@@ -11,8 +11,8 @@
 use std::iter;
 
 use allocative::Allocative;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_util::arc_str::ArcS;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_util::arc_str::ArcS;
 use either::Either;
 use pagable::Pagable;
 use static_assertions::assert_eq_size;

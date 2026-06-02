@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-use buck2_hash::StdBuckHashMap;
-use buck2_node::attrs::configured_attr::ConfiguredAttr;
-use buck2_node::attrs::display::AttrDisplayWithContextExt;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_query::query::environment::QueryTarget;
+use bz_hash::StdBuckHashMap;
+use bz_node::attrs::configured_attr::ConfiguredAttr;
+use bz_node::attrs::display::AttrDisplayWithContextExt;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_query::query::environment::QueryTarget;
 use flatbuffers::FlatBufferBuilder;
 use flatbuffers::WIPOffset;
 
@@ -49,7 +49,7 @@ pub(crate) fn gen_fbs(
     data: Vec<ConfiguredTargetNode>,
     actions: Vec<(String, ActionEntryData)>,
     changed_files: Vec<ChangedFilesEntryData>,
-) -> buck2_error::Result<FlatBufferBuilder<'static>> {
+) -> bz_error::Result<FlatBufferBuilder<'static>> {
     // associate actions and changed files with targets when possible
     let (target_data, other_actions_data, other_changed_files) = {
         // These are in case we need to debug orphan actions or changed files
@@ -128,7 +128,7 @@ pub(crate) fn gen_fbs(
 fn target_to_fbs<'a>(
     builder: &'_ mut FlatBufferBuilder<'static>,
     data: &'_ TargetData,
-) -> buck2_error::Result<WIPOffset<fbs::ConfiguredTargetNode<'a>>> {
+) -> bz_error::Result<WIPOffset<fbs::ConfiguredTargetNode<'a>>> {
     let node = &data.node;
 
     let actions = {
@@ -325,20 +325,20 @@ fn categorize(a: ConfiguredAttr) -> AttrField {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::execution_types::execution::ExecutionPlatform;
-    use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-    use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-    use buck2_core::package::package_relative_path::PackageRelativePath;
-    use buck2_core::target::label::label::TargetLabel;
-    use buck2_interpreter_for_build::call_stack::StarlarkCallStackWrapper;
-    use buck2_node::attrs::attr::Attribute;
-    use buck2_node::attrs::attr_type::AttrType;
-    use buck2_node::attrs::attr_type::list::ListLiteral;
-    use buck2_node::attrs::coerced_attr::CoercedAttr;
-    use buck2_node::attrs::coerced_path::CoercedPath;
-    use buck2_node::call_stack::StarlarkCallStack;
-    use buck2_util::arc_str::ArcSlice;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::execution_types::execution::ExecutionPlatform;
+    use bz_core::execution_types::execution::ExecutionPlatformResolution;
+    use bz_core::execution_types::executor_config::CommandExecutorConfig;
+    use bz_core::package::package_relative_path::PackageRelativePath;
+    use bz_core::target::label::label::TargetLabel;
+    use bz_interpreter_for_build::call_stack::StarlarkCallStackWrapper;
+    use bz_node::attrs::attr::Attribute;
+    use bz_node::attrs::attr_type::AttrType;
+    use bz_node::attrs::attr_type::list::ListLiteral;
+    use bz_node::attrs::coerced_attr::CoercedAttr;
+    use bz_node::attrs::coerced_path::CoercedPath;
+    use bz_node::call_stack::StarlarkCallStack;
+    use bz_util::arc_str::ArcSlice;
     use dupe::Dupe;
     use starlark::codemap::FileSpan;
     use starlark::errors::Frame;
@@ -398,8 +398,8 @@ mod tests {
     fn gen_data(
         attrs: Vec<(
             &str,
-            buck2_node::attrs::attr::Attribute,
-            buck2_node::attrs::coerced_attr::CoercedAttr,
+            bz_node::attrs::attr::Attribute,
+            bz_node::attrs::coerced_attr::CoercedAttr,
         )>,
     ) -> Vec<ConfiguredTargetNode> {
         // Setup data

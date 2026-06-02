@@ -24,7 +24,7 @@ def with_buck2_output(output: str) -> typing.List[str]:
     ]
 
 
-def with_buck2_key_value(key: str, value: str) -> typing.List[str]:
+def with_bz_key_value(key: str, value: str) -> typing.List[str]:
     return [
         "-c",
         f"test.{key}={value}",
@@ -83,8 +83,8 @@ async def test_config_diff_command_command_line(buck: Buck) -> None:
     await buck.build(
         "//:simple",
         *with_buck2_output("changed_old"),
-        *with_buck2_key_value("first", "x"),
-        *with_buck2_key_value("first", "overwrite_x"),
+        *with_bz_key_value("first", "x"),
+        *with_bz_key_value("first", "overwrite_x"),
     )
     out1 = await buck.log("last")
     path1 = out1.stdout.strip()

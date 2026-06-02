@@ -11,42 +11,42 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_common::package_listing::dice::DicePackageListingResolver;
-use buck2_common::package_listing::resolver::PackageListingResolver;
-use buck2_common::pattern::resolve::ResolvedPattern;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::name::CellName;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::environment::QueryEnvironment;
-use buck2_query::query::environment::QueryEnvironmentAsNodeLookup;
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::graph::node::LabeledNode;
-use buck2_query::query::graph::node::NodeKey;
-use buck2_query::query::graph::successors::AsyncChildVisitor;
-use buck2_query::query::syntax::simple::eval::error::QueryError;
-use buck2_query::query::syntax::simple::eval::file_set::FileNode;
-use buck2_query::query::syntax::simple::eval::file_set::FileSet;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
-use buck2_query::query::syntax::simple::functions::HasModuleDescription;
-use buck2_query::query::syntax::simple::functions::docs::QueryEnvironmentDescription;
-use buck2_query::query::traversal::AsyncNodeLookup;
-use buck2_query::query::traversal::ChildVisitor;
-use buck2_query::query::traversal::async_depth_first_postorder_traversal;
-use buck2_query::query::traversal::async_depth_limited_traversal;
-use buck2_util::future::try_join_all;
+use bz_common::package_listing::dice::DicePackageListingResolver;
+use bz_common::package_listing::resolver::PackageListingResolver;
+use bz_common::pattern::resolve::ResolvedPattern;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::name::CellName;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_hash::BuckIndexSet;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::environment::QueryEnvironment;
+use bz_query::query::environment::QueryEnvironmentAsNodeLookup;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::graph::node::LabeledNode;
+use bz_query::query::graph::node::NodeKey;
+use bz_query::query::graph::successors::AsyncChildVisitor;
+use bz_query::query::syntax::simple::eval::error::QueryError;
+use bz_query::query::syntax::simple::eval::file_set::FileNode;
+use bz_query::query::syntax::simple::eval::file_set::FileSet;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
+use bz_query::query::syntax::simple::functions::HasModuleDescription;
+use bz_query::query::syntax::simple::functions::docs::QueryEnvironmentDescription;
+use bz_query::query::traversal::AsyncNodeLookup;
+use bz_query::query::traversal::ChildVisitor;
+use bz_query::query::traversal::async_depth_first_postorder_traversal;
+use bz_query::query::traversal::async_depth_limited_traversal;
+use bz_util::future::try_join_all;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::LinearRecomputeDiceComputations;
@@ -61,14 +61,14 @@ use tracing::warn;
 
 type ArcCellPath = Arc<CellPath>;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum QueryLiteralResolutionError {
     #[error("literal `{0}` missing in pre-resolved literals")]
     LiteralMissing(String),
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum RBuildFilesError {
     #[error("no parent found for the file `{0}`")]
@@ -82,15 +82,15 @@ enum RBuildFilesError {
 pub(crate) trait UqueryDelegate: Send + Sync {
     async fn get_buildfile_names_by_cell(
         &self,
-    ) -> buck2_error::Result<StdBuckHashMap<CellName, Arc<[FileNameBuf]>>>;
+    ) -> bz_error::Result<StdBuckHashMap<CellName, Arc<[FileNameBuf]>>>;
 
     /// Resolves a target pattern.
     async fn resolve_target_patterns(
         &self,
         pattern: &[&str],
-    ) -> buck2_error::Result<ResolvedPattern<TargetPatternExtra>>;
+    ) -> bz_error::Result<ResolvedPattern<TargetPatternExtra>>;
 
-    async fn eval_file_literal(&self, literal: &str) -> buck2_error::Result<FileSet>;
+    async fn eval_file_literal(&self, literal: &str) -> bz_error::Result<FileSet>;
 
     // Get all enclosing packages needed to compute owner function.
     // This always includes the immediate enclosing package of the path but can also include
@@ -98,7 +98,7 @@ pub(crate) trait UqueryDelegate: Send + Sync {
     async fn get_enclosing_packages(
         &self,
         path: &CellPath,
-    ) -> buck2_error::Result<Vec<PackageLabel>>;
+    ) -> bz_error::Result<Vec<PackageLabel>>;
 
     fn linear_dice_computations(&self) -> &LinearRecomputeDiceComputations<'_>;
 
@@ -111,7 +111,7 @@ pub(crate) trait QueryLiterals<T: QueryTarget>: Send + Sync {
         &self,
         literals: &[&str],
         dice: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<TargetSet<T>>;
+    ) -> bz_error::Result<TargetSet<T>>;
 }
 
 pub(crate) struct UqueryEnvironment<'c> {
@@ -120,12 +120,12 @@ pub(crate) struct UqueryEnvironment<'c> {
 }
 
 pub(crate) struct PreresolvedQueryLiterals<T: QueryTarget> {
-    resolved_literals: StdBuckHashMap<String, buck2_error::Result<TargetSet<T>>>,
+    resolved_literals: StdBuckHashMap<String, bz_error::Result<TargetSet<T>>>,
 }
 
 impl<T: QueryTarget> PreresolvedQueryLiterals<T> {
     pub(crate) fn new(
-        resolved_literals: StdBuckHashMap<String, buck2_error::Result<TargetSet<T>>>,
+        resolved_literals: StdBuckHashMap<String, bz_error::Result<TargetSet<T>>>,
     ) -> Self {
         Self { resolved_literals }
     }
@@ -148,7 +148,7 @@ impl<T: QueryTarget> PreresolvedQueryLiterals<T> {
     }
 
     /// All the literals, or error if resolution of any failed.
-    pub(crate) fn literals(&self) -> buck2_error::Result<TargetSet<T>> {
+    pub(crate) fn literals(&self) -> bz_error::Result<TargetSet<T>> {
         let mut literals = TargetSet::new();
         for result in self.resolved_literals.values() {
             literals.extend(result.as_ref().map_err(|e| e.dupe())?);
@@ -163,7 +163,7 @@ impl<T: QueryTarget> QueryLiterals<T> for PreresolvedQueryLiterals<T> {
         &self,
         literals: &[&str],
         _: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<TargetSet<T>> {
+    ) -> bz_error::Result<TargetSet<T>> {
         let mut targets = TargetSet::new();
         for lit in literals {
             let resolved = match self
@@ -195,7 +195,7 @@ impl<'c> UqueryEnvironment<'c> {
         }
     }
 
-    async fn get_node(&self, target: &TargetLabel) -> buck2_error::Result<TargetNode> {
+    async fn get_node(&self, target: &TargetLabel) -> bz_error::Result<TargetNode> {
         let package = self
             .delegate
             .ctx()
@@ -210,27 +210,27 @@ impl<'c> UqueryEnvironment<'c> {
 impl QueryEnvironment for UqueryEnvironment<'_> {
     type Target = TargetNode;
 
-    async fn get_node(&self, node_ref: &TargetLabel) -> buck2_error::Result<Self::Target> {
+    async fn get_node(&self, node_ref: &TargetLabel) -> bz_error::Result<Self::Target> {
         UqueryEnvironment::get_node(self, node_ref).await
     }
 
     async fn get_node_for_default_configured_target(
         &self,
         _node_ref: &TargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<Self::Target>> {
+    ) -> bz_error::Result<MaybeCompatible<Self::Target>> {
         Err(QueryError::FunctionUnimplemented(
             "get_node_for_default_configured_target() only for CqueryEnvironment",
         )
         .into())
     }
 
-    async fn eval_literals(&self, literals: &[&str]) -> buck2_error::Result<TargetSet<TargetNode>> {
+    async fn eval_literals(&self, literals: &[&str]) -> bz_error::Result<TargetSet<TargetNode>> {
         self.literals
             .eval_literals(literals, &mut self.delegate.ctx())
             .await
     }
 
-    async fn eval_file_literal(&self, literal: &str) -> buck2_error::Result<FileSet> {
+    async fn eval_file_literal(&self, literal: &str) -> bz_error::Result<FileSet> {
         self.delegate.eval_file_literal(literal).await
     }
 
@@ -238,8 +238,8 @@ impl QueryEnvironment for UqueryEnvironment<'_> {
         &self,
         root: &TargetSet<TargetNode>,
         traversal_delegate: impl AsyncChildVisitor<TargetNode>,
-        visit: impl FnMut(TargetNode) -> buck2_error::Result<()> + Send,
-    ) -> buck2_error::Result<()> {
+        visit: impl FnMut(TargetNode) -> bz_error::Result<()> + Send,
+    ) -> bz_error::Result<()> {
         async_depth_first_postorder_traversal(
             &QueryEnvironmentAsNodeLookup { env: self },
             root.iter_names(),
@@ -253,9 +253,9 @@ impl QueryEnvironment for UqueryEnvironment<'_> {
         &self,
         root: &TargetSet<Self::Target>,
         delegate: impl AsyncChildVisitor<Self::Target>,
-        visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
+        visit: impl FnMut(Self::Target) -> bz_error::Result<()> + Send,
         depth: u32,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         async_depth_limited_traversal(
             &QueryEnvironmentAsNodeLookup { env: self },
             root.iter_names(),
@@ -269,7 +269,7 @@ impl QueryEnvironment for UqueryEnvironment<'_> {
     async fn allbuildfiles(
         &self,
         universe: &TargetSet<Self::Target>,
-    ) -> buck2_error::Result<FileSet> {
+    ) -> bz_error::Result<FileSet> {
         return allbuildfiles(universe, self.delegate).await;
     }
 
@@ -277,11 +277,11 @@ impl QueryEnvironment for UqueryEnvironment<'_> {
         &self,
         universe: &FileSet,
         argset: &FileSet,
-    ) -> buck2_error::Result<FileSet> {
+    ) -> bz_error::Result<FileSet> {
         return rbuildfiles(universe, argset, self.delegate).await;
     }
 
-    async fn owner(&self, paths: &FileSet) -> buck2_error::Result<TargetSet<Self::Target>> {
+    async fn owner(&self, paths: &FileSet) -> bz_error::Result<TargetSet<Self::Target>> {
         let mut result: TargetSet<Self::Target> = TargetSet::new();
         for path in paths.iter() {
             // need to explicitly track this rather than checking for changes to result set since the owner might
@@ -312,7 +312,7 @@ impl QueryEnvironment for UqueryEnvironment<'_> {
                                 None
                             })
                             .collect();
-                        buck2_error::Ok(owner_targets)
+                        bz_error::Ok(owner_targets)
                     });
 
                     for nodes in futures::future::join_all(package_futs).await.into_iter() {
@@ -341,7 +341,7 @@ impl QueryEnvironment for UqueryEnvironment<'_> {
     async fn targets_in_buildfile(
         &self,
         paths: &FileSet,
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         let mut result: TargetSet<Self::Target> = TargetSet::new();
 
         let compute = &mut self.delegate.ctx();
@@ -385,7 +385,7 @@ impl QueryEnvironment for UqueryEnvironment<'_> {
 pub(crate) async fn allbuildfiles<T: QueryTarget>(
     universe: &TargetSet<T>,
     delegate: &dyn UqueryDelegate,
-) -> buck2_error::Result<FileSet> {
+) -> bz_error::Result<FileSet> {
     let mut paths = BuckIndexSet::<FileNode>::default();
 
     let mut top_level_imports = Vec::<ImportPath>::new();
@@ -416,7 +416,7 @@ pub(crate) async fn rbuildfiles(
     universe: &FileSet,
     argset: &FileSet,
     delegate: &dyn UqueryDelegate,
-) -> buck2_error::Result<FileSet> {
+) -> bz_error::Result<FileSet> {
     let universe_paths: Vec<ArcCellPath> =
         universe.iter().map(|file| Arc::new(file.clone())).collect();
     // step 1: split the build files and bzl files
@@ -465,7 +465,7 @@ pub(crate) async fn rbuildfiles(
 
     #[async_trait]
     impl AsyncNodeLookup<Node> for Lookup {
-        async fn get(&self, label: &NodeRef) -> buck2_error::Result<Node> {
+        async fn get(&self, label: &NodeRef) -> bz_error::Result<Node> {
             Ok(Node(Arc::new(label.0.clone())))
         }
     }
@@ -501,7 +501,7 @@ pub(crate) async fn rbuildfiles(
             &self,
             node: &Node,
             mut func: impl ChildVisitor<Node>,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             for import in self
                 .first_order_import_map
                 .get(node.import_path())
@@ -560,15 +560,15 @@ pub(crate) async fn rbuildfiles(
 async fn split_universe_files(
     universe: &[ArcCellPath],
     delegate: &dyn UqueryDelegate,
-) -> buck2_error::Result<(Vec<ArcCellPath>, Vec<ArcCellPath>)> {
+) -> bz_error::Result<(Vec<ArcCellPath>, Vec<ArcCellPath>)> {
     let mut buildfiles = Vec::<ArcCellPath>::new();
     let mut bzlfiles = Vec::<ArcCellPath>::new();
     let buildfile_names_by_cell = delegate.get_buildfile_names_by_cell().await?;
     for file in universe {
         let buildfile_names_for_file =
             buildfile_names_by_cell.get(&file.cell()).ok_or_else(|| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "{}",
                     RBuildFilesError::CellMissingBuildFileNames(file.cell()).to_string()
                 )
@@ -594,7 +594,7 @@ async fn top_level_imports_by_build_file(
     buildfiles: &[ArcCellPath],
     bzlfiles: &[ArcCellPath],
     delegate: &dyn UqueryDelegate,
-) -> buck2_error::Result<StdBuckHashMap<ArcCellPath, Vec<ImportPath>>> {
+) -> bz_error::Result<StdBuckHashMap<ArcCellPath, Vec<ImportPath>>> {
     let mut top_level_import_by_build_file = StdBuckHashMap::<ArcCellPath, Vec<ImportPath>>::new();
 
     for file in bzlfiles {
@@ -634,7 +634,7 @@ async fn top_level_imports_by_build_file(
 async fn first_order_imports(
     all_top_level_imports: &[ImportPath],
     delegate: &dyn UqueryDelegate,
-) -> buck2_error::Result<StdBuckHashMap<ImportPath, Vec<ImportPath>>> {
+) -> bz_error::Result<StdBuckHashMap<ImportPath, Vec<ImportPath>>> {
     let all_imports = get_transitive_loads(
         all_top_level_imports.to_vec(),
         delegate.linear_dice_computations(),
@@ -661,7 +661,7 @@ async fn first_order_imports(
 pub(crate) async fn get_transitive_loads(
     top_level_imports: Vec<ImportPath>,
     ctx: &LinearRecomputeDiceComputations<'_>,
-) -> buck2_error::Result<Vec<ImportPath>> {
+) -> bz_error::Result<Vec<ImportPath>> {
     #[derive(Clone, Dupe)]
     struct Node(Arc<ImportPath>);
 
@@ -689,7 +689,7 @@ pub(crate) async fn get_transitive_loads(
 
     #[async_trait]
     impl AsyncNodeLookup<Node> for Lookup {
-        async fn get(&self, label: &NodeRef) -> buck2_error::Result<Node> {
+        async fn get(&self, label: &NodeRef) -> bz_error::Result<Node> {
             Ok(Node(Arc::new(label.0.clone())))
         }
     }
@@ -710,7 +710,7 @@ pub(crate) async fn get_transitive_loads(
             &self,
             target: &Node,
             mut func: impl ChildVisitor<Node>,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             for import in self
                 .ctx
                 .get()

@@ -21,7 +21,7 @@ use crate::cells::external::ExternalCellOrigin;
 use crate::cells::name::CellName;
 use crate::cells::nested::NestedCells;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum CellInstanceError {
     #[error(
@@ -63,7 +63,7 @@ impl CellInstance {
         path: CellRootPathBuf,
         external: Option<ExternalCellOrigin>,
         nested_cells: NestedCells,
-    ) -> buck2_error::Result<CellInstance> {
+    ) -> bz_error::Result<CellInstance> {
         if external.is_some()
             && let Some(nested) = nested_cells.check_empty()
         {
@@ -100,7 +100,7 @@ impl CellInstance {
     }
 
     #[inline]
-    pub fn expect_non_external(&self, context: &'static str) -> buck2_error::Result<()> {
+    pub fn expect_non_external(&self, context: &'static str) -> bz_error::Result<()> {
         match self.0.external {
             Some(_) => Err(CellInstanceError::ExpectedNonExternalCell(self.name(), context).into()),
             None => Ok(()),

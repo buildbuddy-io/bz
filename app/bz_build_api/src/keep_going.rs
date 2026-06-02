@@ -39,7 +39,7 @@ impl KeepGoing {
                     .into_iter()
                     .try_collect::<Vec<_>>()?
             } else {
-                buck2_util::future::try_join_all(futs).await?
+                bz_util::future::try_join_all(futs).await?
             })
         }
     }

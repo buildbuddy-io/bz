@@ -68,12 +68,12 @@ impl<T> AsyncOnceCell<T> {
 
 #[cfg(test)]
 mod tests {
-    use buck2_error::buck2_error;
+    use bz_error::bz_error;
 
     use super::*;
 
     #[tokio::test]
-    async fn test() -> buck2_error::Result<()> {
+    async fn test() -> bz_error::Result<()> {
         let cell1 = AsyncOnceCell::new();
 
         let counter = cell1.get_or_init(async { 42u32 }).await;
@@ -96,40 +96,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_or_try_init() -> buck2_error::Result<()> {
+    async fn test_get_or_try_init() -> bz_error::Result<()> {
         let cell1 = AsyncOnceCell::new();
 
         assert_eq!(
             &43,
             cell1
-                .get_or_try_init(async { buck2_error::Ok(43) })
+                .get_or_try_init(async { bz_error::Ok(43) })
                 .await
                 .unwrap()
         );
         assert_eq!(
             &43,
             cell1
-                .get_or_try_init(async { buck2_error::Ok(55) })
+                .get_or_try_init(async { bz_error::Ok(55) })
                 .await
                 .unwrap()
         );
 
         let cell2 = AsyncOnceCell::new();
         cell2
-            .get_or_try_init(async { Err(buck2_error!(buck2_error::ErrorTag::TestOnly, "foo")) })
+            .get_or_try_init(async { Err(bz_error!(bz_error::ErrorTag::TestOnly, "foo")) })
             .await
             .unwrap_err();
         assert_eq!(
             &44,
             cell2
-                .get_or_try_init(async { buck2_error::Ok(44) })
+                .get_or_try_init(async { bz_error::Ok(44) })
                 .await
                 .unwrap()
         );
         assert_eq!(
             &44,
             cell2
-                .get_or_try_init(async { buck2_error::Ok(56) })
+                .get_or_try_init(async { bz_error::Ok(56) })
                 .await
                 .unwrap()
         );

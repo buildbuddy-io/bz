@@ -15,7 +15,7 @@ use std::hash::Hash;
 use std::str;
 
 use allocative::Allocative;
-use buck2_data::ToProtoMessage;
+use bz_data::ToProtoMessage;
 use dupe::Dupe;
 use pagable::Pagable;
 use serde::Serialize;
@@ -109,10 +109,10 @@ impl Serialize for ConfiguredTargetLabel {
 }
 
 impl ToProtoMessage for ConfiguredTargetLabel {
-    type Message = buck2_data::ConfiguredTargetLabel;
+    type Message = bz_data::ConfiguredTargetLabel;
 
     fn as_proto(&self) -> Self::Message {
-        buck2_data::ConfiguredTargetLabel {
+        bz_data::ConfiguredTargetLabel {
             label: Some(self.unconfigured().as_proto()),
             configuration: Some(self.cfg().as_proto()),
             execution_configuration: self.exec_cfg().map(ToProtoMessage::as_proto),

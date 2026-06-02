@@ -19,13 +19,13 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use allocative::Allocative;
-use buck2_core::cells::name::CellName;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::StdBuckHashMap;
-pub use buck2_test_proto::CasDigest;
-pub use buck2_test_proto::ExecutionDetails;
+use bz_core::cells::name::CellName;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::StdBuckHashMap;
+pub use bz_test_proto::CasDigest;
+pub use bz_test_proto::ExecutionDetails;
 use derivative::Derivative;
 use derive_more::Display;
 use derive_more::From;
@@ -199,7 +199,7 @@ impl std::fmt::Display for ExternalRunnerSpecValue {
 pub struct ArgHandle(pub usize);
 
 impl TryFrom<i64> for ArgHandle {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn try_from(i: i64) -> Result<Self, Self::Error> {
         Ok(ArgHandle(i.try_into()?))

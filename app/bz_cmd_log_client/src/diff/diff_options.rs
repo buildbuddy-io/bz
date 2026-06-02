@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_event_log::read::EventLogPathBuf;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::path_arg::PathArg;
+use bz_event_log::read::EventLogPathBuf;
+use bz_wrapper_common::invocation_id::TraceId;
 
 #[derive(Debug, clap::Parser)]
 #[clap(group = clap::ArgGroup::new("first").required(true))]
@@ -42,7 +42,7 @@ impl DiffEventLogOptions {
     pub(crate) async fn get(
         &self,
         ctx: &ClientCommandContext<'_>,
-    ) -> buck2_error::Result<(EventLogPathBuf, EventLogPathBuf)> {
+    ) -> bz_error::Result<(EventLogPathBuf, EventLogPathBuf)> {
         let options1 = &EventLogOptions {
             recent: self.recent1,
             path: self.path1.clone(),

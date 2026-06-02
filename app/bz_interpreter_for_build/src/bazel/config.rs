@@ -1,7 +1,7 @@
 use allocative::Allocative;
-use buck2_core::provider::id::ProviderId;
-use buck2_interpreter::types::provider::callable::ProviderCallableLike;
-use buck2_interpreter::types::provider::callable::ProviderLike;
+use bz_core::provider::id::ProviderId;
+use bz_interpreter::types::provider::callable::ProviderCallableLike;
+use bz_interpreter::types::provider::callable::ProviderLike;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -31,7 +31,7 @@ use std::fmt;
 use std::hash::Hash;
 use std::sync::Arc;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BazelConfigError {
     #[error("'repeatable' can only be set for a setting with 'flag = True'")]
@@ -129,7 +129,7 @@ fn bazel_feature_flag_info_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<bool> {
         if value.unpack_str().is_none() {
             return Err(
-                buck2_error::Error::from(BazelConfigError::FeatureFlagInfoValueNotString(
+                bz_error::Error::from(BazelConfigError::FeatureFlagInfoValueNotString(
                     value.get_type().to_owned(),
                 ))
                 .into(),
@@ -202,7 +202,7 @@ impl<'v> StarlarkValue<'v> for BazelConfigProviderCallable {
             match name.as_str() {
                 "value" => value = Some(v),
                 other => {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         BazelConfigError::FeatureFlagInfoUnexpectedArgument(other.to_owned()),
                     )
                     .into());
@@ -210,11 +210,11 @@ impl<'v> StarlarkValue<'v> for BazelConfigProviderCallable {
             }
         }
         let value = value.ok_or_else(|| {
-            buck2_error::Error::from(BazelConfigError::FeatureFlagInfoMissingValue)
+            bz_error::Error::from(BazelConfigError::FeatureFlagInfoMissingValue)
         })?;
         if value.unpack_str().is_none() {
             return Err(
-                buck2_error::Error::from(BazelConfigError::FeatureFlagInfoValueNotString(
+                bz_error::Error::from(BazelConfigError::FeatureFlagInfoValueNotString(
                     value.get_type().to_owned(),
                 ))
                 .into(),
@@ -247,7 +247,7 @@ impl<'v> StarlarkValue<'v> for BazelConfigProviderCallable {
 }
 
 impl ProviderCallableLike for BazelConfigProviderCallable {
-    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+    fn id(&self) -> bz_error::Result<&Arc<ProviderId>> {
         Ok(&self.id)
     }
 }
@@ -301,7 +301,7 @@ fn bazel_config_module(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         if repeatable && !flag {
-            return Err(buck2_error::Error::from(BazelConfigError::RepeatableRequiresFlag).into());
+            return Err(bz_error::Error::from(BazelConfigError::RepeatableRequiresFlag).into());
         }
         Ok(build_setting("string_list", flag, false, repeatable, eval))
     }

@@ -12,28 +12,28 @@ use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::iter;
 
-use buck2_build_api::artifact_groups::promise::PromiseArtifactAttr;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
-use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
-use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacros;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::soft_error;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::attr_type::AttrTypeInner;
-use buck2_node::attrs::attr_type::bool::BoolLiteral;
-use buck2_node::attrs::attr_type::dep::DepAttr;
-use buck2_node::attrs::attr_type::dep::DepAttrTransition;
-use buck2_node::attrs::attr_type::dict::DictAttrType;
-use buck2_node::attrs::attr_type::dict::DictLiteral;
-use buck2_node::attrs::attr_type::list::ListAttrType;
-use buck2_node::attrs::attr_type::list::ListLiteral;
-use buck2_node::attrs::attr_type::one_of::OneOfAttrType;
-use buck2_node::attrs::attr_type::string::StringLiteral;
-use buck2_node::attrs::attr_type::tuple::TupleAttrType;
-use buck2_node::attrs::attr_type::tuple::TupleLiteral;
+use bz_build_api::artifact_groups::promise::PromiseArtifactAttr;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
+use bz_build_api::interpreter::rule_defs::provider::dependency::Dependency;
+use bz_build_api::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacros;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::soft_error;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::attr_type::AttrTypeInner;
+use bz_node::attrs::attr_type::bool::BoolLiteral;
+use bz_node::attrs::attr_type::dep::DepAttr;
+use bz_node::attrs::attr_type::dep::DepAttrTransition;
+use bz_node::attrs::attr_type::dict::DictAttrType;
+use bz_node::attrs::attr_type::dict::DictLiteral;
+use bz_node::attrs::attr_type::list::ListAttrType;
+use bz_node::attrs::attr_type::list::ListLiteral;
+use bz_node::attrs::attr_type::one_of::OneOfAttrType;
+use bz_node::attrs::attr_type::string::StringLiteral;
+use bz_node::attrs::attr_type::tuple::TupleAttrType;
+use bz_node::attrs::attr_type::tuple::TupleLiteral;
 use dupe::Dupe;
 use dupe::IterDupedExt;
 use gazebo::prelude::SliceExt;
@@ -49,11 +49,11 @@ use crate::anon_target_attr::AnonTargetAttr;
 use crate::anon_targets::AnonAttrCtx;
 
 pub trait AnonTargetAttrTypeCoerce {
-    fn coerce_item(&self, ctx: &AnonAttrCtx, value: Value) -> buck2_error::Result<AnonTargetAttr>;
+    fn coerce_item(&self, ctx: &AnonAttrCtx, value: Value) -> bz_error::Result<AnonTargetAttr>;
 }
 
 impl AnonTargetAttrTypeCoerce for AttrType {
-    fn coerce_item(&self, ctx: &AnonAttrCtx, value: Value) -> buck2_error::Result<AnonTargetAttr> {
+    fn coerce_item(&self, ctx: &AnonAttrCtx, value: Value) -> bz_error::Result<AnonTargetAttr> {
         match &self.0.inner {
             AttrTypeInner::Any(_) => to_anon_target_any(value, ctx),
             AttrTypeInner::Bool(_) => match value.unpack_bool() {
@@ -181,7 +181,7 @@ impl AnonTargetAttrTypeCoerce for AttrType {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 pub(crate) enum AnonTargetCoercionError {
     #[error("Expected value of type `{0}`, got value with type `{1}` (value was `{2}`)")]
     #[buck2(tag = Input)]
@@ -191,7 +191,7 @@ pub(crate) enum AnonTargetCoercionError {
     OneOfEmpty,
     #[error("one_of fails, the errors against each alternative in turn were:\n{}", .0.map(|x| format!("{x:#}")).join("\n"))]
     #[buck2(tag = Input)]
-    OneOfMany(Vec<buck2_error::Error>),
+    OneOfMany(Vec<bz_error::Error>),
     #[error("enum called with `{0}`, only allowed: {}", .1.map(|x| format!("`{x}`")).join(", "))]
     #[buck2(tag = Input)]
     InvalidEnumVariant(String, Vec<String>),
@@ -228,7 +228,7 @@ impl AnonTargetCoercionError {
         )
     }
 
-    pub fn one_of_many(mut errs: Vec<buck2_error::Error>) -> buck2_error::Error {
+    pub fn one_of_many(mut errs: Vec<bz_error::Error>) -> bz_error::Error {
         if errs.is_empty() {
             AnonTargetCoercionError::OneOfEmpty.into()
         } else if errs.len() == 1 {
@@ -239,7 +239,7 @@ impl AnonTargetCoercionError {
     }
 }
 
-fn to_anon_target_any(value: Value, ctx: &AnonAttrCtx) -> buck2_error::Result<AnonTargetAttr> {
+fn to_anon_target_any(value: Value, ctx: &AnonAttrCtx) -> bz_error::Result<AnonTargetAttr> {
     if value.is_none() {
         Ok(AnonTargetAttr::None)
     } else if let Some(x) = value.unpack_bool() {
@@ -250,14 +250,14 @@ fn to_anon_target_any(value: Value, ctx: &AnonAttrCtx) -> buck2_error::Result<An
         Ok(AnonTargetAttr::Dict(
             x.iter()
                 .map(|(k, v)| Ok((to_anon_target_any(k, ctx)?, to_anon_target_any(v, ctx)?)))
-                .collect::<buck2_error::Result<_>>()?,
+                .collect::<bz_error::Result<_>>()?,
         ))
     } else if let Some(x) = TupleRef::from_value(value) {
         // TODO(wendyy) intern attr
         Ok(AnonTargetAttr::Tuple(TupleLiteral(
             x.iter()
                 .map(|v| to_anon_target_any(v, ctx))
-                .collect::<buck2_error::Result<Vec<_>>>()?
+                .collect::<bz_error::Result<Vec<_>>>()?
                 .into(),
         )))
     } else if let Some(x) = ListRef::from_value(value) {
@@ -265,7 +265,7 @@ fn to_anon_target_any(value: Value, ctx: &AnonAttrCtx) -> buck2_error::Result<An
         Ok(AnonTargetAttr::List(ListLiteral(
             x.iter()
                 .map(|v| to_anon_target_any(v, ctx))
-                .collect::<buck2_error::Result<Vec<_>>>()?
+                .collect::<bz_error::Result<Vec<_>>>()?
                 .into(),
         )))
     } else if let Some(s) = value.unpack_str() {
@@ -287,7 +287,7 @@ fn to_anon_target_dict(
 
     ctx: &AnonAttrCtx,
     value: Value,
-) -> buck2_error::Result<AnonTargetAttr> {
+) -> bz_error::Result<AnonTargetAttr> {
     if let Some(dict) = DictRef::from_value(value) {
         let mut res = Vec::with_capacity(dict.len());
         if dict_attr_type.sorted {
@@ -321,7 +321,7 @@ fn to_anon_target_one_of(
 
     ctx: &AnonAttrCtx,
     value: Value,
-) -> buck2_error::Result<AnonTargetAttr> {
+) -> bz_error::Result<AnonTargetAttr> {
     let mut errs = Vec::new();
     // Bias towards the start of the list - try and use success/failure from first in preference
     for (i, x) in one_of_attr_type.xs.iter().enumerate() {
@@ -341,7 +341,7 @@ fn to_anon_target_tuple(
 
     ctx: &AnonAttrCtx,
     value: Value,
-) -> buck2_error::Result<AnonTargetAttr> {
+) -> bz_error::Result<AnonTargetAttr> {
     let coerce = |value, items: &[Value]| {
         // Use comparison rather than equality below. If the tuple is too short,
         // it is implicitly extended using None.
@@ -378,7 +378,7 @@ fn to_anon_target_list(
 
     ctx: &AnonAttrCtx,
     value: Value,
-) -> buck2_error::Result<AnonTargetAttr> {
+) -> bz_error::Result<AnonTargetAttr> {
     if let Some(list) = ListRef::from_value(value) {
         Ok(AnonTargetAttr::List(ListLiteral(
             // TODO(wendyy) intern attr

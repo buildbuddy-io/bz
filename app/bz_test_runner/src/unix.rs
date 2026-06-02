@@ -12,8 +12,8 @@ use std::os::unix::io::FromRawFd;
 use std::os::unix::io::RawFd;
 use std::os::unix::net::UnixStream as StdUnixStream;
 
-use buck2_error::BuckErrorContext;
-use buck2_grpc::DuplexChannel;
+use bz_error::BuckErrorContext;
+use bz_grpc::DuplexChannel;
 use clap::Parser;
 use tokio::net::UnixStream;
 
@@ -29,7 +29,7 @@ pub struct Buck2TestRunnerUnix {
 }
 
 impl Buck2TestRunnerUnix {
-    pub async fn run(self) -> buck2_error::Result<()> {
+    pub async fn run(self) -> bz_error::Result<()> {
         // NOTE: We assume the parameters we received from the caller are correct here. If
         // they're not, things are probably going to go wrong but that's on our caller.
         //

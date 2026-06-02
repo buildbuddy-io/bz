@@ -1026,7 +1026,7 @@ def cxx_test_impl(ctx: AnalysisContext) -> list[Provider]:
             # We implicitly make this test via the project root, instead of
             # the cell root (e.g. fbcode root).
             run_from_project_root = (
-                "buck2_run_from_project_root" in (ctx.attrs.labels or []) or
+                "bz_run_from_project_root" in (ctx.attrs.labels or []) or
                 re_executor != None
             ),
             use_project_relative_paths = re_executor != None,

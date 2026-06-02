@@ -14,12 +14,12 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::validation::transitive_validations::TransitiveValidations;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::validation::transitive_validations::TransitiveValidations;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
 use derivative::Derivative;
 use derive_more::Display;
 use dice::CancellationContext;
@@ -74,7 +74,7 @@ impl TransitiveValidationKey {
             .validations()
             .filter(|spec| !spec.optional() || enabled_optional_validations.contains(spec.name()))
             .map(|spec| spec.validation_result().get_bound_artifact())
-            .collect::<buck2_error::Result<Vec<Artifact>>>()?;
+            .collect::<bz_error::Result<Vec<Artifact>>>()?;
         ctx.try_compute_join(artifacts, |ctx, output| {
             async move { compute_single_validation(ctx, output).await }.boxed()
         })
@@ -105,7 +105,7 @@ impl TransitiveValidationKey {
 
 #[async_trait]
 impl Key for TransitiveValidationKey {
-    type Value = buck2_error::Result<CachedValidationResult>;
+    type Value = bz_error::Result<CachedValidationResult>;
 
     async fn compute(
         &self,
@@ -170,18 +170,18 @@ impl Key for TransitiveValidationKey {
 /// as error when doing single node check in order to be able to cache the result in DICE.
 enum TreatValidationFailureAsError {
     ValidationFailed(ValidationFailedUserFacingError),
-    Transient(buck2_error::Error),
+    Transient(bz_error::Error),
 }
 
-impl From<buck2_error::Error> for TreatValidationFailureAsError {
-    fn from(value: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for TreatValidationFailureAsError {
+    fn from(value: bz_error::Error) -> Self {
         TreatValidationFailureAsError::Transient(value)
     }
 }
 
 impl From<DiceError> for TreatValidationFailureAsError {
     fn from(value: DiceError) -> Self {
-        TreatValidationFailureAsError::Transient(buck2_error::Error::from(value))
+        TreatValidationFailureAsError::Transient(bz_error::Error::from(value))
     }
 }
 
@@ -204,7 +204,7 @@ async fn compute_single_validation(
 }
 
 fn tighten_cached_validation_result(
-    result: buck2_error::Result<CachedValidationResult>,
+    result: bz_error::Result<CachedValidationResult>,
 ) -> Result<(), TreatValidationFailureAsError> {
     match result {
         Ok(result) => match result.0.as_ref() {

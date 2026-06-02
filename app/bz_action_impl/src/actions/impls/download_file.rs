@@ -13,43 +13,43 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::Action;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::UnregisteredAction;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::cas_digest::RawDigest;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_common::io::trace::TracingIoProvider;
-use buck2_core::category::CategoryRef;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::materialize::http::Checksum;
-use buck2_execute::materialize::http::http_download;
-use buck2_execute::materialize::http::http_head;
-use buck2_execute::materialize::materializer::DeclareArtifactPayload;
-use buck2_execute::materialize::materializer::HttpDownloadInfo;
-use buck2_hash::BuckIndexSet;
-use buck2_http::HttpClient;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::Action;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::UnregisteredAction;
+use bz_build_api::actions::execute::action_executor::ActionExecutionKind;
+use bz_build_api::actions::execute::action_executor::ActionExecutionMetadata;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::actions::execute::error::ExecuteError;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_signals::env::WaitingData;
+use bz_common::cas_digest::RawDigest;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::io::trace::TracingIoProvider;
+use bz_core::category::CategoryRef;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::conversion::from_any_with_tag;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::materialize::http::Checksum;
+use bz_execute::materialize::http::http_download;
+use bz_execute::materialize::http::http_head;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_execute::materialize::materializer::HttpDownloadInfo;
+use bz_hash::BuckIndexSet;
+use bz_http::HttpClient;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark::values::OwnedFrozenValue;
 
 use crate::actions::impls::offline;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum DownloadFileActionError {
     #[error("Exactly one output file must be specified for a download file action, got {0}")]
@@ -93,7 +93,7 @@ impl UnregisteredAction for UnregisteredDownloadFileAction {
         outputs: BuckIndexSet<BuildArtifact>,
         _starlark_data: Option<OwnedFrozenValue>,
         _error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         Ok(Box::new(DownloadFileAction::new(outputs, *self)?))
     }
 }
@@ -108,7 +108,7 @@ impl DownloadFileAction {
     fn new(
         outputs: BuckIndexSet<BuildArtifact>,
         inner: UnregisteredDownloadFileAction,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         if outputs.len() != 1 {
             Err(DownloadFileActionError::WrongNumberOfOutputs(outputs.len()).into())
         } else {
@@ -139,7 +139,7 @@ impl DownloadFileAction {
         &self,
         client: &HttpClient,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<Option<FileMetadata>> {
+    ) -> bz_error::Result<Option<FileMetadata>> {
         let digest = if digest_config.cas_digest_config().allows_sha1() {
             self.inner
                 .checksum
@@ -172,13 +172,13 @@ impl DownloadFileAction {
                     .map(|content_length| {
                         let content_length = content_length
                             .to_str()
-                            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Http))
+                            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Http))
                             .buck_error_context("Header is not valid utf-8")?;
                         let content_length_number =
                             content_length.parse().with_buck_error_context(|| {
                                 format!("Header is not a number: `{content_length}`")
                             })?;
-                        buck2_error::Ok(content_length_number)
+                        bz_error::Ok(content_length_number)
                     })
                     .transpose()
                     .with_buck_error_context(|| {
@@ -210,7 +210,7 @@ impl DownloadFileAction {
     async fn execute_for_offline(
         &self,
         ctx: &mut dyn ActionExecutionCtx,
-    ) -> buck2_error::Result<(ActionOutputs, ActionExecutionMetadata)> {
+    ) -> bz_error::Result<(ActionOutputs, ActionExecutionMetadata)> {
         let outputs = offline::declare_copy_from_offline_cache(ctx, &[self.output()]).await?;
 
         Ok((
@@ -227,11 +227,11 @@ impl DownloadFileAction {
 
 #[async_trait]
 impl Action for DownloadFileAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::DownloadFile
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::DownloadFile
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         Ok(Cow::Borrowed(&[]))
     }
 

@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::attr_type::plugin_dep::PluginDepAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::attr_type::plugin_dep::PluginDepAttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
 use starlark::values::Value;
 
@@ -24,7 +24,7 @@ impl AttrTypeCoerce for PluginDepAttrType {
         _configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         ctx.coerce_target_label(value.unpack_str_err()?)
             .map(CoercedAttr::PluginDep)
     }

@@ -9,19 +9,19 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::new_generic::MaterializeRequest;
-use buck2_cli_proto::new_generic::NewGenericRequest;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::streaming::StreamingCommand;
+use bz_cli_proto::new_generic::MaterializeRequest;
+use bz_cli_proto::new_generic::NewGenericRequest;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::streaming::StreamingCommand;
 
 #[derive(Debug, clap::Parser)]
 pub struct MaterializeCommand {

@@ -14,83 +14,83 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::actions::calculation::get_target_rule_type_name;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::build::AsyncBuildTargetResultBuilder;
-use buck2_build_api::build::BuildConfiguredLabelOptions;
-use buck2_build_api::build::BuildEvent;
-use buck2_build_api::build::BuildEventConsumer;
-use buck2_build_api::build::BuildTargetResult;
-use buck2_build_api::build::BuildTargetResultBuilder;
-use buck2_build_api::build::ConfiguredBuildEventVariant;
-use buck2_build_api::build::ProvidersToBuild;
-use buck2_build_api::build::build_configured_label;
-use buck2_build_api::build::build_report::build_report_opts;
-use buck2_build_api::build::build_report::write_build_report;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
-use buck2_build_api::interpreter::rule_defs::provider::test_provider::TestProvider;
-use buck2_build_api::materialize::MaterializationAndUploadContext;
-use buck2_cli_proto::HasClientContext;
-use buck2_cli_proto::TestRequest;
-use buck2_cli_proto::TestResponse;
-use buck2_cli_proto::representative_config_flag;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::events::HasEvents;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::liveliness_observer::LivelinessGuard;
-use buck2_common::liveliness_observer::LivelinessObserver;
-use buck2_common::liveliness_observer::LivelinessObserverExt;
-use buck2_common::liveliness_observer::TimeoutLivelinessObserver;
-use buck2_common::pattern::parse_from_cli::parse_patterns_with_modifiers_from_cli_args;
-use buck2_common::pattern::resolve::ResolveTargetPatterns;
-use buck2_common::pattern::resolve::ResolvedPattern;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
-use buck2_core::configuration::compatibility::ResultMaybeCompatible;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabelWithModifiers;
-use buck2_core::pattern::pattern::Modifiers;
-use buck2_core::pattern::pattern::ModifiersError;
-use buck2_core::pattern::pattern::PackageSpec;
-use buck2_core::pattern::pattern::ProvidersLabelWithModifiers;
-use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::tag_result;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_data::BuildResult;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::internal_error;
-use buck2_events::dispatch::console_message;
-use buck2_events::dispatch::with_dispatcher_async;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::extra::InterpreterHostPlatform;
-use buck2_interpreter_for_build::interpreter::context::HasInterpreterContext;
-use buck2_node::load_patterns::MissingTargetBehavior;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
-use buck2_server_ctx::commands::send_target_cfg_event;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
-use buck2_server_ctx::test_command::TEST_COMMAND;
-use buck2_server_ctx::tpx_experiment_util::get_tpx_experiments;
-use buck2_test_api::data::TestResult;
-use buck2_test_api::data::TestStatus;
-use buck2_test_api::protocol::TestExecutor;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::actions::calculation::get_target_rule_type_name;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::build::AsyncBuildTargetResultBuilder;
+use bz_build_api::build::BuildConfiguredLabelOptions;
+use bz_build_api::build::BuildEvent;
+use bz_build_api::build::BuildEventConsumer;
+use bz_build_api::build::BuildTargetResult;
+use bz_build_api::build::BuildTargetResultBuilder;
+use bz_build_api::build::ConfiguredBuildEventVariant;
+use bz_build_api::build::ProvidersToBuild;
+use bz_build_api::build::build_configured_label;
+use bz_build_api::build::build_report::build_report_opts;
+use bz_build_api::build::build_report::write_build_report;
+use bz_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use bz_build_api::interpreter::rule_defs::provider::test_provider::TestProvider;
+use bz_build_api::materialize::MaterializationAndUploadContext;
+use bz_cli_proto::HasClientContext;
+use bz_cli_proto::TestRequest;
+use bz_cli_proto::TestResponse;
+use bz_cli_proto::representative_config_flag;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::events::HasEvents;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::liveliness_observer::LivelinessGuard;
+use bz_common::liveliness_observer::LivelinessObserver;
+use bz_common::liveliness_observer::LivelinessObserverExt;
+use bz_common::liveliness_observer::TimeoutLivelinessObserver;
+use bz_common::pattern::parse_from_cli::parse_patterns_with_modifiers_from_cli_args;
+use bz_common::pattern::resolve::ResolveTargetPatterns;
+use bz_common::pattern::resolve::ResolvedPattern;
+use bz_core::cells::CellResolver;
+use bz_core::cells::name::CellName;
+use bz_core::configuration::compatibility::ResultMaybeCompatible;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabelWithModifiers;
+use bz_core::pattern::pattern::Modifiers;
+use bz_core::pattern::pattern::ModifiersError;
+use bz_core::pattern::pattern::PackageSpec;
+use bz_core::pattern::pattern::ProvidersLabelWithModifiers;
+use bz_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::tag_result;
+use bz_core::target::label::label::TargetLabel;
+use bz_data::BuildResult;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::internal_error;
+use bz_events::dispatch::console_message;
+use bz_events::dispatch::with_dispatcher_async;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_hash::BuckIndexSet;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::extra::InterpreterHostPlatform;
+use bz_interpreter_for_build::interpreter::context::HasInterpreterContext;
+use bz_node::load_patterns::MissingTargetBehavior;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
+use bz_server_ctx::commands::send_target_cfg_event;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
+use bz_server_ctx::test_command::TEST_COMMAND;
+use bz_server_ctx::tpx_experiment_util::get_tpx_experiments;
+use bz_test_api::data::TestResult;
+use bz_test_api::data::TestStatus;
+use bz_test_api::protocol::TestExecutor;
 use dice::DiceTransaction;
 use dice::LinearRecomputeDiceComputations;
 use dice_futures::cancellation::CancellationContext;
@@ -118,7 +118,7 @@ use crate::session::TestSessionOptions;
 use crate::translations::build_configured_target_handle;
 
 struct TestOutcome {
-    errors: Vec<buck2_data::ErrorReport>,
+    errors: Vec<bz_data::ErrorReport>,
     executor_report: ExecutorReport,
     executor_stdout: String,
     executor_stderr: String,
@@ -126,7 +126,7 @@ struct TestOutcome {
 }
 
 impl TestOutcome {
-    fn exit_code(&self) -> buck2_error::Result<i32> {
+    fn exit_code(&self) -> bz_error::Result<i32> {
         self.executor_report
             .exit_code
             .ok_or_else(|| internal_error!("Test executor did not provide an exit code"))
@@ -171,8 +171,8 @@ impl CounterWithExamples {
         }
     }
 
-    fn into_cli_proto_counter(self) -> buck2_cli_proto::CounterWithExamples {
-        buck2_cli_proto::CounterWithExamples {
+    fn into_cli_proto_counter(self) -> bz_cli_proto::CounterWithExamples {
+        bz_cli_proto::CounterWithExamples {
             count: self.count,
             max: self.max,
             example_tests: self.example_tests,
@@ -219,7 +219,7 @@ impl TestStatuses {
     }
 }
 
-#[derive(Debug, buck2_error_derive::Error)]
+#[derive(Debug, bz_error_derive::Error)]
 #[buck2(tag = TestDeadlineExpired)]
 #[error("This test run exceeded the deadline that was provided")]
 struct DeadlineExpired;
@@ -228,7 +228,7 @@ async fn test_command(
     ctx: &dyn ServerCommandContextTrait,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
     req: TestRequest,
-) -> buck2_error::Result<TestResponse> {
+) -> bz_error::Result<TestResponse> {
     run_server_command(TestServerCommand { req }, ctx, partial_result_dispatcher).await
 }
 
@@ -239,19 +239,19 @@ pub(crate) fn init_test_command() {
 }
 
 struct TestServerCommand {
-    req: buck2_cli_proto::TestRequest,
+    req: bz_cli_proto::TestRequest,
 }
 
 #[async_trait]
 impl ServerCommandTemplate for TestServerCommand {
-    type StartEvent = buck2_data::TestCommandStart;
-    type EndEvent = buck2_data::TestCommandEnd;
-    type Response = buck2_cli_proto::TestResponse;
+    type StartEvent = bz_data::TestCommandStart;
+    type EndEvent = bz_data::TestCommandEnd;
+    type Response = bz_cli_proto::TestResponse;
     type PartialResult = NoPartialResult;
 
     fn build_result(&self, response: &Self::Response) -> Option<BuildResult> {
         let build_completed =
-            if let Some(buck2_cli_proto::test_response::TestStatuses { build_errors, .. }) =
+            if let Some(bz_cli_proto::test_response::TestStatuses { build_errors, .. }) =
                 response.test_statuses
             {
                 build_errors == 0
@@ -262,13 +262,13 @@ impl ServerCommandTemplate for TestServerCommand {
         Some(BuildResult { build_completed })
     }
 
-    fn end_event(&self, _response: &buck2_error::Result<Self::Response>) -> Self::EndEvent {
-        buck2_data::TestCommandEnd {
+    fn end_event(&self, _response: &bz_error::Result<Self::Response>) -> Self::EndEvent {
+        bz_data::TestCommandEnd {
             unresolved_target_patterns: self
                 .req
                 .target_patterns
                 .iter()
-                .map(|p| buck2_data::TargetPattern { value: p.clone() })
+                .map(|p| bz_data::TargetPattern { value: p.clone() })
                 .collect(),
         }
     }
@@ -278,7 +278,7 @@ impl ServerCommandTemplate for TestServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         test(server_ctx, ctx, &self.req).await
     }
 }
@@ -287,7 +287,7 @@ async fn test(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
     request: &TestRequest,
-) -> buck2_error::Result<TestResponse> {
+) -> bz_error::Result<TestResponse> {
     // TODO (torozco): Should the --fail-fast flag work here?
 
     let cwd = server_ctx.working_dir();
@@ -445,7 +445,7 @@ async fn test(
         .count()
         .try_into()?;
 
-    let test_statuses = buck2_cli_proto::test_response::TestStatuses {
+    let test_statuses = bz_cli_proto::test_response::TestStatuses {
         passed: Some(
             test_outcome
                 .executor_report
@@ -571,7 +571,7 @@ async fn test_targets(
     build_default_info: bool,
     build_run_info: bool,
     tpx_experiments: StdBuckHashSet<String>,
-) -> buck2_error::Result<TestOutcome> {
+) -> bz_error::Result<TestOutcome> {
     let session = Arc::new(session);
 
     let (mut liveliness_observer, _guard) = LivelinessGuard::create();
@@ -722,7 +722,7 @@ async fn test_targets(
                 driver.build_target_result.extend(error_target_result);
 
                 // And finally return our results;
-                buck2_error::Ok((driver.build_target_result, test_statuses))
+                bz_error::Ok((driver.build_target_result, test_statuses))
             },
         )
     });
@@ -732,7 +732,7 @@ async fn test_targets(
         .buck_error_context("Failed to retrieve executor exit code")?;
 
     if executor_output.exit_code != 0 {
-        return Err(buck2_error::buck2_error!(
+        return Err(bz_error::bz_error!(
             ErrorTag::TestExecutor,
             "{}",
             executor_output.to_string()
@@ -745,7 +745,7 @@ async fn test_targets(
     // - The executor had not reported end-of-tests. Assuming we didn't crash on our end (in which
     // case we're about to get this Err out of test_statuses), then this will ensure we don't wait
     // forever on the executor to notify us!
-    let _ignored = test_status_sender.unbounded_send(Err(buck2_error::buck2_error!(
+    let _ignored = test_status_sender.unbounded_send(Err(bz_error::bz_error!(
         ErrorTag::TestExecutor,
         "Executor exited without reporting end-of-tests",
     )));
@@ -757,13 +757,13 @@ async fn test_targets(
 
     let mut errors = convert_error(&build_target_result)
         .iter()
-        .map(buck2_data::ErrorReport::from)
+        .map(bz_data::ErrorReport::from)
         .unique_by(|e| e.message.clone())
         .collect::<Vec<_>>();
 
     if let Some(timeout_observer) = timeout_observer {
         if !timeout_observer.is_alive().await {
-            errors.push(buck2_data::ErrorReport::from(&DeadlineExpired.into()));
+            errors.push(bz_data::ErrorReport::from(&DeadlineExpired.into()));
         }
     }
 
@@ -947,7 +947,7 @@ impl<'a, 'e> TestDriver<'a, 'e> {
                 {
                     Ok(res) => res,
                     Err(e) => {
-                        let e: buck2_error::Error = e;
+                        let e: bz_error::Error = e;
                         let mut events = Vec::new();
                         // Try to associate the error to concrete targets, if possible
                         match spec {
@@ -989,7 +989,7 @@ impl<'a, 'e> TestDriver<'a, 'e> {
                             let events = vec![BuildEvent::OtherError {
                                 label: Some(ProvidersLabel::new(
                                     TargetLabel::new(err.package.dupe(), err.target.as_ref()),
-                                    buck2_core::provider::label::ProvidersName::Default,
+                                    bz_core::provider::label::ProvidersName::Default,
                                 )),
                                 err: err.into(),
                             }];
@@ -1258,7 +1258,7 @@ async fn build_target_result(
     modifiers: Modifiers,
     build_default_info: bool,
     build_run_info: bool,
-) -> buck2_error::Result<(BuildTargetResult, FrozenProviderCollectionValue)> {
+) -> bz_error::Result<(BuildTargetResult, FrozenProviderCollectionValue)> {
     // NOTE: We fail if we hit an incompatible target here. This can happen if we reach an
     // incompatible target via `tests = [...]`. This should perhaps change, but that's how it works
     // in v1: https://fb.workplace.com/groups/buckeng/posts/8520953297953210
@@ -1332,7 +1332,7 @@ async fn test_target(
     working_dir_cell: CellName,
     test_config_unification_rollout: bool,
     oncall: Option<String>,
-) -> buck2_error::Result<Option<ConfiguredProvidersLabel>> {
+) -> bz_error::Result<Option<ConfiguredProvidersLabel>> {
     let collection = providers.provider_collection();
 
     let fut = match <dyn TestProvider>::from_collection(collection) {
@@ -1365,7 +1365,7 @@ async fn test_target(
     fut.await
 }
 
-fn convert_error(build_result: &BuildTargetResult) -> Vec<buck2_error::Error> {
+fn convert_error(build_result: &BuildTargetResult) -> Vec<bz_error::Error> {
     let mut errors = Vec::new();
     errors.extend(build_result.other_errors.values().flatten().duped());
 
@@ -1391,7 +1391,7 @@ fn run_tests<'a, 'b>(
     working_dir_cell: CellName,
     test_config_unification_rollout: bool,
     oncall: Option<String>,
-) -> BoxFuture<'a, buck2_error::Result<ConfiguredProvidersLabel>> {
+) -> BoxFuture<'a, bz_error::Result<ConfiguredProvidersLabel>> {
     let maybe_handle = build_configured_target_handle(
         providers_label.dupe(),
         session,
@@ -1420,7 +1420,7 @@ fn run_tests<'a, 'b>(
 // a call to mapping minimally, potentially by adding the mappings to the `TestDriverState`.
 fn create_and_map_configured_build_error(
     label: ConfiguredProvidersLabel,
-    err: buck2_error::Error,
+    err: bz_error::Error,
     modifiers: Modifiers,
 ) -> Vec<BuildEvent> {
     vec![
@@ -1496,7 +1496,7 @@ impl TestLabelFiltering {
 
 fn generate_config_entry_args(
     test_executor_args: &mut Vec<String>,
-    representative_config_flags: &[buck2_cli_proto::RepresentativeConfigFlag],
+    representative_config_flags: &[bz_cli_proto::RepresentativeConfigFlag],
 ) {
     let mut config_flags = String::new();
     let mut config_files = String::new();
@@ -1576,7 +1576,7 @@ fn generate_config_entry_args(
     }
 }
 
-fn post_process_test_executor(s: &str) -> buck2_error::Result<PathBuf> {
+fn post_process_test_executor(s: &str) -> bz_error::Result<PathBuf> {
     match s.split_once("$BUCK2_BINARY_DIR/") {
         Some(("", rest)) => {
             let exe = AbsPathBuf::new(
@@ -1585,7 +1585,7 @@ fn post_process_test_executor(s: &str) -> buck2_error::Result<PathBuf> {
             // On Linux, /proc/self/exe appends " (deleted)" to the path when the
             // binary has been removed from disk (e.g. after a buck2 upgrade).
             if exe.as_path().to_string_lossy().ends_with(" (deleted)") {
-                return Err(buck2_error::buck2_error!(
+                return Err(bz_error::bz_error!(
                     ErrorTag::BuckdExeDeleted,
                     "The buck2 daemon's binary has been deleted from disk. \
                      Run `buck2 kill` to restart the daemon with the current binary."
@@ -1604,7 +1604,7 @@ fn post_process_test_executor(s: &str) -> buck2_error::Result<PathBuf> {
 
             Ok(exe_dir.join(rest).to_path_buf())
         }
-        Some(..) => Err(buck2_error::buck2_error!(
+        Some(..) => Err(bz_error::bz_error!(
             ErrorTag::Environment,
             "Invalid value: {}",
             s
@@ -1615,8 +1615,8 @@ fn post_process_test_executor(s: &str) -> buck2_error::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use buck2_cli_proto::RepresentativeConfigFlag;
-    use buck2_cli_proto::representative_config_flag;
+    use bz_cli_proto::RepresentativeConfigFlag;
+    use bz_cli_proto::representative_config_flag;
 
     use crate::command::TestLabelFiltering;
     use crate::command::generate_config_entry_args;

@@ -11,14 +11,14 @@
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
 
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_fs::paths::file_name::FileNameBuf;
 use dupe::Dupe;
 use nix::fcntl::OFlag;
 use nix::sys::stat::Mode;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Environment)]
 enum CgroupFileError {
     #[error("File size doesn't fit in off_t: {0}")]
@@ -44,7 +44,7 @@ impl CgroupFile {
         d: Arc<OwnedFd>,
         name: FileNameBuf,
         mode: CgroupFileMode,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         tokio::task::spawn_blocking(move || Self::sync_open(&d, name, mode)).await?
     }
 
@@ -52,7 +52,7 @@ impl CgroupFile {
         d: &OwnedFd,
         name: FileNameBuf,
         mode: CgroupFileMode,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let flags = OFlag::O_CLOEXEC
             | match mode {
                 CgroupFileMode::ReadOnly => OFlag::O_RDONLY,
@@ -72,7 +72,7 @@ impl CgroupFile {
     pub(crate) async fn write(
         &self,
         data: impl AsRef<[u8]> + Send + Sync + 'static,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let file = self.0.dupe();
         Ok(
             tokio::task::spawn_blocking(move || Self::sync_write_impl(&file, data.as_ref()))
@@ -111,7 +111,7 @@ impl CgroupFile {
     /// Reads files of length at most 31 bytes
     ///
     /// Semantically like `read_to_buf` but avoids a heap allocation
-    async fn read_to_short_buf(&self) -> buck2_error::Result<([u8; 32], usize)> {
+    async fn read_to_short_buf(&self) -> bz_error::Result<([u8; 32], usize)> {
         let file = self.0.dupe();
         tokio::task::spawn_blocking(move || {
             let mut data = [0u8; 32];
@@ -133,13 +133,13 @@ impl CgroupFile {
                 }
                 filled += read;
             }
-            buck2_error::Ok((data, filled))
+            bz_error::Ok((data, filled))
         })
         .await?
         .with_buck_error_context(|| format!("Reading cgroup file {}", self.1))
     }
 
-    async fn read_to_buf(&self) -> buck2_error::Result<Vec<u8>> {
+    async fn read_to_buf(&self) -> bz_error::Result<Vec<u8>> {
         let file = self.0.dupe();
         tokio::task::spawn_blocking(move || {
             let mut data = vec![0u8; 2048]; // Enough in practice
@@ -159,24 +159,24 @@ impl CgroupFile {
                 filled += read;
             }
             data.truncate(filled);
-            buck2_error::Ok(data)
+            bz_error::Ok(data)
         })
         .await?
         .with_buck_error_context(|| format!("Reading cgroup file {}", self.1))
     }
 
-    pub(crate) async fn read_to_string(&self) -> buck2_error::Result<String> {
+    pub(crate) async fn read_to_string(&self) -> bz_error::Result<String> {
         let buf = self.read_to_buf().await?;
         Ok(String::from_utf8(buf)?)
     }
 
     // FIXME(JakobDegen): Ought probably to have some types to represent the files
-    pub(crate) async fn read_memory_stat(&self) -> buck2_error::Result<MemoryStat> {
+    pub(crate) async fn read_memory_stat(&self) -> bz_error::Result<MemoryStat> {
         MemoryStat::parse(&self.read_to_string().await?)
             .buck_error_context("Failed to parse memory.stat")
     }
 
-    pub(crate) async fn read_max_or_int(&self) -> buck2_error::Result<Option<u64>> {
+    pub(crate) async fn read_max_or_int(&self) -> bz_error::Result<Option<u64>> {
         let (data, filled) = self.read_to_short_buf().await?;
         let data = &data[..filled];
         std::str::from_utf8(data)
@@ -198,7 +198,7 @@ impl CgroupFile {
             })
     }
 
-    pub(crate) async fn read_int(&self) -> buck2_error::Result<u64> {
+    pub(crate) async fn read_int(&self) -> bz_error::Result<u64> {
         let (data, filled) = self.read_to_short_buf().await?;
         let data = &data[..filled];
         std::str::from_utf8(data)
@@ -214,7 +214,7 @@ impl CgroupFile {
             })
     }
 
-    pub(crate) async fn read_resource_pressure(&self) -> buck2_error::Result<ResourcePressure> {
+    pub(crate) async fn read_resource_pressure(&self) -> bz_error::Result<ResourcePressure> {
         ResourcePressure::parse(&self.read_to_string().await?)
     }
 }
@@ -235,7 +235,7 @@ pub struct MemoryStat {
 }
 
 impl MemoryStat {
-    fn parse(content: &str) -> buck2_error::Result<Self> {
+    fn parse(content: &str) -> bz_error::Result<Self> {
         let mut res = MemoryStat::default();
 
         for line in content.lines() {
@@ -249,7 +249,7 @@ impl MemoryStat {
                 .parse::<u64>()
                 .with_buck_error_context(|| format!("Invalid line: '{}' (invalid value)", line))?;
             if parts.next().is_some() {
-                return Err(buck2_error::internal_error!(
+                return Err(bz_error::internal_error!(
                     "Invalid line: '{}' (too many parts)",
                     line
                 ));
@@ -283,9 +283,9 @@ pub struct ResourcePressure {
 }
 
 impl ResourcePressure {
-    fn parse(s: &str) -> buck2_error::Result<Self> {
+    fn parse(s: &str) -> bz_error::Result<Self> {
         Self::parse_inner(s).ok_or_else(|| {
-            buck2_error::Error::from(CgroupFileError::UnexpectedFormat(
+            bz_error::Error::from(CgroupFileError::UnexpectedFormat(
                 FileNameBuf::unchecked_new("memory.pressure"),
                 s.to_owned(),
             ))

@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_wrapper_common::invocation_id::TraceId;
 
 /// Information about the current command, such as session or build ids.
 pub struct SessionInfo {
     pub trace_id: TraceId,
-    pub test_session: Option<buck2_data::TestSessionInfo>,
+    pub test_session: Option<bz_data::TestSessionInfo>,
     pub legacy_dice: bool,
 }

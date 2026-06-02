@@ -11,7 +11,7 @@
 use std::fmt;
 use std::fmt::Display;
 
-use buck2_error::conversion::rusqlite::Buck2ErrorAsRusqliteError;
+use bz_error::conversion::rusqlite::Buck2ErrorAsRusqliteError;
 use dupe::Dupe;
 use rusqlite::ToSql;
 use rusqlite::types::FromSql;
@@ -56,7 +56,7 @@ impl ArtifactType {
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 #[error("Internal error: found unknown value '{}' for enum `artifact_type`", .0)]
 struct UnknownArtifactTypeError(String);

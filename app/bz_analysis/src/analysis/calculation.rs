@@ -13,49 +13,49 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_build_api::analysis::calculation::EVAL_ANALYSIS_QUERY;
-use buck2_build_api::analysis::calculation::RULE_ANALYSIS_CALCULATION;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculationImpl;
-use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
-use buck2_build_api::build::eager::schedule_eager_inputs_from_analysis;
-use buck2_build_api::build::overlap::HasBuildOverlapTracker;
-use buck2_build_api::deferred::calculation::DeferredHolder;
-use buck2_build_api::keep_going::KeepGoing;
-use buck2_build_signals::env::WaitingData;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_data::ToProtoMessage;
-use buck2_data::error::ErrorTag;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::async_record_root_spans;
-use buck2_events::dispatch::record_root_spans;
-use buck2_events::dispatch::span_async;
-use buck2_events::dispatch::span_async_simple;
-use buck2_events::span::SpanId;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_interpreter::file_loader::LoadedModule;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_interpreter::starlark_profiler::config::GetStarlarkProfilerInstrumentation;
-use buck2_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
-use buck2_interpreter::starlark_profiler::mode::StarlarkProfileMode;
-use buck2_node::attrs::attr_type::query::ResolvedQueryLiterals;
-use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured::ConfiguredTargetNodeRef;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_node::rule_type::RuleType;
-use buck2_node::rule_type::StarlarkRuleType;
-use buck2_query::query::syntax::simple::eval::label_indexed::LabelIndexedSet;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_util::time_span::TimeSpan;
+use bz_build_api::analysis::AnalysisResult;
+use bz_build_api::analysis::calculation::EVAL_ANALYSIS_QUERY;
+use bz_build_api::analysis::calculation::RULE_ANALYSIS_CALCULATION;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculationImpl;
+use bz_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
+use bz_build_api::build::eager::schedule_eager_inputs_from_analysis;
+use bz_build_api::build::overlap::HasBuildOverlapTracker;
+use bz_build_api::deferred::calculation::DeferredHolder;
+use bz_build_api::keep_going::KeepGoing;
+use bz_build_signals::env::WaitingData;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_data::ToProtoMessage;
+use bz_data::error::ErrorTag;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::async_record_root_spans;
+use bz_events::dispatch::record_root_spans;
+use bz_events::dispatch::span_async;
+use bz_events::dispatch::span_async_simple;
+use bz_events::span::SpanId;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_interpreter::file_loader::LoadedModule;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_interpreter::starlark_profiler::config::GetStarlarkProfilerInstrumentation;
+use bz_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
+use bz_interpreter::starlark_profiler::mode::StarlarkProfileMode;
+use bz_node::attrs::attr_type::query::ResolvedQueryLiterals;
+use bz_node::bzl_or_bxl_path::BzlOrBxlPath;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured::ConfiguredTargetNodeRef;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_node::rule_type::RuleType;
+use bz_node::rule_type::StarlarkRuleType;
+use bz_query::query::syntax::simple::eval::label_indexed::LabelIndexedSet;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_util::time_span::TimeSpan;
 use dice::CancellationContext;
 use dice::DiceComputations;
 use dice::Key;
@@ -99,7 +99,7 @@ pub(crate) fn init_rule_analysis_calculation() {
 
 #[async_trait]
 impl Key for AnalysisKey {
-    type Value = buck2_error::Result<MaybeCompatible<AnalysisResult>>;
+    type Value = bz_error::Result<MaybeCompatible<AnalysisResult>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -139,7 +139,7 @@ impl RuleAnalysisCalculationImpl for RuleAnalysisCalculationInstance {
         &self,
         ctx: &mut DiceComputations<'_>,
         target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<AnalysisResult>> {
+    ) -> bz_error::Result<MaybeCompatible<AnalysisResult>> {
         ctx.compute(&AnalysisKey(target.dupe())).await?
     }
 }
@@ -147,7 +147,7 @@ impl RuleAnalysisCalculationImpl for RuleAnalysisCalculationInstance {
 pub async fn resolve_queries(
     ctx: &mut DiceComputations<'_>,
     configured_node: ConfiguredTargetNodeRef<'_>,
-) -> buck2_error::Result<StdBuckHashMap<String, Arc<AnalysisQueryResult>>> {
+) -> bz_error::Result<StdBuckHashMap<String, Arc<AnalysisQueryResult>>> {
     let mut queries = configured_node.queries().peekable();
 
     if queries.peek().is_none() {
@@ -155,11 +155,11 @@ pub async fn resolve_queries(
     }
 
     span_async_simple(
-        buck2_data::AnalysisResolveQueriesStart {
+        bz_data::AnalysisResolveQueriesStart {
             standard_target: Some(configured_node.label().as_proto()),
         },
         resolve_queries_impl(ctx, configured_node, queries),
-        buck2_data::AnalysisResolveQueriesEnd {},
+        bz_data::AnalysisResolveQueriesEnd {},
     )
     .await
 }
@@ -168,7 +168,7 @@ async fn resolve_queries_impl(
     ctx: &mut DiceComputations<'_>,
     configured_node: ConfiguredTargetNodeRef<'_>,
     queries: impl IntoIterator<Item = (String, ResolvedQueryLiterals<ConfiguredProvidersLabel>)>,
-) -> buck2_error::Result<StdBuckHashMap<String, Arc<AnalysisQueryResult>>> {
+) -> bz_error::Result<StdBuckHashMap<String, Arc<AnalysisQueryResult>>> {
     let deps: TargetSet<_> = configured_node.deps().duped().collect();
     let query_results = ctx
         .try_compute_join(
@@ -208,7 +208,7 @@ async fn resolve_queries_impl(
                         ))
                     }
 
-                    buck2_error::Ok((
+                    bz_error::Ok((
                         query.to_owned(),
                         Arc::new(AnalysisQueryResult {
                             result: query_results,
@@ -227,7 +227,7 @@ async fn resolve_queries_impl(
 pub async fn get_dep_analysis<'v>(
     configured_node: ConfiguredTargetNodeRef<'v>,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<Vec<(&'v ConfiguredTargetLabel, AnalysisResult)>> {
+) -> bz_error::Result<Vec<(&'v ConfiguredTargetLabel, AnalysisResult)>> {
     KeepGoing::try_compute_join_all(ctx, configured_node.deps(), |ctx, dep| {
         async move {
             let res = if matches!(dep.rule_type(), RuleType::BazelInputFile) {
@@ -247,7 +247,7 @@ pub async fn get_dep_analysis<'v>(
 pub async fn get_loaded_module(
     ctx: &mut DiceComputations<'_>,
     func: &StarlarkRuleType,
-) -> buck2_error::Result<LoadedModule> {
+) -> bz_error::Result<LoadedModule> {
     let module = match &func.path {
         BzlOrBxlPath::Bxl(bxl_file_path) => {
             let module_path = StarlarkModulePath::BxlFile(bxl_file_path);
@@ -263,7 +263,7 @@ pub async fn get_loaded_module(
 pub async fn get_rule_spec(
     ctx: &mut DiceComputations<'_>,
     func: &StarlarkRuleType,
-) -> buck2_error::Result<impl RuleSpec + use<>> {
+) -> bz_error::Result<impl RuleSpec + use<>> {
     let module = get_loaded_module(ctx, func).await?;
     Ok(get_user_defined_rule_spec(module.env().dupe(), func))
 }
@@ -272,7 +272,7 @@ async fn get_analysis_result(
     ctx: &mut DiceComputations<'_>,
     target: &ConfiguredTargetLabel,
     cancellation: &CancellationContext,
-) -> buck2_error::Result<MaybeCompatible<AnalysisResult>> {
+) -> bz_error::Result<MaybeCompatible<AnalysisResult>> {
     get_analysis_result_inner(ctx, target, cancellation)
         .await
         .tag(ErrorTag::Analysis)
@@ -282,7 +282,7 @@ async fn get_analysis_result_inner(
     ctx: &mut DiceComputations<'_>,
     target: &ConfiguredTargetLabel,
     cancellation: &CancellationContext,
-) -> buck2_error::Result<MaybeCompatible<AnalysisResult>> {
+) -> bz_error::Result<MaybeCompatible<AnalysisResult>> {
     let configured_node: MaybeCompatible<ConfiguredTargetNode> =
         ctx.get_configured_target_node(target).await.ok()?;
     let configured_node: ConfiguredTargetNode = match configured_node {
@@ -299,7 +299,7 @@ async fn get_analysis_result_inner(
 
     let configured_node = configured_node.as_ref();
 
-    let ((res, now, split_instants), spans): ((buck2_error::Result<_>, _, _), _) =
+    let ((res, now, split_instants), spans): ((bz_error::Result<_>, _, _), _) =
         match configured_node.rule_type() {
             RuleType::Starlark(func) => {
                 let (dep_analysis, query_results) = ctx
@@ -312,7 +312,7 @@ async fn get_analysis_result_inner(
                 let now = std::time::Instant::now();
                 let (res, spans) = async_record_root_spans(async {
                     let rule_spec = get_rule_spec(ctx, func).await?;
-                    let start_event = buck2_data::AnalysisStart {
+                    let start_event = bz_data::AnalysisStart {
                         target: Some(target.as_proto().into()),
                         rule: func.to_string(),
                     };
@@ -323,11 +323,11 @@ async fn get_analysis_result_inner(
                         let mut declared_actions = None;
                         let mut split_instants = None;
 
-                        let result: buck2_error::Result<_> = try {
+                        let result: bz_error::Result<_> = try {
                             let (result, split) = span_async_simple(
-                                buck2_data::AnalysisStageStart {
+                                bz_data::AnalysisStageStart {
                                     stage: Some(
-                                        buck2_data::analysis_stage_start::Stage::EvaluateRule(()),
+                                        bz_data::analysis_stage_start::Stage::EvaluateRule(()),
                                     ),
                                 },
                                 run_analysis(
@@ -341,7 +341,7 @@ async fn get_analysis_result_inner(
                                     action_owner_rule_type_name.dupe(),
                                     cancellation,
                                 ),
-                                buck2_data::AnalysisStageEnd {},
+                                bz_data::AnalysisStageEnd {},
                             )
                             .await?;
 
@@ -355,7 +355,7 @@ async fn get_analysis_result_inner(
 
                         (
                             (result, split_instants),
-                            buck2_data::AnalysisEnd {
+                            bz_data::AnalysisEnd {
                                 target: Some(target.as_proto().into()),
                                 rule: func.to_string(),
                                 profile,
@@ -366,7 +366,7 @@ async fn get_analysis_result_inner(
                     })
                     .await;
 
-                    buck2_error::Ok((result, split_instants))
+                    bz_error::Ok((result, split_instants))
                 })
                 .await;
 
@@ -453,10 +453,10 @@ async fn get_analysis_result_inner(
     res
 }
 
-fn make_analysis_profile(res: &AnalysisResult) -> buck2_error::Result<buck2_data::AnalysisProfile> {
+fn make_analysis_profile(res: &AnalysisResult) -> bz_error::Result<bz_data::AnalysisProfile> {
     let heap = res.providers()?.owner();
 
-    Ok(buck2_data::AnalysisProfile {
+    Ok(bz_data::AnalysisProfile {
         starlark_allocated_bytes: heap.allocated_bytes() as u64,
         starlark_available_bytes: heap.available_bytes() as u64,
     })
@@ -492,7 +492,7 @@ fn all_deps(nodes: &[ConfiguredTargetNode]) -> LabelIndexedSet<ConfiguredTargetN
 pub async fn profile_analysis(
     ctx: &mut DiceComputations<'_>,
     targets: &[ConfiguredTargetLabel],
-) -> buck2_error::Result<StarlarkProfileDataAndStats> {
+) -> bz_error::Result<StarlarkProfileDataAndStats> {
     // Self check.
     for target in targets {
         let profile_mode = ctx
@@ -510,7 +510,7 @@ pub async fn profile_analysis(
                     .get_configured_target_node(target)
                     .await
                     .require_compatible()?;
-                buck2_error::Ok(node)
+                bz_error::Ok(node)
             }
             .boxed()
         })
@@ -526,7 +526,7 @@ pub async fn profile_analysis(
                     .await?
                     .require_compatible()?;
                 // This may be `None` if we are running profiling for a subset of the targets.
-                buck2_error::Ok(result.profile_data)
+                bz_error::Ok(result.profile_data)
             }
             .boxed()
         })

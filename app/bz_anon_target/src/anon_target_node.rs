@@ -15,35 +15,35 @@ use std::hash::Hasher;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_analysis::analysis::env::RuleAnalysisAttrResolutionContext;
-use buck2_analysis::analysis::env::get_deps_from_analysis_results;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::anon_target::AnonTargetDependentAnalysisResults;
-use buck2_build_api::anon_target::AnonTargetDyn;
-use buck2_build_api::artifact_groups::promise::PromiseArtifactId;
-use buck2_build_api::artifact_groups::promise::PromiseArtifactResolveError;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
-use buck2_core::deferred::base_deferred_key::PathResolutionError;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_data::ToProtoMessage;
-use buck2_data::action_key_owner::BaseDeferredKeyProto;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::BuckHasher;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_node::rule_type::StarlarkRuleType;
-use buck2_util::strong_hasher::Blake3StrongHasher;
+use bz_analysis::analysis::env::RuleAnalysisAttrResolutionContext;
+use bz_analysis::analysis::env::get_deps_from_analysis_results;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::anon_target::AnonTargetDependentAnalysisResults;
+use bz_build_api::anon_target::AnonTargetDyn;
+use bz_build_api::artifact_groups::promise::PromiseArtifactId;
+use bz_build_api::artifact_groups::promise::PromiseArtifactResolveError;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
+use bz_core::deferred::base_deferred_key::PathResolutionError;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_data::ToProtoMessage;
+use bz_data::action_key_owner::BaseDeferredKeyProto;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::BuckHasher;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_node::rule_type::StarlarkRuleType;
+use bz_util::strong_hasher::Blake3StrongHasher;
 use cmp_any::PartialEqAny;
 use dupe::Dupe;
 use pagable::Pagable;
@@ -108,8 +108,8 @@ impl Hash for AnonTarget {
 }
 
 impl AnonTarget {
-    pub(crate) fn as_proto(&self) -> buck2_data::AnonTarget {
-        buck2_data::AnonTarget {
+    pub(crate) fn as_proto(&self) -> bz_data::AnonTarget {
+        bz_data::AnonTarget {
             name: Some(self.name().as_proto()),
             execution_configuration: Some(self.exec_cfg().cfg().as_proto()),
             hash: self.path_hash().to_owned(),
@@ -194,7 +194,7 @@ impl AnonTargetDyn for AnonTarget {
         env: &Module<'v>,
         dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
         exec_resolution: ExecutionPlatformResolution,
-    ) -> buck2_error::Result<ValueOfUncheckedGeneric<Value<'v>, StructRef<'static>>> {
+    ) -> bz_error::Result<ValueOfUncheckedGeneric<Value<'v>, StructRef<'static>>> {
         let dep_analysis_results =
             get_deps_from_analysis_results(dependents_analyses.dep_analysis_results)?;
 
@@ -230,7 +230,7 @@ impl AnonTargetDyn for AnonTarget {
         promise_artifact_mappings: SmallMap<String, Value<'v>>,
         anon_target_result: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<StdBuckHashMap<PromiseArtifactId, Artifact>> {
+    ) -> bz_error::Result<StdBuckHashMap<PromiseArtifactId, Artifact>> {
         let mut fulfilled_artifact_mappings = StdBuckHashMap::default();
 
         for (id, func) in promise_artifact_mappings.values().enumerate() {
@@ -281,7 +281,7 @@ impl BaseDeferredKeyDyn for AnonTarget {
         path: &ForwardRelativePath,
         path_resolution_method: BuckOutPathKind,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let cell_relative_path = self.name().pkg().cell_relative_path().as_str();
 
         // It is performance critical that we use slices and allocate via `join` instead of
@@ -350,7 +350,7 @@ impl BaseDeferredKeyDyn for AnonTarget {
     }
 }
 
-impl buck2_interpreter::dice::starlark_provider::DynEvalKindKey for AnonTarget {
+impl bz_interpreter::dice::starlark_provider::DynEvalKindKey for AnonTarget {
     fn hash(&self, state: &mut dyn Hasher) {
         state.write_u64(self.hash);
     }
@@ -359,7 +359,7 @@ impl buck2_interpreter::dice::starlark_provider::DynEvalKindKey for AnonTarget {
         state.write_u64(self.strong_hash);
     }
 
-    fn eq(&self, other: &dyn buck2_interpreter::dice::starlark_provider::DynEvalKindKey) -> bool {
+    fn eq(&self, other: &dyn bz_interpreter::dice::starlark_provider::DynEvalKindKey) -> bool {
         match other.as_any().downcast_ref::<Self>() {
             None => false,
             Some(v) => v == self,

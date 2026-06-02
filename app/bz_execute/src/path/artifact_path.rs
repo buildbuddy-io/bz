@@ -12,15 +12,15 @@ use std::borrow::Cow;
 use std::fmt;
 use std::hash::Hash;
 
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::package::source_path::SourcePathRef;
-use buck2_error::ErrorTag;
-use buck2_error::buck2_error;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::package::source_path::SourcePathRef;
+use bz_error::ErrorTag;
+use bz_error::bz_error;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use either::Either;
 use gazebo::cell::ARef;
 
@@ -34,7 +34,7 @@ pub struct ArtifactPath<'a> {
 }
 
 impl ArtifactPath<'_> {
-    pub fn with_filename<F, T>(&self, f: F) -> buck2_error::Result<T>
+    pub fn with_filename<F, T>(&self, f: F) -> bz_error::Result<T>
     where
         for<'b> F: FnOnce(&'b FileName) -> T,
     {
@@ -47,7 +47,7 @@ impl ArtifactPath<'_> {
         }
         .file_name()
         .ok_or_else(|| {
-            buck2_error!(
+            bz_error!(
                 ErrorTag::ArtifactMissingFilename,
                 "Artifact has no file name: `{}`",
                 self
@@ -102,7 +102,7 @@ impl ArtifactPath<'_> {
         &self,
         artifact_fs: &ArtifactFs,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let ArtifactPath {
             base_path,
             projected_path,
@@ -125,7 +125,7 @@ impl ArtifactPath<'_> {
     pub fn resolve_configuration_hash_path(
         &self,
         artifact_fs: &ArtifactFs,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let ArtifactPath {
             base_path,
             projected_path,

@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_hash::StdBuckHashSet;
+use bz_hash::StdBuckHashSet;
 use dupe::Dupe;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum VerbosityError {
     #[error("Can't have more than 1 level set at a time")]
@@ -114,7 +114,7 @@ impl VerbosityLevel {
 }
 
 impl VerbosityItem {
-    fn from(value: &str) -> buck2_error::Result<Self> {
+    fn from(value: &str) -> bz_error::Result<Self> {
         let item = match value {
             "stderr" => Self::Stderr,
             "full_failed_command" => Self::FullFailedCommand,
@@ -130,7 +130,7 @@ impl VerbosityItem {
 }
 
 impl Verbosity {
-    pub fn try_from_cli(value: &str) -> buck2_error::Result<Verbosity> {
+    pub fn try_from_cli(value: &str) -> bz_error::Result<Verbosity> {
         let split: Vec<&str> = value.split(',').collect();
         let mut levels: Vec<VerbosityLevel> = Vec::new();
         let mut items: StdBuckHashSet<VerbosityItem> = StdBuckHashSet::default();

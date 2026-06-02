@@ -38,7 +38,7 @@ pub use self::transitive_set_json_projection::FrozenTransitiveSetJsonProjection;
 pub use self::transitive_set_json_projection::TransitiveSetJsonProjection;
 pub use self::traversal::TransitiveSetOrdering;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum TransitiveSetError {
     #[error(
@@ -89,7 +89,7 @@ pub(crate) enum TransitiveSetError {
         name: String,
 
         #[source]
-        error: buck2_error::Error,
+        error: bz_error::Error,
     },
 
     #[error("Error evaluating transitive set reduction {}", .name)]
@@ -97,7 +97,7 @@ pub(crate) enum TransitiveSetError {
         name: String,
 
         #[source]
-        error: buck2_error::Error,
+        error: bz_error::Error,
     },
 
     #[error(

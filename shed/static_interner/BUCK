@@ -12,7 +12,7 @@ rust_library(
         "//bz/gazebo/dupe:dupe",
         "//bz/gazebo/strong_hash:strong_hash",
         "//bz/pagable:pagable",
-        "//bz/shed/buck2_hash:buck2_hash",
+        "//bz/shed/bz_hash:bz_hash",
         "//bz/shed/lock_free_hashtable:lock_free_hashtable",
     ],
 )

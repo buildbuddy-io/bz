@@ -11,7 +11,7 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
+use bz_build_api_derive::internal_provider;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark::any::ProvidesStaticType;

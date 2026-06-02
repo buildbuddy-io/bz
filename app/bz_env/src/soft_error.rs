@@ -16,14 +16,14 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use arc_swap::ArcSwapOption;
-use buck2_error::internal_error;
+use bz_error::internal_error;
 use once_cell::sync::Lazy;
 use starlark_map::small_set::SmallSet;
 
-use crate::env::buck2_env;
+use crate::env::bz_env;
 
 type StructuredErrorHandler = Box<
-    dyn for<'a> Fn(&'a str, &buck2_error::Error, (&'a str, u32, u32), StructuredErrorOptions)
+    dyn for<'a> Fn(&'a str, &bz_error::Error, (&'a str, u32, u32), StructuredErrorOptions)
         + Send
         + Sync
         + 'static,
@@ -31,8 +31,8 @@ type StructuredErrorHandler = Box<
 
 static HANDLER: OnceLock<StructuredErrorHandler> = OnceLock::new();
 
-pub fn buck2_hard_error_env() -> buck2_error::Result<Option<&'static str>> {
-    buck2_env!("BUCK2_HARD_ERROR")
+pub fn bz_hard_error_env() -> bz_error::Result<Option<&'static str>> {
+    bz_env!("BUCK2_HARD_ERROR")
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -88,8 +88,8 @@ impl ShowSoftErrorConfigHolder {
     }
 }
 
-pub fn buck2_show_soft_errors_env() -> buck2_error::Result<Option<&'static str>> {
-    buck2_env!("BUCK2_SHOW_SOFT_ERRORS")
+pub fn bz_show_soft_errors_env() -> bz_error::Result<Option<&'static str>> {
+    bz_env!("BUCK2_SHOW_SOFT_ERRORS")
 }
 
 /// Reload the show soft error config from the client-provided value.
@@ -127,7 +127,7 @@ static HARD_ERROR_PANIC_ALLOWLIST: Lazy<SmallSet<String>> =
 ///
 /// * The category string that will remain constant and identifies this specific soft error
 ///   (used to report as a key).
-/// * The error is a `buck2_error::Error`.
+/// * The error is a `bz_error::Error`.
 ///
 /// Soft errors from Meta internal runs can be viewed
 /// [in logview](https://www.internalfb.com/logview/overview/buck2).
@@ -139,8 +139,8 @@ static HARD_ERROR_PANIC_ALLOWLIST: Lazy<SmallSet<String>> =
 /// ```ignore
 /// soft_error!(
 ///     "soft_error_category",
-///     buck2_error::buck2_error!(
-///         buck2_error::ErrorTag::Tier0,
+///     bz_error::bz_error!(
+///         bz_error::ErrorTag::Tier0,
 ///         "Did something bad with {}",
 ///         value,
 ///     )
@@ -201,7 +201,7 @@ pub macro tag_result {
     },
 }
 
-fn hard_error_config() -> buck2_error::Result<Arc<HardErrorConfig>> {
+fn hard_error_config() -> bz_error::Result<Arc<HardErrorConfig>> {
     // This function should return `Guard<Arc<HardErrorConfig>>` to make it a little bit faster,
     // see https://github.com/vorner/arc-swap/issues/90
 
@@ -209,7 +209,7 @@ fn hard_error_config() -> buck2_error::Result<Arc<HardErrorConfig>> {
         return Ok(config);
     }
 
-    let config = buck2_hard_error_env()?.unwrap_or_default();
+    let config = bz_hard_error_env()?.unwrap_or_default();
     let config = HardErrorConfig::from_str(config)?;
     HARD_ERROR_CONFIG.config.store(Some(Arc::new(config)));
     HARD_ERROR_CONFIG
@@ -218,7 +218,7 @@ fn hard_error_config() -> buck2_error::Result<Arc<HardErrorConfig>> {
         .ok_or_else(|| internal_error!("Just stored a value"))
 }
 
-pub fn reload_hard_error_config(var_value: &str) -> buck2_error::Result<()> {
+pub fn reload_hard_error_config(var_value: &str) -> bz_error::Result<()> {
     HARD_ERROR_CONFIG.reload_hard_error_config(var_value)
 }
 
@@ -262,12 +262,12 @@ impl Default for StructuredErrorOptions {
 #[doc(hidden)]
 pub fn handle_soft_error(
     category: &str,
-    err: buck2_error::Error,
+    err: bz_error::Error,
     count: &'static AtomicUsize,
     once: &std::sync::Once,
     loc: (&'static str, u32, u32),
     options: StructuredErrorOptions,
-) -> Result<buck2_error::Error, buck2_error::Error> {
+) -> Result<bz_error::Error, bz_error::Error> {
     validate_logview_category(category)?;
 
     once.call_once(|| {
@@ -317,7 +317,7 @@ pub fn reset_soft_error_counters() {
     }
 }
 
-pub fn initialize(handler: StructuredErrorHandler) -> buck2_error::Result<()> {
+pub fn initialize(handler: StructuredErrorHandler) -> bz_error::Result<()> {
     hard_error_config()?;
 
     if let Err(_e) = HANDLER.set(handler) {
@@ -385,7 +385,7 @@ struct HardErrorConfigHolder {
 }
 
 impl HardErrorConfigHolder {
-    fn reload_hard_error_config(&self, var_value: &str) -> buck2_error::Result<()> {
+    fn reload_hard_error_config(&self, var_value: &str) -> bz_error::Result<()> {
         let config = HardErrorConfig::from_str(var_value)?;
         if let Some(old_config) = &*self.config.load() {
             if **old_config == config {
@@ -398,7 +398,7 @@ impl HardErrorConfigHolder {
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[error(
     "Invalid hard error config: `{0}`\n\
     Valid examples: empty, `true`, `false`, `only=category1,category2`"
@@ -406,7 +406,7 @@ impl HardErrorConfigHolder {
 #[buck2(tag = Input)]
 struct InvalidHardErrorConfig(String);
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum InvalidSoftError {
     #[error("Invalid category, must be lower_snake_case, got `{0}`")]
@@ -414,7 +414,7 @@ enum InvalidSoftError {
 }
 
 /// A category must be a-z with no consecutive underscores. Or we raise an error.
-pub fn validate_logview_category(category: &str) -> buck2_error::Result<()> {
+pub fn validate_logview_category(category: &str) -> bz_error::Result<()> {
     let mut allow_underscore = false;
     for &x in category.as_bytes() {
         if x.is_ascii_lowercase() {
@@ -442,7 +442,7 @@ pub(crate) mod tests {
     use super::*;
 
     #[test]
-    fn test_hard_error() -> buck2_error::Result<()> {
+    fn test_hard_error() -> bz_error::Result<()> {
         assert!(HardErrorConfig::from_str("true")?.should_hard_error("foo"));
         assert!(!HardErrorConfig::from_str("false")?.should_hard_error("foo"));
         assert_eq!(

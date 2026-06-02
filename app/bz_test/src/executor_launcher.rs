@@ -16,15 +16,15 @@ use std::task::Context;
 use std::task::Poll;
 
 use async_trait::async_trait;
-use buck2_core::buck2_env;
-use buck2_error::BuckErrorContext as _;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_grpc::DuplexChannel;
-use buck2_grpc::ServerHandle;
-use buck2_hash::StdBuckHashMap;
-use buck2_test_api::grpc::TestExecutorClient;
-use buck2_test_api::grpc::spawn_orchestrator_server;
-use buck2_test_api::protocol::TestExecutor;
+use bz_core::bz_env;
+use bz_error::BuckErrorContext as _;
+use bz_events::dispatch::EventDispatcher;
+use bz_grpc::DuplexChannel;
+use bz_grpc::ServerHandle;
+use bz_hash::StdBuckHashMap;
+use bz_test_api::grpc::TestExecutorClient;
+use bz_test_api::grpc::spawn_orchestrator_server;
+use bz_test_api::protocol::TestExecutor;
 use derive_more::Display;
 use dupe::Dupe;
 use futures::future::BoxFuture;
@@ -76,7 +76,7 @@ pub struct ExecutorLaunch {
 }
 
 pub struct ExecutorFuture {
-    fut: BoxFuture<'static, buck2_error::Result<ExecutorOutput>>,
+    fut: BoxFuture<'static, bz_error::Result<ExecutorOutput>>,
 }
 
 impl ExecutorFuture {
@@ -103,7 +103,7 @@ impl ExecutorFuture {
 }
 
 impl Future for ExecutorFuture {
-    type Output = buck2_error::Result<ExecutorOutput>;
+    type Output = bz_error::Result<ExecutorOutput>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.fut.poll_unpin(cx)
@@ -125,7 +125,7 @@ pub struct ExecutorOutput {
 
 #[async_trait]
 pub trait ExecutorLauncher: Send + Sync {
-    async fn launch(&self, tpx_args: Vec<String>) -> buck2_error::Result<ExecutorLaunch>;
+    async fn launch(&self, tpx_args: Vec<String>) -> bz_error::Result<ExecutorLaunch>;
 }
 
 pub struct OutOfProcessTestExecutor {
@@ -136,10 +136,10 @@ pub struct OutOfProcessTestExecutor {
 
 #[async_trait]
 impl ExecutorLauncher for OutOfProcessTestExecutor {
-    async fn launch(&self, tpx_args: Vec<String>) -> buck2_error::Result<ExecutorLaunch> {
+    async fn launch(&self, tpx_args: Vec<String>) -> bz_error::Result<ExecutorLaunch> {
         // Declare outside of `cfg(unix)` so `buck2 help-env` would include it on Windows
         // even if it is no-op on Windows.
-        let use_tcp = buck2_env!("BUCK2_TEST_TPX_USE_TCP", bool)?;
+        let use_tcp = bz_env!("BUCK2_TEST_TPX_USE_TCP", bool)?;
 
         if !use_tcp {
             #[cfg(unix)]
@@ -168,7 +168,7 @@ impl ExecutorLauncher for OutOfProcessTestExecutor {
 async fn spawn_orchestrator<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     (handle, executor_client_io, orchestrator_server_io): (ExecutorFuture, T, T),
     dispatcher: EventDispatcher,
-) -> buck2_error::Result<ExecutorLaunch> {
+) -> bz_error::Result<ExecutorLaunch> {
     let client = TestExecutorClient::new(executor_client_io)
         .await
         .buck_error_context("Failed to create TestExecutorClient")?;

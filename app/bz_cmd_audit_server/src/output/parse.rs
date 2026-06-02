@@ -9,12 +9,12 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::output::parse::AuditParseCommand;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::output::parse::AuditParseCommand;
+use bz_common::dice::cells::HasCellResolver;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 use super::buck_out_path_parser::BuckOutPathParser;
 use super::buck_out_path_type_printer::BuckOutPathTypePrinter;
@@ -25,9 +25,9 @@ impl ServerAuditSubcommand for AuditParseCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         server_ctx
             .with_dice_ctx(|_server_ctx, mut dice_ctx| async move {
                 let cell_resolver = dice_ctx.get_cell_resolver().await?;

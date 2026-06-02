@@ -8,42 +8,42 @@
  * above-listed licenses.
  */
 
-use buck2_core::package::source_path::SourcePathRef;
-use buck2_core::plugins::PluginKind;
-use buck2_core::plugins::PluginKindSet;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
+use bz_core::package::source_path::SourcePathRef;
+use bz_core::plugins::PluginKind;
+use bz_core::plugins::PluginKindSet;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
 
 use crate::attrs::attr_type::query::ResolvedQueryLiterals;
 
 pub trait ConfiguredAttrTraversal {
-    fn dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()>;
+    fn dep(&mut self, dep: &ConfiguredProvidersLabel) -> bz_error::Result<()>;
 
     fn dep_with_plugins(
         &mut self,
         dep: &ConfiguredProvidersLabel,
         _plugins: &PluginKindSet,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // By default, just treat it as a dep. Most things don't care about the distinction.
         self.dep(dep)
     }
 
-    fn exec_dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+    fn exec_dep(&mut self, dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
         // By default, just treat it as a dep. Most things don't care about the distinction.
         self.dep(dep)
     }
 
-    fn toolchain_dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+    fn toolchain_dep(&mut self, dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
         // By default, just treat it as a dep. Most things don't care about the distinction.
         self.dep(dep)
     }
 
-    fn configuration_dep(&mut self, _dep: &ProvidersLabel) -> buck2_error::Result<()> {
+    fn configuration_dep(&mut self, _dep: &ProvidersLabel) -> bz_error::Result<()> {
         Ok(())
     }
 
-    fn plugin_dep(&mut self, _dep: &TargetLabel, _kind: &PluginKind) -> buck2_error::Result<()> {
+    fn plugin_dep(&mut self, _dep: &TargetLabel, _kind: &PluginKind) -> bz_error::Result<()> {
         Ok(())
     }
 
@@ -52,15 +52,15 @@ pub trait ConfiguredAttrTraversal {
         &mut self,
         _query: &str,
         _resolved_literals: &ResolvedQueryLiterals<ConfiguredProvidersLabel>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
-    fn input(&mut self, _path: SourcePathRef) -> buck2_error::Result<()> {
+    fn input(&mut self, _path: SourcePathRef) -> bz_error::Result<()> {
         Ok(())
     }
 
-    fn label(&mut self, _label: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+    fn label(&mut self, _label: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
         Ok(())
     }
 }

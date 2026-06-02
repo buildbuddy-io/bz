@@ -271,7 +271,7 @@ impl BazelRemoteRepositoryCommandExecutor {
 
         let env =
             sorted_vector_map::SortedVectorMap::from_iter([("PATH".to_owned(), path.to_owned())]);
-        let request = buck2_execute::execute::request::CommandExecutionRequest::new(
+        let request = bz_execute::execute::request::CommandExecutionRequest::new(
             vec!["/bin/sh".to_owned()],
             vec![
                 "-c".to_owned(),
@@ -302,7 +302,7 @@ impl BazelRemoteRepositoryCommandExecutor {
         };
         let manager = CommandExecutionManager::new(
             Box::new(MutexClaimManager::new()),
-            buck2_events::dispatch::get_dispatcher(),
+            bz_events::dispatch::get_dispatcher(),
             NoopLivelinessObserver::create(),
             Default::default(),
         );
@@ -440,7 +440,7 @@ impl BazelRemoteRepositoryCommandExecutor {
         )
         .map_err(|error| error.to_string())?;
 
-        let remote_repo_root = "__buck2_repository_ctx_work";
+        let remote_repo_root = "__bz_repository_ctx_work";
         let remote_input_root = repository_working_dir_rel.as_str().to_owned();
         let remote_working_dir =
             self.remote_path_for_local_path(&current_dir, repository_working_dir_abs)?;
@@ -533,7 +533,7 @@ input_root="$1"
         ];
         request_args.extend(remote_args);
 
-        let request = buck2_execute::execute::request::CommandExecutionRequest::new(
+        let request = bz_execute::execute::request::CommandExecutionRequest::new(
             vec!["/bin/bash".to_owned()],
             request_args,
             paths,
@@ -559,7 +559,7 @@ input_root="$1"
         };
         let manager = CommandExecutionManager::new(
             Box::new(MutexClaimManager::new()),
-            buck2_events::dispatch::get_dispatcher(),
+            bz_events::dispatch::get_dispatcher(),
             NoopLivelinessObserver::create(),
             Default::default(),
         );
@@ -943,7 +943,7 @@ input_root="$1"
         &self,
         output_project_path: &ProjectRelativePath,
         repository_working_dir: &Path,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let tar_path = self.project_root.resolve(output_project_path);
         fs::remove_dir_all(repository_working_dir).or_else(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -984,9 +984,9 @@ input_root="$1"
 
 fn remote_repo_path(suffix: &Path) -> String {
     if suffix.as_os_str().is_empty() {
-        "__buck2_repository_ctx_work".to_owned()
+        "__bz_repository_ctx_work".to_owned()
     } else {
-        format!("__buck2_repository_ctx_work/{}", suffix.to_string_lossy())
+        format!("__bz_repository_ctx_work/{}", suffix.to_string_lossy())
     }
 }
 
@@ -1141,16 +1141,16 @@ impl CommandExecutionTarget for RepositoryCommandExecutionTarget {
         self.repository.clone()
     }
 
-    fn as_proto_action_key(&self) -> buck2_data::ActionKey {
-        buck2_data::ActionKey {
+    fn as_proto_action_key(&self) -> bz_data::ActionKey {
+        bz_data::ActionKey {
             id: self.re_action_key().into_bytes(),
             owner: None,
             key: self.re_action_key(),
         }
     }
 
-    fn as_proto_action_name(&self) -> buck2_data::ActionName {
-        buck2_data::ActionName {
+    fn as_proto_action_name(&self) -> bz_data::ActionName {
+        bz_data::ActionName {
             category: "BazelRepositoryExecute".to_owned(),
             identifier: self.program.clone(),
         }

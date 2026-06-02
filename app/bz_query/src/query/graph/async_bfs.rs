@@ -10,7 +10,7 @@
 
 use std::future;
 
-use buck2_error::internal_error;
+use bz_error::internal_error;
 use futures::StreamExt;
 use futures::future::Either;
 use futures::stream::FuturesOrdered;
@@ -34,7 +34,7 @@ struct BfsVisited<N: LabeledNode + 'static> {
 }
 
 impl<N: LabeledNode + 'static> BfsVisited<N> {
-    fn take_path(mut self, last: &N::Key, mut item: impl FnMut(N)) -> buck2_error::Result<()> {
+    fn take_path(mut self, last: &N::Key, mut item: impl FnMut(N)) -> bz_error::Result<()> {
         let node = self
             .visited
             .remove(last)
@@ -63,7 +63,7 @@ pub(crate) async fn async_bfs_find_path<'a, N: LabeledNode + 'static>(
     lookup: impl AsyncNodeLookup<N>,
     successors: impl AsyncChildVisitor<N>,
     target: impl Fn(&N::Key) -> Option<N> + Sync,
-) -> buck2_error::Result<Option<Vec<N>>> {
+) -> bz_error::Result<Option<Vec<N>>> {
     let lookup = &lookup;
 
     let mut visited = BfsVisited::<N> {
@@ -90,7 +90,7 @@ pub(crate) async fn async_bfs_find_path<'a, N: LabeledNode + 'static>(
                 );
                 queue.push_back(Either::Left(future::ready((
                     root_key.into_key().clone(),
-                    buck2_error::Ok(root.dupe()),
+                    bz_error::Ok(root.dupe()),
                 ))));
             }
         }
@@ -169,9 +169,9 @@ pub(crate) async fn async_bfs_find_path<'a, N: LabeledNode + 'static>(
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use buck2_hash::StdBuckHashMap;
-    use buck2_hash::StdBuckHashSet;
-    use buck2_query::query::traversal::ChildVisitor;
+    use bz_hash::StdBuckHashMap;
+    use bz_hash::StdBuckHashSet;
+    use bz_query::query::traversal::ChildVisitor;
     use dupe::Dupe;
     use gazebo::prelude::VecExt;
 
@@ -218,7 +218,7 @@ mod tests {
             &self,
             roots: impl IntoIterator<Item = u32>,
             target: u32,
-        ) -> buck2_error::Result<Option<Vec<u32>>> {
+        ) -> bz_error::Result<Option<Vec<u32>>> {
             let roots: Vec<TestNode> = roots
                 .into_iter()
                 .map(|n| TestNode(TestNodeKey(n)))
@@ -240,7 +240,7 @@ mod tests {
             &self,
             node: &TestNode,
             mut children: impl ChildVisitor<TestNode>,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             for succ in self.successors.get(&node.0.0).unwrap_or(&Vec::new()) {
                 children.visit(&TestNodeKey(*succ))?;
             }
@@ -250,10 +250,10 @@ mod tests {
 
     #[async_trait]
     impl AsyncNodeLookup<TestNode> for TestGraph {
-        async fn get(&self, label: &TestNodeKey) -> buck2_error::Result<TestNode> {
+        async fn get(&self, label: &TestNodeKey) -> bz_error::Result<TestNode> {
             if self.errors.contains(&label.0) {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "my error"
                 ));
             }
@@ -269,7 +269,7 @@ mod tests {
             &self,
             node: &TestNode,
             mut children: impl ChildVisitor<TestNode>,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             children.visit(&TestNodeKey(node.0.0 + 1))?;
             Ok(())
         }
@@ -280,7 +280,7 @@ mod tests {
 
     #[async_trait]
     impl AsyncNodeLookup<TestNode> for TestLookupImpl {
-        async fn get(&self, label: &TestNodeKey) -> buck2_error::Result<TestNode> {
+        async fn get(&self, label: &TestNodeKey) -> bz_error::Result<TestNode> {
             Ok(TestNode(*label))
         }
     }

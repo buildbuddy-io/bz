@@ -11,10 +11,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckDashMap;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckDashMap;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use rusqlite::Connection;
@@ -66,7 +66,7 @@ fn convert_incremental_state_to_sqlite_entries<'a>(
 
 fn convert_sqlite_entries_to_incremental_state(
     entries: Vec<SqliteEntry>,
-) -> buck2_error::Result<IncrementalState> {
+) -> bz_error::Result<IncrementalState> {
     let incremental_state: BuckDashMap<String, Arc<IncrementalPathMap>> = BuckDashMap::default();
 
     for entry in entries {
@@ -100,7 +100,7 @@ impl IncrementalStateSqliteTable {
         Self { connection }
     }
 
-    pub(crate) fn create_table(&self) -> buck2_error::Result<()> {
+    pub(crate) fn create_table(&self) -> bz_error::Result<()> {
         let sql = format!(
             "CREATE TABLE {STATE_TABLE_NAME} (
                 run_action_key          TEXT NOT NULL,
@@ -121,7 +121,7 @@ impl IncrementalStateSqliteTable {
         &self,
         run_action_key: String,
         incremental_path_map: IncrementalPathMap,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let entries =
             convert_incremental_state_to_sqlite_entries(run_action_key, incremental_path_map);
         static SQL: Lazy<String> = Lazy::new(|| {
@@ -148,14 +148,14 @@ impl IncrementalStateSqliteTable {
         Ok(())
     }
 
-    pub(crate) fn read_incremental_state(&self) -> buck2_error::Result<IncrementalState> {
+    pub(crate) fn read_incremental_state(&self) -> bz_error::Result<IncrementalState> {
         let entries = self.read_all_entries().with_buck_error_context(|| {
             format!("error reading row of sqlite table {STATE_TABLE_NAME}")
         })?;
         convert_sqlite_entries_to_incremental_state(entries)
     }
 
-    fn read_all_entries(&self) -> buck2_error::Result<Vec<SqliteEntry<'_>>> {
+    fn read_all_entries(&self) -> bz_error::Result<Vec<SqliteEntry<'_>>> {
         static SQL: Lazy<String> = Lazy::new(|| {
             format!("SELECT run_action_key, short_path, content_path FROM {STATE_TABLE_NAME}",)
         });
@@ -171,7 +171,7 @@ impl IncrementalStateSqliteTable {
         .with_buck_error_context(|| format!("reading from sqlite table {STATE_TABLE_NAME}"))
     }
 
-    pub(crate) fn delete(&self, run_action_key: String) -> buck2_error::Result<usize> {
+    pub(crate) fn delete(&self, run_action_key: String) -> bz_error::Result<usize> {
         let sql = format!("DELETE FROM {} WHERE run_action_key = ?", STATE_TABLE_NAME,);
 
         tracing::trace!(sql = %sql, entry = ?run_action_key, "deleting artifact rows from table");
@@ -184,7 +184,7 @@ impl IncrementalStateSqliteTable {
             })
     }
 
-    pub(crate) fn clear(&self) -> buck2_error::Result<usize> {
+    pub(crate) fn clear(&self) -> bz_error::Result<usize> {
         let sql = format!("DELETE FROM {STATE_TABLE_NAME}");
 
         tracing::trace!(sql = %sql, "clearing incremental state table");
@@ -203,7 +203,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_insert_and_read_single_action() -> buck2_error::Result<()> {
+    fn test_insert_and_read_single_action() -> bz_error::Result<()> {
         let conn = Connection::open_in_memory()?;
         let table = IncrementalStateSqliteTable::new(Arc::new(Mutex::new(conn)));
         table.create_table()?;
@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_and_read_multiple_actions() -> buck2_error::Result<()> {
+    fn test_insert_and_read_multiple_actions() -> bz_error::Result<()> {
         let conn = Connection::open_in_memory()?;
         let table = IncrementalStateSqliteTable::new(Arc::new(Mutex::new(conn)));
         table.create_table()?;
@@ -285,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_action() -> buck2_error::Result<()> {
+    fn test_delete_action() -> bz_error::Result<()> {
         let conn = Connection::open_in_memory()?;
         let table = IncrementalStateSqliteTable::new(Arc::new(Mutex::new(conn)));
         table.create_table()?;

@@ -8,17 +8,17 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::callable::register_provider;
-use buck2_build_api::interpreter::rule_defs::provider::collection::tester::collection_creator;
-use buck2_build_api::interpreter::rule_defs::register_rule_defs;
-use buck2_core::bzl::ImportPath;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
-use buck2_interpreter_for_build::interpreter::testing::expect_error;
+use bz_build_api::interpreter::rule_defs::provider::callable::register_provider;
+use bz_build_api::interpreter::rule_defs::provider::collection::tester::collection_creator;
+use bz_build_api::interpreter::rule_defs::register_rule_defs;
+use bz_core::bzl::ImportPath;
+use bz_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::interpreter::testing::expect_error;
 use indoc::indoc;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
 
-fn provider_collection_tester() -> buck2_error::Result<Tester> {
+fn provider_collection_tester() -> bz_error::Result<Tester> {
     let mut tester = Tester::new()?;
     tester.additional_globals(collection_creator);
     tester.additional_globals(artifactory);
@@ -51,7 +51,7 @@ fn provider_collection_tester() -> buck2_error::Result<Tester> {
 }
 
 #[test]
-fn provider_collection_constructs_properly() -> buck2_error::Result<()> {
+fn provider_collection_constructs_properly() -> bz_error::Result<()> {
     let mut tester = provider_collection_tester()?;
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -69,7 +69,7 @@ fn provider_collection_constructs_properly() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn provider_collection_fails_to_construct_on_bad_data() -> buck2_error::Result<()> {
+fn provider_collection_fails_to_construct_on_bad_data() -> bz_error::Result<()> {
     let mut tester = provider_collection_tester()?;
     let not_a_list = indoc!(
         r#"
@@ -129,7 +129,7 @@ fn provider_collection_fails_to_construct_on_bad_data() -> buck2_error::Result<(
 }
 
 #[test]
-fn returns_default_info() -> buck2_error::Result<()> {
+fn returns_default_info() -> bz_error::Result<()> {
     let mut tester = provider_collection_tester()?;
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -150,7 +150,7 @@ fn returns_default_info() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn provider_collection_contains_methods_and_in_operator() -> buck2_error::Result<()> {
+fn provider_collection_contains_methods_and_in_operator() -> bz_error::Result<()> {
     let mut tester = provider_collection_tester()?;
     tester.add_import(
         &ImportPath::testing_new("root//providers:defs.bzl"),
@@ -177,7 +177,7 @@ fn provider_collection_contains_methods_and_in_operator() -> buck2_error::Result
 }
 
 #[test]
-fn provider_collection_get() -> buck2_error::Result<()> {
+fn provider_collection_get() -> bz_error::Result<()> {
     let mut tester = provider_collection_tester()?;
     tester.add_import(
         &ImportPath::testing_new("root//providers:defs.bzl"),

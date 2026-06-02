@@ -26,7 +26,7 @@ use crate::scheduler::SceneResourceReading;
 pub struct ActionCgroupResult {
     pub memory_peak: Option<u64>,
     pub swap_peak: Option<u64>,
-    pub error: Option<buck2_error::Error>,
+    pub error: Option<bz_error::Error>,
     pub suspend_duration: Option<Duration>,
     pub suspend_count: u64,
 }
@@ -35,11 +35,11 @@ pub(crate) struct ActionScene {
     pub(crate) cgroup: CgroupLeaf,
     pub(crate) memory_initial: u64,
     pub(crate) swap_initial: u64,
-    error: Option<buck2_error::Error>,
+    error: Option<bz_error::Error>,
 }
 
 impl ActionScene {
-    async fn new(cgroup: CgroupLeaf) -> Result<Self, (buck2_error::Error, CgroupLeaf)> {
+    async fn new(cgroup: CgroupLeaf) -> Result<Self, (bz_error::Error, CgroupLeaf)> {
         let (memory_initial, swap_initial) =
             match tokio::try_join!(cgroup.read_memory_current(), cgroup.read_swap_current(),) {
                 Ok(x) => x,
@@ -91,7 +91,7 @@ impl ActionCgroupSession {
         command_type: CommandType,
         action_digest: Option<String>,
         disable_kill_and_retry_suspend: bool,
-    ) -> buck2_error::Result<Option<(Self, RetryFuture)>> {
+    ) -> bz_error::Result<Option<(Self, RetryFuture)>> {
         let Some(tracker) = tracker else {
             return Ok(None);
         };

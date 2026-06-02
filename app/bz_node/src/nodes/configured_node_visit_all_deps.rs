@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_query::query::graph::bfs::bfs_preorder;
+use bz_query::query::graph::bfs::bfs_preorder;
 
 use crate::nodes::configured::ConfiguredTargetNodeRef;
 use crate::nodes::configured_node_ref::ConfiguredTargetNodeRefNode;

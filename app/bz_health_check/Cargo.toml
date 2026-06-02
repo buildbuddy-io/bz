@@ -1,20 +1,20 @@
 [package]
 edition = "2024"
 license = { workspace = true }
-name = "buck2_health_check"
+name = "bz_health_check"
 repository = { workspace = true }
 version = "0.1.0"
 
 [dependencies]
 async-trait = { workspace = true }
-buck2_common = { workspace = true }
-buck2_core = { workspace = true }
-buck2_data = { workspace = true }
-buck2_error = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_grpc = { workspace = true }
-buck2_health_check_proto = { workspace = true }
-buck2_util = { workspace = true }
+bz_common = { workspace = true }
+bz_core = { workspace = true }
+bz_data = { workspace = true }
+bz_error = { workspace = true }
+bz_fs = { workspace = true }
+bz_grpc = { workspace = true }
+bz_health_check_proto = { workspace = true }
+bz_util = { workspace = true }
 dupe = { workspace = true }
 itertools = { workspace = true }
 prost = { workspace = true }

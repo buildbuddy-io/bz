@@ -13,9 +13,9 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::package::source_path::SourcePathRef;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
+use bz_core::package::source_path::SourcePathRef;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark_map::Hashed;
@@ -27,7 +27,7 @@ use crate::attrs::coerced_attr::CoercedAttr;
 use crate::attrs::display::AttrDisplayWithContextExt;
 use crate::attrs::traversal::CoercedAttrTraversal;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum AttributeAllowedValuesError {
     #[error("value `{value}` is not one of the allowed values: {}", .allowed.join(", "))]
@@ -76,7 +76,7 @@ impl AttributeAllowedValues {
         }
     }
 
-    pub fn validate(&self, value: &CoercedAttr) -> buck2_error::Result<()> {
+    pub fn validate(&self, value: &CoercedAttr) -> bz_error::Result<()> {
         match value {
             CoercedAttr::Selector(selector) => {
                 for (_, value) in selector.all_entries() {
@@ -120,7 +120,7 @@ impl Attribute {
         default: Option<Arc<CoercedAttr>>,
         doc: &str,
         coercer: AttrType,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Self::new_with_allowed_values(default, doc, coercer, None)
     }
 
@@ -129,7 +129,7 @@ impl Attribute {
         doc: &str,
         coercer: AttrType,
         allowed_values: Option<AttributeAllowedValues>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(Attribute {
             default: match default {
                 Some(default) => {
@@ -191,7 +191,7 @@ impl Attribute {
         &self.doc
     }
 
-    pub fn validate_allowed_values(&self, value: &CoercedAttr) -> buck2_error::Result<()> {
+    pub fn validate_allowed_values(&self, value: &CoercedAttr) -> bz_error::Result<()> {
         match &self.allowed_values {
             Some(allowed_values) => allowed_values.validate(value),
             None => Ok(()),
@@ -220,14 +220,14 @@ pub enum CoercedValue {
 fn collect_default_deps(
     default: &Arc<CoercedAttr>,
     attr_type: &AttrType,
-) -> buck2_error::Result<SmallSet<TargetLabel>> {
+) -> bz_error::Result<SmallSet<TargetLabel>> {
     struct CollectDefaultsTraversal<'a> {
         deps: &'a mut SmallSet<TargetLabel>,
     }
 
     // N.B. the traversal here needs to match the `dep` cases that check_within_view checks
     impl<'a> CoercedAttrTraversal<'a> for CollectDefaultsTraversal<'a> {
-        fn dep(&mut self, dep: &ProvidersLabel) -> buck2_error::Result<()> {
+        fn dep(&mut self, dep: &ProvidersLabel) -> bz_error::Result<()> {
             self.deps.insert(dep.target().dupe());
             Ok(())
         }
@@ -236,7 +236,7 @@ fn collect_default_deps(
             &mut self,
             dep: &ProvidersLabel,
             t: ConfigurationDepKind,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             match t {
                 // Skip some configuration deps
                 ConfigurationDepKind::CompatibilityAttribute
@@ -249,7 +249,7 @@ fn collect_default_deps(
             Ok(())
         }
 
-        fn input(&mut self, _input: SourcePathRef) -> buck2_error::Result<()> {
+        fn input(&mut self, _input: SourcePathRef) -> bz_error::Result<()> {
             Ok(())
         }
 
@@ -273,7 +273,7 @@ fn collect_default_deps(
 mod tests {
     use std::sync::Arc;
 
-    use buck2_core::package::package_relative_path::PackageRelativePathBuf;
+    use bz_core::package::package_relative_path::PackageRelativePathBuf;
 
     use crate::attrs::attr::Attribute;
     use crate::attrs::attr_type::AttrType;
@@ -281,7 +281,7 @@ mod tests {
     use crate::attrs::coerced_path::CoercedPath;
 
     #[test]
-    fn source_file_defaults_do_not_need_package_to_collect_default_deps() -> buck2_error::Result<()>
+    fn source_file_defaults_do_not_need_package_to_collect_default_deps() -> bz_error::Result<()>
     {
         let path = PackageRelativePathBuf::unchecked_new("LICENSE".to_owned());
         let default = Arc::new(CoercedAttr::SourceFile(CoercedPath::File(

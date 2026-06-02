@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_http",
+    name = "bz_http",
     srcs = glob(["src/**/*.rs"]),
     test_deps = [
         "fbsource//third-party/rust:httptest",
@@ -35,8 +35,8 @@ rust_library(
         "fbsource//third-party/rust:tower-service",
         "fbsource//third-party/rust:tracing",
         "//bz/allocative/allocative:allocative",
-        "//bz/app/bz_certs:buck2_certs",
-        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_certs:bz_certs",
+        "//bz/app/bz_error:bz_error",
         "//bz/gazebo/dupe:dupe",
         # @oss-disable[end= ]: "//common/rust/cpe:cpe",
     ] + select({

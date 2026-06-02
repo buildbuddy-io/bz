@@ -13,22 +13,22 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-use buck2_common::client_utils::get_channel_tcp;
-use buck2_common::client_utils::retrying;
-use buck2_core::async_once_cell::AsyncOnceCell;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_fs::async_fs_util;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_health_check_proto::health_check_client::HealthCheckClient;
-use buck2_util::properly_reaped_child::ProperlyReapedChild;
-use buck2_util::properly_reaped_child::reap_on_drop_command;
+use bz_common::client_utils::get_channel_tcp;
+use bz_common::client_utils::retrying;
+use bz_core::async_once_cell::AsyncOnceCell;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_fs::async_fs_util;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_health_check_proto::health_check_client::HealthCheckClient;
+use bz_util::properly_reaped_child::ProperlyReapedChild;
+use bz_util::properly_reaped_child::reap_on_drop_command;
 use dupe::Dupe;
 use futures::FutureExt;
 use tonic::transport::Channel;
@@ -49,7 +49,7 @@ struct HealthCheckServerConnection {
 
 pub(crate) struct HealthCheckRpcClient {
     // The connection is lazily created when the first event to update the context or to run checks is received.
-    connection: AsyncOnceCell<buck2_error::Result<HealthCheckServerConnection>>,
+    connection: AsyncOnceCell<bz_error::Result<HealthCheckServerConnection>>,
     health_check_dir: AbsNormPathBuf,
 }
 
@@ -61,7 +61,7 @@ impl HealthCheckRpcClient {
         }
     }
 
-    async fn connection(&self) -> buck2_error::Result<&HealthCheckServerConnection> {
+    async fn connection(&self) -> bz_error::Result<&HealthCheckServerConnection> {
         let init_fut = async move {
             let file_path = self.get_state_info_file_path().await?;
             Self::spawn_out_of_process_health_check_server(file_path)
@@ -74,13 +74,13 @@ impl HealthCheckRpcClient {
         }
     }
 
-    async fn rpc_client(&self) -> buck2_error::Result<HealthCheckClient<Channel>> {
+    async fn rpc_client(&self) -> bz_error::Result<HealthCheckClient<Channel>> {
         Ok(self.connection().await?.rpc_client.clone())
     }
 
     async fn spawn_out_of_process_health_check_server(
         file_path: AbsNormPathBuf,
-    ) -> buck2_error::Result<HealthCheckServerConnection> {
+    ) -> bz_error::Result<HealthCheckServerConnection> {
         let initial_delay = Duration::from_millis(10);
         let max_delay = Duration::from_millis(100);
         let timeout = Duration::from_secs(20);
@@ -115,7 +115,7 @@ impl HealthCheckRpcClient {
         })
     }
 
-    fn get_cli_path() -> buck2_error::Result<String> {
+    fn get_cli_path() -> bz_error::Result<String> {
         if let Ok(overridden_path) = std::env::var("BUCK2_HEALTH_CHECK_CLI_PATH") {
             // If there is a custom CLI path, use it. This is useful for testing new health checks and CLI changes.
             return Ok(overridden_path);
@@ -141,10 +141,10 @@ impl HealthCheckRpcClient {
         Ok(exe_dir.join(cli_name).to_string())
     }
 
-    async fn get_state_info_file_path(&self) -> buck2_error::Result<AbsNormPathBuf> {
+    async fn get_state_info_file_path(&self) -> bz_error::Result<AbsNormPathBuf> {
         async fn create_state_info_file_path(
             dir: &AbsNormPathBuf,
-        ) -> buck2_error::Result<AbsNormPathBuf> {
+        ) -> bz_error::Result<AbsNormPathBuf> {
             async_fs_util::create_dir_all(dir).await?;
             let state_info_file = dir.join(ForwardRelativePath::unchecked_new(CLI_INFO_FILE));
             if fs_util::try_exists(&state_info_file)? {
@@ -163,8 +163,8 @@ impl HealthCheckRpcClient {
 
 #[async_trait::async_trait]
 impl HealthCheckService for HealthCheckRpcClient {
-    async fn update_context(&mut self, event: HealthCheckContextEvent) -> buck2_error::Result<()> {
-        let rpc_event: buck2_health_check_proto::HealthCheckContextEvent = event.try_into()?;
+    async fn update_context(&mut self, event: HealthCheckContextEvent) -> bz_error::Result<()> {
+        let rpc_event: bz_health_check_proto::HealthCheckContextEvent = event.try_into()?;
         self.rpc_client()
             .await?
             .update_context(rpc_event)
@@ -176,8 +176,8 @@ impl HealthCheckService for HealthCheckRpcClient {
     async fn run_checks(
         &mut self,
         snapshot: HealthCheckSnapshotData,
-    ) -> buck2_error::Result<Vec<Report>> {
-        let snapshot: buck2_health_check_proto::HealthCheckSnapshotData = snapshot.try_into()?;
+    ) -> bz_error::Result<Vec<Report>> {
+        let snapshot: bz_health_check_proto::HealthCheckSnapshotData = snapshot.try_into()?;
         let mut reports = Vec::new();
 
         let response = self
@@ -208,7 +208,7 @@ mod tests {
 
     async fn temp_state_info(
         temp_dir: &TempDir,
-    ) -> buck2_error::Result<(AbsNormPathBuf, AbsNormPathBuf)> {
+    ) -> bz_error::Result<(AbsNormPathBuf, AbsNormPathBuf)> {
         let temp_path = AbsNormPathBuf::try_from(temp_dir.path().to_path_buf()).unwrap();
         Ok((
             temp_path.clone(),
@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_server_state_reset() -> buck2_error::Result<()> {
+    async fn test_server_state_reset() -> bz_error::Result<()> {
         let temp_dir_guard = tempfile::tempdir()?;
         let (dir, file) = temp_state_info(&temp_dir_guard).await?;
 

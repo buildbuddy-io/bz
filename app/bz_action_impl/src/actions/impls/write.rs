@@ -15,41 +15,41 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::Action;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::UnregisteredAction;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
-use buck2_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::cas_digest::CasDigestData;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::category::CategoryRef;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_error::internal_error;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::request::LocalActionCacheKey;
-use buck2_execute::materialize::materializer::WriteRequest;
-use buck2_fs::fs_util::uncategorized as fs_util;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::buck_indexmap;
-use buck2_hash::buck_indexset;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::Action;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::UnregisteredAction;
+use bz_build_api::actions::execute::action_executor::ActionExecutionKind;
+use bz_build_api::actions::execute::action_executor::ActionExecutionMetadata;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::actions::execute::error::ExecuteError;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use bz_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_build_signals::env::WaitingData;
+use bz_common::cas_digest::CasDigestData;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::category::CategoryRef;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_error::internal_error;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::request::LocalActionCacheKey;
+use bz_execute::materialize::materializer::WriteRequest;
+use bz_fs::fs_util::uncategorized as fs_util;
+use bz_hash::BuckIndexMap;
+use bz_hash::BuckIndexSet;
+use bz_hash::buck_indexmap;
+use bz_hash::buck_indexset;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark::values::OwnedFrozenValue;
@@ -63,7 +63,7 @@ use crate::actions::impls::run::compose_local_action_cache_fingerprint;
 use crate::actions::impls::run::finalize_action_cache_digest;
 use crate::actions::impls::run::fingerprint_command_execution_output;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum WriteActionValidationError {
     #[error("WriteAction received no outputs")]
@@ -99,9 +99,9 @@ impl<'v> CommandLineArtifactVisitor<'v> for CommandLineContentBasedInputVisitor 
 
     fn visit_declared_artifact(
         &mut self,
-        declared_artifact: buck2_artifact::artifact::artifact_type::DeclaredArtifact<'v>,
+        declared_artifact: bz_artifact::artifact::artifact_type::DeclaredArtifact<'v>,
         tags: Vec<&ArtifactTag>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if declared_artifact.has_content_based_path() {
             let artifact = declared_artifact.ensure_bound()?.into_artifact();
             self.visit_input(ArtifactGroup::Artifact(artifact), tags);
@@ -157,7 +157,7 @@ impl TemplateExpansionAction {
         &self,
         ctx: &dyn ActionExecutionCtx,
         output: &CommandExecutionOutput,
-    ) -> buck2_error::Result<LocalActionCacheKey> {
+    ) -> bz_error::Result<LocalActionCacheKey> {
         let key = output
             .as_ref()
             .resolve(ctx.fs(), Some(&ContentBasedPathHash::for_output_artifact()))?
@@ -214,7 +214,7 @@ impl UnregisteredAction for UnregisteredWriteAction {
         outputs: BuckIndexSet<BuildArtifact>,
         starlark_data: Option<OwnedFrozenValue>,
         _error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         let contents = starlark_data.expect("module data to be present");
 
         let write_action = WriteAction::new(contents, outputs, *self)?;
@@ -228,7 +228,7 @@ impl UnregisteredAction for UnregisteredTemplateExpansionAction {
         outputs: BuckIndexSet<BuildArtifact>,
         _starlark_data: Option<OwnedFrozenValue>,
         _error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         let mut outputs = outputs.into_iter();
         let output = match (outputs.next(), outputs.next()) {
             (Some(o), None) => o,
@@ -264,7 +264,7 @@ impl WriteAction {
         contents: OwnedFrozenValue,
         outputs: BuckIndexSet<BuildArtifact>,
         inner: UnregisteredWriteAction,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut outputs = outputs.into_iter();
 
         let output = match (outputs.next(), outputs.next()) {
@@ -291,7 +291,7 @@ impl WriteAction {
         &self,
         fs: &ExecutorFs,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<String> {
+    ) -> bz_error::Result<String> {
         let mut cli = Vec::<String>::new();
 
         let macro_files = self.inner.macro_files.as_ref().map(|macro_files| {
@@ -327,11 +327,11 @@ impl WriteAction {
 
 #[async_trait]
 impl Action for WriteAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::Write
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::Write
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         if self.inner.use_dep_files_placeholder_for_content_based_paths {
             return Ok(Cow::Borrowed(&[]));
         }
@@ -450,11 +450,11 @@ impl Action for WriteAction {
 
 #[async_trait]
 impl Action for TemplateExpansionAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::Write
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::Write
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         Ok(Cow::Borrowed(slice::from_ref(&self.template)))
     }
 
@@ -528,7 +528,7 @@ impl Action for TemplateExpansionAction {
                     false,
                     false,
                     None,
-                    buck2_data::IncrementalKind::NonIncremental,
+                    bz_data::IncrementalKind::NonIncremental,
                 );
             }
             ControlFlow::Continue(_) => {}

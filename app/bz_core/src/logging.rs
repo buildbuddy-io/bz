@@ -10,8 +10,8 @@
 
 use std::sync::Arc;
 
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::Filtered;
 use tracing_subscriber::fmt::MakeWriter;
@@ -19,12 +19,12 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::reload;
 use tracing_subscriber::reload::Handle;
 
-use crate::buck2_env;
+use crate::bz_env;
 
 pub mod log_file;
 
 pub trait LogConfigurationReloadHandle: Send + Sync + 'static {
-    fn update_log_filter(&self, format: &str) -> buck2_error::Result<()>;
+    fn update_log_filter(&self, format: &str) -> bz_error::Result<()>;
 }
 
 impl dyn LogConfigurationReloadHandle {
@@ -36,7 +36,7 @@ impl dyn LogConfigurationReloadHandle {
 struct NoopLogConfigurationReloadHandle;
 
 impl LogConfigurationReloadHandle for NoopLogConfigurationReloadHandle {
-    fn update_log_filter(&self, _filter: &str) -> buck2_error::Result<()> {
+    fn update_log_filter(&self, _filter: &str) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -46,12 +46,12 @@ where
     L: Send + Sync + 'static,
     R: Send + Sync + 'static,
 {
-    fn update_log_filter(&self, raw: &str) -> buck2_error::Result<()> {
+    fn update_log_filter(&self, raw: &str) -> bz_error::Result<()> {
         let filter = EnvFilter::try_new(raw)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogFilter))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::LogFilter))
             .buck_error_context("Invalid log filter")?;
         self.modify(|layer| *layer.filter_mut() = filter)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogFilter))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::LogFilter))
             .buck_error_context("Error updating log filter")?;
         tracing::debug!("Log filter was updated to: `{}`", raw);
         Ok(())
@@ -60,7 +60,7 @@ where
 
 pub fn init_tracing_for_writer<W>(
     writer: W,
-) -> buck2_error::Result<Arc<dyn LogConfigurationReloadHandle>>
+) -> bz_error::Result<Arc<dyn LogConfigurationReloadHandle>>
 where
     W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
 {
@@ -68,9 +68,9 @@ where
     // If the user specifies BUCK_LOG, we want to honour that.
     const ENV_VAR: &str = "BUCK_LOG";
 
-    let filter = match buck2_env!(ENV_VAR)? {
+    let filter = match bz_env!(ENV_VAR)? {
         Some(v) => EnvFilter::try_new(v)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogFilter))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::LogFilter))
             .with_buck_error_context(|| format!("Failed to parse ${ENV_VAR} as a filter"))?,
         // daemon_listener is all emitted before the client starts tailing, which is why we log
         // those by default.

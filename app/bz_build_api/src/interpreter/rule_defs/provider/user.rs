@@ -16,7 +16,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::provider::id::ProviderId;
+use bz_core::provider::id::ProviderId;
 use display_container::fmt_keyed_container;
 use dupe::Dupe;
 use indexmap::map::RawEntryApiV1;
@@ -44,7 +44,7 @@ use crate::interpreter::rule_defs::provider::ProviderLike;
 use crate::interpreter::rule_defs::provider::callable::UserProviderCallableData;
 use crate::interpreter::rule_defs::provider::callable::UserProviderSchema;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum UserProviderError {
     #[error("Value for parameter `{0}` mismatches type `{1}`: `{2}`")]
@@ -212,7 +212,7 @@ pub(crate) fn user_provider_creator<'v>(
     callable: FrozenAnyValue<UserProviderCallableData>,
     eval: &Evaluator<'v, '_, '_>,
     param_parser: &mut ParametersParser<'v, '_>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     let callable_data: &UserProviderCallableData = &callable;
     let (values, attribute_names) = match &callable_data.fields {
         UserProviderSchema::Schema(fields) => {
@@ -235,7 +235,7 @@ pub(crate) fn user_provider_creator<'v>(
                         None => Err(UserProviderError::MissingParameter(name.to_owned()).into()),
                     },
                 })
-                .collect::<buck2_error::Result<Box<[Value]>>>()?;
+                .collect::<bz_error::Result<Box<[Value]>>>()?;
             (values, None)
         }
         UserProviderSchema::Schemaless => {
@@ -256,7 +256,7 @@ pub(crate) fn user_provider_creator_from_kwargs<'v>(
     callable: FrozenAnyValue<UserProviderCallableData>,
     eval: &Evaluator<'v, '_, '_>,
     kwargs: SmallMap<String, Value<'v>>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     let callable_data: &UserProviderCallableData = &callable;
     let (values, attribute_names) = match &callable_data.fields {
         UserProviderSchema::Schema(fields) => {
@@ -291,7 +291,7 @@ pub(crate) fn user_provider_creator_from_kwargs<'v>(
                         },
                     }
                 })
-                .collect::<buck2_error::Result<Box<[Value]>>>()?;
+                .collect::<bz_error::Result<Box<[Value]>>>()?;
             (values, None)
         }
         UserProviderSchema::Schemaless => {
@@ -312,7 +312,7 @@ fn user_provider_creator_from_values<'v>(
     eval: &Evaluator<'v, '_, '_>,
     values: Box<[Value<'v>]>,
     attribute_names: Option<Box<[String]>>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     let heap = eval.heap();
     Ok(heap.alloc(UserProvider {
         callable,

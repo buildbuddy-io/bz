@@ -17,9 +17,9 @@ use std::ptr;
 use std::str;
 
 use allocative::Allocative;
-use buck2_data::ToProtoMessage;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::BuckHasher;
+use bz_data::ToProtoMessage;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::BuckHasher;
 use dupe::Dupe;
 use lock_free_hashtable::atomic_value::AtomicValue;
 use pagable::Pagable;
@@ -185,7 +185,7 @@ impl TargetLabel {
         cell_name: CellName,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<TargetLabel> {
+    ) -> bz_error::Result<TargetLabel> {
         let (target_label, TargetPatternExtra) =
             ParsedPattern::<TargetPatternExtra>::parse_precise(
                 label,
@@ -252,10 +252,10 @@ impl Serialize for TargetLabel {
 }
 
 impl ToProtoMessage for TargetLabel {
-    type Message = buck2_data::TargetLabel;
+    type Message = bz_data::TargetLabel;
 
     fn as_proto(&self) -> Self::Message {
-        buck2_data::TargetLabel {
+        bz_data::TargetLabel {
             package: self.pkg().to_string(),
             name: self.name().to_string(),
         }

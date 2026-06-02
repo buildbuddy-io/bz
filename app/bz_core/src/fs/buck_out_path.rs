@@ -14,9 +14,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use allocative::Allocative;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckDefaultHasher;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckDefaultHasher;
 use derive_more::Display;
 use dupe::Dupe;
 use itertools::Itertools;
@@ -298,7 +298,7 @@ impl BuckOutScratchPath {
         identifier: Option<&str>,
         action_key: ForwardRelativePathBuf,
         uses_content_hash: bool,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         const MAKE_SENSIBLE_PREFIX: &str = "_buck_";
         // Windows has MAX_PATH limit (260 chars).
         const LENGTH_THRESHOLD: usize = 50;
@@ -477,7 +477,7 @@ impl BuckOutPathResolver {
         &self,
         path: &BuildArtifactPath,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         if let Some(path) =
             self.bazel_shared_physical_path(ForwardRelativePath::unchecked_new("art"), path)
         {
@@ -501,7 +501,7 @@ impl BuckOutPathResolver {
     pub fn resolve_gen_configuration_hash_path(
         &self,
         path: &BuildArtifactPath,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         if let Some(path) =
             self.bazel_shared_physical_path(ForwardRelativePath::unchecked_new("art"), path)
         {
@@ -523,7 +523,7 @@ impl BuckOutPathResolver {
     pub fn resolve_offline_cache(
         &self,
         path: &BuildArtifactPath,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         self.prefixed_path_for_owner(
             ForwardRelativePath::unchecked_new("offline-cache"),
             path.owner().owner(),
@@ -575,7 +575,7 @@ impl BuckOutPathResolver {
     pub fn resolve_scratch(
         &self,
         path: &BuckOutScratchPath,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         self.prefixed_path_for_owner(
             ForwardRelativePath::unchecked_new("tmp"),
             &path.owner,
@@ -601,7 +601,7 @@ impl BuckOutPathResolver {
     pub fn resolve_test_discovery(
         &self,
         label: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         self.resolve_test_path(
             ForwardRelativePath::unchecked_new("test/discovery"),
             label,
@@ -614,7 +614,7 @@ impl BuckOutPathResolver {
         &self,
         label: &ConfiguredProvidersLabel,
         extra_path: &ForwardRelativePath,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         self.resolve_test_path(
             ForwardRelativePath::unchecked_new("test/execution"),
             label,
@@ -627,7 +627,7 @@ impl BuckOutPathResolver {
         prefix: &ForwardRelativePath,
         label: &ConfiguredProvidersLabel,
         extra_path: Option<&ForwardRelativePath>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let path = match label.name() {
             ProvidersName::Default => "default".into(),
             ProvidersName::NonDefault(nd) => match nd.as_ref() {
@@ -666,7 +666,7 @@ impl BuckOutPathResolver {
         fully_hash_path: bool,
         path_resolution_method: BuckOutPathKind,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         owner.make_hashed_path(
             &self.buck_out_v2,
             prefix,
@@ -699,9 +699,9 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     use dupe::Dupe;
     use regex::Regex;
 
@@ -732,7 +732,7 @@ mod tests {
     use crate::target::name::TargetNameRef;
 
     #[test]
-    fn buck_path_resolves() -> buck2_error::Result<()> {
+    fn buck_path_resolves() -> bz_error::Result<()> {
         let cell_resolver = CellResolver::testing_with_name_and_path(
             CellName::testing_new("foo"),
             CellRootPathBuf::new(ProjectRelativePathBuf::unchecked_new("bar-cell".into())),
@@ -774,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn buck_output_path_resolves() -> buck2_error::Result<()> {
+    fn buck_output_path_resolves() -> bz_error::Result<()> {
         let path_resolver = BuckOutPathResolver::new(ProjectRelativePathBuf::unchecked_new(
             "base/buck-out/v2".into(),
         ));
@@ -842,7 +842,7 @@ mod tests {
     }
 
     #[test]
-    fn buck_target_output_path_resolves() -> buck2_error::Result<()> {
+    fn buck_target_output_path_resolves() -> bz_error::Result<()> {
         let path_resolver =
             BuckOutPathResolver::new(ProjectRelativePathBuf::unchecked_new("buck-out".into()));
 
@@ -1034,7 +1034,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_test_discovery() -> buck2_error::Result<()> {
+    fn test_resolve_test_discovery() -> bz_error::Result<()> {
         let path_resolver =
             BuckOutPathResolver::new(ProjectRelativePathBuf::unchecked_new("buck-out".into()));
 
@@ -1053,7 +1053,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_test_execution() -> buck2_error::Result<()> {
+    fn test_resolve_test_execution() -> bz_error::Result<()> {
         let path_resolver =
             BuckOutPathResolver::new(ProjectRelativePathBuf::unchecked_new("buck-out".into()));
 

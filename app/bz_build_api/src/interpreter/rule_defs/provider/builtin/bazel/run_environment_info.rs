@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
+use bz_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -18,7 +18,7 @@ use starlark::values::list::AllocList;
 use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 
 /// Provider containing environment variables for executable and test targets.
 #[internal_provider(run_environment_info_creator)]

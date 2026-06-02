@@ -74,7 +74,7 @@ impl<R> FromResidual<CommandFailure> for CommandOutcome<R> {
 
 impl<R, E> FromResidual<Result<Infallible, E>> for CommandOutcome<R>
 where
-    E: Into<buck2_error::Error>,
+    E: Into<bz_error::Error>,
 {
     fn from_residual(result: Result<Infallible, E>) -> Self {
         match result {

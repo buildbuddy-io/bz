@@ -10,14 +10,14 @@
 
 use std::sync::Arc;
 
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_signals::env::DeferredBuildSignals;
-use buck2_build_signals::env::NodeDuration;
-use buck2_build_signals::env::WaitingData;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_events::span::SpanId;
-use buck2_util::late_binding::LateBinding;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_signals::env::DeferredBuildSignals;
+use bz_build_signals::env::NodeDuration;
+use bz_build_signals::env::WaitingData;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_events::span::SpanId;
+use bz_util::late_binding::LateBinding;
 use dice::ActivationTracker;
 use dice::UserComputationData;
 use dupe::Dupe;

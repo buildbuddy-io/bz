@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
 use bytes::BytesMut;
 use futures::Stream;
 use futures::StreamExt;
@@ -23,7 +23,7 @@ use tokio_util::codec::FramedRead;
 /// Reads from input a stream of lsp-like messages and returns them as serde_json serialized strings.
 pub fn ide_message_stream<T: AsyncRead, Message: for<'a> Deserialize<'a> + Serialize>(
     input: T,
-) -> impl Stream<Item = buck2_error::Result<String>> {
+) -> impl Stream<Item = bz_error::Result<String>> {
     FramedRead::new(
         input,
         LspMessageLikeDecoder::<Message> {
@@ -39,7 +39,7 @@ pub struct LspMessageLikeDecoder<T: for<'a> Deserialize<'a>> {
 
 impl<T: for<'a> Deserialize<'a>> Decoder for LspMessageLikeDecoder<T> {
     type Item = T;
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         // The LSP (and DAP) protocol allows at most 2 headers (Content-Length and Content-Type), but since a
@@ -47,7 +47,7 @@ impl<T: for<'a> Deserialize<'a>> Decoder for LspMessageLikeDecoder<T> {
         let mut headers_buff = [httparse::EMPTY_HEADER; 16];
 
         let (headers_length, headers) = match httparse::parse_headers(src, &mut headers_buff)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
             .buck_error_context("Invalid headers")?
         {
             httparse::Status::Complete(r) => r,
@@ -91,7 +91,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_decoder() -> buck2_error::Result<()> {
+    fn test_decoder() -> bz_error::Result<()> {
         let r1 = Request {
             id: RequestId::from(1i32),
             method: "m1".into(),

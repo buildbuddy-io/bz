@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_event_observer::action_stats::ActionStats;
+use bz_event_observer::action_stats::ActionStats;
 use superconsole::Component;
 use superconsole::Line;
 use superconsole::Lines;
@@ -21,13 +21,13 @@ pub(crate) struct CommandsComponent<'a> {
 }
 
 impl Component for CommandsComponent<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         _dimensions: superconsole::Dimensions,
         _mode: superconsole::DrawMode,
-    ) -> buck2_error::Result<Lines> {
+    ) -> bz_error::Result<Lines> {
         if !self.super_console_config.enable_commands {
             return Ok(Lines::new());
         }

@@ -9,15 +9,15 @@
  */
 
 use allocative::Allocative;
-use buck2_core::package::PackageLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_node::attrs::coerced_attr::CoercedConcat;
-use buck2_node::attrs::coerced_attr::CoercedSelector;
-use buck2_node::attrs::coerced_attr::CoercedSelectorKeyRef;
-use buck2_node::attrs::display::AttrDisplayWithContext;
-use buck2_node::attrs::fmt_context::AttrFmtContext;
-use buck2_node::attrs::serialize::AttrSerializeWithContext;
-use buck2_node::configuration::resolved::ConfigurationSettingKey;
+use bz_core::package::PackageLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_node::attrs::coerced_attr::CoercedConcat;
+use bz_node::attrs::coerced_attr::CoercedSelector;
+use bz_node::attrs::coerced_attr::CoercedSelectorKeyRef;
+use bz_node::attrs::display::AttrDisplayWithContext;
+use bz_node::attrs::fmt_context::AttrFmtContext;
+use bz_node::attrs::serialize::AttrSerializeWithContext;
+use bz_node::configuration::resolved::ConfigurationSettingKey;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;
@@ -92,7 +92,7 @@ impl StarlarkSelectDict {
         &self,
         key: SelectDictKeyArg<'v>,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<NoneOr<Value<'v>>> {
+    ) -> bz_error::Result<NoneOr<Value<'v>>> {
         match key {
             SelectDictKeyArg::Label(label) => {
                 let key = ConfigurationSettingKey(label.label().dupe());
@@ -179,7 +179,7 @@ fn select_dict_methods(builder: &mut MethodsBuilder) {
                 v.to_value(this.pkg.dupe(), heap)
                     .map(|v| (key_to_starlark_type(&k), v))
             })
-            .collect::<buck2_error::Result<_>>()?;
+            .collect::<bz_error::Result<_>>()?;
         Ok(items)
     }
 
@@ -323,7 +323,7 @@ fn select_concat_methods(builder: &mut MethodsBuilder) {
             .concat
             .iter()
             .map(|a| a.to_value(this.pkg.dupe(), heap))
-            .collect::<buck2_error::Result<_>>()?;
+            .collect::<bz_error::Result<_>>()?;
         Ok(list)
     }
 

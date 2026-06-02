@@ -13,42 +13,42 @@ use std::fmt;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_core::package::package_relative_path::PackageRelativePathBuf;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern::TargetParsingRel;
-use buck2_core::pattern::pattern_type::PatternType;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::soft_error;
-use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
-use buck2_core::target::name::TargetName;
-use buck2_core::target::name::TargetNameRef;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coerced_path::CoercedDirectory;
-use buck2_node::attrs::coerced_path::CoercedPath;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::configuration::resolved::ConfigurationSettingKey;
-use buck2_node::query::query_functions::CONFIGURED_GRAPH_QUERY_FUNCTIONS;
-use buck2_query::query::syntax::simple::eval::error::QueryError;
-use buck2_query::query::syntax::simple::functions::QueryLiteralVisitor;
-use buck2_query_parser::Expr;
-use buck2_query_parser::spanned::Spanned;
-use buck2_util::arc_str::ArcSlice;
-use buck2_util::arc_str::ArcStr;
+use bz_common::package_listing::listing::PackageListing;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::package::PackageLabel;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_core::package::package_relative_path::PackageRelativePathBuf;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern::TargetParsingRel;
+use bz_core::pattern::pattern_type::PatternType;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::soft_error;
+use bz_core::target::label::interner::ConcurrentTargetLabelInterner;
+use bz_core::target::name::TargetName;
+use bz_core::target::name::TargetNameRef;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coerced_path::CoercedDirectory;
+use bz_node::attrs::coerced_path::CoercedPath;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::configuration::resolved::ConfigurationSettingKey;
+use bz_node::query::query_functions::CONFIGURED_GRAPH_QUERY_FUNCTIONS;
+use bz_query::query::syntax::simple::eval::error::QueryError;
+use bz_query::query::syntax::simple::functions::QueryLiteralVisitor;
+use bz_query_parser::Expr;
+use bz_query_parser::spanned::Spanned;
+use bz_util::arc_str::ArcSlice;
+use bz_util::arc_str::ArcStr;
 use bumpalo::Bump;
 use dupe::Dupe;
 use dupe::IterDupedExt;
@@ -62,7 +62,7 @@ use crate::attrs::coerce::str_hash::str_hash;
 use crate::bazel::label::bazel_absolute_label_parts;
 use crate::bazel::label::parse_bazel_canonical_providers_label;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum BuildAttrCoercionContextError {
     #[error("Expected a label, got the pattern `{0}`.")]
@@ -198,7 +198,7 @@ impl BuildAttrCoercionContext {
     pub fn parse_pattern<P: PatternType>(
         &self,
         value: &str,
-    ) -> buck2_error::Result<ParsedPattern<P>> {
+    ) -> bz_error::Result<ParsedPattern<P>> {
         let target_parsing_rel = match self.enclosing_package.as_ref().map(|x| x.0.as_cell_path()) {
             Some(package) => {
                 if self
@@ -223,7 +223,7 @@ impl BuildAttrCoercionContext {
         )
     }
 
-    fn coerce_label_no_cache(&self, value: &str) -> buck2_error::Result<ProvidersLabel> {
+    fn coerce_label_no_cache(&self, value: &str) -> bz_error::Result<ProvidersLabel> {
         // TODO(nmj): Make this take an import path / package
         let normalized_value;
         let value = if let Some(root_label) = value.strip_prefix("@@root//") {
@@ -293,7 +293,7 @@ impl BuildAttrCoercionContext {
                 };
                 let target_name = TargetNameRef::new(target_name.as_str())?;
                 Ok(ProvidersLabel::new(
-                    buck2_core::target::label::label::TargetLabel::new(package, target_name),
+                    bz_core::target::label::label::TargetLabel::new(package, target_name),
                     ProvidersName::Default,
                 ))
             }
@@ -304,7 +304,7 @@ impl BuildAttrCoercionContext {
     fn coerce_bazel_repo_shorthand_label(
         &self,
         value: &str,
-    ) -> buck2_error::Result<Option<ProvidersLabel>> {
+    ) -> bz_error::Result<Option<ProvidersLabel>> {
         if !self.is_bazel_compat_cell() {
             return Ok(None);
         }
@@ -338,7 +338,7 @@ impl BuildAttrCoercionContext {
         )?;
         let target = TargetNameRef::new(repo)?;
         Ok(Some(ProvidersLabel::new(
-            buck2_core::target::label::label::TargetLabel::new(package, target),
+            bz_core::target::label::label::TargetLabel::new(package, target),
             ProvidersName::Default,
         )))
     }
@@ -346,7 +346,7 @@ impl BuildAttrCoercionContext {
     fn coerce_bazel_non_visible_repo_label(
         &self,
         value: &str,
-    ) -> buck2_error::Result<Option<ProvidersLabel>> {
+    ) -> bz_error::Result<Option<ProvidersLabel>> {
         if !self.is_bazel_compat_cell() {
             return Ok(None);
         }
@@ -377,7 +377,7 @@ impl BuildAttrCoercionContext {
             PackageLabel::new(cell_name, CellRelativePathBuf::try_from(package)?.as_ref())?;
         let target = TargetNameRef::new_bazel(&target)?;
         Ok(Some(ProvidersLabel::new(
-            buck2_core::target::label::label::TargetLabel::new(package, target),
+            bz_core::target::label::label::TargetLabel::new(package, target),
             ProvidersName::Default,
         )))
     }
@@ -385,7 +385,7 @@ impl BuildAttrCoercionContext {
     fn coerce_bazel_compat_label(
         &self,
         value: &str,
-    ) -> buck2_error::Result<Option<ProvidersLabel>> {
+    ) -> bz_error::Result<Option<ProvidersLabel>> {
         if !self.is_bazel_compat_cell() {
             return Ok(None);
         }
@@ -448,11 +448,11 @@ impl BuildAttrCoercionContext {
         &self,
         target: &str,
         original: &str,
-    ) -> buck2_error::Result<ProvidersLabel> {
+    ) -> bz_error::Result<ProvidersLabel> {
         let package = self.require_enclosing_package(original)?.0.dupe();
         let target = TargetName::new_bazel(target)?;
         Ok(ProvidersLabel::new(
-            buck2_core::target::label::label::TargetLabel::new(package, target.as_ref()),
+            bz_core::target::label::label::TargetLabel::new(package, target.as_ref()),
             ProvidersName::Default,
         ))
     }
@@ -461,7 +461,7 @@ impl BuildAttrCoercionContext {
         &self,
         cell_name: CellName,
         package_and_target: &str,
-    ) -> buck2_error::Result<ProvidersLabel> {
+    ) -> bz_error::Result<ProvidersLabel> {
         let Some((package, target)) = bazel_absolute_label_parts(package_and_target) else {
             return Err(BuildAttrCoercionContextError::RequiredLabel(
                 package_and_target.to_owned(),
@@ -472,7 +472,7 @@ impl BuildAttrCoercionContext {
             PackageLabel::new(cell_name, CellRelativePathBuf::try_from(package)?.as_ref())?;
         let target = TargetName::new_bazel(&target)?;
         Ok(ProvidersLabel::new(
-            buck2_core::target::label::label::TargetLabel::new(package, target.as_ref()),
+            bz_core::target::label::label::TargetLabel::new(package, target.as_ref()),
             ProvidersName::Default,
         ))
     }
@@ -480,7 +480,7 @@ impl BuildAttrCoercionContext {
     fn coerce_bazel_non_visible_repo_visibility_pattern(
         &self,
         value: &str,
-    ) -> buck2_error::Result<Option<ParsedPattern<TargetPatternExtra>>> {
+    ) -> bz_error::Result<Option<ParsedPattern<TargetPatternExtra>>> {
         if !self.is_bazel_compat_cell() {
             return Ok(None);
         }
@@ -505,7 +505,7 @@ impl BuildAttrCoercionContext {
         )?))
     }
 
-    fn bazel_non_visible_repo_cell_name(&self, repo: &str) -> buck2_error::Result<CellName> {
+    fn bazel_non_visible_repo_cell_name(&self, repo: &str) -> bz_error::Result<CellName> {
         let canonical_repo_name = format!("unknown+{}+{}", self.cell_name.as_str(), repo);
         let cell_name = bzlmod_cell_name(&canonical_repo_name);
         register_bzlmod_cell_canonical_repo_name_for_cell(&cell_name, &canonical_repo_name);
@@ -515,7 +515,7 @@ impl BuildAttrCoercionContext {
     fn require_enclosing_package(
         &self,
         msg: &str,
-    ) -> buck2_error::Result<&(PackageLabel, PackageListing)> {
+    ) -> bz_error::Result<&(PackageLabel, PackageListing)> {
         self.enclosing_package.as_ref().ok_or_else(|| {
             BuildAttrCoercionContextError::NotBuildFileContext(msg.to_owned()).into()
         })
@@ -542,7 +542,7 @@ fn is_bazel_package_relative_target(value: &str) -> bool {
 fn parse_non_visible_repo_target_pattern(
     cell_name: CellName,
     pattern: &str,
-) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
+) -> bz_error::Result<ParsedPattern<TargetPatternExtra>> {
     if pattern == "..." {
         return Ok(ParsedPattern::Recursive(CellPath::new(
             cell_name,
@@ -577,7 +577,7 @@ fn parse_non_visible_repo_target_pattern(
 }
 
 impl AttrCoercionContext for BuildAttrCoercionContext {
-    fn coerce_providers_label(&self, value: &str) -> buck2_error::Result<ProvidersLabel> {
+    fn coerce_providers_label(&self, value: &str) -> bz_error::Result<ProvidersLabel> {
         let hash = str_hash(value);
         let mut label_cache = self.label_cache.borrow_mut();
 
@@ -622,7 +622,7 @@ impl AttrCoercionContext for BuildAttrCoercionContext {
         self.select_interner.intern(value)
     }
 
-    fn coerce_path(&self, value: &str, allow_directory: bool) -> buck2_error::Result<CoercedPath> {
+    fn coerce_path(&self, value: &str, allow_directory: bool) -> bz_error::Result<CoercedPath> {
         let path = <&PackageRelativePath>::try_from(value)?;
         let (package, listing) = self.require_enclosing_package(value)?;
 
@@ -677,7 +677,7 @@ impl AttrCoercionContext for BuildAttrCoercionContext {
         &self,
         value: &str,
         allow_directory: bool,
-    ) -> buck2_error::Result<Option<CoercedPath>> {
+    ) -> bz_error::Result<Option<CoercedPath>> {
         let path = <&PackageRelativePath>::try_from(value)?;
         let (package, listing) = self.require_enclosing_package(value)?;
 
@@ -717,14 +717,14 @@ impl AttrCoercionContext for BuildAttrCoercionContext {
     fn coerce_target_pattern(
         &self,
         pattern: &str,
-    ) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
+    ) -> bz_error::Result<ParsedPattern<TargetPatternExtra>> {
         self.parse_pattern(pattern)
     }
 
     fn coerce_visibility_pattern(
         &self,
         pattern: &str,
-    ) -> buck2_error::Result<Option<ParsedPattern<TargetPatternExtra>>> {
+    ) -> bz_error::Result<Option<ParsedPattern<TargetPatternExtra>>> {
         match self.parse_pattern(pattern) {
             Ok(pattern) => Ok(Some(pattern)),
             Err(e) => {
@@ -753,7 +753,7 @@ impl AttrCoercionContext for BuildAttrCoercionContext {
         visitor: &mut dyn QueryLiteralVisitor<'q>,
         expr: &Spanned<Expr<'q>>,
         query: &'q str,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         CONFIGURED_GRAPH_QUERY_FUNCTIONS
             .get()?
             .visit_literals(visitor, expr)
@@ -764,12 +764,12 @@ impl AttrCoercionContext for BuildAttrCoercionContext {
 
 #[cfg(test)]
 mod tests {
-    use buck2_node::attrs::coercion_context::AttrCoercionContext;
+    use bz_node::attrs::coercion_context::AttrCoercionContext;
 
     use crate::attrs::coerce::testing::coercion_ctx;
 
     #[test]
-    fn bazel_compat_accepts_package_relative_label_with_slashes() -> buck2_error::Result<()> {
+    fn bazel_compat_accepts_package_relative_label_with_slashes() -> bz_error::Result<()> {
         let ctx = coercion_ctx();
         let label = ctx.coerce_providers_label("bin/nodejs/bin/node")?;
         assert_eq!(
@@ -780,7 +780,7 @@ mod tests {
     }
 
     #[test]
-    fn bazel_compat_accepts_bazel_target_name_characters() -> buck2_error::Result<()> {
+    fn bazel_compat_accepts_bazel_target_name_characters() -> bz_error::Result<()> {
         let ctx = coercion_ctx();
         let label = ctx.coerce_providers_label(
             "lib/python3.11/site-packages/setuptools/_vendor/jaraco/text/Lorem ipsum.txt",

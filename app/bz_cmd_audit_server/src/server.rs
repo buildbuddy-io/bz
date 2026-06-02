@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-use buck2_events::dispatch::span_async;
-use buck2_server_ctx::commands::command_end;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::late_bindings::AUDIT_SERVER_COMMAND;
-use buck2_server_ctx::late_bindings::AuditServerCommand;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_events::dispatch::span_async;
+use bz_server_ctx::commands::command_end;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::late_bindings::AUDIT_SERVER_COMMAND;
+use bz_server_ctx::late_bindings::AuditServerCommand;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 use crate::AuditCommand;
 use crate::AuditCommandExt;
@@ -29,11 +29,11 @@ impl AuditServerCommand for AuditServerCommandImpl {
     async fn audit(
         &self,
         ctx: &dyn ServerCommandContextTrait,
-        partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-        req: buck2_cli_proto::GenericRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::GenericResponse> {
+        partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+        req: bz_cli_proto::GenericRequest,
+    ) -> bz_error::Result<bz_cli_proto::GenericResponse> {
         let start_event = ctx
-            .command_start_event(buck2_data::AuditCommandStart {}.into())
+            .command_start_event(bz_data::AuditCommandStart {}.into())
             .await?;
         span_async(
             start_event,
@@ -45,25 +45,25 @@ impl AuditServerCommand for AuditServerCommandImpl {
 
 async fn server_audit_command_inner(
     context: &dyn ServerCommandContextTrait,
-    partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-    req: buck2_cli_proto::GenericRequest,
+    partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+    req: bz_cli_proto::GenericRequest,
 ) -> (
-    buck2_error::Result<buck2_cli_proto::GenericResponse>,
-    buck2_data::CommandEnd,
+    bz_error::Result<bz_cli_proto::GenericResponse>,
+    bz_data::CommandEnd,
 ) {
     let result = parse_command_and_execute(context, partial_result_dispatcher, req).await;
-    let end_event = command_end(&result, buck2_data::AuditCommandEnd {});
+    let end_event = command_end(&result, bz_data::AuditCommandEnd {});
 
-    let result = result.map(|()| buck2_cli_proto::GenericResponse {});
+    let result = result.map(|()| bz_cli_proto::GenericResponse {});
 
     (result, end_event)
 }
 
 async fn parse_command_and_execute(
     context: &dyn ServerCommandContextTrait,
-    partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-    req: buck2_cli_proto::GenericRequest,
-) -> buck2_error::Result<()> {
+    partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+    req: bz_cli_proto::GenericRequest,
+) -> bz_error::Result<()> {
     let command: AuditCommand = serde_json::from_str(&req.serialized_opts)?;
     command
         .server_execute(

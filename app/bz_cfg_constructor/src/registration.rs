@@ -11,15 +11,15 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_CFG_CONSTRUCTOR_GLOBALS;
-use buck2_interpreter_for_build::interpreter::build_context::BuildContext;
-use buck2_interpreter_for_build::interpreter::build_context::PerFileTypeContext;
-use buck2_interpreter_for_build::interpreter::package_file_extra::MAKE_CFG_CONSTRUCTOR;
-use buck2_interpreter_for_build::interpreter::package_file_extra::PackageFileExtra;
-use buck2_node::cfg_constructor::CfgConstructorImpl;
-use buck2_node::metadata::key::MetadataKeyRef;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::paths::CellRelativePath;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_CFG_CONSTRUCTOR_GLOBALS;
+use bz_interpreter_for_build::interpreter::build_context::BuildContext;
+use bz_interpreter_for_build::interpreter::build_context::PerFileTypeContext;
+use bz_interpreter_for_build::interpreter::package_file_extra::MAKE_CFG_CONSTRUCTOR;
+use bz_interpreter_for_build::interpreter::package_file_extra::PackageFileExtra;
+use bz_node::cfg_constructor::CfgConstructorImpl;
+use bz_node::metadata::key::MetadataKeyRef;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
@@ -41,7 +41,7 @@ use starlark::values::starlark_value;
 
 use crate::CfgConstructor;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum RegisterCfgConstructorError {
     #[error("`set_cfg_constructor()` can only be called from the repository root `PACKAGE` file")]
@@ -119,7 +119,7 @@ impl Freeze for StarlarkCfgConstructor<'_> {
 
 fn make_cfg_constructor(
     cfg_constructor: OwnedFrozenValue,
-) -> buck2_error::Result<Arc<dyn CfgConstructorImpl>> {
+) -> bz_error::Result<Arc<dyn CfgConstructorImpl>> {
     let cfg_constructor = cfg_constructor.downcast_starlark::<FrozenStarlarkCfgConstructor>()?;
     let (
         cfg_constructor_pre_constraint_analysis,
@@ -174,7 +174,7 @@ pub(crate) fn register_set_cfg_constructor(globals: &mut GlobalsBuilder) {
             PerFileTypeContext::Package(ctx) => ctx,
             _ => {
                 return Err(
-                    buck2_error::Error::from(RegisterCfgConstructorError::NotPackageRoot).into(),
+                    bz_error::Error::from(RegisterCfgConstructorError::NotPackageRoot).into(),
                 );
             }
         };
@@ -185,13 +185,13 @@ pub(crate) fn register_set_cfg_constructor(globals: &mut GlobalsBuilder) {
             )
         {
             return Err(
-                buck2_error::Error::from(RegisterCfgConstructorError::NotPackageRoot).into(),
+                bz_error::Error::from(RegisterCfgConstructorError::NotPackageRoot).into(),
             );
         }
         let package_file_extra: &PackageFileExtra = PackageFileExtra::get_or_init(eval)?;
         if package_file_extra.cfg_constructor.get().is_some() {
             return Err(
-                buck2_error::Error::from(RegisterCfgConstructorError::AlreadyRegistered).into(),
+                bz_error::Error::from(RegisterCfgConstructorError::AlreadyRegistered).into(),
             );
         }
         package_file_extra.cfg_constructor.get_or_init(|| {

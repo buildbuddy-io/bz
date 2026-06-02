@@ -11,8 +11,8 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_core::execution_types::execution_platforms::ExecutionPlatformFallback;
+use bz_build_api_derive::internal_provider;
+use bz_core::execution_types::execution_platforms::ExecutionPlatformFallback;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -32,11 +32,11 @@ use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::none::NoneOr;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::provider::builtin::execution_platform_info::ExecutionPlatformInfo;
 use crate::interpreter::rule_defs::provider::builtin::execution_platform_info::FrozenExecutionPlatformInfo;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum ExecutionPlatformRegistrationTypeError {
     #[error("expected a list of ExecutionPlatformInfo, got `{0}` (type `{1}`)")]
@@ -75,7 +75,7 @@ impl FrozenExecutionPlatformRegistrationInfo {
     // TODO(cjhopman): If we impl this on the non-frozen one, we can check validity when constructed rather than only when used.
     pub fn platforms(
         &self,
-    ) -> buck2_error::Result<Vec<FrozenValueTyped<'static, FrozenExecutionPlatformInfo>>> {
+    ) -> bz_error::Result<Vec<FrozenValueTyped<'static, FrozenExecutionPlatformInfo>>> {
         ListRef::from_frozen_value(self.platforms.get())
             .ok_or_else(|| {
                 ExecutionPlatformRegistrationTypeError::ExpectedListOfPlatforms(
@@ -95,10 +95,10 @@ impl FrozenExecutionPlatformRegistrationInfo {
                     },
                 )
             })
-            .collect::<buck2_error::Result<_>>()
+            .collect::<bz_error::Result<_>>()
     }
 
-    pub fn fallback(&self) -> buck2_error::Result<ExecutionPlatformFallback> {
+    pub fn fallback(&self) -> bz_error::Result<ExecutionPlatformFallback> {
         if self.fallback.get().is_none() {
             return Ok(ExecutionPlatformFallback::UseUnspecifiedExec);
         }

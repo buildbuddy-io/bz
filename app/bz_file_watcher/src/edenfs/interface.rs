@@ -14,29 +14,29 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::file_ops::dice::FileChangeTracker;
-use buck2_common::ignores::ignore_set::IgnoreSet;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::soft_error;
-use buck2_data::FileWatcherEventType as Type;
-use buck2_data::FileWatcherKind as Kind;
-use buck2_eden::connection::EdenConnectionManager;
-use buck2_eden::semaphore;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::span_async;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
+use bz_common::file_ops::dice::FileChangeTracker;
+use bz_common::ignores::ignore_set::IgnoreSet;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_core::cells::CellResolver;
+use bz_core::cells::name::CellName;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::soft_error;
+use bz_data::FileWatcherEventType as Type;
+use bz_data::FileWatcherKind as Kind;
+use bz_eden::connection::EdenConnectionManager;
+use bz_eden::semaphore;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::span_async;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
 use dice::DiceTransactionUpdater;
 use edenfs::ChangeNotification;
 use edenfs::ChangesSinceV2Params;
@@ -64,11 +64,11 @@ use crate::stats::FileWatcherStats;
 
 const MAX_SAPLING_STATUS_CHANGES: usize = 10_000;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 pub(crate) enum EdenFsWatcherError {
     #[buck2(tag = IoNotConnected)]
     #[error("Failed to connect to EdenFS {0}")]
-    EdenConnectionError(buck2_error::Error),
+    EdenConnectionError(bz_error::Error),
     #[buck2(tag = Input)]
     #[error("Eden mount point is not absolute normalized path")]
     NotAbsNormPath,
@@ -112,16 +112,16 @@ impl EdenFsFileWatcher {
         root_config: &LegacyBuckConfig,
         cells: CellResolver,
         ignore_specs: StdBuckHashMap<CellName, IgnoreSet>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let manager = EdenConnectionManager::new(
             fb,
             project_root,
-            Some(semaphore::buck2_default()),
+            Some(semaphore::bz_default()),
         )
         .map_err(EdenFsWatcherError::EdenConnectionError)?
         .ok_or(EdenFsWatcherError::EdenConnectionError(
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Environment,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Environment,
                 "Couldn't initiate connection to Eden. This is usually due to .eden dir missing"
             ),
         ))?;
@@ -161,7 +161,7 @@ impl EdenFsFileWatcher {
     async fn update(
         &self,
         dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(buck2_data::FileWatcherStats, DiceTransactionUpdater)> {
+    ) -> bz_error::Result<(bz_data::FileWatcherStats, DiceTransactionUpdater)> {
         let position = self.position.read().await.clone();
         let changes_since_v2_params = ChangesSinceV2Params {
             mountPoint: self.mount_point.clone(),
@@ -224,7 +224,7 @@ impl EdenFsFileWatcher {
         tracker: &mut FileChangeTracker,
         stats: &mut FileWatcherStats,
         processed_changes: &mut StdBuckHashSet<EdenFsEvent>,
-    ) -> buck2_error::Result<ProcessChangeStatus> {
+    ) -> bz_error::Result<ProcessChangeStatus> {
         let large_or_unknown_change = match change {
             ChangeNotification::smallChange(small_change) => match small_change {
                 SmallChangeNotification::added(added) => {
@@ -253,8 +253,8 @@ impl EdenFsFileWatcher {
                     if renamed.fileType == Dtype::DIR {
                         soft_error!(
                             "edenfs_small_change_dir_rename",
-                            buck2_error::buck2_error!(
-                                buck2_error::ErrorTag::Environment,
+                            bz_error::bz_error!(
+                                bz_error::ErrorTag::Environment,
                                 "EdenFS reported SmallChangeNotification::renamed directory: '{}' -> '{}'. \
                                  Directory renames are handled as LargeChangeNotification changes. \
                                  EdenFS Thrift API has changed and the buck2 code needs to be updated.",
@@ -338,8 +338,8 @@ impl EdenFsFileWatcher {
                 SmallChangeNotification::UnknownField(_) => {
                     soft_error!(
                         "edenfs_small_change_unknown",
-                        buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Environment,
+                        bz_error::bz_error!(
+                            bz_error::ErrorTag::Environment,
                             "EdenFS reported an unknown SmallChangeNotification: '{:?}'. \
                              EdenFS Thrift API has changed and the buck2 code needs to be updated.",
                             small_change
@@ -389,8 +389,8 @@ impl EdenFsFileWatcher {
                 LargeChangeNotification::UnknownField(_) => {
                     soft_error!(
                         "edenfs_large_change_unknown",
-                        buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Environment,
+                        bz_error::bz_error!(
+                            bz_error::ErrorTag::Environment,
                             "EdenFS reported an unknown LargeChangeNotification: '{:?}'. \
                              EdenFS Thrift API has changed and the buck2 code needs to be updated.",
                             large_change
@@ -406,8 +406,8 @@ impl EdenFsFileWatcher {
             ChangeNotification::UnknownField(_) => {
                 soft_error!(
                     "edenfs_change_unknown",
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Environment,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::Environment,
                         "EdenFS reported an unknown ChangeNotification: '{:?}'. \
                          EdenFS Thrift API has changed and the buck2 code needs to be updated.",
                         change
@@ -422,7 +422,7 @@ impl EdenFsFileWatcher {
 
     // Skip processing changes after a large or unknown change. Commit
     // transitions still need to be "processed" to update the mergebase.
-    async fn skip_change(&self, change: &ChangeNotification) -> buck2_error::Result<()> {
+    async fn skip_change(&self, change: &ChangeNotification) -> bz_error::Result<()> {
         if let ChangeNotification::largeChange(LargeChangeNotification::commitTransition(
             commit_transition,
         )) = change
@@ -444,7 +444,7 @@ impl EdenFsFileWatcher {
         event: Type,
         path: &[u8],
         processed_changes: &mut StdBuckHashSet<EdenFsEvent>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let eden_rel_path = PathBuf::from(str::from_utf8(path)?);
 
         // If the path is invalid, then walk up all the way until you find a valid dir to
@@ -543,7 +543,7 @@ impl EdenFsFileWatcher {
         from: &str,
         to: Option<&str>,
         processed_changes: &mut StdBuckHashSet<EdenFsEvent>,
-    ) -> buck2_error::Result<ProcessChangeStatus> {
+    ) -> bz_error::Result<ProcessChangeStatus> {
         // `sl status` only reports added/removed/modified files, not directories.
         // we use `sl debugdiffdirs` to get changes for directories
         if self
@@ -572,7 +572,7 @@ impl EdenFsFileWatcher {
         from: &str,
         to: Option<&str>,
         processed_changes: &mut StdBuckHashSet<EdenFsEvent>,
-    ) -> buck2_error::Result<ProcessChangeStatus> {
+    ) -> bz_error::Result<ProcessChangeStatus> {
         // limit results to MAX_SAPLING_STATUS_CHANGES
         match get_status(&self.eden_root, &from, to, MAX_SAPLING_STATUS_CHANGES)
             .await
@@ -581,7 +581,7 @@ impl EdenFsFileWatcher {
             SaplingGetStatusResult::TooManyChanges => Ok(ProcessChangeStatus::LargeOrUnknown),
             SaplingGetStatusResult::Normal(status) => {
                 // Process statuses - if any fail, will terminate early.
-                let results: buck2_error::Result<Vec<_>> = status
+                let results: bz_error::Result<Vec<_>> = status
                     .into_iter()
                     .map(|(change, path)| match change {
                         SaplingStatus::Added
@@ -631,7 +631,7 @@ impl EdenFsFileWatcher {
         from: &str,
         to: Option<&str>,
         processed_changes: &mut StdBuckHashSet<EdenFsEvent>,
-    ) -> buck2_error::Result<ProcessChangeStatus> {
+    ) -> bz_error::Result<ProcessChangeStatus> {
         // limit results to MAX_SAPLING_STATUS_CHANGES
         match get_dir_diff(&self.eden_root, &from, to, MAX_SAPLING_STATUS_CHANGES)
             .await
@@ -640,7 +640,7 @@ impl EdenFsFileWatcher {
             SaplingGetStatusResult::TooManyChanges => Ok(ProcessChangeStatus::LargeOrUnknown),
             SaplingGetStatusResult::Normal(status) => {
                 // Process statuses - if any fail, will terminate early.
-                let results: buck2_error::Result<Vec<_>> = status
+                let results: bz_error::Result<Vec<_>> = status
                     .into_iter()
                     .map(|(change, path)| match change {
                         SaplingStatus::Added
@@ -694,7 +694,7 @@ impl EdenFsFileWatcher {
         from: &str,
         to: &str,
         processed_changes: &mut StdBuckHashSet<EdenFsEvent>,
-    ) -> buck2_error::Result<ProcessChangeStatus> {
+    ) -> bz_error::Result<ProcessChangeStatus> {
         let mergebase_changed = self
             .update_mergebase(to)
             .await
@@ -715,7 +715,7 @@ impl EdenFsFileWatcher {
     async fn on_large_or_unknown_change(
         &self,
         dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(FileWatcherStats, FileChangeTracker, DiceTransactionUpdater)> {
+    ) -> bz_error::Result<(FileWatcherStats, FileChangeTracker, DiceTransactionUpdater)> {
         // A large change is one that affects numerous files or is otherwise unbounded in nature.
         // For example:
         // - A commit transition (e.g. a rebase, checkout, etc.).
@@ -744,10 +744,10 @@ impl EdenFsFileWatcher {
         let last_mergebase_info = self.last_mergebase.read().await.clone();
         let mergebase_info = self.mergebase.read().await.clone();
         let base_stats = self.base_file_watcher_stats().await?;
-        let mut base_stats = buck2_data::FileWatcherStats {
+        let mut base_stats = bz_data::FileWatcherStats {
             fresh_instance: true,
             watchman_version: None,
-            fresh_instance_data: Some(buck2_data::FreshInstance {
+            fresh_instance_data: Some(bz_data::FreshInstance {
                 new_mergebase: last_mergebase_info.is_none()
                     || last_mergebase_info != mergebase_info,
                 cleared_dice: true,
@@ -780,7 +780,7 @@ impl EdenFsFileWatcher {
     }
 
     // Compute and update the mergebase.
-    async fn update_mergebase(&self, to: &str) -> buck2_error::Result<bool> {
+    async fn update_mergebase(&self, to: &str) -> bz_error::Result<bool> {
         if let Some(mergebase_with) = &self.mergebase_with {
             // Compute new mergebase.
             let mergebase = get_mergebase(&self.eden_root, &to, mergebase_with)
@@ -805,7 +805,7 @@ impl EdenFsFileWatcher {
         }
     }
 
-    async fn base_file_watcher_stats(&self) -> buck2_error::Result<buck2_data::FileWatcherStats> {
+    async fn base_file_watcher_stats(&self) -> bz_error::Result<bz_data::FileWatcherStats> {
         let eden_version = { self.eden_version.read().await.clone() };
         let eden_version = if eden_version.is_some() {
             eden_version.clone()
@@ -819,7 +819,7 @@ impl EdenFsFileWatcher {
         let mergebase = mergebase_info.as_ref().map(|m| m.mergebase.clone());
         let branched_from_revision_timestamp = mergebase_info.as_ref().and_then(|m| m.timestamp);
         let branched_from_global_rev = mergebase_info.as_ref().and_then(|m| m.global_rev);
-        Ok(buck2_data::FileWatcherStats {
+        Ok(bz_data::FileWatcherStats {
             branched_from_revision: mergebase,
             branched_from_global_rev,
             branched_from_revision_timestamp,
@@ -834,10 +834,10 @@ impl FileWatcher for EdenFsFileWatcher {
     async fn sync(
         &self,
         dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(DiceTransactionUpdater, Mergebase)> {
+    ) -> bz_error::Result<(DiceTransactionUpdater, Mergebase)> {
         span_async(
-            buck2_data::FileWatcherStart {
-                provider: buck2_data::FileWatcherProvider::EdenFs as i32,
+            bz_data::FileWatcherStart {
+                provider: bz_data::FileWatcherProvider::EdenFs as i32,
             },
             async {
                 let (stats, res) = match self.update(dice).await {
@@ -847,7 +847,7 @@ impl FileWatcher for EdenFsFileWatcher {
                     }
                     Err(e) => (None, Err(e)),
                 };
-                (res, buck2_data::FileWatcherEnd { stats })
+                (res, bz_data::FileWatcherEnd { stats })
             },
         )
         .await

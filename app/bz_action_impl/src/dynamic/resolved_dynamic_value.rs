@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;

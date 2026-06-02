@@ -10,8 +10,8 @@
 
 use std::sync::Arc;
 
-use buck2_error::BuckErrorContext;
-use buck2_hash::StdBuckHashMap;
+use bz_error::BuckErrorContext;
+use bz_hash::StdBuckHashMap;
 use itertools::Itertools;
 use parking_lot::Mutex;
 use rusqlite::Connection;
@@ -30,7 +30,7 @@ impl KeyValueSqliteTable {
         }
     }
 
-    pub fn create_table(&self) -> buck2_error::Result<()> {
+    pub fn create_table(&self) -> bz_error::Result<()> {
         let sql = format!(
             "CREATE TABLE {} (
                 key     TEXT PRIMARY KEY NOT NULL,
@@ -46,7 +46,7 @@ impl KeyValueSqliteTable {
         Ok(())
     }
 
-    pub fn insert_all(&self, map: StdBuckHashMap<String, String>) -> buck2_error::Result<()> {
+    pub fn insert_all(&self, map: StdBuckHashMap<String, String>) -> bz_error::Result<()> {
         let sql = format!(
             "INSERT OR REPLACE INTO {} (key, value) VALUES {}",
             self.table_name,
@@ -68,7 +68,7 @@ impl KeyValueSqliteTable {
         Ok(())
     }
 
-    pub fn read_all(&self) -> buck2_error::Result<StdBuckHashMap<String, String>> {
+    pub fn read_all(&self) -> bz_error::Result<StdBuckHashMap<String, String>> {
         let sql = format!("SELECT key, value FROM {}", self.table_name);
         tracing::trace!(sql = %sql, "read all from table");
         let connection = self.connection.lock();
@@ -80,7 +80,7 @@ impl KeyValueSqliteTable {
         Ok(map)
     }
 
-    pub fn get(&self, key: &str) -> buck2_error::Result<Option<String>> {
+    pub fn get(&self, key: &str) -> bz_error::Result<Option<String>> {
         let sql = format!("SELECT value FROM {} WHERE key = ?", self.table_name);
         tracing::trace!(sql = %sql, key = %key, "read from table");
         let connection = self.connection.lock();
@@ -99,8 +99,8 @@ impl KeyValueSqliteTable {
 #[cfg(test)]
 mod tests {
 
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
 
     use super::*;
 

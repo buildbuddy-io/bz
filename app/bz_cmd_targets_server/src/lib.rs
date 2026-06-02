@@ -16,11 +16,11 @@
 #![feature(used_with_arg)]
 
 use async_trait::async_trait;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::late_bindings::TARGETS_SERVER_COMMANDS;
-use buck2_server_ctx::late_bindings::TargetsServerCommands;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::late_bindings::TARGETS_SERVER_COMMANDS;
+use bz_server_ctx::late_bindings::TargetsServerCommands;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 pub mod ctargets;
 pub(crate) mod json;
@@ -35,9 +35,9 @@ impl TargetsServerCommands for TargetsServerCommandsInstance {
     async fn targets(
         &self,
         ctx: &dyn ServerCommandContextTrait,
-        partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-        req: buck2_cli_proto::TargetsRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::TargetsResponse> {
+        partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+        req: bz_cli_proto::TargetsRequest,
+    ) -> bz_error::Result<bz_cli_proto::TargetsResponse> {
         targets::targets_command(ctx, partial_result_dispatcher, req).await
     }
 
@@ -45,8 +45,8 @@ impl TargetsServerCommands for TargetsServerCommandsInstance {
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::TargetsRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::TargetsShowOutputsResponse> {
+        req: bz_cli_proto::TargetsRequest,
+    ) -> bz_error::Result<bz_cli_proto::TargetsShowOutputsResponse> {
         targets_show_outputs::targets_show_outputs_command(ctx, partial_result_dispatcher, req)
             .await
     }
@@ -55,8 +55,8 @@ impl TargetsServerCommands for TargetsServerCommandsInstance {
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::ConfiguredTargetsRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::ConfiguredTargetsResponse> {
+        req: bz_cli_proto::ConfiguredTargetsRequest,
+    ) -> bz_error::Result<bz_cli_proto::ConfiguredTargetsResponse> {
         ctargets::configured_targets_command(ctx, partial_result_dispatcher, req).await
     }
 }

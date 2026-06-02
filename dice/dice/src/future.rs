@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-// Copy-paste from `buck2_util`.
+// Copy-paste from `bz_util`.
 
 use std::future::Future;
 use std::iter;

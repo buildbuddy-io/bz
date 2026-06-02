@@ -10,27 +10,27 @@
 
 use std::time::SystemTime;
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_common::chunk_reader::ChunkReader;
-use buck2_common::manifold;
-use buck2_common::manifold::ManifoldChunkedUploader;
-use buck2_common::manifold::ManifoldClient;
-use buck2_core::soft_error;
-use buck2_data::InstantEvent;
-use buck2_data::PersistEventLogSubprocess;
-use buck2_data::instant_event::Data;
-use buck2_error::BuckErrorContext;
-use buck2_event_log::ttl::manifold_event_log_ttl;
-use buck2_events::BuckEvent;
-use buck2_events::daemon_id::DaemonId;
-use buck2_events::sink::remote::RemoteEventSink;
-use buck2_events::sink::remote::ScribeConfig;
-use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_common::chunk_reader::ChunkReader;
+use bz_common::manifold;
+use bz_common::manifold::ManifoldChunkedUploader;
+use bz_common::manifold::ManifoldClient;
+use bz_core::soft_error;
+use bz_data::InstantEvent;
+use bz_data::PersistEventLogSubprocess;
+use bz_data::instant_event::Data;
+use bz_error::BuckErrorContext;
+use bz_event_log::ttl::manifold_event_log_ttl;
+use bz_events::BuckEvent;
+use bz_events::daemon_id::DaemonId;
+use bz_events::sink::remote::RemoteEventSink;
+use bz_events::sink::remote::ScribeConfig;
+use bz_events::sink::remote::new_remote_event_sink_if_enabled;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_wrapper_common::invocation_id::TraceId;
 use tokio::fs::File;
 use tokio::fs::OpenOptions;
 use tokio::io;
@@ -44,7 +44,7 @@ use tokio::time::sleep;
 
 const MAX_WAIT: Duration = Duration::from_mins(5);
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 pub(crate) enum PersistEventLogError {
     #[error("Read more bytes than are available")]
@@ -77,7 +77,7 @@ impl PersistEventLogsCommand {
         ctx: ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
-        buck2_core::facebook_only();
+        bz_core::facebook_only();
         events_ctx.log_invocation_record = false;
         let sink = create_scribe_sink(&ctx)?;
         let trace_id = self.trace_id.clone();
@@ -97,7 +97,7 @@ impl PersistEventLogsCommand {
                 remote_error_messages,
                 remote_error_category,
                 remote_success,
-                metadata: buck2_events::metadata::collect(&DaemonId::null()),
+                metadata: bz_events::metadata::collect(&DaemonId::null()),
             };
             dispatch_event_to_scribe(sink.as_ref(), &trace_id, event_to_send).await;
         });
@@ -107,15 +107,15 @@ impl PersistEventLogsCommand {
     async fn write_and_upload(
         self,
         stdin: impl io::AsyncBufRead + Unpin,
-    ) -> (buck2_error::Result<()>, buck2_error::Result<()>) {
+    ) -> (bz_error::Result<()>, bz_error::Result<()>) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let file = match create_log_file(self.local_path).await {
             Ok(f) => Mutex::new(f),
             Err(e) => {
                 return (
                     Err(e),
-                    Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
+                    Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Tier0,
                         "Not tried"
                     )),
                 );
@@ -134,7 +134,7 @@ async fn write_task(
     file_mutex: &Mutex<File>,
     tx: tokio::sync::mpsc::UnboundedSender<u64>,
     mut stdin: impl io::AsyncBufRead + Unpin,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut write_position = 0;
     let mut buf = vec![0; 64 * 1024]; // maximum pipe size in linux
     loop {
@@ -152,7 +152,7 @@ async fn write_task(
     Ok(())
 }
 
-async fn create_log_file(local_path: String) -> Result<tokio::fs::File, buck2_error::Error> {
+async fn create_log_file(local_path: String) -> Result<tokio::fs::File, bz_error::Error> {
     let local_path = AbsPathBuf::new(local_path)?;
 
     let file = OpenOptions::new()
@@ -176,7 +176,7 @@ async fn upload_task(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
     manifold_name: String,
     no_upload: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if no_upload {
         return Ok(());
     }
@@ -237,7 +237,7 @@ impl<'a> Uploader<'a> {
         file_mutex: &'a Mutex<File>,
         manifold_path: &'a str,
         manifold_client: &'a ManifoldClient,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let manifold = manifold_client.start_chunked_upload(
             manifold::Bucket::EVENT_LOGS,
             manifold_path,
@@ -254,7 +254,7 @@ impl<'a> Uploader<'a> {
     }
 
     /// Uploads at most 'chunk size' bytes to Manifold
-    async fn upload_chunk(&mut self) -> buck2_error::Result<()> {
+    async fn upload_chunk(&mut self) -> bz_error::Result<()> {
         let mut file = self.file_mutex.lock().await;
         file.seek(io::SeekFrom::Start(self.manifold.position()))
             .await
@@ -270,7 +270,7 @@ impl<'a> Uploader<'a> {
         self.total_bytes += n
     }
 
-    fn can_fill_chunk(&mut self) -> buck2_error::Result<bool> {
+    fn can_fill_chunk(&mut self) -> bz_error::Result<bool> {
         Ok(self
             .total_bytes
             .checked_sub(self.manifold.position())
@@ -291,7 +291,7 @@ async fn write_to_file(
     file: &mut File,
     write_position: u64,
     buf: &[u8],
-) -> Result<(), buck2_error::Error> {
+) -> Result<(), bz_error::Error> {
     file.seek(io::SeekFrom::Start(write_position))
         .await
         .buck_error_context("Failed to seek log file")?;
@@ -300,7 +300,7 @@ async fn write_to_file(
     Ok(())
 }
 
-fn status_from_result(res: buck2_error::Result<()>) -> (Vec<String>, Option<String>, bool) {
+fn status_from_result(res: bz_error::Result<()>) -> (Vec<String>, Option<String>, bool) {
     // Returns a tuple of error messages, error category, and success/failure
     if let Err(e) = res {
         let status = (
@@ -315,7 +315,7 @@ fn status_from_result(res: buck2_error::Result<()>) -> (Vec<String>, Option<Stri
     }
 }
 
-fn categorize_error(err: &buck2_error::Error) -> &'static str {
+fn categorize_error(err: &bz_error::Error) -> &'static str {
     // This is for internal error tracking in `logview buck2`
     // Each category should point to 1 root cause
     // In case any of this is to be changed, just give a heads up
@@ -366,22 +366,22 @@ async fn dispatch_event_to_scribe(
     };
 }
 
-fn create_scribe_sink(ctx: &ClientCommandContext) -> buck2_error::Result<Option<RemoteEventSink>> {
+fn create_scribe_sink(ctx: &ClientCommandContext) -> bz_error::Result<Option<RemoteEventSink>> {
     new_remote_event_sink_if_enabled(ctx.fbinit(), ScribeConfig::default())
 }
 
 #[cfg(test)]
 mod tests {
-    use buck2_error::buck2_error;
+    use bz_error::bz_error;
 
     use super::*;
 
     #[test]
     fn test_categorize_error() {
-        let err = buck2_error!(buck2_error::ErrorTag::Environment, "CertificateRequired");
+        let err = bz_error!(bz_error::ErrorTag::Environment, "CertificateRequired");
         assert_eq!(categorize_error(&err), "persist_log_certificate_required");
 
-        let err = buck2_error!(buck2_error::ErrorTag::Tier0, "Some other error");
+        let err = bz_error!(bz_error::ErrorTag::Tier0, "Some other error");
         assert_eq!(categorize_error(&err), "persist_log_other");
     }
 }

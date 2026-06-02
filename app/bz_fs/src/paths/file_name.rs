@@ -17,7 +17,7 @@ use std::ops::Deref;
 use std::path::Path;
 
 use allocative::Allocative;
-use buck2_util::arc_str::StringInside;
+use bz_util::arc_str::StringInside;
 use compact_str::CompactString;
 use derive_more::Display;
 use pagable::Pagable;
@@ -29,7 +29,7 @@ use serde::Serialize;
 use crate::paths::forward_rel_path::ForwardRelativePath;
 
 /// Errors from ForwardRelativePath creation
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum FileNameError {
     #[error("file name is empty")]
@@ -44,7 +44,7 @@ enum FileNameError {
     NotUnicode(OsString),
 }
 
-fn verify_file_name(file_name: &str) -> buck2_error::Result<()> {
+fn verify_file_name(file_name: &str) -> bz_error::Result<()> {
     if file_name.is_empty() {
         Err(FileNameError::Empty.into())
     } else if file_name == "." {
@@ -130,7 +130,7 @@ impl FileName {
     /// platform-independent file name, otherwise error.
     ///
     /// ```
-    /// use buck2_fs::paths::file_name::FileName;
+    /// use bz_fs::paths::file_name::FileName;
     /// assert!(FileName::new("foo").is_ok());
     /// assert!(FileName::new("").is_err());
     /// assert!(FileName::new(".").is_err());
@@ -141,12 +141,12 @@ impl FileName {
     /// assert!(FileName::new("foo\\bar").is_err());
     /// ```
     #[inline]
-    pub fn new<S: ?Sized + AsRef<str>>(s: &S) -> buck2_error::Result<&Self> {
+    pub fn new<S: ?Sized + AsRef<str>>(s: &S) -> bz_error::Result<&Self> {
         verify_file_name(s.as_ref())?;
         Ok(Self::unchecked_new(s.as_ref()))
     }
 
-    pub fn from_os_string(file_name: &OsString) -> buck2_error::Result<&FileName> {
+    pub fn from_os_string(file_name: &OsString) -> bz_error::Result<&FileName> {
         let file_name = file_name
             .to_str()
             .ok_or_else(|| FileNameError::NotUnicode(file_name.clone()))?;
@@ -183,13 +183,13 @@ impl FileName {
     /// * Otherwise, the portion of the file name before the final `.`
     ///
     /// ```
-    /// use buck2_fs::paths::file_name::FileName;
+    /// use bz_fs::paths::file_name::FileName;
     ///
     /// let path = FileName::new("foo.rs")?;
     ///
     /// assert_eq!(Some("foo"), path.file_stem());
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn file_stem(&self) -> Option<&str> {
@@ -199,11 +199,11 @@ impl FileName {
     /// Extracts the extension of `self.file_name`, if possible.
     ///
     /// ```
-    /// use buck2_fs::paths::file_name::FileName;
+    /// use bz_fs::paths::file_name::FileName;
     ///
     /// assert_eq!(Some("rs"), FileName::new("foo.rs")?.extension());
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn extension(&self) -> Option<&str> {
@@ -364,19 +364,19 @@ impl AsRef<ForwardRelativePath> for FileNameBuf {
 }
 
 impl<'a> TryFrom<&'a str> for &'a FileName {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     #[inline]
-    fn try_from(value: &'a str) -> buck2_error::Result<&'a FileName> {
+    fn try_from(value: &'a str) -> bz_error::Result<&'a FileName> {
         FileName::new(value)
     }
 }
 
 impl TryFrom<String> for FileNameBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     #[inline]
-    fn try_from(value: String) -> buck2_error::Result<FileNameBuf> {
+    fn try_from(value: String) -> bz_error::Result<FileNameBuf> {
         // NOTE: This does not turn a String into an inlined string.
         verify_file_name(value.as_str())?;
         Ok(FileNameBuf(value.into()))
@@ -384,10 +384,10 @@ impl TryFrom<String> for FileNameBuf {
 }
 
 impl TryFrom<CompactString> for FileNameBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     #[inline]
-    fn try_from(value: CompactString) -> buck2_error::Result<FileNameBuf> {
+    fn try_from(value: CompactString) -> bz_error::Result<FileNameBuf> {
         verify_file_name(value.as_str())?;
         Ok(FileNameBuf(value))
     }

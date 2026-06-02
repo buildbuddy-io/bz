@@ -12,12 +12,12 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::SystemTime;
 
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::restarter::Restarter;
-use buck2_client_ctx::tokio_runtime_setup::client_tokio_runtime;
-use buck2_core::logging::LogConfigurationReloadHandle;
-use buck2_fs::working_dir::AbsWorkingDir;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::restarter::Restarter;
+use bz_client_ctx::tokio_runtime_setup::client_tokio_runtime;
+use bz_core::logging::LogConfigurationReloadHandle;
+use bz_fs::working_dir::AbsWorkingDir;
+use bz_wrapper_common::invocation_id::TraceId;
 use superconsole::Stdin;
 use tokio::runtime::Runtime;
 
@@ -48,7 +48,7 @@ impl ClientRuntime {
     }
 
     // Should not be initialized before daemon forks.
-    pub fn get_or_init(&mut self) -> buck2_error::Result<&Runtime> {
+    pub fn get_or_init(&mut self) -> bz_error::Result<&Runtime> {
         if let Some(s) = self.0.get() {
             Ok(s)
         } else {

@@ -11,12 +11,12 @@
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::configurations::AuditConfigurationsCommand;
-use buck2_core::configuration::bound_id::BoundConfigurationId;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::configurations::AuditConfigurationsCommand;
+use bz_core::configuration::bound_id::BoundConfigurationId;
+use bz_core::configuration::data::ConfigurationData;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use itertools::Itertools;
 
 use crate::ServerAuditSubcommand;
@@ -26,9 +26,9 @@ impl ServerAuditSubcommand for AuditConfigurationsCommand {
     async fn server_execute(
         &self,
         _server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut stdout = stdout.as_writer();
 
         if self.configs.is_empty() {
@@ -50,7 +50,7 @@ impl ServerAuditSubcommand for AuditConfigurationsCommand {
     }
 }
 
-fn print_cfg(stdout: &mut impl Write, cfg: &ConfigurationData) -> buck2_error::Result<()> {
+fn print_cfg(stdout: &mut impl Write, cfg: &ConfigurationData) -> bz_error::Result<()> {
     writeln!(stdout, "{}:", cfg.full_name())?;
     let data = cfg.data()?;
     for (constraint_key, constraint_value) in data

@@ -15,9 +15,9 @@ use std::fmt::Debug;
 use std::fmt::Display;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_node::attrs::attr_type::arg::ConfiguredStringWithMacros;
-use buck2_util::arc_str::ArcStr;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_node::attrs::attr_type::arg::ConfiguredStringWithMacros;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
@@ -91,7 +91,7 @@ pub fn add_output_to_arg(
     ctx: &mut dyn CommandLineContext,
     artifact: &StarlarkArtifact,
     artifact_path_mapping: &dyn ArtifactPathMapper,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let path = ctx
         .resolve_artifact(&artifact.get_bound_artifact()?, artifact_path_mapping)?
         .into_string();
@@ -104,7 +104,7 @@ fn add_outputs_to_arg(
     ctx: &mut dyn CommandLineContext,
     outputs_list: &[StarlarkArtifact],
     artifact_path_mapping: &dyn ArtifactPathMapper,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for (i, value) in outputs_list.iter().enumerate() {
         if i != 0 {
             builder.push_str(" ");
@@ -120,7 +120,7 @@ impl<'v> ResolvedMacro<'v> {
         builder: &mut dyn ArgBuilder,
         ctx: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             Self::Source(artifact) => {
                 let s = ctx
@@ -148,7 +148,7 @@ impl<'v> ResolvedMacro<'v> {
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             Self::Location(info) => {
                 info.for_each_output(&mut |i| visitor.visit_input(i, vec![]))?;
@@ -241,13 +241,13 @@ impl<'v> CommandLineArgLike<'v> for ResolvedStringWithMacros {
         cmdline_builder: &mut dyn CommandLineBuilder,
         ctx: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         struct Builder {
             arg: String,
         }
 
         impl Builder {
-            fn push_path(&mut self, ctx: &mut dyn CommandLineContext) -> buck2_error::Result<()> {
+            fn push_path(&mut self, ctx: &mut dyn CommandLineContext) -> bz_error::Result<()> {
                 let next_path = ctx.next_macro_file_path()?;
                 self.push_str(next_path.as_str());
                 Ok(())
@@ -287,7 +287,7 @@ impl<'v> CommandLineArgLike<'v> for ResolvedStringWithMacros {
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for part in &*self.parts {
             if let ResolvedStringWithMacrosPart::Macro(_, val) = part {
                 val.visit_artifacts(visitor)?;
@@ -305,7 +305,7 @@ impl<'v> CommandLineArgLike<'v> for ResolvedStringWithMacros {
         &self,
         visitor: &mut dyn WriteToFileMacroVisitor,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for part in &*self.parts {
             match part {
                 ResolvedStringWithMacrosPart::String(_) => {

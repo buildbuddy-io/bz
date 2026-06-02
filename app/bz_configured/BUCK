@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_configured",
+    name = "bz_configured",
     srcs = glob(
         ["src/**/*.rs"],
     ),
@@ -14,14 +14,14 @@ rust_library(
         "fbsource//third-party/rust:itertools",
         "fbsource//third-party/rust:ref-cast",
         "//bz/allocative/allocative:allocative",
-        "//bz/app/bz_build_api:buck2_build_api",
-        "//bz/app/bz_build_signals:buck2_build_signals",
-        "//bz/app/bz_common:buck2_common",
-        "//bz/app/bz_core:buck2_core",
-        "//bz/app/bz_error:buck2_error",
-        "//bz/app/bz_node:buck2_node",
-        "//bz/app/bz_util:buck2_util",
-        "//bz/shed/buck2_hash:buck2_hash",
+        "//bz/app/bz_build_api:bz_build_api",
+        "//bz/app/bz_build_signals:bz_build_signals",
+        "//bz/app/bz_common:bz_common",
+        "//bz/app/bz_core:bz_core",
+        "//bz/app/bz_error:bz_error",
+        "//bz/app/bz_node:bz_node",
+        "//bz/app/bz_util:bz_util",
+        "//bz/shed/bz_hash:bz_hash",
         "//bz/dice/dice:dice",
         "//bz/dice/dice_futures:dice_futures",
         "//bz/gazebo/dupe:dupe",

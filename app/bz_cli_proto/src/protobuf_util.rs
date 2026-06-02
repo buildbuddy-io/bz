@@ -10,7 +10,7 @@
 
 use std::io::Cursor;
 
-use buck2_error::buck2_error;
+use bz_error::bz_error;
 use bytes::BytesMut;
 use tokio_util::codec::Decoder;
 
@@ -19,7 +19,7 @@ pub struct ProtobufSplitter;
 
 impl Decoder for ProtobufSplitter {
     type Item = BytesMut;
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let orig_len = src.len();
@@ -29,8 +29,8 @@ impl Decoder for ProtobufSplitter {
             Err(..) => {
                 // 10 bytes is the largest length of an encoded size
                 if orig_len > 10 {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::Tier0,
                         "Corrupted stream"
                     ));
                 } else {
@@ -51,7 +51,7 @@ impl Decoder for ProtobufSplitter {
 
 #[cfg(test)]
 mod tests {
-    use buck2_error::internal_error;
+    use bz_error::internal_error;
     use futures::stream::StreamExt;
     use prost::Message;
     use tokio_util::codec::FramedRead;
@@ -66,7 +66,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_split() -> buck2_error::Result<()> {
+    async fn test_split() -> bz_error::Result<()> {
         let mut buffer = Vec::new();
 
         let foo = TestMessage {

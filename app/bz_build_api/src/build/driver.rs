@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::liveliness_observer::LivelinessObserver;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_error::BuckErrorContext;
+use bz_common::liveliness_observer::LivelinessObserver;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_error::BuckErrorContext;
 use dice::CancellationContext;
 use dice::DiceComputations;
 use dice::Key;
@@ -71,7 +71,7 @@ impl std::fmt::Display for BuildDriverKey {
 
 #[async_trait]
 impl Key for BuildDriverKey {
-    type Value = buck2_error::Result<()>;
+    type Value = bz_error::Result<()>;
 
     async fn compute(
         &self,
@@ -116,7 +116,7 @@ impl Key for BuildDriverKey {
 async fn compute_build_driver(
     ctx: &mut DiceComputations<'_>,
     key: &BuildDriverKey,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let completion_key = TargetCompletionKey::new(
         key.providers_label.dupe(),
         key.providers_to_build.clone(),

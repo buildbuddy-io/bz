@@ -10,11 +10,11 @@
 
 use std::io::Cursor;
 
-use buck2_common::manifold::Bucket;
-use buck2_common::manifold::ManifoldClient;
-use buck2_fs::async_fs_util;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::paths::abs_path::AbsPath;
+use bz_common::manifold::Bucket;
+use bz_common::manifold::ManifoldClient;
+use bz_fs::async_fs_util;
+use bz_fs::error::IoResultExt;
+use bz_fs::paths::abs_path::AbsPath;
 
 pub(crate) fn manifold_leads(bucket: &Bucket, filename: String) -> String {
     let full_path = bucket.path(filename.as_str());
@@ -27,7 +27,7 @@ pub(crate) async fn file_to_manifold(
     manifold: &ManifoldClient,
     path: &AbsPath,
     filename: String,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let bucket = Bucket::RAGE_DUMPS;
     // can't use async_fs_util
     // the trait to convert from tokio::fs::File is not implemented for Stdio
@@ -44,7 +44,7 @@ pub(crate) async fn buf_to_manifold(
     manifold: &ManifoldClient,
     buf: &[u8],
     filename: String,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let bucket = Bucket::RAGE_DUMPS;
     let mut cursor = &mut Cursor::new(buf);
 

@@ -13,73 +13,73 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::build;
-use buck2_build_api::build::AsyncBuildTargetResultBuilder;
-use buck2_build_api::build::BuildEvent;
-use buck2_build_api::build::BuildEventConsumer;
-use buck2_build_api::build::BuildEventSink;
-use buck2_build_api::build::BuildTargetResult;
-use buck2_build_api::build::ConfiguredBuildEventVariant;
-use buck2_build_api::build::HasBuildEventSink;
-use buck2_build_api::build::HasCreateUnhashedSymlinkLock;
-use buck2_build_api::build::ProvidersToBuild;
-use buck2_build_api::build::build_report::build_report_opts;
-use buck2_build_api::build::build_report::initialize_streaming_build_report;
-use buck2_build_api::build::build_report::stream_build_report;
-use buck2_build_api::build::build_report::write_build_report;
-use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
-use buck2_build_api::build::detailed_aggregated_metrics::types::ActionGraphSketchResult;
-use buck2_build_api::build::detailed_aggregated_metrics::types::DetailedAggregatedMetrics;
-use buck2_build_api::build::eager::HasEagerBuildExecution;
-use buck2_build_api::build::graph_properties::GraphPropertiesOptions;
-use buck2_build_api::build::overlap::HasBuildOverlapTracker;
-use buck2_build_api::materialize::MaterializationAndUploadContext;
-use buck2_cli_proto::CommonBuildOptions;
-use buck2_cli_proto::build_request::BuildProviders;
-use buck2_cli_proto::build_request::Materializations;
-use buck2_cli_proto::build_request::Uploads;
-use buck2_cli_proto::build_request::build_providers::Action as BuildProviderAction;
-use buck2_cli_proto::common_build_options::ExecutionStrategy;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::liveliness_observer::LivelinessObserver;
-use buck2_common::liveliness_observer::TimeoutLivelinessObserver;
-use buck2_common::pattern::parse_from_cli::parse_patterns_with_modifiers_from_cli_args;
-use buck2_common::pattern::resolve::ResolveTargetPatterns;
-use buck2_common::pattern::resolve::ResolvedPattern;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabelWithModifiers;
-use buck2_core::pattern::pattern::Modifiers;
-use buck2_core::pattern::pattern::ModifiersError;
-use buck2_core::pattern::pattern::PackageSpec;
-use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
-use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::soft_error;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_data::BuildResult;
-use buck2_data::ToProtoMessage;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::console_message;
-use buck2_events::dispatch::instant_event;
-use buck2_events::dispatch::span_async;
-use buck2_node::configured_universe::CqueryUniverse;
-use buck2_node::load_patterns::MissingTargetBehavior;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
-use buck2_server_ctx::commands::send_target_cfg_event;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::target_resolution_config::TargetResolutionConfig;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::build;
+use bz_build_api::build::AsyncBuildTargetResultBuilder;
+use bz_build_api::build::BuildEvent;
+use bz_build_api::build::BuildEventConsumer;
+use bz_build_api::build::BuildEventSink;
+use bz_build_api::build::BuildTargetResult;
+use bz_build_api::build::ConfiguredBuildEventVariant;
+use bz_build_api::build::HasBuildEventSink;
+use bz_build_api::build::HasCreateUnhashedSymlinkLock;
+use bz_build_api::build::ProvidersToBuild;
+use bz_build_api::build::build_report::build_report_opts;
+use bz_build_api::build::build_report::initialize_streaming_build_report;
+use bz_build_api::build::build_report::stream_build_report;
+use bz_build_api::build::build_report::write_build_report;
+use bz_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
+use bz_build_api::build::detailed_aggregated_metrics::types::ActionGraphSketchResult;
+use bz_build_api::build::detailed_aggregated_metrics::types::DetailedAggregatedMetrics;
+use bz_build_api::build::eager::HasEagerBuildExecution;
+use bz_build_api::build::graph_properties::GraphPropertiesOptions;
+use bz_build_api::build::overlap::HasBuildOverlapTracker;
+use bz_build_api::materialize::MaterializationAndUploadContext;
+use bz_cli_proto::CommonBuildOptions;
+use bz_cli_proto::build_request::BuildProviders;
+use bz_cli_proto::build_request::Materializations;
+use bz_cli_proto::build_request::Uploads;
+use bz_cli_proto::build_request::build_providers::Action as BuildProviderAction;
+use bz_cli_proto::common_build_options::ExecutionStrategy;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::liveliness_observer::LivelinessObserver;
+use bz_common::liveliness_observer::TimeoutLivelinessObserver;
+use bz_common::pattern::parse_from_cli::parse_patterns_with_modifiers_from_cli_args;
+use bz_common::pattern::resolve::ResolveTargetPatterns;
+use bz_common::pattern::resolve::ResolvedPattern;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabelWithModifiers;
+use bz_core::pattern::pattern::Modifiers;
+use bz_core::pattern::pattern::ModifiersError;
+use bz_core::pattern::pattern::PackageSpec;
+use bz_core::pattern::pattern::ParsedPatternWithModifiers;
+use bz_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::soft_error;
+use bz_core::target::label::label::TargetLabel;
+use bz_data::BuildResult;
+use bz_data::ToProtoMessage;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::console_message;
+use bz_events::dispatch::instant_event;
+use bz_events::dispatch::span_async;
+use bz_node::configured_universe::CqueryUniverse;
+use bz_node::load_patterns::MissingTargetBehavior;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
+use bz_server_ctx::commands::send_target_cfg_event;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::target_resolution_config::TargetResolutionConfig;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::DiceComputations;
 use dice::DiceTransaction;
 use dupe::Dupe;
@@ -98,29 +98,29 @@ mod unhashed_outputs;
 pub(crate) async fn build_command(
     ctx: &dyn ServerCommandContextTrait,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-    req: buck2_cli_proto::BuildRequest,
-) -> buck2_error::Result<buck2_cli_proto::BuildResponse> {
+    req: bz_cli_proto::BuildRequest,
+) -> bz_error::Result<bz_cli_proto::BuildResponse> {
     run_server_command(BuildServerCommand { req }, ctx, partial_result_dispatcher).await
 }
 
 struct BuildServerCommand {
-    req: buck2_cli_proto::BuildRequest,
+    req: bz_cli_proto::BuildRequest,
 }
 
 #[async_trait]
 impl ServerCommandTemplate for BuildServerCommand {
-    type StartEvent = buck2_data::BuildCommandStart;
-    type EndEvent = buck2_data::BuildCommandEnd;
-    type Response = buck2_cli_proto::BuildResponse;
+    type StartEvent = bz_data::BuildCommandStart;
+    type EndEvent = bz_data::BuildCommandEnd;
+    type Response = bz_cli_proto::BuildResponse;
     type PartialResult = NoPartialResult;
 
-    fn end_event(&self, _response: &buck2_error::Result<Self::Response>) -> Self::EndEvent {
-        buck2_data::BuildCommandEnd {
+    fn end_event(&self, _response: &bz_error::Result<Self::Response>) -> Self::EndEvent {
+        bz_data::BuildCommandEnd {
             unresolved_target_patterns: self
                 .req
                 .target_patterns
                 .iter()
-                .map(|p| buck2_data::TargetPattern { value: p.clone() })
+                .map(|p| bz_data::TargetPattern { value: p.clone() })
                 .collect(),
         }
     }
@@ -130,7 +130,7 @@ impl ServerCommandTemplate for BuildServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         build(server_ctx, ctx, &self.req).await
     }
 
@@ -141,11 +141,11 @@ impl ServerCommandTemplate for BuildServerCommand {
     }
 }
 
-fn expect_build_opts(req: &buck2_cli_proto::BuildRequest) -> &CommonBuildOptions {
+fn expect_build_opts(req: &bz_cli_proto::BuildRequest) -> &CommonBuildOptions {
     req.build_opts.as_ref().expect("should have build options")
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 #[error(
     "`buck2 run` will require a `--` separator before target arguments in the future. \
@@ -156,8 +156,8 @@ struct RunArgsMissingSeparator;
 async fn build(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
-    request: &buck2_cli_proto::BuildRequest,
-) -> buck2_error::Result<buck2_cli_proto::BuildResponse> {
+    request: &bz_cli_proto::BuildRequest,
+) -> bz_error::Result<bz_cli_proto::BuildResponse> {
     if request.run_args_missing_separator {
         soft_error!(
             "run_args_without_separator",
@@ -412,15 +412,15 @@ async fn build(
 async fn process_streaming_build_result(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
-    request: &buck2_cli_proto::BuildRequest,
+    request: &bz_cli_proto::BuildRequest,
     build_result: BuildTargetResult,
     detailed_metrics: Option<DetailedAggregatedMetrics>,
     graph_properties_opts: GraphPropertiesOptions,
     action_graph_sketch_result: Option<ActionGraphSketchResult>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let build_opts = expect_build_opts(request);
     let fs = server_ctx.project_root();
-    let cwd: &buck2_core::fs::project_rel_path::ProjectRelativePath = server_ctx.working_dir();
+    let cwd: &bz_core::fs::project_rel_path::ProjectRelativePath = server_ctx.working_dir();
     let cell_resolver = ctx.get_cell_resolver().await?;
     let artifact_fs = ctx.get_artifact_fs().await?;
 
@@ -447,12 +447,12 @@ async fn process_streaming_build_result(
 async fn init_streaming_build_report(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
-    request: &buck2_cli_proto::BuildRequest,
+    request: &bz_cli_proto::BuildRequest,
     graph_properties_opts: GraphPropertiesOptions,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let build_opts = expect_build_opts(request);
     let fs = server_ctx.project_root();
-    let cwd: &buck2_core::fs::project_rel_path::ProjectRelativePath = server_ctx.working_dir();
+    let cwd: &bz_core::fs::project_rel_path::ProjectRelativePath = server_ctx.working_dir();
     let cell_resolver = ctx.get_cell_resolver().await?;
 
     let build_report_opts =
@@ -464,14 +464,14 @@ async fn init_streaming_build_report(
 }
 
 async fn maybe_stream_build_reports(
-    build_future: impl std::future::Future<Output = buck2_error::Result<BuildTargetResult>>,
+    build_future: impl std::future::Future<Output = bz_error::Result<BuildTargetResult>>,
     build_opts: &CommonBuildOptions,
     ctx: DiceTransaction,
     graph_properties: GraphPropertiesOptions,
     server_ctx: &dyn ServerCommandContextTrait,
-    request: &buck2_cli_proto::BuildRequest,
+    request: &bz_cli_proto::BuildRequest,
     mut streaming_build_result_rx: tokio::sync::mpsc::UnboundedReceiver<BuildTargetResult>,
-) -> buck2_error::Result<BuildTargetResult> {
+) -> bz_error::Result<BuildTargetResult> {
     if build_opts
         .unstable_streaming_build_report_filename
         .is_empty()
@@ -526,12 +526,12 @@ async fn maybe_stream_build_reports(
 async fn process_build_result(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
-    request: &buck2_cli_proto::BuildRequest,
+    request: &bz_cli_proto::BuildRequest,
     build_result: BuildTargetResult,
     detailed_metrics: Option<DetailedAggregatedMetrics>,
     action_graph_sketch_result: Option<ActionGraphSketchResult>,
     graph_properties_opts: GraphPropertiesOptions,
-) -> buck2_error::Result<buck2_cli_proto::BuildResponse> {
+) -> bz_error::Result<bz_cli_proto::BuildResponse> {
     let fs = server_ctx.project_root();
     let cwd = server_ctx.working_dir();
 
@@ -591,7 +591,7 @@ async fn process_build_result(
         .await?;
 
     if should_create_unhashed_links.unwrap_or(false) {
-        span_async(buck2_data::CreateOutputSymlinksStart {}, async {
+        span_async(bz_data::CreateOutputSymlinksStart {}, async {
             let lock = ctx
                 .per_transaction_data()
                 .get_create_unhashed_symlink_lock();
@@ -602,7 +602,7 @@ async fn process_build_result(
                 Ok(n) => *n,
                 Err(..) => 0,
             };
-            (res, buck2_data::CreateOutputSymlinksEnd { created })
+            (res, bz_data::CreateOutputSymlinksEnd { created })
         })
         .await?;
     }
@@ -612,13 +612,13 @@ async fn process_build_result(
         .build_errors
         .errors
         .iter()
-        .map(buck2_data::ErrorReport::from)
+        .map(bz_data::ErrorReport::from)
         .unique_by(|e| e.message.clone())
         .collect();
 
     let project_root = server_ctx.project_root().to_string();
 
-    Ok(buck2_cli_proto::BuildResponse {
+    Ok(bz_cli_proto::BuildResponse {
         build_targets,
         project_root,
         serialized_build_report,
@@ -639,7 +639,7 @@ async fn build_targets(
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
     streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
     build_start: Instant,
-) -> buck2_error::Result<BuildTargetResult> {
+) -> bz_error::Result<BuildTargetResult> {
     let (builder, consumer) =
         AsyncBuildTargetResultBuilder::new(streaming_build_result_tx, build_start);
     ctx.per_transaction_data()
@@ -900,7 +900,7 @@ async fn build_targets_for_spec(
     let res = match ctx.get_interpreter_results(package.dupe()).await {
         Ok(res) => res,
         Err(e) => {
-            let e: buck2_error::Error = e;
+            let e: bz_error::Error = e;
             // Try to associate the error to concrete targets, if possible
             let targets = match spec {
                 PackageSpec::Targets(targets) => Either::Left(

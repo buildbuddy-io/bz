@@ -14,27 +14,27 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use buck2_common::cas_digest::TrackedCasDigest;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileDigestKind;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::buck2_env;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::soft_error;
-use buck2_data::ReUploadMetrics;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
-use buck2_directory::directory::directory_ref::FingerprintedDirectoryRef;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
+use bz_common::cas_digest::TrackedCasDigest;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileDigestKind;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::bz_env;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::soft_error;
+use bz_data::ReUploadMetrics;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::directory_iterator::DirectoryIteratorPathStack;
+use bz_directory::directory::directory_ref::FingerprintedDirectoryRef;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_directory::directory::fingerprinted_directory::FingerprintedDirectory;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
@@ -185,14 +185,14 @@ impl UploadClaim {
         (claimed_files, claimed_blobs, claim)
     }
 
-    async fn wait_for_other_uploads(&self) -> buck2_error::Result<()> {
+    async fn wait_for_other_uploads(&self) -> bz_error::Result<()> {
         for waiter in &self.waiters {
             waiter
                 .clone()
                 .await
                 .map_err(|message| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::ReUnknown,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::ReUnknown,
                         "Remote upload failed in another concurrent action: {}",
                         message
                     )
@@ -223,13 +223,13 @@ impl Uploader {
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
         deduplicate_get_digests_ttl_calls: bool,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         Vec<InlinedBlobWithDigest>,
         StdBuckHashSet<&'a TrackedCasDigest<FileDigestKind>>,
     )> {
         // RE mentions they usually take 5-10 minutes of leeway so we mirror this here.
         let now = Utc::now();
-        let ttl_wanted = if buck2_core::is_open_source() {
+        let ttl_wanted = if bz_core::is_open_source() {
             1
         } else {
             600i64
@@ -296,9 +296,9 @@ impl Uploader {
             where
                 I: Iterator<Item = &'a TrackedFileDigest>,
             {
-                type Item = buck2_error::Result<(&'a TrackedFileDigest, i64)>;
+                type Item = bz_error::Result<(&'a TrackedFileDigest, i64)>;
 
-                fn next(&mut self) -> Option<buck2_error::Result<(&'a TrackedFileDigest, i64)>> {
+                fn next(&mut self) -> Option<bz_error::Result<(&'a TrackedFileDigest, i64)>> {
                     let digest = self.inner.next()?;
                     let digest_ttl = self
                         .ttls
@@ -370,7 +370,7 @@ impl Uploader {
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
         deduplicate_get_digests_ttl_calls: bool,
-    ) -> buck2_error::Result<UploadStats> {
+    ) -> bz_error::Result<UploadStats> {
         let (mut upload_blobs, mut missing_digests) = Self::find_missing(
             client,
             input_dir,
@@ -570,8 +570,8 @@ impl Uploader {
                                 if should_error_for_missing_digest(info) {
                                     soft_error!(
                                         "cas_missing_fatal",
-                                        buck2_error::buck2_error!(
-                                            buck2_error::ErrorTag::Input,
+                                        bz_error::bz_error!(
+                                            bz_error::ErrorTag::Input,
                                             "{} missing (origin: {})",
                                             file.digest,
                                             info.origin.as_display_for_not_found(),
@@ -580,8 +580,8 @@ impl Uploader {
                                         action_cache_is_corrupted: info.origin.guaranteed_by_action_cache()
                                     )?;
 
-                                    return Err(buck2_error::buck2_error!(
-                                        buck2_error::ErrorTag::ReCasArtifactExpired,
+                                    return Err(bz_error::bz_error!(
+                                        bz_error::ErrorTag::ReCasArtifactExpired,
                                         "Your build requires an artifact that has expired in the RE CAS \
                                         and Buck does not have it. This likely happened because your Buck daemon \
                                         has been online for a long time. This error is currently unrecoverable. \
@@ -593,8 +593,8 @@ impl Uploader {
 
                                 soft_error!(
                                     "cas_missing",
-                                    buck2_error::buck2_error!(
-                                        buck2_error::ErrorTag::Input,
+                                    bz_error::bz_error!(
+                                        bz_error::ErrorTag::Input,
                                         "{} (expires = {}) is missing in the CAS but expected to exist as per: {:#}",
                                         file.digest,
                                         file.digest.expires()?,
@@ -692,9 +692,9 @@ impl Uploader {
             .await
             .map(|_| ())
             .map_err(|e| {
-                if e.tags().contains(&buck2_error::ErrorTag::ReInvalidArgument) {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::ReInvalidArgument,
+                if e.tags().contains(&bz_error::ErrorTag::ReInvalidArgument) {
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::ReInvalidArgument,
                         "RE Upload failed. It looks like you might have modified files while the build \
                         was in progress. Retry your build to proceed. Debug information: {:#}",
                         e
@@ -750,9 +750,9 @@ where
 fn error_for_missing_file(
     digest: &TDigest,
     cause: &ArtifactNotMaterializedReason,
-) -> buck2_error::Error {
-    buck2_error::buck2_error!(
-        buck2_error::ErrorTag::ReInvalidGetCasResponse,
+) -> bz_error::Error {
+    bz_error::bz_error!(
+        bz_error::ErrorTag::ReInvalidGetCasResponse,
         "Action execution requires artifact `{}` but the materializer did not return a matching \
         file for this path. This error is unrecoverable and you should restart Buck using \
         `buck2 killall`. We would appreciate a bug report. Debug information: {:#}",
@@ -766,21 +766,21 @@ fn error_for_missing_file(
 fn add_injected_missing_digests<'a>(
     input_digests: &StdBuckHashSet<&'a TrackedFileDigest>,
     missing_digests: &mut StdBuckHashSet<&'a TrackedFileDigest>,
-) -> buck2_error::Result<()> {
-    fn convert_digests(val: &str) -> buck2_error::Result<Vec<FileDigest>> {
+) -> bz_error::Result<()> {
+    fn convert_digests(val: &str) -> bz_error::Result<Vec<FileDigest>> {
         val.split(' ')
             .map(|digest| {
                 let digest = TDigest::from_str(digest)
-                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::InvalidDigest))
+                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::InvalidDigest))
                     .with_buck_error_context(|| format!("Invalid digest: `{digest}`"))?;
                 // This code does not run in a test but it is only used for testing.
                 let digest = FileDigest::from_re(&digest, DigestConfig::testing_default())?;
-                buck2_error::Ok(digest)
+                bz_error::Ok(digest)
             })
             .collect()
     }
 
-    let ingested_digests = buck2_env!(
+    let ingested_digests = bz_env!(
         "BUCK2_TEST_INJECTED_MISSING_DIGESTS",
         type=Vec<FileDigest>,
         converter=convert_digests,
@@ -829,7 +829,7 @@ struct GetDigestsTtlDeduper<'s> {
     /// Maps a request to the actual future that will contain its results.
     queries: StdBuckHashMap<
         RequestId,
-        Shared<BoxFuture<'s, buck2_error::Result<StdBuckHashMap<TrackedFileDigest, i64>>>>,
+        Shared<BoxFuture<'s, bz_error::Result<StdBuckHashMap<TrackedFileDigest, i64>>>>,
     >,
 }
 
@@ -844,7 +844,7 @@ impl<'s> GetDigestsTtlDeduper<'s> {
         digest_config: DigestConfig,
         digests: impl IntoIterator<Item = &'a TrackedFileDigest>,
     ) -> (
-        impl Future<Output = buck2_error::Result<StdBuckHashMap<TrackedFileDigest, i64>>> + 's,
+        impl Future<Output = bz_error::Result<StdBuckHashMap<TrackedFileDigest, i64>>> + 's,
         usize,
         usize,
     ) {
@@ -915,7 +915,7 @@ fn query_digest_ttls<'s>(
     identity: Option<&ReActionIdentity<'_>>,
     digest_config: DigestConfig,
     input_digests: Vec<TrackedFileDigest>,
-) -> BoxFuture<'s, buck2_error::Result<StdBuckHashMap<TrackedFileDigest, i64>>> {
+) -> BoxFuture<'s, bz_error::Result<StdBuckHashMap<TrackedFileDigest, i64>>> {
     let client = client.dupe();
     let metadata = use_case.metadata(identity);
     let digests = input_digests.iter().map(|d| d.to_re()).collect();
@@ -950,15 +950,15 @@ fn process_get_digest_ttls_response<T>(
     mut req: Vec<T>,
     res: GetDigestsTtlResponse,
     digest_config: DigestConfig,
-) -> buck2_error::Result<impl Iterator<Item = buck2_error::Result<(T, i64)>>>
+) -> bz_error::Result<impl Iterator<Item = bz_error::Result<(T, i64)>>>
 where
     T: Borrow<TrackedFileDigest> + Ord,
 {
     let digest_ttls = res.digests_with_ttl;
 
     if req.len() != digest_ttls.len() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::ReInvalidGetCasResponse,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::ReInvalidGetCasResponse,
             "Invalid response from get_digests_ttl: expected {}, got {} digests",
             req.len(),
             digest_ttls.len()
@@ -968,8 +968,8 @@ where
     req.sort();
 
     let mut digest_ttls = digest_ttls.into_try_map(|d| {
-        buck2_error::Ok((
-            FileDigest::from_re(&d.digest, digest_config).map_err(buck2_error::Error::from)?,
+        bz_error::Ok((
+            FileDigest::from_re(&d.digest, digest_config).map_err(bz_error::Error::from)?,
             d.ttl,
         ))
     })?;
@@ -980,8 +980,8 @@ where
         .zip(digest_ttls)
         .map(|(digest, (matching_digest, digest_ttl))| {
             if *digest.borrow().data() != matching_digest {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::ReInvalidGetCasResponse,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::ReInvalidGetCasResponse,
                     "Invalid response from get_digests_ttl"
                 ));
             }

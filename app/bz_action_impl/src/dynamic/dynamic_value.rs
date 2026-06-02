@@ -11,7 +11,7 @@
 use std::hash::Hash;
 
 use allocative::Allocative;
-use buck2_build_api::dynamic_value::DynamicValue;
+use bz_build_api::dynamic_value::DynamicValue;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;

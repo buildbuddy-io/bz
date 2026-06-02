@@ -15,7 +15,7 @@ pub(crate) mod query_target_ext;
 pub(crate) mod starlark_profile;
 pub(crate) mod uquery;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum QueryCommandError {
     #[error(

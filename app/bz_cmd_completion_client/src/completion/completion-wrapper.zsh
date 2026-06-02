@@ -16,7 +16,7 @@ compdef -d buck2
 
 _BUCK_COMPLETE_BIN="${_BUCK_COMPLETE_BIN:-buck2}"
 
-__buck2_takes_target()
+__bz_takes_target()
 {
     case "$1" in
     build|ctargets|install|run|targets|test|utargets)
@@ -28,7 +28,7 @@ __buck2_takes_target()
     esac
 }
 
-__buck2_subcommand()
+__bz_subcommand()
 {
     local subcommand=
     for w in "${words[@]:1:$CURRENT - 1}"; do
@@ -47,7 +47,7 @@ __buck2_subcommand()
     fi
 }
 
-__buck2_add_target_completions()
+__bz_add_target_completions()
 {
     local completions=()
     while read -r; do
@@ -58,7 +58,7 @@ __buck2_add_target_completions()
     compadd -S '' -J targets -o nosort -- "${completions[@]}"
 }
 
-__buck2_completions_queued()
+__bz_completions_queued()
 {
     if [[ ${compstate[nmatches]} -eq 0 ]]; then
         return 255
@@ -67,7 +67,7 @@ __buck2_completions_queued()
     fi
 }
 
-__buck2_fix()
+__bz_fix()
 {
     for w in "${words[@]:1:$CURRENT - 1}"; do
         if [[ "$w" = '--' ]]; then
@@ -96,13 +96,13 @@ __buck2_fix()
         fi
     fi
 
-    if __buck2_takes_target "$(__buck2_subcommand)"; then
+    if __bz_takes_target "$(__bz_subcommand)"; then
         if [[ $cur =~ ^- ]]; then
             _buck2 "$@"
         else
             _buck2 "$@"
-            if ! __buck2_completions_queued; then
-                __buck2_add_target_completions "$cur"
+            if ! __bz_completions_queued; then
+                __bz_add_target_completions "$cur"
             fi
         fi
     else
@@ -112,4 +112,4 @@ __buck2_fix()
     compstate[insert]="automenu-unambiguous"
 }
 
-compdef __buck2_fix buck buck2
+compdef __bz_fix buck buck2

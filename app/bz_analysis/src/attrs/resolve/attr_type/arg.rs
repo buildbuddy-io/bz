@@ -8,22 +8,22 @@
  * above-listed licenses.
  */
 
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfoCallable;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
-use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
-use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacros;
-use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacrosPart;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::source_path::SourcePath;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_error::BuckErrorContext;
-use buck2_node::attrs::attr_type::arg::ConfiguredMacro;
-use buck2_node::attrs::attr_type::arg::ConfiguredStringWithMacros;
-use buck2_node::attrs::attr_type::arg::ConfiguredStringWithMacrosPart;
-use buck2_node::attrs::attr_type::arg::StringWithMacros;
-use buck2_node::attrs::attr_type::arg::UnrecognizedMacro;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
+use bz_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfoCallable;
+use bz_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
+use bz_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
+use bz_build_api::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacros;
+use bz_build_api::interpreter::rule_defs::resolved_macro::ResolvedStringWithMacrosPart;
+use bz_core::package::PackageLabel;
+use bz_core::package::source_path::SourcePath;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_error::BuckErrorContext;
+use bz_node::attrs::attr_type::arg::ConfiguredMacro;
+use bz_node::attrs::attr_type::arg::ConfiguredStringWithMacros;
+use bz_node::attrs::attr_type::arg::ConfiguredStringWithMacrosPart;
+use bz_node::attrs::attr_type::arg::StringWithMacros;
+use bz_node::attrs::attr_type::arg::UnrecognizedMacro;
 use dupe::Dupe;
 use either::Either;
 use starlark::values::Value;
@@ -33,7 +33,7 @@ use crate::attrs::resolve::ctx::AttrResolutionContext;
 
 pub mod query;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum ResolveMacroError {
     #[error(
@@ -63,7 +63,7 @@ pub trait ConfiguredStringWithMacrosExt {
         &self,
         ctx: &mut dyn AttrResolutionContext<'v>,
         pkg: PackageLabel,
-    ) -> buck2_error::Result<Value<'v>>;
+    ) -> bz_error::Result<Value<'v>>;
 }
 
 impl ConfiguredStringWithMacrosExt for ConfiguredStringWithMacros {
@@ -71,7 +71,7 @@ impl ConfiguredStringWithMacrosExt for ConfiguredStringWithMacros {
         &self,
         ctx: &mut dyn AttrResolutionContext<'v>,
         pkg: PackageLabel,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         let resolved_parts = match &self.string_with_macros {
             StringWithMacros::StringPart(s) => {
                 vec![ResolvedStringWithMacrosPart::String(s.dupe())]
@@ -126,7 +126,7 @@ fn resolve_configured_macro<'v>(
     configured_macro: &ConfiguredMacro,
     ctx: &mut dyn AttrResolutionContext<'v>,
     pkg: PackageLabel,
-) -> buck2_error::Result<ResolvedMacro<'v>> {
+) -> bz_error::Result<ResolvedMacro<'v>> {
     match configured_macro {
         ConfiguredMacro::Location { label, .. } => {
             // Don't need to consider exec_dep as it already was applied when configuring the label.

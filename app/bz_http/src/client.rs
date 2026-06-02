@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
+use bz_error::BuckErrorContext;
 use bytes::Bytes;
 use dupe::Dupe;
 use futures::StreamExt;
@@ -308,7 +308,7 @@ async fn read_truncated_error_response(
 /// Helper function to consume a response stream and convert it to a Bytes container.
 /// Warning: This does no length checking (like hyper::body::to_bytes). Should
 /// only be used for trusted endpoints.
-pub async fn to_bytes(body: BoxStream<'_, hyper::Result<Bytes>>) -> buck2_error::Result<Bytes> {
+pub async fn to_bytes(body: BoxStream<'_, hyper::Result<Bytes>>) -> bz_error::Result<Bytes> {
     let mut reader = StreamReader::new(body.map_err(std::io::Error::other));
     let mut buf = Vec::new();
     reader
@@ -360,8 +360,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_change_scheme_to_http_succeeds() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    fn test_change_scheme_to_http_succeeds() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let mut request = Request::builder()
             .method(Method::GET)
             .uri("https://some.site/foo")
@@ -379,8 +379,8 @@ mod tests {
     }
 
     #[test]
-    fn test_change_scheme_to_http_no_effect() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    fn test_change_scheme_to_http_no_effect() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let uri: Uri = "http://some.site/foo".try_into()?;
         let mut request = Request::builder()
             .method(Method::GET)
@@ -393,8 +393,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_simple_get_success() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_simple_get_success() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         test_server.expect(
             Expectation::matching(request::method_path("GET", "/foo"))
@@ -409,8 +409,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_simple_put_success() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_simple_put_success() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         test_server.expect(
             Expectation::matching(all_of![
@@ -435,8 +435,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_simple_post_success() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_simple_post_success() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         test_server.expect(
             Expectation::matching(all_of![
@@ -461,8 +461,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_404_not_found_is_error() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_404_not_found_is_error() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         test_server.expect(
             Expectation::matching(request::method_path("GET", "/foo"))
@@ -488,8 +488,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_count_response_size() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_count_response_size() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         test_server.expect(
             Expectation::matching(request::method_path("GET", "/foo"))
@@ -515,8 +515,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_follows_redirects() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_follows_redirects() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         // Chain of two redirects /foo -> /bar -> /baz.
         test_server.expect(
@@ -550,8 +550,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_head_changes_to_get_on_redirect() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_head_changes_to_get_on_redirect() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         // Chain of two redirects /foo -> /bar -> /baz.
         test_server.expect(
@@ -578,8 +578,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_post_gets_redirected() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_post_gets_redirected() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         // Redirect /foo -> /bar
         test_server.expect(
@@ -626,8 +626,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_too_many_redirects_fails() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_too_many_redirects_fails() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         // Chain of three redirects /foo -> /bar -> /baz -> /boo.
         test_server.expect(
@@ -700,7 +700,7 @@ mod tests {
         }
 
         impl UnixSocketProxyServer {
-            pub async fn new() -> buck2_error::Result<Self> {
+            pub async fn new() -> bz_error::Result<Self> {
                 let tempdir = tempfile::tempdir()?;
                 let socket = tempdir.path().join("test-uds.sock");
 
@@ -754,8 +754,8 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_proxies_through_unix_socket_when_set() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_proxies_through_unix_socket_when_set() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let proxy_server = unix::UnixSocketProxyServer::new().await?;
 
         let test_server = httptest::Server::run();
@@ -785,8 +785,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_x2p_error_response_is_forbidden_host() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_x2p_error_response_is_forbidden_host() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         let url = test_server.url("/foo");
         test_server.expect(
@@ -814,8 +814,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_x2p_error_response_is_access_denied() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_x2p_error_response_is_access_denied() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         let url = test_server.url("/foo");
         test_server.expect(
@@ -843,8 +843,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_x2p_error_response_is_generic_error() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_x2p_error_response_is_generic_error() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
 
         let test_server = httptest::Server::run();
         let url = test_server.url("/foo");
@@ -872,8 +872,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_concurrency_limit() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_concurrency_limit() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         test_server.expect(
             Expectation::matching(request::method_path("GET", "/foo"))
@@ -934,7 +934,7 @@ mod proxy_tests {
     use std::net::ToSocketAddrs;
     use std::time::Duration;
 
-    use buck2_error::BuckErrorContext;
+    use bz_error::BuckErrorContext;
     use bytes::Bytes;
     use http::Method;
     use httptest::Expectation;
@@ -967,7 +967,7 @@ mod proxy_tests {
     }
 
     impl ProxyServer {
-        async fn new() -> buck2_error::Result<Self> {
+        async fn new() -> bz_error::Result<Self> {
             let proxy_server_addr = "[::1]:0".to_socket_addrs().unwrap().next().unwrap();
             let listener = TcpListener::bind(proxy_server_addr)
                 .await
@@ -1011,7 +1011,7 @@ mod proxy_tests {
             })
         }
 
-        fn uri(&self) -> buck2_error::Result<http::Uri> {
+        fn uri(&self) -> bz_error::Result<http::Uri> {
             http::Uri::builder()
                 .scheme("http")
                 .authority(self.addr.to_string().as_str())
@@ -1022,8 +1022,8 @@ mod proxy_tests {
     }
 
     #[tokio::test]
-    async fn test_uses_http_proxy() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_uses_http_proxy() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         test_server.expect(
             Expectation::matching(all_of![
@@ -1048,8 +1048,8 @@ mod proxy_tests {
     }
 
     #[tokio::test]
-    async fn test_uses_http_proxy_with_no_scheme_in_proxy_uri() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_uses_http_proxy_with_no_scheme_in_proxy_uri() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         test_server.expect(
             Expectation::matching(all_of![
@@ -1079,8 +1079,8 @@ mod proxy_tests {
     }
 
     #[tokio::test]
-    async fn test_does_not_proxy_when_no_proxy_matches() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_does_not_proxy_when_no_proxy_matches() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         test_server.expect(
             Expectation::matching(all_of![request::method_path("GET", "/foo")])
@@ -1115,8 +1115,8 @@ mod proxy_tests {
     }
 
     #[tokio::test]
-    async fn test_proxies_when_no_proxy_does_not_match() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_proxies_when_no_proxy_does_not_match() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         test_server.expect(
             Expectation::matching(all_of![
@@ -1148,8 +1148,8 @@ mod proxy_tests {
 
     // Use proxy server harness to test slow connections.
     #[tokio::test]
-    async fn test_timeout() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_timeout() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let test_server = httptest::Server::run();
         let proxy_server = ProxyServer::new().await?;
 

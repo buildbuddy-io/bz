@@ -556,7 +556,7 @@ def _check_exported_deps(exported_deps: list[Dependency], attr_name: str):
 
 # TODO(T145137403) remove need for this
 def _skip_java_library_dep_checks(ctx: AnalysisContext) -> bool:
-    return "skip_buck2_java_library_dep_checks" in ctx.attrs.labels
+    return "skip_bz_java_library_dep_checks" in ctx.attrs.labels
 
 def java_library_impl(ctx: AnalysisContext) -> list[Provider]:
     """

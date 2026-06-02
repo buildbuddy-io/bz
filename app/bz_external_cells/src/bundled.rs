@@ -16,54 +16,54 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_common::cas_digest::CasDigestConfig;
-use buck2_common::file_ops::delegate::FileOpsDelegate;
-use buck2_common::file_ops::dice::ReadFileProxy;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::FileType;
-use buck2_common::file_ops::metadata::RawDirEntry;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_common::io::IoProvider;
-use buck2_common::io::NoWatchFsMetadataCache;
-use buck2_common::io::fs::is_executable;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::directory_digest::DirectoryDigest;
-use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::builder::DirectoryBuilder;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_hasher::DirectoryDigester;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::directory_ref::DirectoryRef;
-use buck2_directory::directory::directory_ref::FingerprintedDirectoryRef;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_directory::directory::find::DirectoryFindError;
-use buck2_directory::directory::find::find;
-use buck2_directory::directory::immutable_directory::ImmutableDirectory;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::materialize::materializer::HasMaterializer;
-use buck2_execute::materialize::materializer::WriteRequest;
-use buck2_external_cells_bundled::BundledCell;
-use buck2_external_cells_bundled::BundledFile;
-use buck2_external_cells_bundled::get_bundled_data;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_util::strong_hasher::Blake3StrongHasher;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_common::cas_digest::CasDigestConfig;
+use bz_common::file_ops::delegate::FileOpsDelegate;
+use bz_common::file_ops::dice::ReadFileProxy;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::FileType;
+use bz_common::file_ops::metadata::RawDirEntry;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::io::IoProvider;
+use bz_common::io::NoWatchFsMetadataCache;
+use bz_common::io::fs::is_executable;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::directory_digest::DirectoryDigest;
+use bz_core::fs::buck_out_path::BuckOutPathResolver;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::builder::DirectoryBuilder;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_hasher::DirectoryDigester;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::directory_ref::DirectoryRef;
+use bz_directory::directory::directory_ref::FingerprintedDirectoryRef;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_directory::directory::find::DirectoryFindError;
+use bz_directory::directory::find::find;
+use bz_directory::directory::immutable_directory::ImmutableDirectory;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::materialize::materializer::HasMaterializer;
+use bz_execute::materialize::materializer::WriteRequest;
+use bz_external_cells_bundled::BundledCell;
+use bz_external_cells_bundled::BundledFile;
+use bz_external_cells_bundled::get_bundled_data;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_util::strong_hasher::Blake3StrongHasher;
 use cmp_any::PartialEqAny;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -75,16 +75,16 @@ use pagable::Pagable;
 use pagable::PagablePanic;
 use pagable::pagable_typetag;
 
-fn load_nano_prelude() -> buck2_error::Result<BundledCell> {
+fn load_nano_prelude() -> bz_error::Result<BundledCell> {
     let path = env::var("NANO_PRELUDE")
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Input))
         .buck_error_context(
             "NANO_PRELUDE env var must be set to the location of nano prelude\n\
         Consider `export NANO_PRELUDE=$HOME/fbsource/fbcode/buck2/tests/e2e_util/nano_prelude`",
         )?;
     if path.is_empty() {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "NANO_PRELUDE env var must not be empty"
         ));
     }
@@ -128,14 +128,14 @@ fn load_nano_prelude() -> buck2_error::Result<BundledCell> {
     })
 }
 
-fn nano_prelude() -> buck2_error::Result<BundledCell> {
+fn nano_prelude() -> bz_error::Result<BundledCell> {
     static NANO_PRELUDE: OnceLock<BundledCell> = OnceLock::new();
     Ok(*NANO_PRELUDE
         .get_or_try_init(|| load_nano_prelude().buck_error_context("loading nano_prelude"))?)
 }
 
-pub(crate) fn find_bundled_data(cell_name: CellName) -> buck2_error::Result<BundledCell> {
-    #[derive(buck2_error::Error, Debug)]
+pub(crate) fn find_bundled_data(cell_name: CellName) -> bz_error::Result<BundledCell> {
+    #[derive(bz_error::Error, Debug)]
     #[error("No bundled cell named `{0}`, options are `{}`", _1.join(", "))]
     #[buck2(tag = Input)]
     struct CellNotBundled(String, Vec<&'static str>);
@@ -248,7 +248,7 @@ pub(crate) struct BundledFileOpsDelegate {
     dir: ImmutableDirectory<ContentsAndMetadata, BundledDirectoryDigest>,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Environment)]
 enum BundledPathSearchError {
     #[error("Expected a directory at `{0}` but found a file")]
@@ -268,7 +268,7 @@ impl BundledFileOpsDelegate {
     fn get_entry_at_path_if_exists(
         &self,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<
+    ) -> bz_error::Result<
         Option<
             DirectoryEntry<
                 impl DirectoryRef<
@@ -291,7 +291,7 @@ impl BundledFileOpsDelegate {
     fn get_entry_at_path(
         &self,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<
+    ) -> bz_error::Result<
         DirectoryEntry<
             impl DirectoryRef<'_, Leaf = ContentsAndMetadata, DirectoryDigest = BundledDirectoryDigest>
             + use<'_>,
@@ -303,7 +303,7 @@ impl BundledFileOpsDelegate {
     }
 
     /// Return the list of file outputs, sorted.
-    async fn read_dir(&self, path: &CellRelativePath) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    async fn read_dir(&self, path: &CellRelativePath) -> bz_error::Result<Arc<[RawDirEntry]>> {
         let dir = match self.get_entry_at_path(path)? {
             DirectoryEntry::Dir(dir) => dir,
             DirectoryEntry::Leaf(_) => {
@@ -328,7 +328,7 @@ impl BundledFileOpsDelegate {
     fn get_file_at_path_if_exists(
         &self,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Option<&ContentsAndMetadata>> {
+    ) -> bz_error::Result<Option<&ContentsAndMetadata>> {
         match self.get_entry_at_path_if_exists(path)? {
             Some(DirectoryEntry::Leaf(leaf)) => Ok(Some(leaf)),
             Some(DirectoryEntry::Dir(_)) => {
@@ -341,7 +341,7 @@ impl BundledFileOpsDelegate {
     fn read_file_if_exists(
         &self,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Option<&'static str>> {
+    ) -> bz_error::Result<Option<&'static str>> {
         Ok(self
             .get_file_at_path_if_exists(path)?
             .map(|leaf| str::from_utf8(leaf.contents))
@@ -351,7 +351,7 @@ impl BundledFileOpsDelegate {
     fn read_path_metadata_if_exists(
         &self,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         match self.get_entry_at_path_if_exists(path)? {
             Some(DirectoryEntry::Leaf(leaf)) => Ok(Some(RawPathMetadata::File(
                 leaf.metadata(self.source_digest_config),
@@ -365,7 +365,7 @@ impl BundledFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let Some(leaf) = self.get_file_at_path_if_exists(path)? else {
             return Ok(());
         };
@@ -395,7 +395,7 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
         &self,
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<ReadFileProxy> {
+    ) -> bz_error::Result<ReadFileProxy> {
         let res = self.read_file_if_exists(path)?;
         Ok(ReadFileProxy::new_with_captures(res, |res| async move {
             Ok(res.map(|s| s.to_owned()))
@@ -407,7 +407,7 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
         &self,
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir(path).await
     }
 
@@ -415,7 +415,7 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
         &self,
         _io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir(path).await
     }
 
@@ -423,7 +423,7 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         let metadata = self.read_path_metadata_if_exists(path)?;
         if matches!(metadata, Some(RawPathMetadata::File(_))) {
             self.declare_file_source_artifact_if_exists(ctx, path)
@@ -436,7 +436,7 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         let metadata = self.read_path_metadata_if_exists(path)?;
         if matches!(metadata, Some(RawPathMetadata::File(_))) {
             self.declare_file_source_artifact_if_exists(ctx, path)
@@ -450,7 +450,7 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
         _io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
         _cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         Ok(self
             .read_path_metadata_if_exists(path)?
             .map(RawPathMetadataForNoWatchFs::from))
@@ -466,7 +466,7 @@ fn get_file_ops_delegate_impl(
     digest_config: DigestConfig,
     cell: CellName,
     buck_out_resolver: BuckOutPathResolver,
-) -> buck2_error::Result<BundledFileOpsDelegate> {
+) -> bz_error::Result<BundledFileOpsDelegate> {
     let mut builder: DirectoryBuilder<ContentsAndMetadata, BundledDirectoryDigest> =
         DirectoryBuilder::empty();
     let source_digest_config = digest_config.cas_digest_config().source_files_config();
@@ -497,7 +497,7 @@ async fn declare_all_source_artifacts(
     ctx: &mut DiceComputations<'_>,
     cell_name: CellName,
     ops: &BundledFileOpsDelegate,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut requests = Vec::new();
     let artifact_fs = ctx.get_artifact_fs().await?;
     let buck_out_resolver = artifact_fs.buck_out_path_resolver();
@@ -525,7 +525,7 @@ async fn declare_all_source_artifacts(
 pub(crate) async fn get_file_ops_delegate(
     ctx: &mut DiceComputations<'_>,
     cell_name: CellName,
-) -> buck2_error::Result<Arc<BundledFileOpsDelegate>> {
+) -> bz_error::Result<Arc<BundledFileOpsDelegate>> {
     #[derive(
         dupe::Dupe,
         Clone,
@@ -543,7 +543,7 @@ pub(crate) async fn get_file_ops_delegate(
 
     #[async_trait::async_trait]
     impl Key for BundledFileOpsDelegateKey {
-        type Value = buck2_error::Result<Arc<BundledFileOpsDelegate>>;
+        type Value = bz_error::Result<Arc<BundledFileOpsDelegate>>;
 
         async fn compute(
             &self,
@@ -577,7 +577,7 @@ pub(crate) async fn get_file_ops_delegate(
 pub(crate) async fn materialize_all(
     ctx: &mut DiceComputations<'_>,
     cell: CellName,
-) -> buck2_error::Result<ProjectRelativePathBuf> {
+) -> bz_error::Result<ProjectRelativePathBuf> {
     let artifact_fs = ctx.get_artifact_fs().await?;
     let buck_out_resolver = artifact_fs.buck_out_path_resolver();
 

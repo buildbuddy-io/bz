@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_events::dispatch::span_async;
-use buck2_server_ctx::commands::command_end;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::streaming_request_handler::StreamingRequestHandler;
+use bz_events::dispatch::span_async;
+use bz_server_ctx::commands::command_end;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::streaming_request_handler::StreamingRequestHandler;
 use debugserver_types as dap;
 use tokio::select;
 use tokio::sync::mpsc;
@@ -28,11 +28,11 @@ use crate::error::StarlarkDebuggerInternalError;
 pub(crate) enum ToClientMessage {
     Event(dap::Event),
     Response(dap::Response),
-    Shutdown(buck2_error::Result<()>),
+    Shutdown(bz_error::Result<()>),
 }
 
 impl ToClientMessage {
-    fn pretty_string(&self) -> buck2_error::Result<String> {
+    fn pretty_string(&self) -> bz_error::Result<String> {
         match self {
             ToClientMessage::Event(ev) => Ok(serde_json::to_string_pretty(&ev)?),
             ToClientMessage::Response(resp) => Ok(serde_json::to_string_pretty(&resp)?),
@@ -44,15 +44,15 @@ impl ToClientMessage {
 /// Wraps `run_dap_server` with a command start/end span.
 pub async fn run_dap_server_command(
     ctx: &dyn ServerCommandContextTrait,
-    partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::DapMessage>,
-    req: StreamingRequestHandler<buck2_cli_proto::DapRequest>,
-) -> buck2_error::Result<buck2_cli_proto::DapResponse> {
+    partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::DapMessage>,
+    req: StreamingRequestHandler<bz_cli_proto::DapRequest>,
+) -> bz_error::Result<bz_cli_proto::DapResponse> {
     let start_event = ctx
-        .command_start_event(buck2_data::StarlarkDebugAttachCommandStart {}.into())
+        .command_start_event(bz_data::StarlarkDebugAttachCommandStart {}.into())
         .await?;
     span_async(start_event, async move {
         let result = run_dap_server(ctx, partial_result_dispatcher, req).await;
-        let end_event = command_end(&result, buck2_data::StarlarkDebugAttachCommandEnd {});
+        let end_event = command_end(&result, bz_data::StarlarkDebugAttachCommandEnd {});
         (result, end_event)
     })
     .await
@@ -60,9 +60,9 @@ pub async fn run_dap_server_command(
 
 async fn run_dap_server(
     ctx: &dyn ServerCommandContextTrait,
-    mut partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::DapMessage>,
-    mut req: StreamingRequestHandler<buck2_cli_proto::DapRequest>,
-) -> buck2_error::Result<buck2_cli_proto::DapResponse> {
+    mut partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::DapMessage>,
+    mut req: StreamingRequestHandler<bz_cli_proto::DapRequest>,
+) -> bz_error::Result<bz_cli_proto::DapResponse> {
     let (to_client_send, mut to_client_recv) = mpsc::unbounded_channel();
     let server_connection = ServerConnection::new(to_client_send, ctx.project_root().clone())?;
 
@@ -80,7 +80,7 @@ async fn run_dap_server(
                     Some(Ok(v)) => v,
                     None => {
                         // client disconnected.
-                        break buck2_cli_proto::DapResponse {};
+                        break bz_cli_proto::DapResponse {};
                     }
                 };
 
@@ -90,7 +90,7 @@ async fn run_dap_server(
                 let disconnect_requested = debugserver_req.command == "disconnect";
                 server_connection.0.send_request(debugserver_req)?;
                 if disconnect_requested {
-                     break buck2_cli_proto::DapResponse {};
+                     break bz_cli_proto::DapResponse {};
                 }
             }
             message = to_client_recv.recv() => {
@@ -114,9 +114,9 @@ async fn run_dap_server(
 /// response (for a Shutdown message).
 fn handle_outgoing_message(
     seq: &mut u32,
-    partial_result_dispatcher: &mut PartialResultDispatcher<buck2_cli_proto::DapMessage>,
+    partial_result_dispatcher: &mut PartialResultDispatcher<bz_cli_proto::DapMessage>,
     message: ToClientMessage,
-) -> buck2_error::Result<Option<buck2_cli_proto::DapResponse>> {
+) -> bz_error::Result<Option<bz_cli_proto::DapResponse>> {
     debug!("sending message {}", &message.pretty_string()?);
 
     let this_seq = *seq as i64;
@@ -147,11 +147,11 @@ fn handle_outgoing_message(
                     event: "exited".to_owned(),
                     body: dap::ExitedEventBody { exit_code },
                 })?,
-                Some(buck2_cli_proto::DapResponse {}),
+                Some(bz_cli_proto::DapResponse {}),
             )
         }
     };
 
-    partial_result_dispatcher.emit(buck2_cli_proto::DapMessage { dap_json });
+    partial_result_dispatcher.emit(bz_cli_proto::DapMessage { dap_json });
     Ok(response)
 }

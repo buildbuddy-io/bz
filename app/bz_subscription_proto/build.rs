@@ -21,7 +21,7 @@ fn main() -> io::Result<()> {
         vec!["."]
     };
 
-    let builder = buck2_protoc_dev::configure();
+    let builder = bz_protoc_dev::configure();
     unsafe { builder.setup_protoc() }
         .type_attribute(".", "#[derive(::serde::Serialize, ::serde::Deserialize)]")
         .type_attribute(".", "#[derive(::allocative::Allocative)]")

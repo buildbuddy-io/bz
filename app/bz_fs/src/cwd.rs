@@ -12,8 +12,8 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
 
 use crate::IoResultExt;
 use crate::fs_util;
@@ -28,12 +28,12 @@ pub struct WorkingDirectoryGen<T: WorkingDirectoryImpl> {
 }
 
 impl<T: WorkingDirectoryImpl> WorkingDirectoryGen<T> {
-    pub fn open(path: AbsNormPathBuf) -> buck2_error::Result<Self> {
+    pub fn open(path: AbsNormPathBuf) -> bz_error::Result<Self> {
         let imp = T::open(&path)?;
         Ok(Self { path, imp })
     }
 
-    pub fn chdir_and_promise_it_will_not_change(&self) -> buck2_error::Result<()> {
+    pub fn chdir_and_promise_it_will_not_change(&self) -> bz_error::Result<()> {
         self.imp
             .chdir(&self.path)
             .buck_error_context("Failed to chdir")?;
@@ -41,16 +41,16 @@ impl<T: WorkingDirectoryImpl> WorkingDirectoryGen<T> {
         Ok(())
     }
 
-    pub fn is_stale(&self) -> buck2_error::Result<bool> {
+    pub fn is_stale(&self) -> bz_error::Result<bool> {
         self.imp.is_stale(&self.path)
     }
 }
 
 /// Used to make sure our UNIX and portable implementations are identical.
 pub trait WorkingDirectoryImpl: Sized {
-    fn open(path: &AbsNormPath) -> buck2_error::Result<Self>;
-    fn chdir(&self, _path: &AbsNormPath) -> buck2_error::Result<()>;
-    fn is_stale(&self, path: &AbsNormPath) -> buck2_error::Result<bool>;
+    fn open(path: &AbsNormPath) -> bz_error::Result<Self>;
+    fn chdir(&self, _path: &AbsNormPath) -> bz_error::Result<()>;
+    fn is_stale(&self, path: &AbsNormPath) -> bz_error::Result<bool>;
 }
 
 #[cfg(unix)]
@@ -59,7 +59,7 @@ mod unix_impl {
     use std::os::fd::OwnedFd;
 
     use allocative::Allocative;
-    use buck2_error::BuckErrorContext;
+    use bz_error::BuckErrorContext;
     use nix::fcntl::OFlag;
     use nix::sys::stat::Mode;
 
@@ -73,7 +73,7 @@ mod unix_impl {
     }
 
     impl WorkingDirectoryImpl for UnixWorkingDirectoryImpl {
-        fn open(path: &AbsNormPath) -> buck2_error::Result<Self> {
+        fn open(path: &AbsNormPath) -> bz_error::Result<Self> {
             let fd = nix::fcntl::open(
                 path.as_path(),
                 OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_DIRECTORY,
@@ -84,12 +84,12 @@ mod unix_impl {
             Ok(Self { fd })
         }
 
-        fn chdir(&self, _path: &AbsNormPath) -> buck2_error::Result<()> {
+        fn chdir(&self, _path: &AbsNormPath) -> bz_error::Result<()> {
             nix::unistd::fchdir(&self.fd)?;
             Ok(())
         }
 
-        fn is_stale(&self, path: &AbsNormPath) -> buck2_error::Result<bool> {
+        fn is_stale(&self, path: &AbsNormPath) -> bz_error::Result<bool> {
             let cwd = nix::sys::stat::fstat(&self.fd).buck_error_context("Failed to stat cwd")?;
             let path = nix::sys::stat::stat(path.as_path())
                 .with_buck_error_context(|| format!("Failed to stat `{path}`"))?;
@@ -102,17 +102,17 @@ mod unix_impl {
 pub struct PortableWorkingDirectoryImpl;
 
 impl WorkingDirectoryImpl for PortableWorkingDirectoryImpl {
-    fn open(_path: &AbsNormPath) -> buck2_error::Result<Self> {
+    fn open(_path: &AbsNormPath) -> bz_error::Result<Self> {
         Ok(Self)
     }
 
-    fn chdir(&self, path: &AbsNormPath) -> buck2_error::Result<()> {
+    fn chdir(&self, path: &AbsNormPath) -> bz_error::Result<()> {
         fs_util::set_current_dir(path).categorize_internal()?;
         Ok(())
     }
 
     /// Not supported for PortableWorkingDirectoryImpl
-    fn is_stale(&self, _path: &AbsNormPath) -> buck2_error::Result<bool> {
+    fn is_stale(&self, _path: &AbsNormPath) -> bz_error::Result<bool> {
         Ok(false)
     }
 }
@@ -123,7 +123,7 @@ pub type WorkingDirectory = WorkingDirectoryGen<unix_impl::UnixWorkingDirectoryI
 #[cfg(not(unix))]
 pub type WorkingDirectory = WorkingDirectoryGen<PortableWorkingDirectoryImpl>;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum CwdError {
     #[error("cwd is already set to `{}`", _0.display())]
@@ -133,14 +133,14 @@ enum CwdError {
 static CWD: OnceLock<AbsPathBuf> = OnceLock::new();
 
 /// Promise the cwd will not change going forward. This should only be called once.
-fn cwd_will_not_change(cwd: &AbsNormPath) -> buck2_error::Result<()> {
+fn cwd_will_not_change(cwd: &AbsNormPath) -> bz_error::Result<()> {
     CWD.set(cwd.as_abs_path().to_owned())
         .ok()
         .ok_or_else(|| internal_error!("cwd_will_not_change was called twice"))?;
     Ok(())
 }
 
-pub(crate) fn assert_cwd_is_not_set() -> buck2_error::Result<()> {
+pub(crate) fn assert_cwd_is_not_set() -> bz_error::Result<()> {
     if let Some(cwd) = CWD.get() {
         return Err(CwdError::CwdAlreadySet(cwd.clone()).into());
     }

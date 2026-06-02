@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_util::late_binding::LateBinding;
+use bz_core::configuration::data::ConfigurationData;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationContext;
 use pagable::PagableBoxDeserialize;
@@ -50,7 +50,7 @@ pub trait CfgConstructorImpl: Send + Sync + Debug + Allocative {
         rule_type: &'a RuleType,
         configuring_exec_dep: bool,
         cancellation: &'a CancellationContext,
-    ) -> Pin<Box<dyn Future<Output = buck2_error::Result<ConfigurationData>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = bz_error::Result<ConfigurationData>> + Send + 'a>>;
 
     /// Returns the metadata key used to encode modifiers in PACKAGE values and metadata attribute
     fn key(&self) -> &MetadataKeyRef;
@@ -77,7 +77,7 @@ pub trait CfgConstructorCalculationImpl: Send + Sync + 'static {
         cli_modifiers: &Arc<Vec<String>>,
         rule_name: &RuleType,
         configuring_exec_dep: bool,
-    ) -> buck2_error::Result<ConfigurationData>;
+    ) -> bz_error::Result<ConfigurationData>;
 }
 
 impl PagableSerialize for dyn CfgConstructorImpl {

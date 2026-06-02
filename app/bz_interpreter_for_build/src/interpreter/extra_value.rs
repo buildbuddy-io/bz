@@ -11,7 +11,7 @@
 use std::cell::OnceCell;
 
 use allocative::Allocative;
-use buck2_error::internal_error;
+use bz_error::internal_error;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::FrozenModule;
 use starlark::environment::Module;
@@ -56,7 +56,7 @@ impl<'v> Freeze for InterpreterExtraValue<'v> {
 }
 
 impl<'v> InterpreterExtraValue<'v> {
-    pub(crate) fn get(module: &Module<'v>) -> buck2_error::Result<&'v InterpreterExtraValue<'v>> {
+    pub(crate) fn get(module: &Module<'v>) -> bz_error::Result<&'v InterpreterExtraValue<'v>> {
         Ok(&module
             .extra_value()
             .ok_or_else(|| internal_error!("Extra value is missing"))?
@@ -69,7 +69,7 @@ impl<'v> InterpreterExtraValue<'v> {
 impl FrozenInterpreterExtraValue {
     pub(crate) fn get(
         module: &FrozenModule,
-    ) -> buck2_error::Result<OwnedFrozenValueTyped<StarlarkAnyComplex<FrozenInterpreterExtraValue>>>
+    ) -> bz_error::Result<OwnedFrozenValueTyped<StarlarkAnyComplex<FrozenInterpreterExtraValue>>>
     {
         module
             .owned_extra_value()

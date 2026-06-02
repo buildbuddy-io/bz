@@ -11,16 +11,16 @@
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_cmd_audit_client::package_values::PackageValuesCommand;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::parse_package::parse_package;
-use buck2_events::dispatch::console_message;
-use buck2_node::metadata::key::MetadataKey;
-use buck2_node::package_values_calculation::PACKAGE_VALUES_CALCULATION;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cmd_audit_client::package_values::PackageValuesCommand;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::parse_package::parse_package;
+use bz_events::dispatch::console_message;
+use bz_node::metadata::key::MetadataKey;
+use bz_node::package_values_calculation::PACKAGE_VALUES_CALCULATION;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use dupe::Dupe;
 use futures::FutureExt;
 use gazebo::prelude::SliceExt;
@@ -33,9 +33,9 @@ impl ServerAuditSubcommand for PackageValuesCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-        _client_server_ctx: buck2_cli_proto::ClientContext,
-    ) -> buck2_error::Result<()> {
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+        _client_server_ctx: bz_cli_proto::ClientContext,
+    ) -> bz_error::Result<()> {
         if self.packages.is_empty() {
             console_message("No packages specified".to_owned());
         }
@@ -57,7 +57,7 @@ impl ServerAuditSubcommand for PackageValuesCommand {
                                 .get()?
                                 .package_values(ctx, package.dupe())
                                 .await?;
-                            buck2_error::Ok((package, package_values))
+                            bz_error::Ok((package, package_values))
                         }
                         .boxed()
                     })

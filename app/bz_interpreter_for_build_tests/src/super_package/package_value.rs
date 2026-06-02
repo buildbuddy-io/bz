@@ -10,14 +10,14 @@
 
 //! Tests for `PACKAGE` files.
 
-use buck2_core::fs::project::ProjectRootTemp;
-use buck2_core::package::PackageLabel;
-use buck2_interpreter::paths::package::PackageFilePath;
-use buck2_interpreter::paths::path::OwnedStarlarkPath;
-use buck2_interpreter_for_build::interpreter::dice_calculation_delegate::HasCalculationDelegate;
-use buck2_node::attrs::display::AttrDisplayWithContextExt;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
+use bz_core::fs::project::ProjectRootTemp;
+use bz_core::package::PackageLabel;
+use bz_interpreter::paths::package::PackageFilePath;
+use bz_interpreter::paths::path::OwnedStarlarkPath;
+use bz_interpreter_for_build::interpreter::dice_calculation_delegate::HasCalculationDelegate;
+use bz_node::attrs::display::AttrDisplayWithContextExt;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::nodes::frontend::TargetGraphCalculation;
 use dice::CancellationContext;
 use indoc::indoc;
 

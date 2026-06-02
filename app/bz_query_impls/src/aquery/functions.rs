@@ -12,17 +12,17 @@ use std::fmt;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use buck2_build_api::actions::query::ActionQueryNode;
-use buck2_build_api::actions::query::ActionQueryNodeData;
-use buck2_query::query::syntax::simple::eval::error::QueryError;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::syntax::simple::eval::values::QueryValue;
-use buck2_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
-use buck2_query::query::syntax::simple::functions::QueryFunctions;
-use buck2_query::query::syntax::simple::functions::helpers::QueryBinaryOp;
-use buck2_query::query::syntax::simple::functions::helpers::QueryFunction;
-use buck2_query::query_module;
-use buck2_query_parser::BinaryOp;
+use bz_build_api::actions::query::ActionQueryNode;
+use bz_build_api::actions::query::ActionQueryNodeData;
+use bz_query::query::syntax::simple::eval::error::QueryError;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::syntax::simple::eval::values::QueryValue;
+use bz_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
+use bz_query::query::syntax::simple::functions::QueryFunctions;
+use bz_query::query::syntax::simple::functions::helpers::QueryBinaryOp;
+use bz_query::query::syntax::simple::functions::helpers::QueryFunction;
+use bz_query::query_module;
+use bz_query_parser::BinaryOp;
 use dupe::Dupe;
 
 use crate::aquery::environment::AqueryEnvironment;
@@ -123,7 +123,7 @@ impl<'a> AqueryFunctions<'a> {
             }
         }
 
-        let nodes = buck2_util::future::try_join_all(
+        let nodes = bz_util::future::try_join_all(
             action_keys.iter().map(|key| env.delegate.get_node(key)),
         )
         .await?;

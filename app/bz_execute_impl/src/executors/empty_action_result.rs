@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_core::execution_types::executor_config::RePlatformFields;
-use buck2_execute::digest::CasDigestToReExt;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
-use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobsBuilder;
+use bz_core::execution_types::executor_config::RePlatformFields;
+use bz_execute::digest::CasDigestToReExt;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
+use bz_execute::execute::action_digest_and_blobs::ActionDigestAndBlobsBuilder;
 use remote_execution as RE;
 use remote_execution::TActionResult2;
 use remote_execution::TExecutedActionMetadata;
@@ -23,7 +23,7 @@ use crate::executors::to_re_platform::RePlatformFieldsToRePlatform;
 pub(crate) fn empty_action_result(
     platform: &RePlatformFields,
     digest_config: DigestConfig,
-) -> buck2_error::Result<(ActionDigestAndBlobs, TActionResult2)> {
+) -> bz_error::Result<(ActionDigestAndBlobs, TActionResult2)> {
     let mut blobs = ActionDigestAndBlobsBuilder::new(digest_config);
 
     let command = blobs.add_command(&RE::Command {

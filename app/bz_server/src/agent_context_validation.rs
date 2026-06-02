@@ -23,8 +23,8 @@
 
 use std::collections::BTreeMap;
 
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
 
 /// Schema for a single agent context field.
 struct FieldSchema {
@@ -109,8 +109,8 @@ impl AgentContextSchema {
 pub(crate) fn validate_agent_context(
     schema: &AgentContextSchema,
     client_id: Option<&str>,
-    entries: &[buck2_data::AgentContextEntry],
-) -> buck2_error::Result<()> {
+    entries: &[bz_data::AgentContextEntry],
+) -> bz_error::Result<()> {
     // If no entries provided or no schema defined, nothing to validate.
     if entries.is_empty() || !schema.has_schema() {
         return Ok(());
@@ -146,8 +146,8 @@ pub(crate) fn validate_agent_context(
         .collect();
 
     if !missing.is_empty() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Missing required agent-context field(s):\n{}",
             missing.join("\n")
         ));
@@ -161,8 +161,8 @@ pub(crate) fn validate_agent_context(
         match schema.fields.get(key.as_str()) {
             None => {
                 let valid_keys: Vec<&str> = schema.fields.keys().map(|k| k.as_str()).collect();
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Unknown agent-context key `{}`.\n  Valid keys: {}",
                     key,
                     valid_keys.join(", ")
@@ -177,8 +177,8 @@ pub(crate) fn validate_agent_context(
                     } else {
                         format!("\n  {}: {}", key, field_schema.description)
                     };
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Invalid agent-context value `{}` for key `{}`.{}\n  Valid values: {}",
                         value,
                         key,

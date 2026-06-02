@@ -1,8 +1,8 @@
 [package]
-description = "Tests for buck2_action_impl"
+description = "Tests for bz_action_impl"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_action_impl_tests"
+name = "bz_action_impl_tests"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -11,15 +11,15 @@ ctor = { workspace = true }
 indoc = { workspace = true }
 maplit = { workspace = true }
 
-buck2_error = { workspace = true }
+bz_error = { workspace = true }
 dupe = { workspace = true }
 starlark = { workspace = true }
 
-buck2_action_impl = { workspace = true }
-buck2_anon_target = { workspace = true }
-buck2_build_api = { workspace = true }
-buck2_core = { workspace = true }
-buck2_execute = { workspace = true }
-buck2_interpreter = { workspace = true }
-buck2_interpreter_for_build = { workspace = true }
-buck2_node = { workspace = true }
+bz_action_impl = { workspace = true }
+bz_anon_target = { workspace = true }
+bz_build_api = { workspace = true }
+bz_core = { workspace = true }
+bz_execute = { workspace = true }
+bz_interpreter = { workspace = true }
+bz_interpreter_for_build = { workspace = true }
+bz_node = { workspace = true }

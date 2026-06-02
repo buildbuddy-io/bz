@@ -13,7 +13,7 @@ serde = { workspace = true, features = ["derive"] }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 
-buck2_data = { workspace = true }
+bz_data = { workspace = true }
 
 [build-dependencies]
-buck2_protoc_dev = { workspace = true }
+bz_protoc_dev = { workspace = true }

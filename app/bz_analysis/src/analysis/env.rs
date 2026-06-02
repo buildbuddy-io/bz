@@ -11,89 +11,89 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessorPair;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::analysis::registry::AnalysisRegistry;
-use buck2_build_api::analysis::registry::RecordedAnalysisValues;
-use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisToolchains;
-use buck2_build_api::interpreter::rule_defs::context::BazelActionsContextOverride;
-use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
-use buck2_build_api::interpreter::rule_defs::context::analysis_actions_to_bazel_ctx_with_overrides;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::FrozenBazelOutputFileInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::new_bazel_output_file_info;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::template_variable_info::FrozenTemplateVariableInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::toolchain_info::FrozenToolchainInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::FrozenDefaultInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::validation_info::FrozenValidationInfo;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValueRef;
-use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
-use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
-use buck2_build_api::keep_going::KeepGoing;
-use buck2_build_api::validation::transitive_validations::TransitiveValidations;
-use buck2_build_api::validation::transitive_validations::TransitiveValidationsData;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::legacy_configs::view::LegacyBuckConfigView;
-use buck2_configured::nodes::resolve_bazel_declared_toolchain_deps;
-use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
-use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_core::package::source_path::SourcePath;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::unsafe_send_future::UnsafeSendFuture;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::execute::request::OutputType;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_interpreter::factory::BuckStarlarkModule;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
-use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
-use buck2_interpreter::types::bazel::label_context::StarlarkLabelResolutionContext;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::rule::FROZEN_BAZEL_ASPECT_INFO_GET_IMPL;
-use buck2_interpreter::types::rule::FROZEN_BAZEL_ATTR_ASPECTS_GET_IMPL;
-use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
-use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
-use buck2_interpreter::types::rule::FrozenBazelAspectInfo;
-use buck2_interpreter::types::rule::bazel_aspect_hidden_attr_name;
-use buck2_interpreter::types::rule::is_bazel_aspect_hidden_attr;
-use buck2_node::attrs::attr_type::dep::DepAttrTransition;
-use buck2_node::attrs::attr_type::dep::DepAttrType;
-use buck2_node::attrs::attr_type::split_transition_dep::ConfiguredSplitTransitionDep;
-use buck2_node::attrs::configured_attr::ConfiguredAttr;
-use buck2_node::attrs::display::AttrDisplayWithContextExt;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::nodes::configured::ConfiguredTargetNodeRef;
-use buck2_node::provider_id_set::ProviderIdSet;
-use buck2_node::rule::BAZEL_OUTPUT_FILE_OUTPUT_ATTR;
-use buck2_node::rule::BazelToolchainRequirement;
-use buck2_node::rule_type::RuleType;
-use buck2_node::rule_type::StarlarkRuleType;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_build_api::analysis::AnalysisResult;
+use bz_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessorPair;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::analysis::registry::AnalysisRegistry;
+use bz_build_api::analysis::registry::RecordedAnalysisValues;
+use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
+use bz_build_api::interpreter::rule_defs::context::AnalysisContext;
+use bz_build_api::interpreter::rule_defs::context::AnalysisToolchains;
+use bz_build_api::interpreter::rule_defs::context::BazelActionsContextOverride;
+use bz_build_api::interpreter::rule_defs::context::BazelCppOptions;
+use bz_build_api::interpreter::rule_defs::context::analysis_actions_to_bazel_ctx_with_overrides;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::FrozenBazelOutputFileInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::new_bazel_output_file_info;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::template_variable_info::FrozenTemplateVariableInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::toolchain_info::FrozenToolchainInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::FrozenDefaultInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::validation_info::FrozenValidationInfo;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValueRef;
+use bz_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
+use bz_build_api::interpreter::rule_defs::provider::dependency::Dependency;
+use bz_build_api::keep_going::KeepGoing;
+use bz_build_api::validation::transitive_validations::TransitiveValidations;
+use bz_build_api::validation::transitive_validations::TransitiveValidationsData;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::legacy_configs::view::LegacyBuckConfigView;
+use bz_configured::nodes::resolve_bazel_declared_toolchain_deps;
+use bz_core::cells::external::bzlmod_cell_aliases_for_cell;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::package::PackageLabel;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_core::package::source_path::SourcePath;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::unsafe_send_future::UnsafeSendFuture;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_events::dispatch::get_dispatcher;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::execute::request::OutputType;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_interpreter::factory::BuckStarlarkModule;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::print_handler::EventDispatcherPrintHandler;
+use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_interpreter::types::bazel::label_context::StarlarkLabelResolutionContext;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::rule::FROZEN_BAZEL_ASPECT_INFO_GET_IMPL;
+use bz_interpreter::types::rule::FROZEN_BAZEL_ATTR_ASPECTS_GET_IMPL;
+use bz_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
+use bz_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
+use bz_interpreter::types::rule::FrozenBazelAspectInfo;
+use bz_interpreter::types::rule::bazel_aspect_hidden_attr_name;
+use bz_interpreter::types::rule::is_bazel_aspect_hidden_attr;
+use bz_node::attrs::attr_type::dep::DepAttrTransition;
+use bz_node::attrs::attr_type::dep::DepAttrType;
+use bz_node::attrs::attr_type::split_transition_dep::ConfiguredSplitTransitionDep;
+use bz_node::attrs::configured_attr::ConfiguredAttr;
+use bz_node::attrs::display::AttrDisplayWithContextExt;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::nodes::configured::ConfiguredTargetNodeRef;
+use bz_node::provider_id_set::ProviderIdSet;
+use bz_node::rule::BAZEL_OUTPUT_FILE_OUTPUT_ATTR;
+use bz_node::rule::BazelToolchainRequirement;
+use bz_node::rule_type::RuleType;
+use bz_node::rule_type::StarlarkRuleType;
 use dice::CancellationContext;
 use dice::DiceComputations;
 use dupe::Dupe;
@@ -126,7 +126,7 @@ use crate::attrs::resolve::ctx::AnalysisQueryResult;
 use crate::attrs::resolve::ctx::AttrResolutionContext;
 use crate::attrs::resolve::node_to_attrs_struct::node_to_attrs_struct;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum AnalysisError {
     #[error(
@@ -154,14 +154,14 @@ impl<'a, 'v> AttrResolutionContext<'v> for &'_ RuleAnalysisAttrResolutionContext
     fn get_dep(
         &mut self,
         target: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<FrozenValueTyped<'v, FrozenProviderCollection>> {
+    ) -> bz_error::Result<FrozenValueTyped<'v, FrozenProviderCollection>> {
         get_dep(&self.dep_analysis_results, target, self.module)
     }
 
     fn resolve_unkeyed_placeholder(
         &mut self,
         name: &str,
-    ) -> buck2_error::Result<Option<FrozenCommandLineArg>> {
+    ) -> bz_error::Result<Option<FrozenCommandLineArg>> {
         Ok(resolve_unkeyed_placeholder(
             &self.dep_analysis_results,
             name,
@@ -169,7 +169,7 @@ impl<'a, 'v> AttrResolutionContext<'v> for &'_ RuleAnalysisAttrResolutionContext
         ))
     }
 
-    fn resolve_query(&mut self, query: &str) -> buck2_error::Result<Arc<AnalysisQueryResult>> {
+    fn resolve_query(&mut self, query: &str) -> bz_error::Result<Arc<AnalysisQueryResult>> {
         resolve_query(&self.query_results, query, self.module)
     }
 
@@ -182,7 +182,7 @@ pub fn get_dep<'v>(
     dep_analysis_results: &StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>,
     target: &ConfiguredProvidersLabel,
     module: &Module<'v>,
-) -> buck2_error::Result<FrozenValueTyped<'v, FrozenProviderCollection>> {
+) -> bz_error::Result<FrozenValueTyped<'v, FrozenProviderCollection>> {
     match dep_analysis_results.get(target.target()) {
         None => Err(AnalysisError::MissingDep(target.dupe()).into()),
         Some(x) => {
@@ -220,7 +220,7 @@ pub fn resolve_query(
     query_results: &StdBuckHashMap<String, Arc<AnalysisQueryResult>>,
     query: &str,
     module: &Module,
-) -> buck2_error::Result<Arc<AnalysisQueryResult>> {
+) -> bz_error::Result<Arc<AnalysisQueryResult>> {
     match query_results.get(query) {
         None => Err(AnalysisError::MissingQuery(query.to_owned()).into()),
         Some(x) => {
@@ -238,17 +238,17 @@ pub trait RuleSpec: Sync {
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
         ctx: ValueTyped<'v, AnalysisContext<'v>>,
-    ) -> buck2_error::Result<Value<'v>>;
+    ) -> bz_error::Result<Value<'v>>;
 
     fn promise_artifact_mappings<'v>(
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<SmallMap<String, Value<'v>>>;
+    ) -> bz_error::Result<SmallMap<String, Value<'v>>>;
 
     fn bazel_attr_aspects<'v>(
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<SmallMap<String, Vec<Value<'v>>>>;
+    ) -> bz_error::Result<SmallMap<String, Vec<Value<'v>>>>;
 }
 
 /// Container for the environment that analysis implementation functions should run in
@@ -272,7 +272,7 @@ pub(crate) async fn run_analysis<'a>(
     node: ConfiguredTargetNodeRef<'a>,
     action_owner_rule_type_name: Arc<str>,
     cancellation: &'a CancellationContext,
-) -> buck2_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
+) -> bz_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
     let analysis_env = AnalysisEnv {
         rule_spec,
         deps: results,
@@ -285,7 +285,7 @@ pub(crate) async fn run_analysis<'a>(
     run_analysis_with_env(dice, analysis_env, node).await
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BazelOutputFileAnalysisError {
     #[error("Bazel output-file target `{0}` has no generating rule dependency")]
@@ -309,7 +309,7 @@ pub(crate) fn run_bazel_output_file_analysis<'a, 'd: 'a>(
     execution_platform: &'a ExecutionPlatformResolution,
     node: ConfiguredTargetNodeRef<'a>,
     cancellation: &'a CancellationContext,
-) -> impl Future<Output = buck2_error::Result<AnalysisResult>> + 'a + Captures<'d> {
+) -> impl Future<Output = bz_error::Result<AnalysisResult>> + 'a + Captures<'d> {
     let fut = async move {
         run_bazel_output_file_analysis_underlying(
             dice,
@@ -329,7 +329,7 @@ pub(crate) fn run_bazel_input_file_analysis<'a, 'd: 'a>(
     label: &'a ConfiguredTargetLabel,
     execution_platform: &'a ExecutionPlatformResolution,
     cancellation: &'a CancellationContext,
-) -> impl Future<Output = buck2_error::Result<AnalysisResult>> + 'a + Captures<'d> {
+) -> impl Future<Output = bz_error::Result<AnalysisResult>> + 'a + Captures<'d> {
     let fut = async move {
         run_bazel_input_file_analysis_underlying(dice, label, execution_platform, cancellation)
             .await
@@ -342,13 +342,13 @@ async fn run_bazel_input_file_analysis_underlying(
     label: &ConfiguredTargetLabel,
     _execution_platform: &ExecutionPlatformResolution,
     _cancellation: &CancellationContext,
-) -> buck2_error::Result<AnalysisResult> {
+) -> bz_error::Result<AnalysisResult> {
     new_bazel_input_file_analysis_result(label)
 }
 
 pub(crate) fn new_bazel_input_file_analysis_result(
     label: &ConfiguredTargetLabel,
-) -> buck2_error::Result<AnalysisResult> {
+) -> bz_error::Result<AnalysisResult> {
     let heap = FrozenHeap::new();
     let path = PackageRelativePath::new(label.unconfigured().name().as_str())?.to_arc();
     let source = SourceArtifact::new(SourcePath::new(label.unconfigured().pkg().dupe(), path));
@@ -377,7 +377,7 @@ async fn run_bazel_output_file_analysis_underlying(
     execution_platform: &ExecutionPlatformResolution,
     node: ConfiguredTargetNodeRef<'_>,
     cancellation: &CancellationContext,
-) -> buck2_error::Result<AnalysisResult> {
+) -> bz_error::Result<AnalysisResult> {
     let output_name = match node
         .get(BAZEL_OUTPUT_FILE_OUTPUT_ATTR, AttrInspectOptions::All)
         .map(|attr| attr.value)
@@ -476,14 +476,14 @@ async fn run_bazel_output_file_analysis_underlying(
 
 pub fn get_deps_from_analysis_results(
     results: Vec<(&ConfiguredTargetLabel, AnalysisResult)>,
-) -> buck2_error::Result<StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>> {
+) -> bz_error::Result<StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>> {
     results
         .into_iter()
         .map(|(label, result)| Ok((label.dupe(), result.providers()?.to_owned())))
-        .collect::<buck2_error::Result<StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>>>()
+        .collect::<bz_error::Result<StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>>>()
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BazelPredeclaredOutputError {
     #[error("Bazel predeclared output `{0}` has unsupported value `{1}`")]
@@ -506,7 +506,7 @@ fn declare_bazel_output_artifact<'v>(
     registry: &mut AnalysisRegistry<'v>,
     output_path: &str,
     bazel_output_root: BazelOutputRoot,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     let output_path = normalize_bazel_output_path(output_path);
     let artifact = registry.declare_bazel_predeclared_output(
         output_path,
@@ -540,7 +540,7 @@ fn declare_bazel_output_attr<'v>(
     value: Value<'v>,
     output_file_targets: &mut Vec<(String, Value<'v>)>,
     bazel_output_root: BazelOutputRoot,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     if value.is_none() {
         return Ok(Value::new_none());
     }
@@ -584,7 +584,7 @@ fn implicit_output_template_value<'v>(
     attrs: ValueOfUnchecked<'v, StructRef<'static>>,
     target_name: &str,
     attr_name: &str,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     if attr_name == "name" {
         return Ok(target_name.to_owned());
     }
@@ -610,7 +610,7 @@ fn expand_bazel_implicit_output_template<'v>(
     attrs: ValueOfUnchecked<'v, StructRef<'static>>,
     target_name: &str,
     template: &str,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let mut output = String::new();
     let mut rest = template;
     while let Some(start) = rest.find("%{") {
@@ -642,7 +642,7 @@ fn declare_bazel_predeclared_outputs<'v>(
     registry: &mut AnalysisRegistry<'v>,
     attrs: ValueOfUnchecked<'v, StructRef<'static>>,
     node: ConfiguredTargetNodeRef<'_>,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     ValueOfUnchecked<'v, StructRef<'static>>,
     Option<Value<'v>>,
     Vec<Value<'v>>,
@@ -714,7 +714,7 @@ fn public_attrs_struct<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     attrs: ValueOfUnchecked<'v, StructRef<'static>>,
     overrides: &SmallMap<String, Value<'v>>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     let attrs = StructRef::from_value(attrs.get())
         .ok_or_else(|| internal_error!("ctx.attrs should be a struct"))?;
     let mut fields = Vec::new();
@@ -737,7 +737,7 @@ fn bazel_split_attr_value<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     deps: &ConfiguredSplitTransitionDep,
     ctx: &RuleAnalysisAttrResolutionContext<'_, 'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     let mut entries = Vec::with_capacity(deps.deps.len());
     for (key, target) in &deps.deps {
         let key = if key.is_empty() {
@@ -756,7 +756,7 @@ fn node_to_bazel_split_attrs_struct<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     node: ConfiguredTargetNodeRef,
     ctx: &RuleAnalysisAttrResolutionContext<'_, 'v>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     let mut fields = Vec::new();
     for attr in node.attrs(AttrInspectOptions::All) {
         if let ConfiguredAttr::SplitTransitionDep(dep) = &attr.value {
@@ -774,7 +774,7 @@ fn node_to_bazel_split_attrs_struct<'v>(
 fn bazel_source_target_dependency<'v>(
     label: &ConfiguredProvidersLabel,
     ctx: &mut dyn AttrResolutionContext<'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     let path = PackageRelativePath::new(label.target().unconfigured().name().as_str())?.to_arc();
     let source = SourceArtifact::new(SourcePath::new(
         label.target().unconfigured().pkg().dupe(),
@@ -801,7 +801,7 @@ fn bazel_source_target_dependency<'v>(
 fn resolve_bazel_source_label_for_aspect_rule_attr<'v>(
     label: &ConfiguredProvidersLabel,
     ctx: &mut dyn AttrResolutionContext<'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     resolve_bazel_dep_label_for_aspect_rule_attr(label, &ProviderIdSet::EMPTY, false, ctx)
 }
 
@@ -810,7 +810,7 @@ fn resolve_bazel_dep_label_for_aspect_rule_attr<'v>(
     required_providers: &ProviderIdSet,
     is_exec: bool,
     ctx: &mut dyn AttrResolutionContext<'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     match DepAttrType::resolve_single_impl(ctx, label, required_providers, is_exec) {
         Ok(value) => Ok(value),
         Err(_) => bazel_source_target_dependency(label, ctx),
@@ -821,7 +821,7 @@ fn resolve_bazel_rule_attr_list_item_for_aspect<'v>(
     attr: &ConfiguredAttr,
     pkg: PackageLabel,
     ctx: &mut dyn AttrResolutionContext<'v>,
-) -> buck2_error::Result<Vec<Value<'v>>> {
+) -> bz_error::Result<Vec<Value<'v>>> {
     match attr {
         ConfiguredAttr::SourceLabel(label) => {
             Ok(vec![resolve_bazel_source_label_for_aspect_rule_attr(
@@ -867,7 +867,7 @@ fn resolve_bazel_rule_attr_for_aspect<'v>(
     attr: &ConfiguredAttr,
     pkg: PackageLabel,
     ctx: &mut dyn AttrResolutionContext<'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     match attr {
         ConfiguredAttr::SourceLabel(label) => {
             resolve_bazel_source_label_for_aspect_rule_attr(label, ctx)
@@ -913,7 +913,7 @@ fn resolve_bazel_rule_attr_for_aspect<'v>(
 fn partial_node_to_attrs_struct<'v>(
     node: ConfiguredTargetNodeRef,
     ctx: &mut dyn AttrResolutionContext<'v>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     let attrs_iter = node.attrs(AttrInspectOptions::All);
     let mut resolved_attrs = Vec::with_capacity(attrs_iter.size_hint().0);
     for a in attrs_iter {
@@ -928,7 +928,7 @@ fn partial_node_to_attrs_struct<'v>(
         .cast())
 }
 
-fn frozen_bazel_aspect_info(aspect: Value<'_>) -> buck2_error::Result<FrozenBazelAspectInfo> {
+fn frozen_bazel_aspect_info(aspect: Value<'_>) -> bz_error::Result<FrozenBazelAspectInfo> {
     let frozen = aspect.unpack_frozen().ok_or_else(|| {
         internal_error!(
             "Bazel aspect `{}` should be a frozen value during analysis",
@@ -941,7 +941,7 @@ fn frozen_bazel_aspect_info(aspect: Value<'_>) -> buck2_error::Result<FrozenBaze
 fn provider_requirements_satisfied<'v>(
     providers: Value<'v>,
     required: &[FrozenValue],
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     if required.is_empty() {
         return Ok(true);
     }
@@ -949,7 +949,7 @@ fn provider_requirements_satisfied<'v>(
     let is_provider_group = |value: Value<'v>| {
         ListRef::from_value(value).is_some() || TupleRef::from_value(value).is_some()
     };
-    let provider_group_satisfied = |group: Vec<Value<'v>>| -> buck2_error::Result<bool> {
+    let provider_group_satisfied = |group: Vec<Value<'v>>| -> bz_error::Result<bool> {
         for provider in group {
             if !providers.is_in(provider)? {
                 return Ok(false);
@@ -977,8 +977,8 @@ fn provider_requirements_satisfied<'v>(
         } else if let Some(tuple) = TupleRef::from_value(group) {
             tuple.content().iter().copied().collect::<Vec<_>>()
         } else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Bazel provider predicate mixes direct providers and provider groups: `{}`",
                 group.to_repr()
             ));
@@ -991,7 +991,7 @@ fn provider_requirements_satisfied<'v>(
     Ok(false)
 }
 
-fn bazel_toolchain_mandatory_from_value(value: Value<'_>) -> buck2_error::Result<bool> {
+fn bazel_toolchain_mandatory_from_value(value: Value<'_>) -> bz_error::Result<bool> {
     StructRef::from_value(value)
         .and_then(|st| {
             st.iter()
@@ -1011,7 +1011,7 @@ fn bazel_toolchain_mandatory_from_value(value: Value<'_>) -> buck2_error::Result
 
 fn bazel_toolchain_requirement_from_value(
     value: Value<'_>,
-) -> buck2_error::Result<BazelToolchainRequirement> {
+) -> bz_error::Result<BazelToolchainRequirement> {
     Ok(BazelToolchainRequirement {
         toolchain_type: AnalysisToolchains::key_from_value(value),
         mandatory: bazel_toolchain_mandatory_from_value(value)?,
@@ -1058,7 +1058,7 @@ fn aspect_attrs_struct<'v>(
     rule_attr: &str,
     aspect_path: &str,
     aspect_info: &FrozenBazelAspectInfo,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     let mut fields = Vec::new();
     for attr_name in &aspect_info.attrs {
         let hidden = bazel_aspect_hidden_attr_name(rule_attr, aspect_path, attr_name);
@@ -1079,7 +1079,7 @@ fn aspect_attrs_struct<'v>(
 fn find_direct_dep_node<'a>(
     node: ConfiguredTargetNodeRef<'a>,
     label: &ConfiguredTargetLabel,
-) -> buck2_error::Result<ConfiguredTargetNodeRef<'a>> {
+) -> bz_error::Result<ConfiguredTargetNodeRef<'a>> {
     node.deps()
         .find_map(|dep| (dep.label() == label).then(|| dep.as_ref()))
         .ok_or_else(|| {
@@ -1146,7 +1146,7 @@ fn collect_bazel_make_variable_label_attr_template_variables<'v>(
     dep_analysis_results: &StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>,
     module: &Module<'v>,
     variables: &mut Vec<Value<'v>>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match attr {
         ConfiguredAttr::Label(label) => {
             let provider_collection = get_dep(dep_analysis_results, label, module)?;
@@ -1209,7 +1209,7 @@ fn collect_bazel_make_variable_label_attr_template_variables<'v>(
 fn collect_bazel_make_variable_attr_template_variables<'v>(
     node: ConfiguredTargetNodeRef<'_>,
     resolution_ctx: &RuleAnalysisAttrResolutionContext<'_, 'v>,
-) -> buck2_error::Result<Vec<Value<'v>>> {
+) -> bz_error::Result<Vec<Value<'v>>> {
     let mut variables = Vec::new();
     for attr_name in BAZEL_DEFAULT_MAKE_VARIABLE_ATTRIBUTES {
         if let Some(attr) = node.get(attr_name, AttrInspectOptions::All) {
@@ -1226,7 +1226,7 @@ fn collect_bazel_make_variable_attr_template_variables<'v>(
 
 fn bazel_aspect_actual_dep_node<'a>(
     node: ConfiguredTargetNodeRef<'a>,
-) -> buck2_error::Result<ConfiguredTargetNodeRef<'a>> {
+) -> bz_error::Result<ConfiguredTargetNodeRef<'a>> {
     let mut current = node;
     loop {
         if current.dupe().rule_type().name() != "alias" {
@@ -1259,7 +1259,7 @@ struct BazelAspectApplication<'v> {
     aspect: Value<'v>,
 }
 
-fn bazel_aspect_analysis_spec(aspect: Value<'_>) -> buck2_error::Result<BazelAspectAnalysisSpec> {
+fn bazel_aspect_analysis_spec(aspect: Value<'_>) -> bz_error::Result<BazelAspectAnalysisSpec> {
     let aspect_info = frozen_bazel_aspect_info(aspect)?;
     Ok(BazelAspectAnalysisSpec {
         attrs: aspect_info.attrs,
@@ -1268,7 +1268,7 @@ fn bazel_aspect_analysis_spec(aspect: Value<'_>) -> buck2_error::Result<BazelAsp
             .requires
             .into_iter()
             .map(|aspect| bazel_aspect_analysis_spec(aspect.to_value()))
-            .collect::<buck2_error::Result<Vec<_>>>()?,
+            .collect::<bz_error::Result<Vec<_>>>()?,
     })
 }
 
@@ -1278,7 +1278,7 @@ fn collect_bazel_aspect_hidden_attr_deps(
     aspect_path: &str,
     aspect: &BazelAspectAnalysisSpec,
     labels: &mut StdBuckHashSet<ConfiguredTargetLabel>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for attr_name in &aspect.attrs {
         let hidden = bazel_aspect_hidden_attr_name(rule_attr, aspect_path, attr_name);
         if let Some(attr) = node.get(&hidden, AttrInspectOptions::All) {
@@ -1304,7 +1304,7 @@ fn collect_bazel_aspect_analysis_dep_edge(
     aspects: &[BazelAspectAnalysisSpec],
     labels: &mut StdBuckHashSet<ConfiguredTargetLabel>,
     visited: &mut StdBuckHashSet<(ConfiguredTargetLabel, BazelAspectAnalysisSpec)>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     labels.insert(dep_label.target().dupe());
     let dep_node = find_direct_dep_node(parent_node, dep_label.target())?;
     let unwrapped_dep_node = dep_node.to_owned().unwrap_forward().dupe();
@@ -1320,7 +1320,7 @@ fn collect_bazel_aspect_analysis_deps_for_aspect(
     aspect: &BazelAspectAnalysisSpec,
     labels: &mut StdBuckHashSet<ConfiguredTargetLabel>,
     visited: &mut StdBuckHashSet<(ConfiguredTargetLabel, BazelAspectAnalysisSpec)>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if !visited.insert((node.label().dupe(), aspect.clone())) {
         return Ok(());
     }
@@ -1383,7 +1383,7 @@ fn collect_bazel_aspect_analysis_deps_from_attr(
     aspect: &BazelAspectAnalysisSpec,
     labels: &mut StdBuckHashSet<ConfiguredTargetLabel>,
     visited: &mut StdBuckHashSet<(ConfiguredTargetLabel, BazelAspectAnalysisSpec)>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut dep_labels = Vec::new();
     collect_configured_attr_dep_labels(attr, &mut dep_labels);
     for dep_label in dep_labels {
@@ -1405,7 +1405,7 @@ fn collect_bazel_aspect_analysis_deps(
     eval: &mut Evaluator<'_, '_, '_>,
     rule_spec: &dyn RuleSpec,
     node: ConfiguredTargetNodeRef<'_>,
-) -> buck2_error::Result<Vec<ConfiguredTargetLabel>> {
+) -> bz_error::Result<Vec<ConfiguredTargetLabel>> {
     let attr_aspects = rule_spec.bazel_attr_aspects(eval)?;
     let attr_aspects = attr_aspects
         .into_iter()
@@ -1415,10 +1415,10 @@ fn collect_bazel_aspect_analysis_deps(
                 aspects
                     .into_iter()
                     .map(bazel_aspect_analysis_spec)
-                    .collect::<buck2_error::Result<Vec<_>>>()?,
+                    .collect::<bz_error::Result<Vec<_>>>()?,
             ))
         })
-        .collect::<buck2_error::Result<SmallMap<_, _>>>()?;
+        .collect::<bz_error::Result<SmallMap<_, _>>>()?;
     let mut labels = StdBuckHashSet::default();
     let mut visited = StdBuckHashSet::default();
     for (attr_name, aspects) in attr_aspects {
@@ -1457,7 +1457,7 @@ fn collect_bazel_applicable_aspect_toolchains_for_aspect<'v>(
     target: Value<'v>,
     aspect: Value<'v>,
     output: &mut Vec<BazelToolchainRequirement>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let aspect_info = frozen_bazel_aspect_info(aspect)?;
     for required in &aspect_info.requires {
         collect_bazel_applicable_aspect_toolchains_for_aspect(target, required.to_value(), output)?;
@@ -1484,7 +1484,7 @@ fn collect_bazel_applicable_aspect_toolchains<'v>(
     node: ConfiguredTargetNodeRef<'_>,
     dep_analysis_results: &StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>,
     module: &Module<'v>,
-) -> buck2_error::Result<Vec<BazelToolchainRequirement>> {
+) -> bz_error::Result<Vec<BazelToolchainRequirement>> {
     let attr_aspects = rule_spec.bazel_attr_aspects(eval)?;
     let mut toolchains = Vec::new();
     for (attr_name, aspects) in attr_aspects {
@@ -1534,7 +1534,7 @@ fn apply_bazel_aspect_to_dep<'v>(
     base_provider_collection: FrozenValueTyped<'v, FrozenProviderCollection>,
     dep_rule_attrs_with_hidden: ValueOfUnchecked<'v, StructRef<'static>>,
     mut providers: ProviderCollection<'v>,
-) -> buck2_error::Result<ProviderCollection<'v>> {
+) -> bz_error::Result<ProviderCollection<'v>> {
     let _ = node;
     let aspect_info = frozen_bazel_aspect_info(aspect)?;
     let cache_key = (
@@ -1601,8 +1601,8 @@ fn apply_bazel_aspect_to_dep<'v>(
                 .resolved_value_for(toolchain)
                 .is_none()
         {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "mandatory toolchain type `{}` was not resolved for Bazel aspect applied to `{}`",
                 AnalysisToolchains::key_from_value(toolchain),
                 dep_label,
@@ -1682,7 +1682,7 @@ fn apply_bazel_recursive_aspects_to_rule_attrs<'v>(
     aspect_path: &str,
     aspect: Value<'v>,
     attr_aspects: &[String],
-) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     if attr_aspects.is_empty() {
         return public_attrs_struct(eval, dep_rule_attrs_with_hidden, &SmallMap::new());
     }
@@ -1730,7 +1730,7 @@ fn apply_bazel_aspects_to_dependency<'v>(
     aspect_cache: &mut BazelAspectApplicationCache<'v>,
     aspects: &[BazelAspectApplication<'v>],
     dep: &Dependency<'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     let dep_label = dep.configured_providers_label();
     let dep_node = find_direct_dep_node(node, dep_label.target())?;
     let unwrapped_dep_node = dep_node.to_owned().unwrap_forward().dupe();
@@ -1777,7 +1777,7 @@ fn apply_bazel_aspects_to_attr_value<'v>(
     aspect_cache: &mut BazelAspectApplicationCache<'v>,
     aspects: &[BazelAspectApplication<'v>],
     value: Value<'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     if let Some(dep) = Dependency::from_value(value) {
         return apply_bazel_aspects_to_dependency(
             eval,
@@ -1837,7 +1837,7 @@ fn apply_bazel_edge_aspects<'v>(
     resolution_ctx: &RuleAnalysisAttrResolutionContext<'_, 'v>,
     aspect_cache: &mut BazelAspectApplicationCache<'v>,
     attr_aspects: SmallMap<String, Vec<BazelAspectApplication<'v>>>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     let mut overrides = SmallMap::new();
     for (name, aspects) in attr_aspects {
         if aspects.is_empty() {
@@ -1871,7 +1871,7 @@ fn run_analysis_with_env<'a, 'd: 'a>(
     dice: &'a mut DiceComputations<'d>,
     analysis_env: AnalysisEnv<'a>,
     node: ConfiguredTargetNodeRef<'a>,
-) -> impl Future<Output = buck2_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)>>
+) -> impl Future<Output = bz_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)>>
 + 'a
 + Captures<'d> {
     let fut = async move { run_analysis_with_env_underlying(dice, analysis_env, node).await };
@@ -1893,7 +1893,7 @@ fn bazel_config_list(value: Option<Arc<str>>) -> Vec<String> {
 
 async fn bazel_cpp_options(
     dice: &mut DiceComputations<'_>,
-) -> buck2_error::Result<BazelCppOptions> {
+) -> bz_error::Result<BazelCppOptions> {
     let root_config = dice.get_legacy_root_config_on_dice().await?;
     let mut config = root_config.view(dice);
     Ok(BazelCppOptions {
@@ -1940,7 +1940,7 @@ async fn run_analysis_with_env_underlying(
     dice: &mut DiceComputations<'_>,
     analysis_env: AnalysisEnv<'_>,
     node: ConfiguredTargetNodeRef<'_>,
-) -> buck2_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
+) -> bz_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
     let bazel_cpp_options = bazel_cpp_options(dice).await?;
     BuckStarlarkModule::with_profiling_async(async move |env| {
         let print = EventDispatcherPrintHandler(get_dispatcher());
@@ -1982,7 +1982,7 @@ async fn run_analysis_with_env_underlying(
                     if let Some(label_resolution_context) = &label_resolution_context {
                         eval.extra = Some(label_resolution_context);
                     }
-                    buck2_error::Ok((
+                    bz_error::Ok((
                         collect_bazel_aspect_analysis_deps(eval, analysis_env.rule_spec, node)?,
                         collect_bazel_applicable_aspect_toolchains(
                             eval,
@@ -2026,7 +2026,7 @@ async fn run_analysis_with_env_underlying(
             KeepGoing::try_compute_join_all(dice, bazel_extra_analysis_deps, |dice, dep| {
                 async move {
                     let result = dice.get_analysis_result(&dep).await?.require_compatible()?;
-                    buck2_error::Ok((dep, result))
+                    bz_error::Ok((dep, result))
                 }
                 .boxed()
             })
@@ -2047,10 +2047,10 @@ async fn run_analysis_with_env_underlying(
         let target_cell = node.label().pkg().cell_name().as_str().to_owned();
         let rule_bzl_cell = match node.rule_type() {
             RuleType::Starlark(rule_type) => match &rule_type.path {
-                buck2_node::bzl_or_bxl_path::BzlOrBxlPath::Bzl(path) => {
+                bz_node::bzl_or_bxl_path::BzlOrBxlPath::Bzl(path) => {
                     Some(path.path().cell().as_str().to_owned())
                 }
-                buck2_node::bzl_or_bxl_path::BzlOrBxlPath::Bxl(_) => None,
+                bz_node::bzl_or_bxl_path::BzlOrBxlPath::Bxl(_) => None,
             },
             _ => None,
         };
@@ -2117,7 +2117,7 @@ async fn run_analysis_with_env_underlying(
 
         let registry = AnalysisRegistry::new_from_owner_and_deferred(
             analysis_env.execution_platform.dupe(),
-            buck2_core::deferred::key::DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(
+            bz_core::deferred::key::DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(
                 node.label().dupe(),
             )),
             Some(analysis_env.action_owner_rule_type_name.dupe()),
@@ -2279,7 +2279,7 @@ async fn run_analysis_with_env_underlying(
             } else {
                 ProviderCollection::try_from_value(list_res)?
             };
-            buck2_error::Ok(res_typed)
+            bz_error::Ok(res_typed)
         })?;
 
         // Pull the ctx object back out, and steal ctx.action's state back.
@@ -2353,10 +2353,10 @@ fn get_rule_callable(
     eval: &mut Evaluator<'_, '_, '_>,
     module: &FrozenModule,
     name: &str,
-) -> buck2_error::Result<FrozenValue> {
+) -> bz_error::Result<FrozenValue> {
     let rule_callable = module
         .get_any_visibility(name)
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
         .with_buck_error_context(|| format!("Couldn't find rule `{name}`"))?
         .0;
     let rule_callable = rule_callable.owned_value(eval.frozen_heap());
@@ -2370,7 +2370,7 @@ pub fn get_rule_impl(
     eval: &mut Evaluator<'_, '_, '_>,
     module: &FrozenModule,
     name: &str,
-) -> buck2_error::Result<FrozenValue> {
+) -> bz_error::Result<FrozenValue> {
     let rule_callable = get_rule_callable(eval, module, name)?;
     let rule_impl = (FROZEN_RULE_GET_IMPL.get()?)(rule_callable)?;
     Ok(rule_impl)
@@ -2380,7 +2380,7 @@ pub fn promise_artifact_mappings<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     module: &FrozenModule,
     name: &str,
-) -> buck2_error::Result<SmallMap<String, Value<'v>>> {
+) -> bz_error::Result<SmallMap<String, Value<'v>>> {
     let rule_callable = get_rule_callable(eval, module, name)?;
     let frozen_promise_artifact_mappings =
         (FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL.get()?)(rule_callable)?;
@@ -2405,7 +2405,7 @@ pub fn get_user_defined_rule_spec(
             &self,
             eval: &mut Evaluator<'v, '_, '_>,
             ctx: ValueTyped<'v, AnalysisContext<'v>>,
-        ) -> buck2_error::Result<Value<'v>> {
+        ) -> bz_error::Result<Value<'v>> {
             let rule_impl = get_rule_impl(eval, &self.module, &self.name)?;
             Ok(eval.eval_function(rule_impl.to_value(), &[ctx.to_value()], &[])?)
         }
@@ -2413,14 +2413,14 @@ pub fn get_user_defined_rule_spec(
         fn promise_artifact_mappings<'v>(
             &self,
             eval: &mut Evaluator<'v, '_, '_>,
-        ) -> buck2_error::Result<SmallMap<String, Value<'v>>> {
+        ) -> bz_error::Result<SmallMap<String, Value<'v>>> {
             promise_artifact_mappings(eval, &self.module, &self.name)
         }
 
         fn bazel_attr_aspects<'v>(
             &self,
             eval: &mut Evaluator<'v, '_, '_>,
-        ) -> buck2_error::Result<SmallMap<String, Vec<Value<'v>>>> {
+        ) -> bz_error::Result<SmallMap<String, Vec<Value<'v>>>> {
             let rule_callable = get_rule_callable(eval, &self.module, &self.name)?;
             let aspects = (FROZEN_BAZEL_ATTR_ASPECTS_GET_IMPL.get()?)(rule_callable)?;
             Ok(aspects

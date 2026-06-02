@@ -667,30 +667,155 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_action_impl"
+name = "bumpalo"
+version = "3.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
+
+[[package]]
+name = "bytemuck"
+version = "1.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
+dependencies = [
+ "bytemuck_derive",
+ "rustversion",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
+name = "byteorder-lite"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
+
+[[package]]
+name = "bytes"
+version = "1.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "bytesize"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bd91ee7b2422bcb158d90ef4d14f75ef67f340943fc4149891dcce8f8b972a3"
+
+[[package]]
+name = "bz"
+version = "0.1.0"
+dependencies = [
+ "backtrace",
+ "blake3",
+ "bz_action_impl",
+ "bz_analysis",
+ "bz_anon_target",
+ "bz_build_api",
+ "bz_build_info",
+ "bz_build_signals",
+ "bz_build_signals_impl",
+ "bz_bxl",
+ "bz_certs",
+ "bz_cfg_constructor",
+ "bz_client",
+ "bz_client_ctx",
+ "bz_cmd_audit_client",
+ "bz_cmd_audit_server",
+ "bz_cmd_completion_client",
+ "bz_cmd_debug_client",
+ "bz_cmd_docs_client",
+ "bz_cmd_docs_server",
+ "bz_cmd_log_client",
+ "bz_cmd_query_server",
+ "bz_cmd_rage_client",
+ "bz_cmd_starlark_client",
+ "bz_cmd_starlark_server",
+ "bz_cmd_targets_server",
+ "bz_common",
+ "bz_configured",
+ "bz_core",
+ "bz_daemon",
+ "bz_data",
+ "bz_error",
+ "bz_event_log",
+ "bz_event_observer",
+ "bz_events",
+ "bz_external_cells",
+ "bz_forkserver",
+ "bz_fs",
+ "bz_hash",
+ "bz_interpreter_for_build",
+ "bz_query_impls",
+ "bz_server",
+ "bz_server_commands",
+ "bz_test",
+ "bz_test_runner",
+ "bz_transition",
+ "bz_util",
+ "bz_validation",
+ "bz_wrapper_common",
+ "clap",
+ "dirs",
+ "dupe",
+ "fbinit",
+ "gazebo",
+ "hex",
+ "host_sharing",
+ "libc",
+ "mimalloc",
+ "nix 0.30.1",
+ "rustls",
+ "superconsole",
+ "tikv-jemallocator",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "bz_action_impl"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_action_metadata_proto",
- "buck2_analysis",
- "buck2_artifact",
- "buck2_build_api",
- "buck2_build_signals",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_directory",
- "buck2_error",
- "buck2_events",
- "buck2_execute",
- "buck2_file_watcher",
- "buck2_fs",
- "buck2_hash",
- "buck2_http",
- "buck2_interpreter",
- "buck2_node",
- "buck2_util",
+ "bz_action_metadata_proto",
+ "bz_analysis",
+ "bz_artifact",
+ "bz_build_api",
+ "bz_build_signals",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_directory",
+ "bz_error",
+ "bz_events",
+ "bz_execute",
+ "bz_file_watcher",
+ "bz_fs",
+ "bz_hash",
+ "bz_http",
+ "bz_interpreter",
+ "bz_node",
+ "bz_util",
  "chrono",
  "dashmap 6.1.0",
  "derive_more 1.0.0",
@@ -721,18 +846,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_action_impl_tests"
+name = "bz_action_impl_tests"
 version = "0.1.0"
 dependencies = [
- "buck2_action_impl",
- "buck2_anon_target",
- "buck2_build_api",
- "buck2_core",
- "buck2_error",
- "buck2_execute",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_node",
+ "bz_action_impl",
+ "bz_anon_target",
+ "bz_build_api",
+ "bz_core",
+ "bz_error",
+ "bz_execute",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_node",
  "ctor",
  "dupe",
  "indoc",
@@ -741,36 +866,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_action_metadata_proto"
+name = "bz_action_metadata_proto"
 version = "0.1.0"
 dependencies = [
- "buck2_protoc_dev",
+ "bz_protoc_dev",
  "prost",
  "tonic",
  "tonic-prost",
 ]
 
 [[package]]
-name = "buck2_analysis"
+name = "bz_analysis"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_artifact",
- "buck2_build_api",
- "buck2_build_signals",
- "buck2_common",
- "buck2_configured",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_execute",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_node",
- "buck2_query",
- "buck2_util",
+ "bz_artifact",
+ "bz_build_api",
+ "bz_build_signals",
+ "bz_common",
+ "bz_configured",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_execute",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_node",
+ "bz_query",
+ "bz_util",
  "derive_more 1.0.0",
  "dice",
  "dupe",
@@ -784,27 +909,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_anon_target"
+name = "bz_anon_target"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_analysis",
- "buck2_artifact",
- "buck2_build_api",
- "buck2_build_signals",
- "buck2_configured",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_execute",
- "buck2_fs",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_node",
- "buck2_util",
+ "bz_analysis",
+ "bz_artifact",
+ "bz_build_api",
+ "bz_build_signals",
+ "bz_configured",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_execute",
+ "bz_fs",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_node",
+ "bz_util",
  "cmp_any",
  "derive_more 1.0.0",
  "dice",
@@ -823,18 +948,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_artifact"
+name = "bz_artifact"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "assert_matches",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_execute",
- "buck2_fs",
- "buck2_util",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_execute",
+ "bz_fs",
+ "bz_util",
  "derivative",
  "derive_more 1.0.0",
  "dupe",
@@ -851,39 +976,39 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_build_api"
+name = "bz_build_api"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-recursion",
  "async-trait",
  "blake3",
- "buck2_artifact",
- "buck2_build_api_derive",
- "buck2_build_info",
- "buck2_build_signals",
- "buck2_certs",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_directory",
- "buck2_error",
- "buck2_errorformat",
- "buck2_event_observer",
- "buck2_events",
- "buck2_execute",
- "buck2_file_watcher",
- "buck2_fs",
- "buck2_hash",
- "buck2_http",
- "buck2_interpreter",
- "buck2_node",
- "buck2_query",
- "buck2_sketches",
- "buck2_test_api",
- "buck2_util",
- "buck2_wrapper_common",
+ "bz_artifact",
+ "bz_build_api_derive",
+ "bz_build_info",
+ "bz_build_signals",
+ "bz_certs",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_directory",
+ "bz_error",
+ "bz_errorformat",
+ "bz_event_observer",
+ "bz_events",
+ "bz_execute",
+ "bz_file_watcher",
+ "bz_fs",
+ "bz_hash",
+ "bz_http",
+ "bz_interpreter",
+ "bz_node",
+ "bz_query",
+ "bz_sketches",
+ "bz_test_api",
+ "bz_util",
+ "bz_wrapper_common",
  "console",
  "dashmap 6.1.0",
  "derivative",
@@ -925,7 +1050,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_build_api_derive"
+name = "bz_build_api_derive"
 version = "0.4.1"
 dependencies = [
  "convert_case 0.10.0",
@@ -936,36 +1061,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_build_api_tests"
+name = "bz_build_api_tests"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "assert_matches",
  "async-trait",
- "buck2_action_impl",
- "buck2_analysis",
- "buck2_anon_target",
- "buck2_artifact",
- "buck2_build_api",
- "buck2_build_signals",
- "buck2_certs",
- "buck2_common",
- "buck2_configured",
- "buck2_core",
- "buck2_data",
- "buck2_directory",
- "buck2_error",
- "buck2_events",
- "buck2_execute",
- "buck2_file_watcher",
- "buck2_fs",
- "buck2_hash",
- "buck2_http",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_node",
- "buck2_transition",
- "buck2_util",
+ "bz_action_impl",
+ "bz_analysis",
+ "bz_anon_target",
+ "bz_artifact",
+ "bz_build_api",
+ "bz_build_signals",
+ "bz_certs",
+ "bz_common",
+ "bz_configured",
+ "bz_core",
+ "bz_data",
+ "bz_directory",
+ "bz_error",
+ "bz_events",
+ "bz_execute",
+ "bz_file_watcher",
+ "bz_fs",
+ "bz_hash",
+ "bz_http",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_node",
+ "bz_transition",
+ "bz_util",
  "ctor",
  "derivative",
  "dice",
@@ -984,24 +1109,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_build_info"
+name = "bz_build_info"
 version = "0.1.0"
 dependencies = [
- "buck2_util",
+ "bz_util",
 ]
 
 [[package]]
-name = "buck2_build_signals"
+name = "bz_build_signals"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_util",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_util",
  "cmp_any",
  "derive_more 1.0.0",
  "dice",
@@ -1011,24 +1136,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_build_signals_impl"
+name = "bz_build_signals_impl"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_analysis",
- "buck2_artifact",
- "buck2_build_api",
- "buck2_build_signals",
- "buck2_common",
- "buck2_core",
- "buck2_critical_path",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_hash",
- "buck2_interpreter_for_build",
- "buck2_node",
- "buck2_util",
+ "bz_analysis",
+ "bz_artifact",
+ "bz_build_api",
+ "bz_build_signals",
+ "bz_common",
+ "bz_core",
+ "bz_critical_path",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_hash",
+ "bz_interpreter_for_build",
+ "bz_node",
+ "bz_util",
  "dice",
  "dupe",
  "gazebo",
@@ -1045,34 +1170,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_bxl"
+name = "bz_bxl"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "anyhow",
  "async-recursion",
  "async-trait",
- "buck2_action_impl",
- "buck2_analysis",
- "buck2_artifact",
- "buck2_build_api",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_execute",
- "buck2_fs",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_node",
- "buck2_profile",
- "buck2_query",
- "buck2_query_parser",
- "buck2_server_ctx",
- "buck2_util",
+ "bz_action_impl",
+ "bz_analysis",
+ "bz_artifact",
+ "bz_build_api",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_execute",
+ "bz_fs",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_node",
+ "bz_profile",
+ "bz_query",
+ "bz_query_parser",
+ "bz_server_ctx",
+ "bz_util",
  "clap",
  "cmp_any",
  "ctor",
@@ -1099,11 +1224,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_certs"
+name = "bz_certs"
 version = "0.1.0"
 dependencies = [
- "buck2_error",
- "buck2_util",
+ "bz_error",
+ "bz_util",
  "dupe",
  "rustls",
  "rustls-native-certs 0.8.3",
@@ -1114,19 +1239,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cfg_constructor"
+name = "bz_cfg_constructor"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_build_api",
- "buck2_common",
- "buck2_core",
- "buck2_error",
- "buck2_events",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_node",
+ "bz_build_api",
+ "bz_common",
+ "bz_core",
+ "bz_error",
+ "bz_events",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_node",
  "derive_more 1.0.0",
  "dice",
  "dice_futures",
@@ -1138,17 +1263,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cli_proto"
+name = "bz_cli_proto"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_fs",
- "buck2_protoc_dev",
- "buck2_subscription_proto",
  "bytes",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_fs",
+ "bz_protoc_dev",
+ "bz_subscription_proto",
  "futures 0.3.32",
  "prost",
  "prost-types",
@@ -1160,26 +1285,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_client"
+name = "bz_client"
 version = "0.1.0"
 dependencies = [
  "assert_matches",
  "async-recursion",
  "async-trait",
- "buck2_cli_proto",
- "buck2_client_ctx",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_event_log",
- "buck2_fs",
- "buck2_hash",
- "buck2_query_parser",
- "buck2_subscription_proto",
- "buck2_util",
- "buck2_wrapper_common",
  "bytesize",
+ "bz_cli_proto",
+ "bz_client_ctx",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_event_log",
+ "bz_fs",
+ "bz_hash",
+ "bz_query_parser",
+ "bz_subscription_proto",
+ "bz_util",
+ "bz_wrapper_common",
  "chrono",
  "clap",
  "dupe",
@@ -1208,7 +1333,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_client_ctx"
+name = "bz_client_ctx"
 version = "0.1.0"
 dependencies = [
  "allocative",
@@ -1217,22 +1342,22 @@ dependencies = [
  "async-compression",
  "async-trait",
  "blake3",
- "buck2_build_info",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_event_log",
- "buck2_event_observer",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_health_check",
- "buck2_resource_control",
- "buck2_util",
- "buck2_wrapper_common",
  "bytes",
+ "bz_build_info",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_event_log",
+ "bz_event_observer",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_health_check",
+ "bz_resource_control",
+ "bz_util",
+ "bz_wrapper_common",
  "chrono",
  "clap",
  "console",
@@ -1284,12 +1409,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_audit_client"
+name = "bz_cmd_audit_client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_cli_proto",
- "buck2_client_ctx",
+ "bz_cli_proto",
+ "bz_client_ctx",
  "clap",
  "dupe",
  "serde",
@@ -1297,28 +1422,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_audit_server"
+name = "bz_cmd_audit_server"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_analysis",
- "buck2_build_api",
- "buck2_cli_proto",
- "buck2_client_ctx",
- "buck2_cmd_audit_client",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_execute",
- "buck2_fs",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_node",
- "buck2_query",
- "buck2_server_ctx",
- "buck2_util",
+ "bz_analysis",
+ "bz_build_api",
+ "bz_cli_proto",
+ "bz_client_ctx",
+ "bz_cmd_audit_client",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_execute",
+ "bz_fs",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_node",
+ "bz_query",
+ "bz_server_ctx",
+ "bz_util",
  "derive_more 1.0.0",
  "dice",
  "dupe",
@@ -1334,17 +1459,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_completion_client"
+name = "bz_cmd_completion_client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_cli_proto",
- "buck2_client_ctx",
- "buck2_common",
- "buck2_core",
- "buck2_error",
- "buck2_fs",
- "buck2_hash",
+ "bz_cli_proto",
+ "bz_client_ctx",
+ "bz_common",
+ "bz_core",
+ "bz_error",
+ "bz_fs",
+ "bz_hash",
  "clap",
  "clap_complete",
  "futures 0.3.32",
@@ -1353,24 +1478,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_debug_client"
+name = "bz_cmd_debug_client"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_cli_proto",
- "buck2_client_ctx",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_event_log",
- "buck2_event_observer",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_offline_archive",
- "buck2_wrapper_common",
+ "bz_cli_proto",
+ "bz_client_ctx",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_event_log",
+ "bz_event_observer",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_offline_archive",
+ "bz_wrapper_common",
  "chrono",
  "clap",
  "derive_more 1.0.0",
@@ -1390,14 +1515,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_docs_client"
+name = "bz_cmd_docs_client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_cli_proto",
- "buck2_client_ctx",
- "buck2_error",
- "buck2_query",
+ "bz_cli_proto",
+ "bz_client_ctx",
+ "bz_error",
+ "bz_query",
  "clap",
  "dupe",
  "regex",
@@ -1405,21 +1530,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_docs_server"
+name = "bz_cmd_docs_server"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_server_ctx",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_server_ctx",
  "dice",
  "dupe",
  "futures 0.3.32",
@@ -1429,21 +1554,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_log_client"
+name = "bz_cmd_log_client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_cli_proto",
- "buck2_client_ctx",
- "buck2_common",
- "buck2_data",
- "buck2_error",
- "buck2_event_log",
- "buck2_event_observer",
- "buck2_events",
- "buck2_hash",
- "buck2_util",
- "buck2_wrapper_common",
+ "bz_cli_proto",
+ "bz_client_ctx",
+ "bz_common",
+ "bz_data",
+ "bz_error",
+ "bz_event_log",
+ "bz_event_observer",
+ "bz_events",
+ "bz_hash",
+ "bz_util",
+ "bz_wrapper_common",
  "clap",
  "csv",
  "derive_more 1.0.0",
@@ -1459,25 +1584,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_query_server"
+name = "bz_cmd_query_server"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_build_api",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_node",
- "buck2_profile",
- "buck2_query",
- "buck2_server_ctx",
- "buck2_util",
+ "bz_build_api",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_node",
+ "bz_profile",
+ "bz_query",
+ "bz_server_ctx",
+ "bz_util",
  "dice",
  "dupe",
  "futures 0.3.32",
@@ -1491,23 +1616,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_rage_client"
+name = "bz_cmd_rage_client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_cli_proto",
- "buck2_client_ctx",
- "buck2_cmd_audit_client",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_event_log",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_util",
- "buck2_wrapper_common",
+ "bz_cli_proto",
+ "bz_client_ctx",
+ "bz_cmd_audit_client",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_event_log",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_util",
+ "bz_wrapper_common",
  "chrono",
  "clap",
  "derive_more 1.0.0",
@@ -1523,17 +1648,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_starlark_client"
+name = "bz_cmd_starlark_client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_cli_proto",
- "buck2_client_ctx",
- "buck2_common",
- "buck2_data",
- "buck2_error",
- "buck2_event_observer",
- "buck2_events",
+ "bz_cli_proto",
+ "bz_client_ctx",
+ "bz_common",
+ "bz_data",
+ "bz_error",
+ "bz_event_observer",
+ "bz_events",
  "clap",
  "debugserver-types",
  "futures 0.3.32",
@@ -1543,24 +1668,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_starlark_server"
+name = "bz_cmd_starlark_server"
 version = "0.1.0"
 dependencies = [
  "async-recursion",
  "async-trait",
- "buck2_cli_proto",
- "buck2_client_ctx",
- "buck2_cmd_starlark_client",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_server_ctx",
+ "bz_cli_proto",
+ "bz_client_ctx",
+ "bz_cmd_starlark_client",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_server_ctx",
  "dice",
  "dupe",
  "serde_json",
@@ -1568,27 +1693,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_cmd_targets_server"
+name = "bz_cmd_targets_server"
 version = "0.1.0"
 dependencies = [
  "async-recursion",
  "async-trait",
  "blake3",
- "buck2_artifact",
- "buck2_build_api",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_execute",
- "buck2_fs",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_node",
- "buck2_query",
- "buck2_server_ctx",
- "buck2_util",
+ "bz_artifact",
+ "bz_build_api",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_execute",
+ "bz_fs",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_node",
+ "bz_query",
+ "bz_server_ctx",
+ "bz_util",
  "derive_more 1.0.0",
  "dice",
  "dice_futures",
@@ -1607,7 +1732,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_common"
+name = "bz_common"
 version = "0.1.0"
 dependencies = [
  "allocative",
@@ -1617,17 +1742,17 @@ dependencies = [
  "base64",
  "blake3",
  "brotli",
- "buck2_cli_proto",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_http",
- "buck2_util",
- "buck2_wrapper_common",
  "bytes",
+ "bz_cli_proto",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_http",
+ "bz_util",
+ "bz_wrapper_common",
  "bzip2",
  "chrono",
  "cmp_any",
@@ -1692,19 +1817,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_configured"
+name = "bz_configured"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_build_api",
- "buck2_build_signals",
- "buck2_common",
- "buck2_core",
- "buck2_error",
- "buck2_hash",
- "buck2_node",
- "buck2_util",
+ "bz_build_api",
+ "bz_build_signals",
+ "bz_common",
+ "bz_core",
+ "bz_error",
+ "bz_hash",
+ "bz_node",
+ "bz_util",
  "derive_more 1.0.0",
  "dice",
  "dice_futures",
@@ -1718,18 +1843,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_core"
+name = "bz_core"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "assert_matches",
  "blake3",
- "buck2_data",
- "buck2_env",
- "buck2_error",
- "buck2_fs",
- "buck2_hash",
- "buck2_util",
+ "bz_data",
+ "bz_env",
+ "bz_error",
+ "bz_fs",
+ "bz_hash",
+ "bz_util",
  "cmp_any",
  "common-path",
  "derivative",
@@ -1769,10 +1894,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_critical_path"
+name = "bz_critical_path"
 version = "0.1.0"
 dependencies = [
- "buck2_error",
+ "bz_error",
  "crossbeam",
  "derive_more 1.0.0",
  "rand 0.10.1",
@@ -1782,22 +1907,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_daemon"
+name = "bz_daemon"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "buck2_certs",
- "buck2_cli_proto",
- "buck2_client_ctx",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_resource_control",
- "buck2_server",
- "buck2_util",
+ "bz_certs",
+ "bz_cli_proto",
+ "bz_client_ctx",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_resource_control",
+ "bz_server",
+ "bz_util",
  "clap",
  "dice",
  "dupe",
@@ -1813,12 +1938,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_data"
+name = "bz_data"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "buck2_host_sharing_proto",
- "buck2_protoc_dev",
+ "bz_host_sharing_proto",
+ "bz_protoc_dev",
  "derive_more 1.0.0",
  "dupe",
  "gazebo",
@@ -1832,16 +1957,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_directory"
+name = "bz_directory"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "assert_matches",
- "buck2_core",
- "buck2_error",
- "buck2_fs",
- "buck2_hash",
- "buck2_util",
+ "bz_core",
+ "bz_error",
+ "bz_fs",
+ "bz_hash",
+ "bz_util",
  "dashmap 6.1.0",
  "derivative",
  "derive_more 1.0.0",
@@ -1854,22 +1979,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_downward_api"
+name = "bz_downward_api"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_error",
- "buck2_hash",
+ "bz_error",
+ "bz_hash",
  "tracing",
 ]
 
 [[package]]
-name = "buck2_downward_api_proto"
+name = "bz_downward_api_proto"
 version = "0.1.0"
 dependencies = [
- "buck2_error",
- "buck2_hash",
- "buck2_protoc_dev",
+ "bz_error",
+ "bz_hash",
+ "bz_protoc_dev",
  "prost",
  "tonic",
  "tonic-prost",
@@ -1877,16 +2002,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_eden"
+name = "bz_eden"
 version = "0.1.0"
 
 [[package]]
-name = "buck2_env"
+name = "bz_env"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
  "assert_matches",
- "buck2_error",
+ "bz_error",
  "dupe",
  "linkme",
  "once_cell",
@@ -1895,13 +2020,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_error"
+name = "bz_error"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "anyhow",
- "buck2_data",
- "buck2_error_derive",
+ "bz_data",
+ "bz_error_derive",
  "clap",
  "derive_more 1.0.0",
  "dice_error",
@@ -1936,7 +2061,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_error_derive"
+name = "bz_error_derive"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -1945,43 +2070,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_error_tests"
+name = "bz_error_tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "buck2_error",
- "buck2_util",
+ "bz_error",
+ "bz_util",
  "starlark",
  "starlark_syntax",
 ]
 
 [[package]]
-name = "buck2_errorformat"
+name = "bz_errorformat"
 version = "0.1.0"
 dependencies = [
- "buck2_error",
+ "bz_error",
  "fancy-regex 0.16.2",
  "nom 8.0.0",
  "tracing",
 ]
 
 [[package]]
-name = "buck2_event_log"
+name = "bz_event_log"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-compression",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_event_observer",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_util",
- "buck2_wrapper_common",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_event_observer",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_util",
+ "bz_wrapper_common",
  "chrono",
  "dupe",
  "futures 0.3.32",
@@ -2003,19 +2128,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_event_observer"
+name = "bz_event_observer"
 version = "0.1.0"
 dependencies = [
  "assert_matches",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_hash",
- "buck2_test_api",
- "buck2_util",
- "buck2_wrapper_common",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_hash",
+ "bz_test_api",
+ "bz_util",
+ "bz_wrapper_common",
  "clap",
  "derivative",
  "derive_more 1.0.0",
@@ -2032,19 +2157,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_events"
+name = "bz_events"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_build_info",
- "buck2_cli_proto",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_hash",
- "buck2_util",
- "buck2_wrapper_common",
+ "bz_build_info",
+ "bz_cli_proto",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_hash",
+ "bz_util",
+ "bz_wrapper_common",
  "console",
  "crossbeam-channel",
  "derive_more 1.0.0",
@@ -2064,7 +2189,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_execute"
+name = "bz_execute"
 version = "0.1.0"
 dependencies = [
  "allocative",
@@ -2073,24 +2198,24 @@ dependencies = [
  "async-compression",
  "async-recursion",
  "async-trait",
- "buck2_action_metadata_proto",
- "buck2_build_info",
- "buck2_build_signals",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_directory",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_http",
- "buck2_miniperf_proto",
- "buck2_re_configuration",
- "buck2_util",
- "buck2_wrapper_common",
  "bytes",
+ "bz_action_metadata_proto",
+ "bz_build_info",
+ "bz_build_signals",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_directory",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_http",
+ "bz_miniperf_proto",
+ "bz_re_configuration",
+ "bz_util",
+ "bz_wrapper_common",
  "chrono",
  "crossbeam-channel",
  "derivative",
@@ -2131,33 +2256,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_execute_impl"
+name = "bz_execute_impl"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "assert_matches",
  "async-condvar-fair",
  "async-trait",
- "buck2_action_metadata_proto",
- "buck2_build_signals",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_directory",
- "buck2_error",
- "buck2_events",
- "buck2_execute",
- "buck2_execute_local",
- "buck2_forkserver",
- "buck2_forkserver_proto",
- "buck2_fs",
- "buck2_hash",
- "buck2_http",
- "buck2_resource_control",
- "buck2_util",
- "buck2_worker_proto",
- "buck2_wrapper_common",
+ "bz_action_metadata_proto",
+ "bz_build_signals",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_directory",
+ "bz_error",
+ "bz_events",
+ "bz_execute",
+ "bz_execute_local",
+ "bz_forkserver",
+ "bz_forkserver_proto",
+ "bz_fs",
+ "bz_hash",
+ "bz_http",
+ "bz_resource_control",
+ "bz_util",
+ "bz_worker_proto",
+ "bz_wrapper_common",
  "chrono",
  "dashmap 6.1.0",
  "derivative",
@@ -2186,21 +2311,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_execute_local"
+name = "bz_execute_local"
 version = "0.1.0"
 dependencies = [
  "assert_matches",
  "async-trait",
  "bincode",
- "buck2_common",
- "buck2_data",
- "buck2_error",
- "buck2_fs",
- "buck2_miniperf_proto",
- "buck2_resource_control",
- "buck2_util",
- "buck2_wrapper_common",
  "bytes",
+ "bz_common",
+ "bz_data",
+ "bz_error",
+ "bz_fs",
+ "bz_miniperf_proto",
+ "bz_resource_control",
+ "bz_util",
+ "bz_wrapper_common",
  "dupe",
  "futures 0.3.32",
  "libc",
@@ -2217,28 +2342,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_external_cells"
+name = "bz_external_cells"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
  "base64",
  "blake3",
- "buck2_build_api",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_directory",
- "buck2_error",
- "buck2_events",
- "buck2_execute",
- "buck2_external_cells_bundled",
- "buck2_fs",
- "buck2_hash",
- "buck2_http",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_util",
+ "bz_build_api",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_directory",
+ "bz_error",
+ "bz_events",
+ "bz_execute",
+ "bz_external_cells_bundled",
+ "bz_fs",
+ "bz_hash",
+ "bz_http",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_util",
  "cmp_any",
  "derive_more 1.0.0",
  "dice",
@@ -2256,31 +2381,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_external_cells_bundled"
+name = "bz_external_cells_bundled"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_common",
+ "bz_common",
  "walkdir",
 ]
 
 [[package]]
-name = "buck2_file_watcher"
+name = "bz_file_watcher"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "assert_matches",
  "async-trait",
  "blake3",
- "buck2_certs",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_util",
+ "bz_certs",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_util",
  "compact_str",
  "dice",
  "dupe",
@@ -2299,23 +2424,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_forkserver"
+name = "bz_forkserver"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "arc-swap",
  "assert_matches",
  "async-trait",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_execute_local",
- "buck2_forkserver_proto",
- "buck2_fs",
- "buck2_grpc",
- "buck2_resource_control",
- "buck2_util",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_execute_local",
+ "bz_forkserver_proto",
+ "bz_fs",
+ "bz_grpc",
+ "bz_resource_control",
+ "bz_util",
  "dupe",
  "futures 0.3.32",
  "libc",
@@ -2327,11 +2452,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_forkserver_proto"
+name = "bz_forkserver_proto"
 version = "0.1.0"
 dependencies = [
- "buck2_data",
- "buck2_protoc_dev",
+ "bz_data",
+ "bz_protoc_dev",
  "derive_more 1.0.0",
  "gazebo",
  "prost",
@@ -2341,15 +2466,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_fs"
+name = "bz_fs"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "assert_matches",
- "buck2_env",
- "buck2_error",
- "buck2_hash",
- "buck2_util",
+ "bz_env",
+ "bz_error",
+ "bz_hash",
+ "bz_util",
  "common-path",
  "compact_str",
  "derive_more 1.0.0",
@@ -2372,11 +2497,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_grpc"
+name = "bz_grpc"
 version = "0.1.0"
 dependencies = [
  "assert_matches",
- "buck2_error",
+ "bz_error",
  "futures 0.3.32",
  "hyper",
  "hyper-util",
@@ -2387,7 +2512,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_hash"
+name = "bz_hash"
 version = "0.1.0"
 dependencies = [
  "dashmap 6.1.0",
@@ -2397,18 +2522,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_health_check"
+name = "bz_health_check"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_fs",
- "buck2_grpc",
- "buck2_health_check_proto",
- "buck2_util",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_fs",
+ "bz_grpc",
+ "bz_health_check_proto",
+ "bz_util",
  "dupe",
  "itertools 0.14.0",
  "prost",
@@ -2420,11 +2545,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_health_check_proto"
+name = "bz_health_check_proto"
 version = "0.1.0"
 dependencies = [
- "buck2_data",
- "buck2_protoc_dev",
+ "bz_data",
+ "bz_protoc_dev",
  "derive_more 1.0.0",
  "gazebo",
  "prost",
@@ -2434,11 +2559,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_host_sharing_proto"
+name = "bz_host_sharing_proto"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "buck2_protoc_dev",
+ "bz_protoc_dev",
  "prost",
  "prost-types",
  "serde",
@@ -2447,13 +2572,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_http"
+name = "bz_http"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "buck2_certs",
- "buck2_error",
  "bytes",
+ "bz_certs",
+ "bz_error",
  "dupe",
  "futures 0.3.32",
  "http",
@@ -2477,28 +2602,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_install_proto"
+name = "bz_install_proto"
 version = "0.1.0"
 dependencies = [
- "buck2_protoc_dev",
+ "bz_protoc_dev",
  "prost",
  "tonic",
  "tonic-prost",
 ]
 
 [[package]]
-name = "buck2_interpreter"
+name = "bz_interpreter"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_common",
- "buck2_core",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_util",
+ "bz_common",
+ "bz_core",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_util",
  "derivative",
  "derive_more 1.0.0",
  "dice",
@@ -2522,7 +2647,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_interpreter_for_build"
+name = "bz_interpreter_for_build"
 version = "0.1.0"
 dependencies = [
  "allocative",
@@ -2530,26 +2655,26 @@ dependencies = [
  "async-trait",
  "base64",
  "blake3",
- "buck2_build_api",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_directory",
- "buck2_error",
- "buck2_event_observer",
- "buck2_events",
- "buck2_execute",
- "buck2_execute_local",
- "buck2_fs",
- "buck2_hash",
- "buck2_http",
- "buck2_interpreter",
- "buck2_node",
- "buck2_query",
- "buck2_query_parser",
- "buck2_resource_control",
- "buck2_util",
  "bumpalo",
+ "bz_build_api",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_directory",
+ "bz_error",
+ "bz_event_observer",
+ "bz_events",
+ "bz_execute",
+ "bz_execute_local",
+ "bz_fs",
+ "bz_hash",
+ "bz_http",
+ "bz_interpreter",
+ "bz_node",
+ "bz_query",
+ "bz_query_parser",
+ "bz_resource_control",
+ "bz_util",
  "cmp_any",
  "derivative",
  "derive_more 1.0.0",
@@ -2592,20 +2717,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_interpreter_for_build_tests"
+name = "bz_interpreter_for_build_tests"
 version = "0.1.0"
 dependencies = [
- "buck2_build_api",
- "buck2_common",
- "buck2_core",
- "buck2_error",
- "buck2_events",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_node",
- "buck2_query",
- "buck2_transition",
- "buck2_util",
+ "bz_build_api",
+ "bz_common",
+ "bz_core",
+ "bz_error",
+ "bz_events",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_node",
+ "bz_query",
+ "bz_transition",
+ "bz_util",
  "ctor",
  "dice",
  "dupe",
@@ -2618,44 +2743,44 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_miniperf"
+name = "bz_miniperf"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
- "buck2_miniperf_proto",
- "buck2_util",
+ "bz_miniperf_proto",
+ "bz_util",
  "perf-event",
  "smallvec",
  "thiserror 2.0.18",
 ]
 
 [[package]]
-name = "buck2_miniperf_proto"
+name = "bz_miniperf_proto"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "buck2_data",
+ "bz_data",
  "dupe",
  "serde",
 ]
 
 [[package]]
-name = "buck2_node"
+name = "bz_node"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_query",
- "buck2_query_parser",
- "buck2_util",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_query",
+ "bz_query_parser",
+ "bz_util",
  "cmp_any",
  "derive_more 1.0.0",
  "dice",
@@ -2683,44 +2808,44 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_node_tests"
+name = "bz_node_tests"
 version = "0.1.0"
 dependencies = [
- "buck2_core",
- "buck2_error",
- "buck2_fs",
- "buck2_node",
- "buck2_util",
+ "bz_core",
+ "bz_error",
+ "bz_fs",
+ "bz_node",
+ "bz_util",
  "dupe",
 ]
 
 [[package]]
-name = "buck2_offline_archive"
+name = "bz_offline_archive"
 version = "0.1.0"
 dependencies = [
- "buck2_core",
- "buck2_error",
- "buck2_fs",
- "buck2_util",
+ "bz_core",
+ "bz_error",
+ "bz_fs",
+ "bz_util",
  "serde",
  "tempfile",
 ]
 
 [[package]]
-name = "buck2_profile"
+name = "bz_profile"
 version = "0.1.0"
 dependencies = [
- "buck2_cli_proto",
- "buck2_core",
- "buck2_error",
- "buck2_fs",
- "buck2_interpreter",
+ "bz_cli_proto",
+ "bz_core",
+ "bz_error",
+ "bz_fs",
+ "bz_interpreter",
  "inferno",
  "starlark",
 ]
 
 [[package]]
-name = "buck2_protoc_dev"
+name = "bz_protoc_dev"
 version = "0.1.0"
 dependencies = [
  "dunce",
@@ -2730,17 +2855,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_query"
+name = "bz_query"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_core",
- "buck2_error",
- "buck2_hash",
- "buck2_query_derive",
- "buck2_query_parser",
- "buck2_util",
+ "bz_core",
+ "bz_error",
+ "bz_hash",
+ "bz_query_derive",
+ "bz_query_parser",
+ "bz_util",
  "derive_more 1.0.0",
  "display_container",
  "dupe",
@@ -2758,7 +2883,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_query_derive"
+name = "bz_query_derive"
 version = "0.4.1"
 dependencies = [
  "itertools 0.14.0",
@@ -2769,25 +2894,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_query_impls"
+name = "bz_query_impls"
 version = "0.0.0"
 dependencies = [
  "allocative",
  "assert_matches",
  "async-trait",
- "buck2_artifact",
- "buck2_build_api",
- "buck2_common",
- "buck2_core",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_node",
- "buck2_query",
- "buck2_query_parser",
- "buck2_util",
+ "bz_artifact",
+ "bz_build_api",
+ "bz_common",
+ "bz_core",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_node",
+ "bz_query",
+ "bz_query_parser",
+ "bz_util",
  "dashmap 6.1.0",
  "derive_more 1.0.0",
  "dice",
@@ -2805,11 +2930,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_query_parser"
+name = "bz_query_parser"
 version = "0.1.0"
 dependencies = [
- "buck2_error",
- "buck2_util",
+ "bz_error",
+ "bz_util",
  "derive_more 1.0.0",
  "dupe",
  "enum-map",
@@ -2819,29 +2944,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_re_configuration"
+name = "bz_re_configuration"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "buck2_common",
- "buck2_core",
- "buck2_error",
+ "bz_common",
+ "bz_core",
+ "bz_error",
 ]
 
 [[package]]
-name = "buck2_resource_control"
+name = "bz_resource_control"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_util",
- "buck2_wrapper_common",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_util",
+ "bz_wrapper_common",
  "derive_more 1.0.0",
  "dupe",
  "futures 0.3.32",
@@ -2852,7 +2977,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_server"
+name = "bz_server"
 version = "0.1.0"
 dependencies = [
  "allocative",
@@ -2861,39 +2986,39 @@ dependencies = [
  "async-trait",
  "bincode",
  "blake3",
- "buck2_analysis",
- "buck2_build_api",
- "buck2_build_signals",
- "buck2_certs",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_configured",
- "buck2_core",
- "buck2_data",
- "buck2_directory",
- "buck2_error",
- "buck2_event_observer",
- "buck2_events",
- "buck2_execute",
- "buck2_execute_impl",
- "buck2_file_watcher",
- "buck2_forkserver",
- "buck2_fs",
- "buck2_hash",
- "buck2_http",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_node",
- "buck2_profile",
- "buck2_re_configuration",
- "buck2_resource_control",
- "buck2_server_ctx",
- "buck2_server_starlark_debug",
- "buck2_subscription_proto",
- "buck2_test",
- "buck2_util",
- "buck2_validation",
- "buck2_wrapper_common",
+ "bz_analysis",
+ "bz_build_api",
+ "bz_build_signals",
+ "bz_certs",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_configured",
+ "bz_core",
+ "bz_data",
+ "bz_directory",
+ "bz_error",
+ "bz_event_observer",
+ "bz_events",
+ "bz_execute",
+ "bz_execute_impl",
+ "bz_file_watcher",
+ "bz_forkserver",
+ "bz_fs",
+ "bz_hash",
+ "bz_http",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_node",
+ "bz_profile",
+ "bz_re_configuration",
+ "bz_resource_control",
+ "bz_server_ctx",
+ "bz_server_starlark_debug",
+ "bz_subscription_proto",
+ "bz_test",
+ "bz_util",
+ "bz_validation",
+ "bz_wrapper_common",
  "chrono",
  "constant_time_eq 0.2.6",
  "crossbeam-channel",
@@ -2932,31 +3057,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_server_commands"
+name = "bz_server_commands"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_artifact",
- "buck2_build_api",
- "buck2_certs",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_directory",
- "buck2_error",
- "buck2_event_log",
- "buck2_event_observer",
- "buck2_events",
- "buck2_execute",
- "buck2_fs",
- "buck2_hash",
- "buck2_install_proto",
- "buck2_interpreter",
- "buck2_node",
- "buck2_query",
- "buck2_server_ctx",
- "buck2_util",
+ "bz_artifact",
+ "bz_build_api",
+ "bz_certs",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_directory",
+ "bz_error",
+ "bz_event_log",
+ "bz_event_observer",
+ "bz_events",
+ "bz_execute",
+ "bz_fs",
+ "bz_hash",
+ "bz_install_proto",
+ "bz_interpreter",
+ "bz_node",
+ "bz_query",
+ "bz_server_ctx",
+ "bz_util",
  "chrono",
  "dice",
  "dupe",
@@ -2973,27 +3098,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_server_ctx"
+name = "bz_server_ctx"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "assert_matches",
  "async-condvar-fair",
  "async-trait",
- "buck2_build_signals",
- "buck2_certs",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_execute",
- "buck2_fs",
- "buck2_hash",
- "buck2_node",
- "buck2_util",
- "buck2_wrapper_common",
+ "bz_build_signals",
+ "bz_certs",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_execute",
+ "bz_fs",
+ "bz_hash",
+ "bz_node",
+ "bz_util",
+ "bz_wrapper_common",
  "const_format",
  "derivative",
  "derive_more 1.0.0",
@@ -3014,20 +3139,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_server_starlark_debug"
+name = "bz_server_starlark_debug"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_cli_proto",
- "buck2_core",
- "buck2_data",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_server_ctx",
- "buck2_util",
+ "bz_cli_proto",
+ "bz_core",
+ "bz_data",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_server_ctx",
+ "bz_util",
  "debugserver-types",
  "derive_more 1.0.0",
  "dupe",
@@ -3042,7 +3167,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_sketches"
+name = "bz_sketches"
 version = "0.1.0"
 dependencies = [
  "base64",
@@ -3050,11 +3175,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_subscription_proto"
+name = "bz_subscription_proto"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "buck2_protoc_dev",
+ "bz_protoc_dev",
  "derive_more 1.0.0",
  "prost",
  "serde",
@@ -3063,33 +3188,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_test"
+name = "bz_test"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_build_api",
- "buck2_build_signals",
- "buck2_cli_proto",
- "buck2_common",
- "buck2_core",
- "buck2_data",
- "buck2_downward_api",
- "buck2_error",
- "buck2_error_derive",
- "buck2_events",
- "buck2_execute",
- "buck2_execute_impl",
- "buck2_fs",
- "buck2_grpc",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_interpreter_for_build",
- "buck2_node",
- "buck2_resource_control",
- "buck2_server_ctx",
- "buck2_test_api",
- "buck2_util",
+ "bz_build_api",
+ "bz_build_signals",
+ "bz_cli_proto",
+ "bz_common",
+ "bz_core",
+ "bz_data",
+ "bz_downward_api",
+ "bz_error",
+ "bz_error_derive",
+ "bz_events",
+ "bz_execute",
+ "bz_execute_impl",
+ "bz_fs",
+ "bz_grpc",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_interpreter_for_build",
+ "bz_node",
+ "bz_resource_control",
+ "bz_server_ctx",
+ "bz_test_api",
+ "bz_util",
  "dashmap 6.1.0",
  "derive_more 1.0.0",
  "dice",
@@ -3114,22 +3239,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_test_api"
+name = "bz_test_api"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "assert_matches",
  "async-trait",
- "buck2_core",
- "buck2_downward_api",
- "buck2_downward_api_proto",
- "buck2_error",
- "buck2_events",
- "buck2_fs",
- "buck2_grpc",
- "buck2_hash",
- "buck2_host_sharing_proto",
- "buck2_test_proto",
+ "bz_core",
+ "bz_downward_api",
+ "bz_downward_api_proto",
+ "bz_error",
+ "bz_events",
+ "bz_fs",
+ "bz_grpc",
+ "bz_hash",
+ "bz_host_sharing_proto",
+ "bz_test_proto",
  "derivative",
  "derive_more 1.0.0",
  "dupe",
@@ -3147,12 +3272,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_test_proto"
+name = "bz_test_proto"
 version = "0.1.0"
 dependencies = [
- "buck2_data",
- "buck2_host_sharing_proto",
- "buck2_protoc_dev",
+ "bz_data",
+ "bz_host_sharing_proto",
+ "bz_protoc_dev",
  "prost",
  "prost-types",
  "tonic",
@@ -3160,13 +3285,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_test_runner"
+name = "bz_test_runner"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "buck2_error",
- "buck2_grpc",
- "buck2_test_api",
+ "bz_error",
+ "bz_grpc",
+ "bz_test_api",
  "clap",
  "futures 0.3.32",
  "host_sharing",
@@ -3175,21 +3300,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_transition"
+name = "bz_transition"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_analysis",
- "buck2_build_api",
- "buck2_build_api_derive",
- "buck2_common",
- "buck2_core",
- "buck2_error",
- "buck2_events",
- "buck2_hash",
- "buck2_interpreter",
- "buck2_node",
+ "bz_analysis",
+ "bz_build_api",
+ "bz_build_api_derive",
+ "bz_common",
+ "bz_core",
+ "bz_error",
+ "bz_events",
+ "bz_hash",
+ "bz_interpreter",
+ "bz_node",
  "derive_more 1.0.0",
  "dice",
  "dice_futures",
@@ -3204,15 +3329,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_util"
+name = "bz_util"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "blake3",
- "buck2_env",
- "buck2_error",
- "buck2_hash",
- "buck2_wrapper_common",
+ "bz_env",
+ "bz_error",
+ "bz_hash",
+ "bz_wrapper_common",
  "dupe",
  "futures 0.3.32",
  "libc",
@@ -3232,17 +3357,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_validation"
+name = "bz_validation"
 version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "buck2_artifact",
- "buck2_build_api",
- "buck2_core",
- "buck2_error",
- "buck2_execute",
- "buck2_fs",
+ "bz_artifact",
+ "bz_build_api",
+ "bz_core",
+ "bz_error",
+ "bz_execute",
+ "bz_fs",
  "derivative",
  "derive_more 1.0.0",
  "dice",
@@ -3256,23 +3381,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "buck2_worker_proto"
+name = "bz_worker_proto"
 version = "0.1.0"
 dependencies = [
- "buck2_protoc_dev",
+ "bz_protoc_dev",
  "prost",
  "tonic",
  "tonic-prost",
 ]
 
 [[package]]
-name = "buck2_wrapper_common"
+name = "bz_wrapper_common"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "buck2_error",
- "buck2_hash",
- "buck2_util",
+ "bz_error",
+ "bz_hash",
+ "bz_util",
  "derive_more 1.0.0",
  "dupe",
  "nix 0.30.1",
@@ -3281,131 +3406,6 @@ dependencies = [
  "shlex",
  "sysinfo",
  "uuid",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "bumpalo"
-version = "3.20.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
-
-[[package]]
-name = "bytemuck"
-version = "1.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
-dependencies = [
- "bytemuck_derive",
- "rustversion",
-]
-
-[[package]]
-name = "bytemuck_derive"
-version = "1.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "byteorder"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
-
-[[package]]
-name = "byteorder-lite"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
-
-[[package]]
-name = "bytes"
-version = "1.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "bytesize"
-version = "2.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bd91ee7b2422bcb158d90ef4d14f75ef67f340943fc4149891dcce8f8b972a3"
-
-[[package]]
-name = "bz"
-version = "0.1.0"
-dependencies = [
- "backtrace",
- "blake3",
- "buck2_action_impl",
- "buck2_analysis",
- "buck2_anon_target",
- "buck2_build_api",
- "buck2_build_info",
- "buck2_build_signals",
- "buck2_build_signals_impl",
- "buck2_bxl",
- "buck2_certs",
- "buck2_cfg_constructor",
- "buck2_client",
- "buck2_client_ctx",
- "buck2_cmd_audit_client",
- "buck2_cmd_audit_server",
- "buck2_cmd_completion_client",
- "buck2_cmd_debug_client",
- "buck2_cmd_docs_client",
- "buck2_cmd_docs_server",
- "buck2_cmd_log_client",
- "buck2_cmd_query_server",
- "buck2_cmd_rage_client",
- "buck2_cmd_starlark_client",
- "buck2_cmd_starlark_server",
- "buck2_cmd_targets_server",
- "buck2_common",
- "buck2_configured",
- "buck2_core",
- "buck2_daemon",
- "buck2_data",
- "buck2_error",
- "buck2_event_log",
- "buck2_event_observer",
- "buck2_events",
- "buck2_external_cells",
- "buck2_forkserver",
- "buck2_fs",
- "buck2_hash",
- "buck2_interpreter_for_build",
- "buck2_query_impls",
- "buck2_server",
- "buck2_server_commands",
- "buck2_test",
- "buck2_test_runner",
- "buck2_transition",
- "buck2_util",
- "buck2_validation",
- "buck2_wrapper_common",
- "clap",
- "dirs",
- "dupe",
- "fbinit",
- "gazebo",
- "hex",
- "host_sharing",
- "libc",
- "mimalloc",
- "nix 0.30.1",
- "rustls",
- "superconsole",
- "tikv-jemallocator",
- "tokio",
- "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -4146,7 +4146,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "bincode",
- "buck2_hash",
+ "bz_hash",
  "cmp_any",
  "dashmap 6.1.0",
  "derivative",
@@ -7424,8 +7424,8 @@ dependencies = [
 name = "re_grpc_proto"
 version = "0.1.0"
 dependencies = [
- "buck2_data",
- "buck2_protoc_dev",
+ "bz_data",
+ "bz_protoc_dev",
  "prost",
  "prost-types",
  "serde",
@@ -7563,8 +7563,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
- "buck2_re_configuration",
- "buck2_util",
+ "bz_re_configuration",
+ "bz_util",
  "dupe",
  "futures 0.3.32",
  "gazebo",
@@ -8371,7 +8371,7 @@ name = "static_interner"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "buck2_hash",
+ "bz_hash",
  "dupe",
  "equivalent",
  "lock_free_hashtable",

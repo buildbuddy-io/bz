@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_query::query::environment::AttrFmtOptions;
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::environment::QueryTargets;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::environment::AttrFmtOptions;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::environment::QueryTargets;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 use regex::RegexSet;
 use starlark_map::small_map::SmallMap;
 
@@ -36,21 +36,21 @@ impl<'a, T: QueryCommandTarget> DotDigraph<'a> for DotTargetGraph<T> {
         "result_graph"
     }
 
-    fn for_each_node<F: FnMut(&Self::Node) -> buck2_error::Result<()>>(
+    fn for_each_node<F: FnMut(&Self::Node) -> bz_error::Result<()>>(
         &'a self,
         mut f: F,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for node in self.targets.iter() {
             f(&DotTargetGraphNode(node, self))?;
         }
         Ok(())
     }
 
-    fn for_each_edge<F: FnMut(&DotEdge) -> buck2_error::Result<()>>(
+    fn for_each_edge<F: FnMut(&DotEdge) -> bz_error::Result<()>>(
         &'a self,
         node: &Self::Node,
         mut f: F,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for dep in node.0.deps() {
             // Only include edges to other nodes within the subgraph.
             if self.targets.contains(dep) {
@@ -65,11 +65,11 @@ impl<'a, T: QueryCommandTarget> DotDigraph<'a> for DotTargetGraph<T> {
 }
 
 impl<T: QueryCommandTarget> DotNode for DotTargetGraphNode<'_, T> {
-    fn attrs(&self) -> buck2_error::Result<DotNodeAttrs> {
+    fn attrs(&self) -> bz_error::Result<DotNodeAttrs> {
         let extra = match &self.1.attributes {
             Some(attr_regex) => {
                 let mut extra = SmallMap::new();
-                QueryTargets::for_all_attrs::<buck2_error::Error, _, _>(
+                QueryTargets::for_all_attrs::<bz_error::Error, _, _>(
                     self.0,
                     |attr_name, attr_value| {
                         if attr_regex.is_match(attr_name) {

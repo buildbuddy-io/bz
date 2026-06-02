@@ -18,17 +18,17 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::execute::request::OutputType;
-use buck2_execute::path::artifact_path::ArtifactPath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_util::arc_str::ThinArcS;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::execute::request::OutputType;
+use bz_execute::path::artifact_path::ArtifactPath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_util::arc_str::ThinArcS;
 use derivative::Derivative;
 use derive_more::Display;
 use derive_more::From;
@@ -229,14 +229,14 @@ impl ArtifactDyn for Artifact {
         &self,
         fs: &ArtifactFs,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         self.get_path().resolve(fs, content_hash)
     }
 
     fn resolve_configuration_hash_path(
         &self,
         fs: &ArtifactFs,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         self.get_path().resolve_configuration_hash_path(fs)
     }
 
@@ -451,7 +451,7 @@ impl<'v> DeclaredArtifact<'v> {
     /// When we freeze `DeclaredArtifact`, we then just call `get_bound_artifact()`, and `expect`
     /// it to be valid. We have the `ensure_bound` method to make sure that we can return
     /// a friendlier message to users because `freeze()` does not return error messages
-    pub fn ensure_bound(self) -> buck2_error::Result<BoundBuildArtifact> {
+    pub fn ensure_bound(self) -> bz_error::Result<BoundBuildArtifact> {
         let borrow = self.artifact().borrow();
 
         let artifact = match &*borrow {
@@ -524,7 +524,7 @@ impl DeclaredArtifactKind {
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 pub enum ArtifactErrors {
     #[error("Attempted to bind an artifact which was already bound\n  Artifact: {0}")]
@@ -546,7 +546,7 @@ impl<'v> From<DeclaredArtifact<'v>> for OutputArtifact<'v> {
 }
 
 impl<'v> OutputArtifact<'v> {
-    pub fn bind(&self, key: ActionKey) -> buck2_error::Result<BoundBuildArtifact> {
+    pub fn bind(&self, key: ActionKey) -> bz_error::Result<BoundBuildArtifact> {
         match &mut *self.0.artifact().borrow_mut() {
             DeclaredArtifactKind::Bound(a) => {
                 // NOTE: If the artifact was already bound to the same action, we leave it alone.
@@ -579,7 +579,7 @@ impl<'v> OutputArtifact<'v> {
         })
     }
 
-    pub fn ensure_output_type(&self, output_type: OutputType) -> buck2_error::Result<()> {
+    pub fn ensure_output_type(&self, output_type: OutputType) -> bz_error::Result<()> {
         output_type.check_path(self, self.0.output_type())
     }
 
@@ -604,19 +604,19 @@ impl<'v> Deref for OutputArtifact<'v> {
 pub struct UnboundArtifact(BuildArtifactPath, OutputType);
 
 impl UnboundArtifact {
-    fn bind(self, key: ActionKey) -> buck2_error::Result<BuildArtifact> {
+    fn bind(self, key: ActionKey) -> bz_error::Result<BuildArtifact> {
         BuildArtifact::new(self.0, key, self.1)
     }
 }
 
 pub mod testing {
-    use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-    use buck2_core::deferred::key::DeferredHolderKey;
-    use buck2_core::fs::buck_out_path::BuckOutPathKind;
-    use buck2_core::fs::buck_out_path::BuildArtifactPath;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-    use buck2_execute::execute::request::OutputType;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+    use bz_core::deferred::key::DeferredHolderKey;
+    use bz_core::fs::buck_out_path::BuckOutPathKind;
+    use bz_core::fs::buck_out_path::BuildArtifactPath;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_execute::execute::request::OutputType;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     use dupe::Dupe;
 
     use crate::actions::key::ActionIndex;
@@ -688,28 +688,28 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use buck2_core::cells::CellResolver;
-    use buck2_core::cells::cell_root_path::CellRootPathBuf;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-    use buck2_core::deferred::key::DeferredHolderKey;
-    use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-    use buck2_core::fs::buck_out_path::BuckOutPathKind;
-    use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-    use buck2_core::fs::buck_out_path::BuildArtifactPath;
-    use buck2_core::fs::project::ProjectRoot;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-    use buck2_core::package::source_path::SourcePath;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-    use buck2_execute::execute::request::OutputType;
-    use buck2_fs::fs_util::uncategorized as fs_util;
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-    use buck2_util::arc_str::ThinArcS;
+    use bz_core::cells::CellResolver;
+    use bz_core::cells::cell_root_path::CellRootPathBuf;
+    use bz_core::cells::name::CellName;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+    use bz_core::deferred::key::DeferredHolderKey;
+    use bz_core::fs::artifact_path_resolver::ArtifactFs;
+    use bz_core::fs::buck_out_path::BuckOutPathKind;
+    use bz_core::fs::buck_out_path::BuckOutPathResolver;
+    use bz_core::fs::buck_out_path::BuildArtifactPath;
+    use bz_core::fs::project::ProjectRoot;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+    use bz_core::package::source_path::SourcePath;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_execute::execute::request::OutputType;
+    use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_util::arc_str::ThinArcS;
     use dupe::Dupe;
     use starlark::values::Heap;
 
@@ -723,7 +723,7 @@ mod tests {
     use crate::artifact::source_artifact::SourceArtifact;
 
     #[test]
-    fn artifact_binding() -> buck2_error::Result<()> {
+    fn artifact_binding() -> bz_error::Result<()> {
         Heap::temp(|heap| {
             let target = ConfiguredTargetLabel::testing_parse(
                 "cell//pkg:foo",
@@ -773,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_artifact() -> buck2_error::Result<()> {
+    fn resolve_artifact() -> bz_error::Result<()> {
         let source = SourceArtifact::new(SourcePath::testing_new("cell//pkg", "src.cpp"));
 
         let project_fs =
@@ -797,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn writes_files() -> buck2_error::Result<()> {
+    fn writes_files() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new().unwrap();
         let project_fs = project_root.path();
 
@@ -854,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn test_short_path() -> buck2_error::Result<()> {
+    fn test_short_path() -> bz_error::Result<()> {
         let target =
             ConfiguredTargetLabel::testing_parse("cell//pkg:foo", ConfigurationData::testing_new());
 

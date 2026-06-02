@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_event_observer::re_state::ReState;
-use buck2_event_observer::two_snapshots::TwoSnapshots;
+use bz_event_observer::re_state::ReState;
+use bz_event_observer::two_snapshots::TwoSnapshots;
 use superconsole::Component;
 
 use crate::subscribers::superconsole::SuperConsoleConfig;
@@ -22,13 +22,13 @@ pub(crate) struct ReHeader<'a> {
 }
 
 impl Component for ReHeader<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         _dimensions: superconsole::Dimensions,
         mode: superconsole::DrawMode,
-    ) -> buck2_error::Result<superconsole::Lines> {
+    ) -> bz_error::Result<superconsole::Lines> {
         self.re_state.render(
             self.two_snapshots,
             self.super_console_config.enable_detailed_re,

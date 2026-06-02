@@ -12,15 +12,15 @@
 pub trait AnyMatches {
     fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool>;
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool>;
 }
 
 impl AnyMatches for serde_json::Value {
     fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         match self {
             Self::Null => {}
             Self::Bool(..) => {}

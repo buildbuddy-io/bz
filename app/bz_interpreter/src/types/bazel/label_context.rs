@@ -1,7 +1,7 @@
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
-use buck2_core::package::PackageLabel;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::name::CellName;
+use bz_core::package::PackageLabel;
 use starlark::any::ProvidesStaticType;
 
 #[derive(Debug, ProvidesStaticType)]

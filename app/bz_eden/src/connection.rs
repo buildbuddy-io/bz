@@ -19,19 +19,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_core;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::soft_error;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_core;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::soft_error;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::conversion::from_any_with_tag;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use dupe::Dupe;
 use edenfs::MountState;
 use edenfs_clients::EdenService;
@@ -87,7 +87,7 @@ impl EdenConnectionManager {
         fb: FacebookInit,
         project_root: &ProjectRoot,
         semaphore: Option<Semaphore>,
-    ) -> buck2_error::Result<Option<Self>> {
+    ) -> bz_error::Result<Option<Self>> {
         let dot_eden_dir = project_root.root().as_abs_path().join(".eden");
         if !dot_eden_dir.exists() {
             return Ok(None);
@@ -124,13 +124,13 @@ impl EdenConnectionManager {
     fn get_eden_connector(
         fb: FacebookInit,
         dot_eden_dir: &AbsPath,
-    ) -> buck2_error::Result<EdenConnector> {
+    ) -> bz_error::Result<EdenConnector> {
         // Based off of how watchman picks up the config: fbcode/watchman/watcher/eden.cpp:138
         if cfg!(windows) {
             let config_path = dot_eden_dir.join("config");
             let config_contents = fs_util::read_to_string(config_path).categorize_internal()?;
             let config: EdenConfig = toml::from_str(&config_contents)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::IoEdenConfigError))?;
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::IoEdenConfigError))?;
             let mount = Arc::new(EdenMountPoint(AbsPathBuf::new(config.config.root)?));
             let socket = AbsPathBuf::new(PathBuf::from(config.config.socket))?;
             Ok(EdenConnector { fb, mount, socket })
@@ -180,12 +180,12 @@ impl EdenConnectionManager {
 
     /// Returns a string like "20220102-030405", assuming this is a release version. This is
     /// pattern-matched off of what the Eden CLI does.
-    pub async fn get_eden_version(&self) -> buck2_error::Result<Option<String>> {
+    pub async fn get_eden_version(&self) -> bz_error::Result<Option<String>> {
         let fb303 = self.connector.connect_fb303()?;
         let values = fb303
             .getRegexExportedValues("^build_.*")
             .await
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::IoEdenVersionError))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::IoEdenVersionError))?;
 
         fn join_version(values: &BTreeMap<String, String>) -> Option<String> {
             let version = values.get("build_package_version")?;
@@ -240,7 +240,7 @@ impl EdenConnectionManager {
                     if retries > 0 {
                         soft_error!(
                             "eden_io_succeeded_after_retry",
-                            buck2_error!(buck2_error::ErrorTag::Input, "Eden IO retried {} times", retries),
+                            bz_error!(bz_error::ErrorTag::Input, "Eden IO retried {} times", retries),
                             quiet: true
                         ).ok();
                     }
@@ -280,7 +280,7 @@ impl EdenConnectionManager {
 
 /// A (potentially pending) Eden client.
 type EdenClientFuture =
-    Shared<BoxFuture<'static, buck2_error::Result<Arc<dyn EdenService + Send + Sync>>>>;
+    Shared<BoxFuture<'static, bz_error::Result<Arc<dyn EdenService + Send + Sync>>>>;
 
 /// An Eden client and an epoch to keep track of reconnections.
 #[derive(Clone, Allocative)]
@@ -304,14 +304,14 @@ struct EdenConnector {
 fn thrift_builder(
     fb: FacebookInit,
     socket: &AbsPathBuf,
-) -> buck2_error::Result<::thriftclient::ThriftChannelBuilder> {
+) -> bz_error::Result<::thriftclient::ThriftChannelBuilder> {
     // NOTE: This timeout is absurdly high, but bear in mind that what we're
     // "comparing" to is a FS call that has no timeouts at all.
     const THRIFT_TIMEOUT_MS: u32 = 120_000;
 
     Ok(
         ::thriftclient::ThriftChannelBuilder::from_path(fb, socket.as_path())
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::IoEdenThriftError))?
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::IoEdenThriftError))?
             .with_conn_timeout(THRIFT_TIMEOUT_MS)
             .with_recv_timeout(THRIFT_TIMEOUT_MS)
             .with_secure(false),
@@ -328,7 +328,7 @@ impl EdenConnector {
             tracing::info!("Creating a new Eden connection via `{}`", socket.display());
             let eden: Arc<dyn EdenService + Send + Sync> = thrift_builder(fb, &socket)?
                 .build_client(::edenfs_clients::make_EdenService)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::IoEdenThriftError))
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::IoEdenThriftError))
                 .buck_error_context("Error constructing Eden client")?;
 
             wait_until_mount_is_ready(eden.as_ref(), &mount).await?;
@@ -337,16 +337,16 @@ impl EdenConnector {
         })
         .map(|r| match r {
             Ok(r) => r,
-            Err(e) => Err(e.into()), // Turn the JoinError into a buck2_error::Error.
+            Err(e) => Err(e.into()), // Turn the JoinError into a bz_error::Error.
         })
         .boxed()
         .shared()
     }
 
-    fn connect_fb303(&self) -> buck2_error::Result<Arc<dyn BaseService + Send + Sync>> {
+    fn connect_fb303(&self) -> bz_error::Result<Arc<dyn BaseService + Send + Sync>> {
         thrift_builder(self.fb, &self.socket)?
             .build_client(::fb303_core_clients::make_BaseService)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::IoEdenThriftError))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::IoEdenThriftError))
     }
 }
 
@@ -354,7 +354,7 @@ impl EdenConnector {
 async fn wait_until_mount_is_ready(
     eden: &(dyn EdenService + Send + Sync),
     mount: &EdenMountPoint,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 

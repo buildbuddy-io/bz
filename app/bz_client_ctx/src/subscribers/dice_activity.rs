@@ -1,4 +1,4 @@
-use buck2_event_observer::dice_state::DiceState;
+use bz_event_observer::dice_state::DiceState;
 
 pub(crate) fn active_dice_summary(dice_state: &DiceState) -> Option<String> {
     let mut computing = DiceActivity::default();

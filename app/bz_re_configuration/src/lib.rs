@@ -13,22 +13,22 @@
 use std::str::FromStr;
 
 use allocative::Allocative;
-use buck2_common::init::BUILDBUDDY_API_KEY_HEADER;
-use buck2_common::init::RemoteExecutionStartupConfig;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::rollout_percentage::RolloutPercentage;
+use bz_common::init::BUILDBUDDY_API_KEY_HEADER;
+use bz_common::init::RemoteExecutionStartupConfig;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_core::rollout_percentage::RolloutPercentage;
 
 static BUCK2_RE_CLIENT_CFG_SECTION: &str = "buck2_re_client";
 
 /// We put functions here that both things need to implement for code that isn't gated behind a
 /// fbcode_build or not(fbcode_build)
 pub trait RemoteExecutionStaticMetadataImpl: Sized {
-    fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> buck2_error::Result<Self>;
+    fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> bz_error::Result<Self>;
     fn apply_remote_execution_startup_config(
         &mut self,
         config: &RemoteExecutionStartupConfig,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
     fn cas_semaphore_size(&self) -> usize;
     fn exec_semaphore_size(&self) -> usize;
 }
@@ -48,7 +48,7 @@ struct ResolvedBazelRemoteExecutionStartupConfig {
 
 fn parse_bazel_remote_endpoint(
     value: &str,
-) -> buck2_error::Result<Option<ParsedBazelRemoteEndpoint>> {
+) -> bz_error::Result<Option<ParsedBazelRemoteEndpoint>> {
     let value = value.trim();
     if value.is_empty() {
         return Ok(None);
@@ -63,8 +63,8 @@ fn parse_bazel_remote_endpoint(
     } else if let Some(rest) = value.strip_prefix("https://") {
         (rest, Some(true))
     } else if value.starts_with("unix:") {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Buck2 does not currently support Bazel remote endpoint `{}`: unix socket endpoints are unsupported",
             value
         ));
@@ -74,8 +74,8 @@ fn parse_bazel_remote_endpoint(
     };
 
     if address.is_empty() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid empty Bazel remote endpoint `{}`",
             value
         ));
@@ -90,7 +90,7 @@ fn parse_bazel_remote_endpoint(
 fn resolve_bazel_remote_execution_startup_config(
     config: &RemoteExecutionStartupConfig,
     cache_address_configured: bool,
-) -> buck2_error::Result<ResolvedBazelRemoteExecutionStartupConfig> {
+) -> bz_error::Result<ResolvedBazelRemoteExecutionStartupConfig> {
     let remote_executor = config
         .remote_executor
         .as_deref()
@@ -109,8 +109,8 @@ fn resolve_bazel_remote_execution_startup_config(
         if let Some(endpoint_tls) = endpoint.tls {
             match tls {
                 Some(existing) if existing != endpoint_tls => {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Buck2 remote execution currently requires --remote_cache and --remote_executor to use the same TLS mode"
                     ));
                 }
@@ -174,7 +174,7 @@ pub enum CASdAddress {
 }
 
 impl FromStr for CASdAddress {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some(path) = s.strip_prefix("unix://") {
@@ -194,7 +194,7 @@ pub enum CASdMode {
 }
 
 impl FromStr for CASdMode {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -202,8 +202,8 @@ impl FromStr for CASdMode {
             "local_without_sync" => Ok(CASdMode::LocalWithoutSync),
             "remote" => Ok(CASdMode::Remote),
             "remote_to_dest" => Ok(CASdMode::RemoteToDest),
-            _ => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            _ => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid CASd mode: {}",
                 s
             )),
@@ -219,7 +219,7 @@ pub enum CopyPolicy {
 }
 
 impl FromStr for CopyPolicy {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -232,7 +232,7 @@ impl FromStr for CopyPolicy {
 
 #[allow(unused)]
 mod fbcode {
-    use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+    use bz_common::legacy_configs::key::BuckconfigKeyRef;
 
     use super::*;
 
@@ -302,7 +302,7 @@ mod fbcode {
     }
 
     impl RemoteExecutionStaticMetadataImpl for RemoteExecutionStaticMetadata {
-        fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+        fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> bz_error::Result<Self> {
             Ok(Self {
                 cas_address: legacy_config.parse(BuckconfigKeyRef {
                     section: BUCK2_RE_CLIENT_CFG_SECTION,
@@ -523,7 +523,7 @@ mod fbcode {
         fn apply_remote_execution_startup_config(
             &mut self,
             config: &RemoteExecutionStartupConfig,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             let resolved = resolve_bazel_remote_execution_startup_config(
                 config,
                 self.cas_address.is_some() || self.action_cache_address.is_some(),
@@ -561,7 +561,7 @@ mod not_fbcode {
     pub struct RemoteExecutionStaticMetadata(pub Buck2OssReConfiguration);
 
     impl RemoteExecutionStaticMetadataImpl for RemoteExecutionStaticMetadata {
-        fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+        fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> bz_error::Result<Self> {
             Ok(Self(Buck2OssReConfiguration::from_legacy_config(
                 legacy_config,
             )?))
@@ -570,7 +570,7 @@ mod not_fbcode {
         fn apply_remote_execution_startup_config(
             &mut self,
             config: &RemoteExecutionStartupConfig,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             self.0.apply_remote_execution_startup_config(config)
         }
 
@@ -650,7 +650,7 @@ pub struct HttpHeader {
 }
 
 impl FromStr for HttpHeader {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut iter = s.splitn(2, ':');
@@ -659,8 +659,8 @@ impl FromStr for HttpHeader {
                 key: key.trim().to_owned(),
                 value: value.trim().to_owned(),
             }),
-            _ => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            _ => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid header (expect name and value separated by `:`): `{}`",
                 s
             )),
@@ -682,7 +682,7 @@ impl Buck2OssReConfiguration {
     pub fn apply_remote_execution_startup_config(
         &mut self,
         config: &RemoteExecutionStartupConfig,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let resolved = resolve_bazel_remote_execution_startup_config(
             config,
             self.cas_address.is_some() || self.action_cache_address.is_some(),
@@ -715,7 +715,7 @@ impl Buck2OssReConfiguration {
         Ok(())
     }
 
-    pub fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+    pub fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> bz_error::Result<Self> {
         // this is used for all three services by default, if given; if one of
         // them has an explicit address given as well though, use that instead
         let default_address: Option<String> = legacy_config.parse(BuckconfigKeyRef {
@@ -825,7 +825,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn remote_executor_defaults_cache_when_cache_is_unset() -> buck2_error::Result<()> {
+    fn remote_executor_defaults_cache_when_cache_is_unset() -> bz_error::Result<()> {
         let mut config = Buck2OssReConfiguration::default();
         config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
             remote_executor: Some("grpc://executor.example.com".to_owned()),
@@ -847,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_cache_overrides_executor_cache_fallback() -> buck2_error::Result<()> {
+    fn remote_cache_overrides_executor_cache_fallback() -> bz_error::Result<()> {
         let mut config = Buck2OssReConfiguration::default();
         config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
             remote_cache: Some("cache.example.com".to_owned()),
@@ -870,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_remote_cache_disables_cache_without_executor() -> buck2_error::Result<()> {
+    fn empty_remote_cache_disables_cache_without_executor() -> bz_error::Result<()> {
         let mut config = Buck2OssReConfiguration {
             cas_address: Some("configured-cache.example.com".to_owned()),
             action_cache_address: Some("configured-cache.example.com".to_owned()),
@@ -888,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn api_key_sets_buildbuddy_header() -> buck2_error::Result<()> {
+    fn api_key_sets_buildbuddy_header() -> bz_error::Result<()> {
         let mut config = Buck2OssReConfiguration::default();
         config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
             buildbuddy_api_key: Some("secret".to_owned()),
@@ -903,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    fn api_key_replaces_existing_buildbuddy_header() -> buck2_error::Result<()> {
+    fn api_key_replaces_existing_buildbuddy_header() -> bz_error::Result<()> {
         let mut config = Buck2OssReConfiguration {
             http_headers: vec![
                 HttpHeader {
@@ -946,7 +946,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_api_key_clears_existing_buildbuddy_header() -> buck2_error::Result<()> {
+    fn empty_api_key_clears_existing_buildbuddy_header() -> bz_error::Result<()> {
         let mut config = Buck2OssReConfiguration {
             http_headers: vec![HttpHeader {
                 key: BUILDBUDDY_API_KEY_HEADER.to_owned(),
@@ -965,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_connection_limits_are_startup_overrides() -> buck2_error::Result<()> {
+    fn remote_connection_limits_are_startup_overrides() -> bz_error::Result<()> {
         let mut config = Buck2OssReConfiguration::default();
         config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
             remote_max_connections: Some(12),

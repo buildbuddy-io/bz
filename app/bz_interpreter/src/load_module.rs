@@ -9,9 +9,9 @@
  */
 
 use async_trait::async_trait;
-use buck2_core::bzl::ImportPath;
-use buck2_core::package::PackageLabel;
-use buck2_util::late_binding::LateBinding;
+use bz_core::bzl::ImportPath;
+use bz_core::package::PackageLabel;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 use starlark::environment::Globals;
 
@@ -27,27 +27,27 @@ pub trait InterpreterCalculationImpl: Send + Sync + 'static {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: StarlarkModulePath<'_>,
-    ) -> buck2_error::Result<LoadedModule>;
+    ) -> bz_error::Result<LoadedModule>;
 
     async fn get_module_deps(
         &self,
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
-    ) -> buck2_error::Result<ModuleDeps>;
+    ) -> bz_error::Result<ModuleDeps>;
 
     /// Return `None` if the PACKAGE file doesn't exist.
     async fn get_package_file_deps(
         &self,
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
-    ) -> buck2_error::Result<Option<(PackageFilePath, Vec<ImportPath>)>>;
+    ) -> bz_error::Result<Option<(PackageFilePath, Vec<ImportPath>)>>;
 
-    async fn global_env(&self, ctx: &mut DiceComputations<'_>) -> buck2_error::Result<Globals>;
+    async fn global_env(&self, ctx: &mut DiceComputations<'_>) -> bz_error::Result<Globals>;
 
     async fn prelude_import(
         &self,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<Option<PreludePath>>;
+    ) -> bz_error::Result<Option<PreludePath>>;
 }
 
 pub static INTERPRETER_CALCULATION_IMPL: LateBinding<&'static dyn InterpreterCalculationImpl> =
@@ -59,12 +59,12 @@ pub trait InterpreterCalculation {
     async fn get_loaded_module(
         &mut self,
         path: StarlarkModulePath<'_>,
-    ) -> buck2_error::Result<LoadedModule>;
+    ) -> bz_error::Result<LoadedModule>;
 
     async fn get_loaded_module_from_import_path(
         &mut self,
         path: &ImportPath,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         let module_path = match path.path().path().extension() {
             Some("json") => StarlarkModulePath::JsonFile(path),
             Some("toml") => StarlarkModulePath::TomlFile(path),
@@ -76,7 +76,7 @@ pub trait InterpreterCalculation {
     async fn get_loaded_module_imports(
         &mut self,
         path: &ImportPath,
-    ) -> buck2_error::Result<Vec<ImportPath>> {
+    ) -> bz_error::Result<Vec<ImportPath>> {
         //TODO(benfoxman): Don't need to get the whole module, just parse the imports.
         Ok(self
             .get_loaded_module_from_import_path(path)
@@ -92,7 +92,7 @@ impl InterpreterCalculation for DiceComputations<'_> {
     async fn get_loaded_module(
         &mut self,
         path: StarlarkModulePath<'_>,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         INTERPRETER_CALCULATION_IMPL
             .get()?
             .get_loaded_module(self, path)

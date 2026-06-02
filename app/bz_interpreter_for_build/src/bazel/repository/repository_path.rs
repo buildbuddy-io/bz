@@ -113,7 +113,7 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
         let mut children = Vec::new();
         for child in args.positions(heap)? {
             let Some(child) = child.unpack_str() else {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     BazelRepositoryError::RepositoryPathGetChildNonString(
                         child.get_type().to_owned(),
                     ),
@@ -157,7 +157,7 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
         }
         let read_path = repository_path_for_read(&this.path);
         let path = fs::canonicalize(&read_path).map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryPathRealpath {
+            bz_error::Error::from(BazelRepositoryError::RepositoryPathRealpath {
                 path: this.path.clone(),
                 error: error.to_string(),
             })
@@ -197,7 +197,7 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
         }
         let read_path = repository_path_for_read(&this.path);
         let entries = fs::read_dir(&read_path).map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
+            bz_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
                 path: this.path.clone(),
                 error: error.to_string(),
             })
@@ -205,7 +205,7 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
         let mut paths = entries
             .map(|entry| {
                 let entry = entry.map_err(|error| {
-                    buck2_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
+                    bz_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
                         path: this.path.clone(),
                         error: error.to_string(),
                     })
@@ -269,7 +269,7 @@ pub(super) fn repository_path_and_dep_from_value_relative_to(
         return Ok((path, dep));
     }
     Err(
-        buck2_error::Error::from(BazelRepositoryError::ModuleCtxPathUnsupportedValue(
+        bz_error::Error::from(BazelRepositoryError::ModuleCtxPathUnsupportedValue(
             value.get_type().to_owned(),
         ))
         .into(),
@@ -296,8 +296,8 @@ fn repository_remote_shell_in_context(
     let BazelRepositoryCommandExecutor::Remote(command_executor) =
         remote_context.command_executor.clone()
     else {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "remote repository path operation requires a remote repository executor"
         )
         .into());
@@ -313,7 +313,7 @@ fn repository_remote_shell_in_context(
     command_executor
         .execute(command, &remote_context.working_dir, timeout, quiet)
         .map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+            bz_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
                 program: "/bin/sh".to_owned(),
                 error,
             })
@@ -370,7 +370,7 @@ printf '%s\n' "$resolved"
     )?;
     if output.return_code != 0 {
         return Err(
-            buck2_error::Error::from(BazelRepositoryError::RepositoryPathRealpath {
+            bz_error::Error::from(BazelRepositoryError::RepositoryPathRealpath {
                 path: path.to_owned(),
                 error: repository_ctx_latin1_output(&output.stderr),
             })
@@ -405,7 +405,7 @@ done
     )?;
     if output.return_code != 0 {
         return Err(
-            buck2_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
+            bz_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
                 path: path.to_owned(),
                 error: repository_ctx_latin1_output(&output.stderr),
             })
@@ -416,13 +416,13 @@ done
     let mut lines = stdout.lines();
     match lines.next() {
         Some("ok") => Ok(lines.map(ToOwned::to_owned).collect()),
-        Some("not_directory") => Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        Some("not_directory") => Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "can't readdir(), not a directory: {}",
             path,
         )
         .into()),
-        Some(status) => Err(buck2_error::Error::from(
+        Some(status) => Err(bz_error::Error::from(
             BazelRepositoryError::RepositoryPathReaddir {
                 path: path.to_owned(),
                 error: format!("remote readdir returned malformed status `{status}`"),
@@ -430,7 +430,7 @@ done
         )
         .into()),
         None => Err(
-            buck2_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
+            bz_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
                 path: path.to_owned(),
                 error: "remote readdir returned no status".to_owned(),
             })
@@ -634,7 +634,7 @@ fn push_unique_repository_read_root(roots: &mut Vec<PathBuf>, root: PathBuf) {
     }
 }
 
-pub(super) fn repository_path_for_write(path: &str) -> buck2_error::Result<PathBuf> {
+pub(super) fn repository_path_for_write(path: &str) -> bz_error::Result<PathBuf> {
     let path = Path::new(path);
     if path.is_absolute() {
         return Ok(path.to_owned());
@@ -642,8 +642,8 @@ pub(super) fn repository_path_for_write(path: &str) -> buck2_error::Result<PathB
     let root = match repository_read_roots().into_iter().next() {
         Some(root) => root,
         None => env::current_dir().map_err(|e| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "could not resolve repository write root: {}",
                 e
             )

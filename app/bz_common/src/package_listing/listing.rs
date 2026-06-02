@@ -11,10 +11,10 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_util::arc_str::ArcS;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_util::arc_str::ArcS;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark_map::sorted_set::SortedSet;
@@ -108,8 +108,8 @@ impl PackageListing {
 }
 
 pub mod testing {
-    use buck2_core::package::package_relative_path::PackageRelativePathBuf;
-    use buck2_fs::paths::file_name::FileNameBuf;
+    use bz_core::package::package_relative_path::PackageRelativePathBuf;
+    use bz_fs::paths::file_name::FileNameBuf;
     use starlark_map::sorted_set::SortedSet;
     use starlark_map::sorted_vec::SortedVec;
 

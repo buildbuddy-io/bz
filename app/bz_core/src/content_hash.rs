@@ -11,10 +11,10 @@
 use std::cmp::min;
 
 use allocative::Allocative;
-use buck2_error::internal_error;
+use bz_error::internal_error;
 use pagable::Pagable;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ContentBasedPathHashError {
     #[error("Content hash must be 16 hex digits, got: `{0}`")]
@@ -53,7 +53,7 @@ pub enum ContentBasedPathHash {
 }
 
 impl ContentBasedPathHash {
-    pub fn new(bytes: &[u8]) -> buck2_error::Result<ContentBasedPathHash> {
+    pub fn new(bytes: &[u8]) -> bz_error::Result<ContentBasedPathHash> {
         let value = hex::encode(&bytes[0..min(8, bytes.len())]);
 
         let value = if value.len() < 16 {

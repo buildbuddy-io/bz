@@ -10,17 +10,17 @@
 
 use std::pin::Pin;
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::analysis::registry::RecordedAnalysisValues;
-use buck2_build_api::dynamic_value::DynamicValue;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKeyBxl;
-use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::StdBuckHashMap;
-use buck2_util::late_binding::LateBinding;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::analysis::registry::RecordedAnalysisValues;
+use bz_build_api::dynamic_value::DynamicValue;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use bz_core::deferred::base_deferred_key::BaseDeferredKeyBxl;
+use bz_core::deferred::dynamic::DynamicLambdaResultsKey;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_hash::BuckIndexMap;
+use bz_hash::StdBuckHashMap;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationObserver;
 use futures::Future;
@@ -41,7 +41,7 @@ pub static EVAL_BXL_FOR_DYNAMIC_OUTPUT: LateBinding<
         DigestConfig,
         CancellationObserver,
     ) -> Pin<
-        Box<dyn Future<Output = buck2_error::Result<RecordedAnalysisValues>> + Send + 'v>,
+        Box<dyn Future<Output = bz_error::Result<RecordedAnalysisValues>> + Send + 'v>,
     >,
 > = LateBinding::new("EVAL_BXL_FOR_DYNAMIC_OUTPUT");
 
@@ -55,7 +55,7 @@ pub(crate) async fn eval_bxl_for_dynamic_output<'v>(
     resolved_dynamic_values: StdBuckHashMap<DynamicValue, FrozenProviderCollectionValue>,
     digest_config: DigestConfig,
     liveness: CancellationObserver,
-) -> buck2_error::Result<RecordedAnalysisValues> {
+) -> bz_error::Result<RecordedAnalysisValues> {
     (EVAL_BXL_FOR_DYNAMIC_OUTPUT.get()?)(
         base_deferred_key,
         self_key,

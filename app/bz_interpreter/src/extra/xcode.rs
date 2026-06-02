@@ -12,16 +12,16 @@ use std::io;
 use std::path::Path;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPath;
 use pagable::Pagable;
 use regex::Regex;
 use serde::Deserialize;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum XcodeVersionError {
     #[error("XCode select symlink `{}` resolved to path without parent: `{}`", XCODE_SELECT_SYMLINK, _0.display())]
@@ -59,7 +59,7 @@ pub struct XcodeVersionInfo {
 
 impl XcodeVersionInfo {
     // Construct from version.plist in root of Xcode install dir.
-    pub fn new() -> buck2_error::Result<Option<Self>> {
+    pub fn new() -> bz_error::Result<Option<Self>> {
         let resolved_xcode_path =
             fs_util::canonicalize_if_exists(AbsPath::new(XCODE_SELECT_SYMLINK)?)
                 .buck_error_context("resolve selected xcode link")?;
@@ -76,7 +76,7 @@ impl XcodeVersionInfo {
         Self::from_plist(&plist_path)
     }
 
-    pub(crate) fn from_plist(plist_path: &Path) -> buck2_error::Result<Option<Self>> {
+    pub(crate) fn from_plist(plist_path: &Path) -> bz_error::Result<Option<Self>> {
         let plist = plist::from_file::<_, XcodeVersionPlistSchema>(plist_path);
 
         let plist = match plist {
@@ -88,7 +88,7 @@ impl XcodeVersionInfo {
                 return Ok(None);
             }
             Err(e) => {
-                return Err(from_any_with_tag(e, buck2_error::ErrorTag::Tier0)
+                return Err(from_any_with_tag(e, bz_error::ErrorTag::Tier0)
                     .context("Error deserializing Xcode `version.plist`"));
             }
         };
@@ -115,7 +115,7 @@ impl XcodeVersionInfo {
 
     /// Construct from a string, formatted as: "version-build"
     /// (e.g., 14.3.0-14C18 or 14.1-14B47b)
-    pub fn from_version_and_build(version_and_build: &str) -> buck2_error::Result<Self> {
+    pub fn from_version_and_build(version_and_build: &str) -> bz_error::Result<Self> {
         let re = Regex::new(r"^((\d+)\.(\d+)(?:\.(\d+))?)\-([[:alnum:]]+)$").unwrap();
         if !re.is_match(version_and_build) {
             return Err(XcodeVersionError::MalformedVersionBuildString.into());

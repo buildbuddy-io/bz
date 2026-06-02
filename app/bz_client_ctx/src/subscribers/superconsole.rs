@@ -15,22 +15,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use buck2_data::CommandExecutionDetails;
-use buck2_error::BuckErrorContext;
-use buck2_event_observer::action_sub_error_display::ActionSubErrorDisplay;
-use buck2_event_observer::display;
-use buck2_event_observer::display::TargetDisplayOptions;
-use buck2_event_observer::display::display_file_watcher_end;
-use buck2_event_observer::event_observer::DebugEventObserverExtra;
-use buck2_event_observer::session_info::SessionInfo;
-use buck2_event_observer::unpack_event::VisitorError;
-use buck2_event_observer::unpack_event::unpack_event;
-use buck2_event_observer::verbosity::Verbosity;
-use buck2_event_observer::what_ran::command_to_string;
-use buck2_event_observer::what_ran::worker_command_as_fallback_to_string;
-use buck2_events::BuckEvent;
-use buck2_health_check::report::DisplayReport;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_data::CommandExecutionDetails;
+use bz_error::BuckErrorContext;
+use bz_event_observer::action_sub_error_display::ActionSubErrorDisplay;
+use bz_event_observer::display;
+use bz_event_observer::display::TargetDisplayOptions;
+use bz_event_observer::display::display_file_watcher_end;
+use bz_event_observer::event_observer::DebugEventObserverExtra;
+use bz_event_observer::session_info::SessionInfo;
+use bz_event_observer::unpack_event::VisitorError;
+use bz_event_observer::unpack_event::unpack_event;
+use bz_event_observer::verbosity::Verbosity;
+use bz_event_observer::what_ran::command_to_string;
+use bz_event_observer::what_ran::worker_command_as_fallback_to_string;
+use bz_events::BuckEvent;
+use bz_health_check::report::DisplayReport;
+use bz_wrapper_common::invocation_id::TraceId;
 use gazebo::prelude::*;
 use strum::IntoEnumIterator;
 use superconsole::Component;
@@ -101,7 +101,7 @@ const GAMES: &[(&str, &str)] = &[
 
 fn games_save_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_owned());
-    PathBuf::from(home).join(".buck2_games")
+    PathBuf::from(home).join(".bz_games")
 }
 
 fn games_save_path_for(game_name: &str) -> PathBuf {
@@ -433,19 +433,19 @@ struct BuckRootComponent<'s> {
 }
 
 /// Adapter that wraps a `Component<Error = anyhow::Error>` to produce
-/// `buck2_error::Error`, allowing games components to be used in the
+/// `bz_error::Error`, allowing games components to be used in the
 /// buck2 render tree.
 struct AnyhowComponentAdapter<'a, C: ?Sized>(&'a C);
 
 impl<C: superconsole::Component<Error = anyhow::Error> + ?Sized> Component
     for AnyhowComponentAdapter<'_, C>
 {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         self.0
             .draw_unchecked(dimensions, mode)
-            .map_err(|e| buck2_error::buck2_error!(buck2_error::ErrorTag::Tier0, "{:#}", e))
+            .map_err(|e| bz_error::bz_error!(bz_error::ErrorTag::Tier0, "{:#}", e))
     }
 }
 
@@ -456,13 +456,13 @@ struct GameOverAdapter<'a> {
 }
 
 impl Component for GameOverAdapter<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         let mut output = self
             .game
             .draw_unchecked(dimensions, mode)
-            .map_err(|e| buck2_error::buck2_error!(buck2_error::ErrorTag::Tier0, "{:#}", e))?;
+            .map_err(|e| bz_error::bz_error!(bz_error::ErrorTag::Tier0, "{:#}", e))?;
         let msg = format!(" {} \u{2014} press Esc to exit ", self.message);
         games::games::render_overlay_box(&mut output, &msg);
         Ok(output)
@@ -473,13 +473,13 @@ impl Component for GameOverAdapter<'_> {
 struct StaticLinesAdapter<'a>(&'a Lines);
 
 impl Component for StaticLinesAdapter<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         _dimensions: Dimensions,
         mode: DrawMode,
-    ) -> buck2_error::Result<Lines> {
+    ) -> bz_error::Result<Lines> {
         Ok(match mode {
             DrawMode::Final => Lines::new(),
             DrawMode::Normal => self.0.clone(),
@@ -488,9 +488,9 @@ impl Component for StaticLinesAdapter<'_> {
 }
 
 impl Component for BuckRootComponent<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         // bound all components to our recommended grapheme-width
         let dimensions = dimensions.intersect(Dimensions {
             width: SUPERCONSOLE_WIDTH,
@@ -623,7 +623,7 @@ impl StatefulSuperConsole {
         stream: Option<Box<dyn Write + Send + 'static + Sync>>,
         config: SuperConsoleConfig,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut builder = Self::console_builder();
         if let Some(stream) = stream {
             builder.write_to(stream);
@@ -650,7 +650,7 @@ impl StatefulSuperConsole {
         timekeeper: Timekeeper,
         config: SuperConsoleConfig,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let header = format!("Command: {command_name}.");
         Ok(Self::Running(StatefulSuperConsoleImpl {
             header,
@@ -684,10 +684,10 @@ impl StatefulSuperConsole {
         builder
     }
 
-    pub fn render_result_errors(result: &buck2_cli_proto::CommandResult) -> Lines {
+    pub fn render_result_errors(result: &bz_cli_proto::CommandResult) -> Lines {
         let mut lines = Lines::new();
-        if let buck2_cli_proto::CommandResult {
-            result: Some(buck2_cli_proto::command_result::Result::Error(e)),
+        if let bz_cli_proto::CommandResult {
+            result: Some(bz_cli_proto::command_result::Result::Error(e)),
         } = result
         {
             let style = ContentStyle {
@@ -701,14 +701,14 @@ impl StatefulSuperConsole {
         lines
     }
 
-    async fn handle_event(&mut self, ev: &Arc<BuckEvent>) -> buck2_error::Result<()> {
+    async fn handle_event(&mut self, ev: &Arc<BuckEvent>) -> bz_error::Result<()> {
         match self {
             Self::Running(c) => c.handle_event(ev).await,
             Self::Finalized(c) => c.handle_event(ev).await,
         }
     }
 
-    fn finalize(&mut self) -> buck2_error::Result<()> {
+    fn finalize(&mut self) -> bz_error::Result<()> {
         let mut res = Ok(());
         take_mut::take(self, |this| match this {
             Self::Running(super_console) => {
@@ -733,7 +733,7 @@ impl SuperConsoleState {
         expect_spans: bool,
         config: SuperConsoleConfig,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
-    ) -> buck2_error::Result<SuperConsoleState> {
+    ) -> bz_error::Result<SuperConsoleState> {
         Ok(SuperConsoleState {
             timekeeper,
             simple_console: SimpleConsole::with_tty(
@@ -750,7 +750,7 @@ impl SuperConsoleState {
     pub async fn update_event_observer(
         &mut self,
         event: &Arc<BuckEvent>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.simple_console.update_event_observer(event).await
     }
 
@@ -771,7 +771,7 @@ impl StatefulSuperConsoleImpl {
         what: &str,
         key: char,
         var: impl FnOnce(&mut Self) -> &mut bool,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let var = var(self);
         *var = !*var;
         let on_off = match *var {
@@ -782,7 +782,7 @@ impl StatefulSuperConsoleImpl {
             .await
     }
 
-    async fn handle_event(&mut self, event: &Arc<BuckEvent>) -> buck2_error::Result<()> {
+    async fn handle_event(&mut self, event: &Arc<BuckEvent>) -> bz_error::Result<()> {
         self.state.update_event_observer(event).await?;
 
         self.handle_inner_event(event)
@@ -800,55 +800,55 @@ impl StatefulSuperConsoleImpl {
         Ok(())
     }
 
-    async fn handle_inner_event(&mut self, event: &BuckEvent) -> buck2_error::Result<()> {
+    async fn handle_inner_event(&mut self, event: &BuckEvent) -> bz_error::Result<()> {
         match unpack_event(event)? {
-            buck2_event_observer::unpack_event::UnpackedBuckEvent::SpanStart(_, _, _) => Ok(()),
-            buck2_event_observer::unpack_event::UnpackedBuckEvent::SpanEnd(_, _, data) => {
+            bz_event_observer::unpack_event::UnpackedBuckEvent::SpanStart(_, _, _) => Ok(()),
+            bz_event_observer::unpack_event::UnpackedBuckEvent::SpanEnd(_, _, data) => {
                 match data {
-                    buck2_data::span_end_event::Data::ActionExecution(action) => {
+                    bz_data::span_end_event::Data::ActionExecution(action) => {
                         self.handle_action_execution_end(action).await
                     }
-                    buck2_data::span_end_event::Data::FileWatcher(file_watcher) => {
+                    bz_data::span_end_event::Data::FileWatcher(file_watcher) => {
                         self.handle_file_watcher_end(file_watcher).await
                     }
                     _ => Ok(()),
                 }
             }
-            buck2_event_observer::unpack_event::UnpackedBuckEvent::Instant(_, _, data) => {
+            bz_event_observer::unpack_event::UnpackedBuckEvent::Instant(_, _, data) => {
                 match data {
-                    buck2_data::instant_event::Data::ConsoleMessage(message) => {
+                    bz_data::instant_event::Data::ConsoleMessage(message) => {
                         self.handle_console_message(message).await
                     }
-                    buck2_data::instant_event::Data::ConsoleWarning(message) => {
+                    bz_data::instant_event::Data::ConsoleWarning(message) => {
                         self.handle_console_warning(message).await
                     }
-                    buck2_data::instant_event::Data::StructuredError(err) => {
+                    bz_data::instant_event::Data::StructuredError(err) => {
                         self.handle_structured_error(err).await
                     }
-                    buck2_data::instant_event::Data::TestResult(result) => {
+                    bz_data::instant_event::Data::TestResult(result) => {
                         self.handle_test_result(result).await
                     }
-                    buck2_data::instant_event::Data::ConsolePreferences(preferences) => {
+                    bz_data::instant_event::Data::ConsolePreferences(preferences) => {
                         self.handle_console_preferences(preferences).await
                     }
-                    buck2_data::instant_event::Data::ActionError(error) => {
+                    bz_data::instant_event::Data::ActionError(error) => {
                         self.handle_action_error(error).await
                     }
-                    buck2_data::instant_event::Data::StreamingOutput(message) => {
+                    bz_data::instant_event::Data::StreamingOutput(message) => {
                         self.handle_streaming_output(message).await
                     }
                     _ => Ok(()),
                 }
             }
-            buck2_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanStart(_, _)
-            | buck2_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanEnd(_, _)
-            | buck2_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedInstant(_, _) => {
+            bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanStart(_, _)
+            | bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanEnd(_, _)
+            | bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedInstant(_, _) => {
                 Err(VisitorError::MissingField(event.clone()).into())
             }
         }
     }
 
-    async fn handle_stderr(&mut self, msg: &str) -> buck2_error::Result<()> {
+    async fn handle_stderr(&mut self, msg: &str) -> bz_error::Result<()> {
         self.super_console
             .emit(msg.lines().map(Line::sanitized).collect());
         Ok(())
@@ -856,8 +856,8 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_structured_error(
         &mut self,
-        err: &buck2_data::StructuredError,
-    ) -> buck2_error::Result<()> {
+        err: &bz_data::StructuredError,
+    ) -> bz_error::Result<()> {
         if err.quiet {
             return Ok(());
         }
@@ -873,8 +873,8 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_file_watcher_end(
         &mut self,
-        file_watcher: &buck2_data::FileWatcherEnd,
-    ) -> buck2_error::Result<()> {
+        file_watcher: &bz_data::FileWatcherEnd,
+    ) -> bz_error::Result<()> {
         if self.verbosity.print_status() {
             self.super_console.emit(Lines(
                 display_file_watcher_end(file_watcher).into_map(|x| Line::sanitized(&x)),
@@ -886,8 +886,8 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_console_message(
         &mut self,
-        message: &buck2_data::ConsoleMessage,
-    ) -> buck2_error::Result<()> {
+        message: &bz_data::ConsoleMessage,
+    ) -> bz_error::Result<()> {
         // TODO(nmj): Maybe better handling of messages that have color data in them. Right now
         //            they're just stripped
         self.super_console.emit(Lines::from_multiline_string_raw(
@@ -899,8 +899,8 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_streaming_output(
         &mut self,
-        message: &buck2_data::StdoutStreamingOutput,
-    ) -> buck2_error::Result<()> {
+        message: &bz_data::StdoutStreamingOutput,
+    ) -> bz_error::Result<()> {
         self.super_console
             .emit_aux(Lines::from_multiline_string_raw(
                 &message.message,
@@ -911,8 +911,8 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_console_warning(
         &mut self,
-        message: &buck2_data::ConsoleWarning,
-    ) -> buck2_error::Result<()> {
+        message: &bz_data::ConsoleWarning,
+    ) -> bz_error::Result<()> {
         let style = ContentStyle {
             foreground_color: Some(Color::Yellow),
             ..Default::default()
@@ -924,8 +924,8 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_action_execution_end(
         &mut self,
-        action: &buck2_data::ActionExecutionEnd,
-    ) -> buck2_error::Result<()> {
+        action: &bz_data::ActionExecutionEnd,
+    ) -> bz_error::Result<()> {
         if action.error.is_some() {
             // Don't handle action errors here. We deal with them as a part of a separate
             // `ActionError` event
@@ -967,8 +967,8 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_action_error(
         &mut self,
-        error: &buck2_data::ActionError,
-    ) -> buck2_error::Result<()> {
+        error: &bz_data::ActionError,
+    ) -> bz_error::Result<()> {
         let mut lines = vec![];
         let display_platform = self.state.config.display_platform;
 
@@ -1021,7 +1021,7 @@ impl StatefulSuperConsoleImpl {
         if include_output_streams {
             if let Some(error_diagnostics) = error_diagnostics {
                 match error_diagnostics.data.as_ref().unwrap() {
-                    buck2_data::action_error_diagnostics::Data::SubErrors(sub_errors) => {
+                    bz_data::action_error_diagnostics::Data::SubErrors(sub_errors) => {
                         let sub_errors = &sub_errors.sub_errors;
                         if !sub_errors.is_empty() {
                             for sub_error in sub_errors {
@@ -1036,7 +1036,7 @@ impl StatefulSuperConsoleImpl {
                             }
                         }
                     }
-                    buck2_data::action_error_diagnostics::Data::HandlerInvocationError(error) => {
+                    bz_data::action_error_diagnostics::Data::HandlerInvocationError(error) => {
                         let colored_error = error.clone().with(Color::DarkRed).to_string();
                         lines.extend(Lines::from_colored_multiline_string(&colored_error));
                     }
@@ -1055,8 +1055,8 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_test_result(
         &mut self,
-        result: &buck2_data::TestResult,
-    ) -> buck2_error::Result<()> {
+        result: &bz_data::TestResult,
+    ) -> bz_error::Result<()> {
         if let Some(msg) = display::format_test_result(result, self.verbosity)? {
             let byte_count: usize = msg.0.iter().map(|line| line.len()).sum();
             match self.state.simple_console.output_limit.emit(byte_count) {
@@ -1075,8 +1075,8 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_console_preferences(
         &mut self,
-        prefs: &buck2_data::ConsolePreferences,
-    ) -> buck2_error::Result<()> {
+        prefs: &bz_data::ConsolePreferences,
+    ) -> bz_error::Result<()> {
         self.state.config.max_lines = prefs.max_lines.try_into()?;
 
         Ok(())
@@ -1085,7 +1085,7 @@ impl StatefulSuperConsoleImpl {
     async fn handle_console_interaction(
         &mut self,
         c: &Option<SuperConsoleToggle>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // When games overlay is active, route all input to games.
         if self.games_overlay.active {
             if let Some(toggle) = c {
@@ -1328,7 +1328,7 @@ impl StatefulSuperConsoleImpl {
             self.state.active_warnings = reports;
         }
     }
-    async fn tick(&mut self, tick: &Tick) -> buck2_error::Result<()> {
+    async fn tick(&mut self, tick: &Tick) -> bz_error::Result<()> {
         self.state.timekeeper.tick(*tick);
         self.try_update_active_warnings();
 
@@ -1398,8 +1398,8 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_command_result(
         &mut self,
-        result: &buck2_cli_proto::CommandResult,
-    ) -> buck2_error::Result<()> {
+        result: &bz_cli_proto::CommandResult,
+    ) -> bz_error::Result<()> {
         let lines = StatefulSuperConsole::render_result_errors(result);
         self.super_console.emit(lines);
         Ok(())
@@ -1409,7 +1409,7 @@ impl StatefulSuperConsoleImpl {
         self,
     ) -> (
         SuperConsoleState,
-        Option<superconsole::Error<buck2_error::Error>>,
+        Option<superconsole::Error<bz_error::Error>>,
     ) {
         let err = self
             .super_console
@@ -1425,14 +1425,14 @@ impl StatefulSuperConsoleImpl {
 
 #[async_trait]
 impl EventSubscriber for StatefulSuperConsole {
-    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
+    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> bz_error::Result<()> {
         for ev in events {
             self.handle_event(ev).await?;
         }
         Ok(())
     }
 
-    async fn handle_output(&mut self, raw_output: &[u8]) -> buck2_error::Result<()> {
+    async fn handle_output(&mut self, raw_output: &[u8]) -> bz_error::Result<()> {
         self.finalize()?;
         match self {
             Self::Running(_) => unreachable!(),
@@ -1440,7 +1440,7 @@ impl EventSubscriber for StatefulSuperConsole {
         }
     }
 
-    async fn handle_tailer_stderr(&mut self, stderr: &str) -> buck2_error::Result<()> {
+    async fn handle_tailer_stderr(&mut self, stderr: &str) -> bz_error::Result<()> {
         match self {
             StatefulSuperConsole::Running(c) => c.handle_stderr(stderr).await,
             StatefulSuperConsole::Finalized(c) => c.handle_stderr(stderr).await,
@@ -1450,7 +1450,7 @@ impl EventSubscriber for StatefulSuperConsole {
     async fn handle_console_interaction(
         &mut self,
         c: &Option<SuperConsoleToggle>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Self::Running(super_console) = self {
             super_console.handle_console_interaction(c).await?;
         }
@@ -1460,8 +1460,8 @@ impl EventSubscriber for StatefulSuperConsole {
 
     async fn handle_command_result(
         &mut self,
-        result: &buck2_cli_proto::CommandResult,
-    ) -> buck2_error::Result<()> {
+        result: &bz_cli_proto::CommandResult,
+    ) -> bz_error::Result<()> {
         match self {
             Self::Running(c) => c.handle_command_result(result).await?,
             Self::Finalized(c) => c.handle_command_result(result).await?,
@@ -1470,7 +1470,7 @@ impl EventSubscriber for StatefulSuperConsole {
         Ok(())
     }
 
-    async fn tick(&mut self, tick: &Tick) -> buck2_error::Result<()> {
+    async fn tick(&mut self, tick: &Tick) -> bz_error::Result<()> {
         if let Self::Running(super_console) = self {
             super_console.tick(tick).await?;
         }
@@ -1486,7 +1486,7 @@ impl EventSubscriber for StatefulSuperConsole {
         None
     }
 
-    async fn handle_error(&mut self, _error: &buck2_error::Error) -> buck2_error::Result<()> {
+    async fn handle_error(&mut self, _error: &bz_error::Error) -> bz_error::Result<()> {
         self.finalize()?;
         Ok(())
     }
@@ -1499,7 +1499,7 @@ fn lines_for_command_details(
     lines: &mut Vec<Line>,
 ) {
     if let Some(command_kind) = command_failed.command_kind.as_ref() {
-        use buck2_data::command_execution_kind::Command;
+        use bz_data::command_execution_kind::Command;
 
         match command_kind.command.as_ref() {
             Some(Command::LocalCommand(local_command)) => {
@@ -1521,7 +1521,7 @@ fn lines_for_command_details(
                 ))]));
             }
             Some(Command::RemoteCommand(remote_command)) => {
-                let help_message = if buck2_core::is_open_source() {
+                let help_message = if bz_core::is_open_source() {
                     format!("Remote action digest: `{}`", remote_command.action_digest)
                 } else {
                     format!(
@@ -1632,15 +1632,15 @@ fn truncate(contents: &str) -> Option<String> {
 mod tests {
     use std::time::SystemTime;
 
-    use buck2_cli_proto::CommandResult;
-    use buck2_cli_proto::GenericResponse;
-    use buck2_data::LoadBuildFileEnd;
-    use buck2_data::LoadBuildFileStart;
-    use buck2_data::SpanEndEvent;
-    use buck2_data::SpanStartEvent;
-    use buck2_error::internal_error;
-    use buck2_event_observer::span_tracker::EventTimestamp;
-    use buck2_events::span::SpanId;
+    use bz_cli_proto::CommandResult;
+    use bz_cli_proto::GenericResponse;
+    use bz_data::LoadBuildFileEnd;
+    use bz_data::LoadBuildFileStart;
+    use bz_data::SpanEndEvent;
+    use bz_data::SpanStartEvent;
+    use bz_error::internal_error;
+    use bz_event_observer::span_tracker::EventTimestamp;
+    use bz_events::span::SpanId;
     use dupe::Dupe;
     use superconsole::testing::SuperConsoleTestingExt;
     use superconsole::testing::assert_frame_contains;
@@ -1650,7 +1650,7 @@ mod tests {
     use crate::subscribers::superconsole::timekeeper::RealtimeClock;
 
     #[tokio::test]
-    async fn test_transfer_state_to_simpleconsole() -> buck2_error::Result<()> {
+    async fn test_transfer_state_to_simpleconsole() -> bz_error::Result<()> {
         let trace_id = TraceId::new();
         let mut console = StatefulSuperConsole::new_with_root_forced(
             trace_id.dupe(),
@@ -1674,8 +1674,8 @@ mod tests {
             trace_id,
             Some(id),
             None,
-            buck2_data::buck_event::Data::SpanStart(SpanStartEvent {
-                data: Some(buck2_data::span_start_event::Data::Load(
+            bz_data::buck_event::Data::SpanStart(SpanStartEvent {
+                data: Some(bz_data::span_start_event::Data::Load(
                     LoadBuildFileStart {
                         module_id: "foo".to_owned(),
                         cell: "bar".to_owned(),
@@ -1688,7 +1688,7 @@ mod tests {
         // drop into simple console
         console
             .handle_command_result(&CommandResult {
-                result: Some(buck2_cli_proto::command_result::Result::GenericResponse(
+                result: Some(bz_cli_proto::command_result::Result::GenericResponse(
                     GenericResponse {},
                 )),
             })
@@ -1702,8 +1702,8 @@ mod tests {
             TraceId::new(),
             Some(id),
             None,
-            buck2_data::buck_event::Data::SpanEnd(SpanEndEvent {
-                data: Some(buck2_data::span_end_event::Data::Load(LoadBuildFileEnd {
+            bz_data::buck_event::Data::SpanEnd(SpanEndEvent {
+                data: Some(bz_data::span_end_event::Data::Load(LoadBuildFileEnd {
                     module_id: "foo".to_owned(),
                     cell: "bar".to_owned(),
                     error: None,
@@ -1721,7 +1721,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_default_layout() -> buck2_error::Result<()> {
+    async fn test_default_layout() -> bz_error::Result<()> {
         let trace_id = TraceId::new();
         let now = SystemTime::now();
         let tick = Tick::now();
@@ -1746,10 +1746,10 @@ mod tests {
                 trace_id.dupe(),
                 Some(SpanId::next()),
                 None,
-                buck2_data::buck_event::Data::SpanStart(SpanStartEvent {
+                bz_data::buck_event::Data::SpanStart(SpanStartEvent {
                     data: Some(
-                        buck2_data::CommandStart {
-                            data: Some(buck2_data::BuildCommandStart {}.into()),
+                        bz_data::CommandStart {
+                            data: Some(bz_data::BuildCommandStart {}.into()),
                             ..Default::default()
                         }
                         .into(),
@@ -1764,9 +1764,9 @@ mod tests {
                 trace_id.dupe(),
                 None,
                 None,
-                buck2_data::InstantEvent {
+                bz_data::InstantEvent {
                     data: Some(
-                        buck2_data::RemoteExecutionSessionCreated {
+                        bz_data::RemoteExecutionSessionCreated {
                             session_id: "reSessionID-123".to_owned(),
                             experiment_name: "".to_owned(),
                             persistent_cache_mode: None,
@@ -1822,17 +1822,17 @@ mod tests {
         assert_frame_contains(&frame, "Loaded");
 
         console
-            .handle_command_result(&buck2_cli_proto::CommandResult { result: None })
+            .handle_command_result(&bz_cli_proto::CommandResult { result: None })
             .await?;
 
         Ok(())
     }
 
     #[test]
-    fn test_session_info() -> buck2_error::Result<()> {
+    fn test_session_info() -> bz_error::Result<()> {
         let info = SessionInfo {
             trace_id: TraceId::null(),
-            test_session: Some(buck2_data::TestSessionInfo {
+            test_session: Some(bz_data::TestSessionInfo {
                 info: (0..100).map(|_| "a").collect(),
                 test_session_id: None,
             }),
@@ -1887,7 +1887,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tailer_stderr() -> buck2_error::Result<()> {
+    async fn test_tailer_stderr() -> bz_error::Result<()> {
         let trace_id = TraceId::new();
         let tick = Tick::now();
 

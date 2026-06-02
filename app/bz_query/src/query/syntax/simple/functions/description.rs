@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_util::late_binding::LateBinding;
+use bz_util::late_binding::LateBinding;
 
 use crate::query::syntax::simple::functions::docs::QueryEnvironmentDescription;
 

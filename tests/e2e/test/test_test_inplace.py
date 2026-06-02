@@ -427,7 +427,7 @@ async def test_stress_runs(buck: Buck) -> None:
 if not is_deployed_buck2():
 
     @buck_test(inplace=False, data_dir="testsof")
-    @env("BUCK_LOG", "buck2_test::command=debug")
+    @env("BUCK_LOG", "bz_test::command=debug")
     async def test_target_compatibility(buck: Buck) -> None:
         out = await buck.test(
             "//...",

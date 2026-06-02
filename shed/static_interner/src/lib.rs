@@ -26,7 +26,7 @@ use std::ptr;
 
 use allocative::Allocative;
 use allocative::Visitor;
-use buck2_hash::BuckDefaultHasher;
+use bz_hash::BuckDefaultHasher;
 use dupe::Dupe;
 pub use equivalent::Equivalent;
 use lock_free_hashtable::sharded::ShardedLockFreeRawTable;
@@ -462,7 +462,7 @@ macro_rules! interner {
 mod tests {
     use std::collections::BTreeSet;
 
-    use buck2_hash::BuckDefaultHasher;
+    use bz_hash::BuckDefaultHasher;
 
     use crate::Intern;
     use crate::InternDisposition;

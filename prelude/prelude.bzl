@@ -7,7 +7,7 @@
 # above-listed licenses.
 
 load("@prelude//:native.bzl", _native = "native")
-load("@prelude//bazel:prelude.bzl", _buck2_bazel_native_rules = "buck2_bazel_native_rules")
+load("@prelude//bazel:prelude.bzl", _bz_bazel_native_rules = "bz_bazel_native_rules")
 load("@prelude//utils:buckconfig.bzl", _read_config = "read_config_with_logging", _read_root_config = "read_root_config_with_logging", log_buckconfigs = "LOG_BUCKCONFIGS")
 
 __overridden_builtins__ = {
@@ -19,5 +19,5 @@ load_symbols(__overridden_builtins__)
 
 # Public symbols in this file become globals everywhere except `bzl` files in prelude.
 # Additionally, members of `native` struct also become globals in `BUCK` files.
-buck2_bazel_native_rules = _buck2_bazel_native_rules
+bz_bazel_native_rules = _bz_bazel_native_rules
 native = _native

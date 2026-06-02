@@ -11,9 +11,9 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use buck2_artifact::actions::key::ActionKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_error::internal_error;
+use bz_artifact::actions::key::ActionKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_error::internal_error;
 use dupe::Dupe;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
@@ -31,11 +31,11 @@ pub(crate) enum DetailedAggregatedMetricsEvent {
     AnalysisComplete(DeferredHolderKey, DeferredHolder),
     ComputeMetrics(
         PerBuildEvents,
-        tokio::sync::oneshot::Sender<buck2_error::Result<DetailedAggregatedMetrics>>,
+        tokio::sync::oneshot::Sender<bz_error::Result<DetailedAggregatedMetrics>>,
     ),
     ComputeActionGraphSketch(
         Vec<TopLevelTargetSpec>,
-        tokio::sync::oneshot::Sender<buck2_error::Result<ActionGraphSketchResult>>,
+        tokio::sync::oneshot::Sender<bz_error::Result<ActionGraphSketchResult>>,
     ),
     ActionExecuted(ActionExecutionMetrics),
 }
@@ -96,7 +96,7 @@ impl DetailedAggregatedMetricsEventHandler {
     pub(crate) async fn compute_metrics(
         &self,
         events: PerBuildEvents,
-    ) -> buck2_error::Result<DetailedAggregatedMetrics> {
+    ) -> bz_error::Result<DetailedAggregatedMetrics> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.0
             .sender
@@ -108,7 +108,7 @@ impl DetailedAggregatedMetricsEventHandler {
     pub(crate) async fn compute_action_graph_sketch(
         &self,
         top_level_targets: Vec<TopLevelTargetSpec>,
-    ) -> buck2_error::Result<ActionGraphSketchResult> {
+    ) -> bz_error::Result<ActionGraphSketchResult> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.0
             .sender
@@ -151,7 +151,7 @@ impl DetailedAggregatedMetricsPerBuildEventsHolder {
             .push(PerBuildEvent::TopLevelTarget(spec));
     }
 
-    pub(crate) fn take_events(&self) -> buck2_error::Result<PerBuildEvents> {
+    pub(crate) fn take_events(&self) -> bz_error::Result<PerBuildEvents> {
         let mut events = PerBuildEvents::default();
         let messages = { std::mem::take(&mut *self.events.lock().unwrap()) };
 

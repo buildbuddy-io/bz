@@ -15,9 +15,9 @@
 use std::borrow::Cow;
 
 use async_trait::async_trait;
-use buck2_query_parser::Expr;
-use buck2_query_parser::SpannedExpr;
-use buck2_query_parser::spanned::Spanned;
+use bz_query_parser::Expr;
+use bz_query_parser::SpannedExpr;
+use bz_query_parser::spanned::Spanned;
 use enum_iterator::Sequence;
 use gazebo::variants::VariantName;
 
@@ -48,7 +48,7 @@ mod _scoped_allow {
 }
 
 pub use _scoped_allow::*;
-use buck2_query::query::syntax::simple::functions::docs::MarkdownOptions;
+use bz_query::query::syntax::simple::functions::docs::MarkdownOptions;
 
 impl QueryArgType {
     pub fn repr(self) -> &'static str {

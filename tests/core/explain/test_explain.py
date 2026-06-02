@@ -16,12 +16,12 @@ from buck2.tests.e2e_util.asserts import expect_failure
 from buck2.tests.e2e_util.buck_workspace import buck_test, env
 from manifold.clients.python.manifold_client_deprecated import Client as ManifoldClient
 
-BUCKET_CONFIG = {"bucket": "buck2_logs", "apikey": "buck2_logs-key"}
+BUCKET_CONFIG = {"bucket": "bz_logs", "apikey": "bz_logs-key"}
 
 
 async def manifold_exists(path: str) -> bool:
     with ManifoldClient(BUCKET_CONFIG) as client:
-        return client.exists(bucket="buck2_logs", path=path)
+        return client.exists(bucket="bz_logs", path=path)
 
 
 @buck_test()

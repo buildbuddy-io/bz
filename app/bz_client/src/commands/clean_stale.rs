@@ -9,23 +9,23 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::CleanStaleRequest;
-use buck2_cli_proto::CleanStaleResponse;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::NoPartialResultHandler;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
+use bz_cli_proto::CleanStaleRequest;
+use bz_cli_proto::CleanStaleResponse;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::NoPartialResultHandler;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::TimeZone;
@@ -53,11 +53,11 @@ pub enum KeepSinceArg {
 pub fn parse_clean_stale_args(
     stale: Option<Option<humantime::Duration>>,
     keep_since_time: Option<i64>,
-) -> buck2_error::Result<Option<KeepSinceArg>> {
+) -> bz_error::Result<Option<KeepSinceArg>> {
     let arg = match (stale, keep_since_time) {
         (Some(Some(human_duration)), None) => {
             let duration = chrono::Duration::from_std(human_duration.into())
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::InvalidDuration))?;
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::InvalidDuration))?;
             Some(KeepSinceArg::Duration(duration))
         }
         (Some(None), None) => Some(KeepSinceArg::Duration(chrono::Duration::weeks(1))),
@@ -68,7 +68,7 @@ pub fn parse_clean_stale_args(
     Ok(arg)
 }
 
-fn format_result_stats(stats: buck2_data::CleanStaleStats) -> String {
+fn format_result_stats(stats: bz_data::CleanStaleStats) -> String {
     let mut output = String::new();
     output += &format!(
         "Found {} stale artifacts ({})\n",
@@ -112,14 +112,14 @@ impl StreamingCommand for CleanStaleCommand {
                 let keep_since_time: DateTime<Utc> = Utc::now()
                     .checked_sub_signed(duration)
                     .ok_or_else(|| internal_error!("Duration underflow"))?;
-                buck2_client_ctx::eprintln!(
+                bz_client_ctx::eprintln!(
                     "Cleaning artifacts more than {} old",
                     humantime::format_duration(
                         duration
                             .to_std()
                             .map_err(|e| from_any_with_tag(
                                 e,
-                                buck2_error::ErrorTag::InvalidDuration
+                                bz_error::ErrorTag::InvalidDuration
                             ))
                             .buck_error_context("Error converting duration")?
                     ),
@@ -151,10 +151,10 @@ impl StreamingCommand for CleanStaleCommand {
             .await??;
 
         if let Some(message) = response.message {
-            buck2_client_ctx::eprintln!("{}", message)?;
+            bz_client_ctx::eprintln!("{}", message)?;
         }
         if let Some(stats) = response.stats {
-            buck2_client_ctx::eprintln!("{}", format_result_stats(stats))?;
+            bz_client_ctx::eprintln!("{}", format_result_stats(stats))?;
         }
         ExitResult::success()
     }

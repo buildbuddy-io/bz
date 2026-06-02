@@ -23,8 +23,8 @@ pub struct ConfigSettingData {
     pub constraints: BTreeMap<ConstraintKey, ConstraintValue>,
     // contains mappings of `section.key` to `value` for buckconfigs
     // TODO(scottcao): Make this into a Vec<ConfigArgumentPair> for more structured data
-    // This can't be done right now because ConfigArgumentPair lives in buck2_common
-    // and buck2_core cannot depend on buck2_common.
+    // This can't be done right now because ConfigArgumentPair lives in bz_common
+    // and bz_core cannot depend on bz_common.
     pub buckconfigs: BTreeMap<String, String>,
     // contains mappings of Bazel build setting labels to their stringified values
     pub build_settings: BTreeMap<String, String>,

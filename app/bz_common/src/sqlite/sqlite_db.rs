@@ -11,14 +11,14 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_hash::StdBuckHashMap;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_hash::StdBuckHashMap;
 use chrono::Utc;
 use derive_more::Display;
 use derive_more::From;
@@ -33,7 +33,7 @@ pub struct SqliteIdentity(String);
 
 const IDENTITY_KEY: &str = "timestamp_on_initialization";
 
-#[derive(buck2_error::Error, Debug, PartialEq, Eq)]
+#[derive(bz_error::Error, Debug, PartialEq, Eq)]
 #[buck2(tag = Input)]
 enum SqliteDbError {
     #[error("Path {} does not exist", .0)]
@@ -53,7 +53,7 @@ enum SqliteDbError {
 /// Trait for specific SQLite table implementations
 pub trait SqliteTable {
     /// Create the table schema
-    fn create_table(&self) -> buck2_error::Result<()>;
+    fn create_table(&self) -> bz_error::Result<()>;
 }
 
 /// Trait for SQLite database implementations that can be generalized
@@ -67,12 +67,12 @@ pub trait SqliteDb {
     }
 
     /// Create a new instance from tables
-    fn new(tables: SqliteTables<Self::TableType>) -> buck2_error::Result<Self>
+    fn new(tables: SqliteTables<Self::TableType>) -> bz_error::Result<Self>
     where
         Self: Sized;
 
     /// Open and configure the database tables
-    fn open_tables(path: &AbsNormPath) -> buck2_error::Result<SqliteTables<Self::TableType>>;
+    fn open_tables(path: &AbsNormPath) -> bz_error::Result<SqliteTables<Self::TableType>>;
 
     /// Get the database identity
     fn identity(&self) -> &SqliteIdentity;
@@ -82,7 +82,7 @@ pub trait SqliteDb {
         versions: &StdBuckHashMap<String, String>,
         mut current_instance_metadata: StdBuckHashMap<String, String>,
         reject_identity: Option<&SqliteIdentity>,
-    ) -> buck2_error::Result<Self>
+    ) -> bz_error::Result<Self>
     where
         Self: std::marker::Sized,
     {
@@ -126,7 +126,7 @@ pub trait SqliteDb {
         db_dir: AbsNormPathBuf,
         versions: StdBuckHashMap<String, String>,
         mut current_instance_metadata: StdBuckHashMap<String, String>,
-    ) -> buck2_error::Result<Self>
+    ) -> bz_error::Result<Self>
     where
         Self: std::marker::Sized,
     {
@@ -184,7 +184,7 @@ impl<T: SqliteTable> SqliteTables<T> {
     }
 
     /// Get the identity from the created_by table
-    pub fn get_identity(&self) -> buck2_error::Result<SqliteIdentity> {
+    pub fn get_identity(&self) -> bz_error::Result<SqliteIdentity> {
         let identity = self
             .created_by_table
             .get(IDENTITY_KEY)
@@ -196,7 +196,7 @@ impl<T: SqliteTable> SqliteTables<T> {
     }
 
     /// Create all tables in the database
-    pub fn create_all_tables(&self) -> buck2_error::Result<()> {
+    pub fn create_all_tables(&self) -> bz_error::Result<()> {
         self.domain_table.create_table()?;
         self.versions_table.create_table()?;
         self.created_by_table.create_table()?;
@@ -204,7 +204,7 @@ impl<T: SqliteTable> SqliteTables<T> {
     }
 
     /// Create a connection with standard SQLite configuration
-    pub fn create_connection(path: &AbsNormPath) -> buck2_error::Result<Arc<Mutex<Connection>>> {
+    pub fn create_connection(path: &AbsNormPath) -> bz_error::Result<Arc<Mutex<Connection>>> {
         let connection = Connection::open(path)?;
         // TODO: make this work on Windows too
         if cfg!(unix) {
@@ -239,9 +239,9 @@ impl<T: SqliteTable> SqliteTables<T> {
 mod tests {
     use std::sync::Arc;
 
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_hash::StdBuckHashMap;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_hash::StdBuckHashMap;
     use dupe::Dupe;
     use parking_lot::Mutex;
     use rusqlite::Connection;
@@ -260,7 +260,7 @@ mod tests {
             Self { connection }
         }
 
-        fn insert(&self, value: &str) -> buck2_error::Result<()> {
+        fn insert(&self, value: &str) -> bz_error::Result<()> {
             let sql = "INSERT INTO test_data (value) VALUES (?1)";
             self.connection
                 .lock()
@@ -269,7 +269,7 @@ mod tests {
             Ok(())
         }
 
-        fn read_all(&self) -> buck2_error::Result<TestState> {
+        fn read_all(&self) -> bz_error::Result<TestState> {
             let sql = "SELECT value FROM test_data ORDER BY id";
             let connection = self.connection.lock();
             let mut stmt = connection.prepare(sql)?;
@@ -281,7 +281,7 @@ mod tests {
     }
 
     impl SqliteTable for TestSqliteTable {
-        fn create_table(&self) -> buck2_error::Result<()> {
+        fn create_table(&self) -> bz_error::Result<()> {
             let sql = "CREATE TABLE test_data (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 value TEXT NOT NULL
@@ -307,12 +307,12 @@ mod tests {
             "test_db.sqlite"
         }
 
-        fn new(tables: SqliteTables<Self::TableType>) -> buck2_error::Result<Self> {
+        fn new(tables: SqliteTables<Self::TableType>) -> bz_error::Result<Self> {
             let identity = tables.get_identity()?;
             Ok(Self { tables, identity })
         }
 
-        fn open_tables(path: &AbsNormPath) -> buck2_error::Result<SqliteTables<Self::TableType>> {
+        fn open_tables(path: &AbsNormPath) -> bz_error::Result<SqliteTables<Self::TableType>> {
             let connection = SqliteTables::<Self::TableType>::create_connection(path)?;
             let test_table = TestSqliteTable::new(connection.dupe());
             Ok(SqliteTables::new(test_table, connection))
@@ -324,7 +324,7 @@ mod tests {
     }
 
     impl TestSqliteDb {
-        fn insert_test_data(&mut self, value: &str) -> buck2_error::Result<()> {
+        fn insert_test_data(&mut self, value: &str) -> bz_error::Result<()> {
             self.tables.domain_table.insert(value)
         }
     }
@@ -344,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_new_sqlite_db() -> buck2_error::Result<()> {
+    fn test_create_new_sqlite_db() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let db_dir = fs
             .path()
@@ -380,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_existing_sqlite_db() -> buck2_error::Result<()> {
+    fn test_load_existing_sqlite_db() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let db_dir = fs
             .path()
@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn test_version_mismatch_error() -> buck2_error::Result<()> {
+    fn test_version_mismatch_error() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let db_dir = fs
             .path()
@@ -440,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rejected_identity() -> buck2_error::Result<()> {
+    fn test_rejected_identity() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let db_dir = fs
             .path()
@@ -466,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn test_path_does_not_exist_error() -> buck2_error::Result<()> {
+    fn test_path_does_not_exist_error() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let nonexistent_db_dir = fs
             .path()
@@ -487,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sqlite_tables_functionality() -> buck2_error::Result<()> {
+    fn test_sqlite_tables_functionality() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let db_path = fs
             .path()

@@ -10,11 +10,11 @@
 
 use std::fmt::Write;
 
-use buck2_core::category::CategoryRef;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::fs::buck_out_path::BuckOutScratchPath;
-use buck2_data::ToProtoMessage;
-use buck2_execute::execute::target::CommandExecutionTarget;
+use bz_core::category::CategoryRef;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::fs::buck_out_path::BuckOutScratchPath;
+use bz_data::ToProtoMessage;
+use bz_execute::execute::target::CommandExecutionTarget;
 use derivative::Derivative;
 use dupe::Dupe;
 
@@ -76,12 +76,12 @@ impl CommandExecutionTarget for ActionExecutionTarget<'_> {
         self.action.owner().to_string()
     }
 
-    fn as_proto_action_key(&self) -> buck2_data::ActionKey {
+    fn as_proto_action_key(&self) -> bz_data::ActionKey {
         self.action.key().as_proto()
     }
 
-    fn as_proto_action_name(&self) -> buck2_data::ActionName {
-        buck2_data::ActionName {
+    fn as_proto_action_name(&self) -> bz_data::ActionName {
+        bz_data::ActionName {
             category: self.action.category().as_str().to_owned(),
             identifier: self.action.identifier().unwrap_or("").to_owned(),
         }

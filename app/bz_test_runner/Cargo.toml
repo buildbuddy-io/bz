@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 license = { workspace = true }
-name = "buck2_test_runner"
+name = "bz_test_runner"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -12,7 +12,7 @@ futures = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true }
 
-buck2_error = { workspace = true }
-buck2_grpc = { workspace = true }
-buck2_test_api = { workspace = true }
+bz_error = { workspace = true }
+bz_grpc = { workspace = true }
+bz_test_api = { workspace = true }
 host_sharing = { workspace = true }

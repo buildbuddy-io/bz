@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_fs::paths::cmp_impls::impl_cmp;
-use buck2_fs::paths::cmp_impls::impl_cmp_str;
-use buck2_fs::paths::file_name::FileName;
+use bz_fs::paths::cmp_impls::impl_cmp;
+use bz_fs::paths::cmp_impls::impl_cmp_str;
+use bz_fs::paths::file_name::FileName;
 
 use crate::cells::paths::CellRelativePath;
 use crate::fs::project_rel_path::ProjectRelativePath;

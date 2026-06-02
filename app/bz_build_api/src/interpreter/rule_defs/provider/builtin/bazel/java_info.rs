@@ -2,9 +2,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::provider::id::ProviderId;
-use buck2_interpreter::types::provider::callable::ProviderCallableLike;
-use buck2_util::late_binding::LateBinding;
+use bz_core::provider::id::ProviderId;
+use bz_interpreter::types::provider::callable::ProviderCallableLike;
+use bz_util::late_binding::LateBinding;
 use dupe::Dupe;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
@@ -135,7 +135,7 @@ impl<'v, V: ValueLike<'v>> BazelJavaCommandLineGen<V> {
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for value in values {
             ValueAsCommandLineLike::unpack_value_err(value.to_value())?
                 .0
@@ -147,7 +147,7 @@ impl<'v, V: ValueLike<'v>> BazelJavaCommandLineGen<V> {
     fn visit_values(
         values: &[V],
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for value in values {
             ValueAsCommandLineLike::unpack_value_err(value.to_value())?
                 .0
@@ -167,7 +167,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelJavaCommandLineGen<V>
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let param_file_start = self.param_file_start.min(self.arguments.len());
         Self::add_values_to_command_line(
             &self.arguments[..param_file_start],
@@ -200,7 +200,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelJavaCommandLineGen<V>
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Self::visit_values(&self.arguments, visitor)
     }
 
@@ -215,7 +215,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelJavaCommandLineGen<V>
         &self,
         visitor: &mut dyn WriteToFileMacroVisitor,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for value in &self.arguments {
             ValueAsCommandLineLike::unpack_value_err(value.to_value())?
                 .0
@@ -357,7 +357,7 @@ impl<'v> StarlarkValue<'v> for JavaProviderCallable {
 }
 
 impl ProviderCallableLike for JavaProviderCallable {
-    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+    fn id(&self) -> bz_error::Result<&Arc<ProviderId>> {
         Ok(&self.id)
     }
 }
@@ -478,8 +478,8 @@ impl fmt::Display for JavaCommonInternal {
 
 starlark::starlark_simple_value!(JavaCommonInternal);
 
-fn java_common_error(message: impl std::fmt::Display) -> buck2_error::Error {
-    buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "{}", message)
+fn java_common_error(message: impl std::fmt::Display) -> bz_error::Error {
+    bz_error::bz_error!(bz_error::ErrorTag::Input, "{}", message)
 }
 
 fn java_attr<'v>(value: Value<'v>, attr: &str, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
@@ -1167,8 +1167,8 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneType> {
         let Some(provider_callable) = provider_type.request_value::<&dyn ProviderCallableLike>()
         else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "wanted Provider, got {}",
                 provider_type.get_type()
             )
@@ -1180,8 +1180,8 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
         } else if let Some(tuple) = TupleRef::from_value(providers) {
             tuple.iter().collect::<Vec<_>>()
         } else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected list or tuple for {}, got {}",
                 what,
                 providers.get_type()
@@ -1190,8 +1190,8 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
         };
         for (index, value) in values.into_iter().enumerate() {
             let Some(provider) = value.request_value::<&dyn ProviderLike>() else {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "at index {} of {}, got element of type {}, want {}",
                     index,
                     what,
@@ -1201,8 +1201,8 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
                 .into());
             };
             if provider.id() != provider_id {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "at index {} of {}, got element of type {}, want {}",
                     index,
                     what,

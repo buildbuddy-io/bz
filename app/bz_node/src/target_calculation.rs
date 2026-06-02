@@ -9,12 +9,12 @@
  */
 
 use async_trait::async_trait;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_util::late_binding::LateBinding;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 
 use crate::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
@@ -26,7 +26,7 @@ pub trait ConfiguredTargetCalculationImpl: Send + Sync + 'static {
         ctx: &mut DiceComputations<'_>,
         target: &TargetLabel,
         global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<ConfiguredTargetLabel>;
+    ) -> bz_error::Result<ConfiguredTargetLabel>;
 }
 
 pub static CONFIGURED_TARGET_CALCULATION: LateBinding<
@@ -50,24 +50,24 @@ pub trait ConfiguredTargetCalculation {
         &mut self,
         target: &TargetLabel,
         global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<ConfiguredTargetLabel>;
+    ) -> bz_error::Result<ConfiguredTargetLabel>;
 
     async fn get_configured_target_post_transition(
         &mut self,
         target: &TargetLabel,
         global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<ConfiguredTargetLabel>;
+    ) -> bz_error::Result<ConfiguredTargetLabel>;
 
     async fn get_configured_provider_label(
         &mut self,
         target: &ProvidersLabel,
         global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<ConfiguredProvidersLabel>;
+    ) -> bz_error::Result<ConfiguredProvidersLabel>;
 
     async fn get_default_configured_target(
         &mut self,
         target: &TargetLabel,
-    ) -> buck2_error::Result<ConfiguredTargetLabel>;
+    ) -> bz_error::Result<ConfiguredTargetLabel>;
 }
 
 #[async_trait]
@@ -76,7 +76,7 @@ impl ConfiguredTargetCalculation for DiceComputations<'_> {
         &mut self,
         target: &TargetLabel,
         global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<ConfiguredTargetLabel> {
+    ) -> bz_error::Result<ConfiguredTargetLabel> {
         CONFIGURED_TARGET_CALCULATION
             .get()?
             .get_configured_target(self, target, global_cfg_options)
@@ -87,7 +87,7 @@ impl ConfiguredTargetCalculation for DiceComputations<'_> {
         &mut self,
         target: &TargetLabel,
         global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<ConfiguredTargetLabel> {
+    ) -> bz_error::Result<ConfiguredTargetLabel> {
         let configured = self
             .get_configured_target(target, global_cfg_options)
             .await?;
@@ -102,7 +102,7 @@ impl ConfiguredTargetCalculation for DiceComputations<'_> {
         &mut self,
         target: &ProvidersLabel,
         global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<ConfiguredProvidersLabel> {
+    ) -> bz_error::Result<ConfiguredProvidersLabel> {
         let configured_target_label = CONFIGURED_TARGET_CALCULATION
             .get()?
             .get_configured_target(self, target.target(), global_cfg_options)
@@ -116,7 +116,7 @@ impl ConfiguredTargetCalculation for DiceComputations<'_> {
     async fn get_default_configured_target(
         &mut self,
         target: &TargetLabel,
-    ) -> buck2_error::Result<ConfiguredTargetLabel> {
+    ) -> bz_error::Result<ConfiguredTargetLabel> {
         CONFIGURED_TARGET_CALCULATION
             .get()?
             .get_configured_target(self, target, &GlobalCfgOptions::default())

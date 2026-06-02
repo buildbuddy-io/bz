@@ -10,14 +10,14 @@
 
 use std::io::Error;
 
-use buck2_error::buck2_error;
+use bz_error::bz_error;
 use windows_sys::Win32::Foundation::FALSE;
 use windows_sys::core::BOOL;
 
-pub(crate) fn result_bool(ret: BOOL) -> buck2_error::Result<()> {
+pub(crate) fn result_bool(ret: BOOL) -> bz_error::Result<()> {
     if ret == FALSE {
-        Err(buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        Err(bz_error!(
+            bz_error::ErrorTag::Tier0,
             "{}",
             format!("{}", Error::last_os_error())
         ))
@@ -26,10 +26,10 @@ pub(crate) fn result_bool(ret: BOOL) -> buck2_error::Result<()> {
     }
 }
 
-pub(crate) fn result_dword(ret: u32) -> buck2_error::Result<()> {
+pub(crate) fn result_dword(ret: u32) -> bz_error::Result<()> {
     if ret == u32::MAX {
-        Err(buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        Err(bz_error!(
+            bz_error::ErrorTag::Tier0,
             "{}",
             format!("{}", Error::last_os_error())
         ))

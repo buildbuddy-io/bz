@@ -12,7 +12,7 @@ use std::fmt;
 use std::ops::Deref;
 
 use allocative::Allocative;
-use buck2_util::arc_str::ArcStr;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 use pagable::Pagable;
 use serde::Serialize;

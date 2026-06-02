@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_util::late_binding::LateBinding;
+use bz_util::late_binding::LateBinding;
 use starlark::values::FrozenStringValue;
 use starlark::values::FrozenValue;
 use starlark_map::small_map::SmallMap;
@@ -25,26 +25,26 @@ pub struct FrozenBazelAspectInfo {
 }
 
 /// `rule()`, `anon_rule()`, `bxl.anon_rule()` value `impl` field.
-pub static FROZEN_RULE_GET_IMPL: LateBinding<fn(FrozenValue) -> buck2_error::Result<FrozenValue>> =
+pub static FROZEN_RULE_GET_IMPL: LateBinding<fn(FrozenValue) -> bz_error::Result<FrozenValue>> =
     LateBinding::new("FROZEN_RULE_GET_IMPL");
 
 pub static FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL: LateBinding<
-    fn(FrozenValue) -> buck2_error::Result<SmallMap<FrozenStringValue, FrozenValue>>,
+    fn(FrozenValue) -> bz_error::Result<SmallMap<FrozenStringValue, FrozenValue>>,
 > = LateBinding::new("FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL");
 
 pub static FROZEN_BAZEL_ASPECTS_GET_IMPL: LateBinding<
-    fn(FrozenValue) -> buck2_error::Result<Vec<FrozenValue>>,
+    fn(FrozenValue) -> bz_error::Result<Vec<FrozenValue>>,
 > = LateBinding::new("FROZEN_BAZEL_ASPECTS_GET_IMPL");
 
 pub static FROZEN_BAZEL_ATTR_ASPECTS_GET_IMPL: LateBinding<
-    fn(FrozenValue) -> buck2_error::Result<SmallMap<String, Vec<FrozenValue>>>,
+    fn(FrozenValue) -> bz_error::Result<SmallMap<String, Vec<FrozenValue>>>,
 > = LateBinding::new("FROZEN_BAZEL_ATTR_ASPECTS_GET_IMPL");
 
 pub static FROZEN_BAZEL_ASPECT_INFO_GET_IMPL: LateBinding<
-    fn(FrozenValue) -> buck2_error::Result<FrozenBazelAspectInfo>,
+    fn(FrozenValue) -> bz_error::Result<FrozenBazelAspectInfo>,
 > = LateBinding::new("FROZEN_BAZEL_ASPECT_INFO_GET_IMPL");
 
-pub const BAZEL_ASPECT_HIDDEN_ATTR_PREFIX: &str = "_buck2_bazel_aspect_";
+pub const BAZEL_ASPECT_HIDDEN_ATTR_PREFIX: &str = "_bz_bazel_aspect_";
 
 pub fn bazel_aspect_hidden_attr_name(
     rule_attr: &str,

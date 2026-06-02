@@ -8,16 +8,16 @@
  * above-listed licenses.
  */
 
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::target::label::label::TargetLabel;
+use bz_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use dupe::Dupe;
 use indoc::indoc;
 
 #[test]
-fn test_with_sub_target() -> buck2_error::Result<()> {
+fn test_with_sub_target() -> bz_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.additional_globals(|globals| {
         let target = TargetLabel::testing_parse("cell//pkg:target");

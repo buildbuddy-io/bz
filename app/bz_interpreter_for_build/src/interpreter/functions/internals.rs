@@ -15,7 +15,7 @@ use starlark::values::none::NoneType;
 
 use crate::interpreter::module_internals::ModuleInternals;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[error("Fail: {0}")]
 #[buck2(tag = Tier0)]
 struct BuckFail(String);
@@ -27,7 +27,7 @@ pub(crate) fn register_internals(builder: &mut GlobalsBuilder) {
     /// `fail()` but implemented using a buck2 error type instead of starlark's, for testing
     /// purposes.
     fn buck2_fail<'v>(msg: &str, _eval: &mut Evaluator<'v, '_, '_>) -> starlark::Result<NoneType> {
-        Err(buck2_error::Error::from(BuckFail(msg.to_owned())).into())
+        Err(bz_error::Error::from(BuckFail(msg.to_owned())).into())
     }
 
     /// Returns a list of direct subpackage relative paths of current package.

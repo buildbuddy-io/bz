@@ -12,5 +12,5 @@ mod __macro_refs;
 mod helper;
 pub mod registry;
 
-pub use __macro_refs::buck2_env;
-pub use __macro_refs::buck2_env_name;
+pub use __macro_refs::bz_env;
+pub use __macro_refs::bz_env_name;

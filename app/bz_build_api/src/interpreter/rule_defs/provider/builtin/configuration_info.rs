@@ -12,13 +12,13 @@ use std::collections::BTreeMap;
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_common::legacy_configs::configs::parse_config_section_and_key;
-use buck2_core::configuration::config_setting::ConfigSettingData;
-use buck2_core::configuration::data::BazelBuildSettingValue;
-use buck2_core::configuration::data::ConfigurationDataData;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_build_api_derive::internal_provider;
+use bz_common::legacy_configs::configs::parse_config_section_and_key;
+use bz_core::configuration::config_setting::ConfigSettingData;
+use bz_core::configuration::data::BazelBuildSettingValue;
+use bz_core::configuration::data::ConfigurationDataData;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
@@ -45,7 +45,7 @@ use starlark::values::dict::DictType;
 use starlark::values::dict::UnpackDictEntries;
 use starlark::values::none::NoneOr;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::provider::builtin::constraint_setting_info::ConstraintSettingInfo;
 use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::ConstraintValueInfo;
 use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::FrozenConstraintValueInfo;
@@ -119,7 +119,7 @@ impl<'v, V: ValueLike<'v>> ConfigurationInfoGen<V> {
         }
     }
 
-    pub fn to_configuration_data(&self) -> buck2_error::Result<ConfigurationDataData> {
+    pub fn to_configuration_data(&self) -> bz_error::Result<ConfigurationDataData> {
         let ConfigSettingData {
             constraints,
             buckconfigs,
@@ -174,7 +174,7 @@ impl<'v> ConfigurationInfo<'v> {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum ConfigurationInfoError {
     #[error("key `{0}` in constraints dict does not match constraint value `{1}`")]
@@ -200,7 +200,7 @@ fn build_constraints_map_from_dict<'v>(
         let constraint_setting_from_constraint_value =
             constraint_value.typed.setting().typed.label();
         if *constraint_setting.typed != *constraint_setting_from_constraint_value {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 ConfigurationInfoError::ConstraintsKeyValueMismatch(
                     constraint_setting.value.to_string(),
                     constraint_value.to_string(),

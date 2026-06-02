@@ -9,12 +9,12 @@
  */
 
 use async_trait::async_trait;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::prepared::PreparedCommand;
-use buck2_execute::execute::prepared::PreparedCommandExecutor;
-use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::result::CommandExecutionResult;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::prepared::PreparedCommand;
+use bz_execute::execute::prepared::PreparedCommandExecutor;
+use bz_execute::execute::prepared::PreparedCommandOptionalExecutor;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::result::CommandExecutionResult;
 use dice_futures::cancellation::CancellationContext;
 
 pub struct StackedExecutor<O, F> {

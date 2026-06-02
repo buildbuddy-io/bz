@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::transitive_set::transitive_set_definition::register_transitive_set;
-use buck2_core::bzl::ImportPath;
-use buck2_interpreter::file_loader::LoadedModules;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
-use buck2_interpreter_for_build::nodes::attr_spec::AttributeSpecExt;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::attrs::spec::AttributeSpec;
-use buck2_node::nodes::unconfigured::testing::targets_to_json;
+use bz_build_api::interpreter::rule_defs::transitive_set::transitive_set_definition::register_transitive_set;
+use bz_core::bzl::ImportPath;
+use bz_interpreter::file_loader::LoadedModules;
+use bz_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::nodes::attr_spec::AttributeSpecExt;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::attrs::spec::AttributeSpec;
+use bz_node::nodes::unconfigured::testing::targets_to_json;
 use indoc::indoc;
 use serde_json::json;
 use starlark::docs::DocFunction;
@@ -34,7 +34,7 @@ fn rule_tester() -> Tester {
 }
 
 #[test]
-fn rule_creates_callable() -> buck2_error::Result<()> {
+fn rule_creates_callable() -> bz_error::Result<()> {
     let mut tester = rule_tester();
     tester.run_starlark_test(indoc!(
         r#"
@@ -129,7 +129,7 @@ fn rule_unbound() {
 }
 
 #[test]
-fn udr_is_recorded() -> buck2_error::Result<()> {
+fn udr_is_recorded() -> bz_error::Result<()> {
     let content = indoc!(
         r#"
         def impl(ctx):
@@ -268,7 +268,7 @@ fn udr_rejects_invalid_parameters() {
 }
 
 #[test]
-fn option_allows_none() -> buck2_error::Result<()> {
+fn option_allows_none() -> bz_error::Result<()> {
     let mut tester = rule_tester();
     tester.run_starlark_test_expecting_error(
         "def test():\n attrs.option(attrs.string(), default = 'test')",
@@ -291,7 +291,7 @@ fn option_allows_none() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn returns_documentation() -> buck2_error::Result<()> {
+fn returns_documentation() -> bz_error::Result<()> {
     let bzl = indoc::indoc!(
         r#"def impl(ctx):
             pass

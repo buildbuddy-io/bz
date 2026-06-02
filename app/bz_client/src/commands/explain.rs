@@ -8,20 +8,20 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::new_generic::ExplainRequest;
-use buck2_cli_proto::new_generic::NewGenericRequest;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_event_log::file_names::get_local_logs;
+use bz_cli_proto::new_generic::ExplainRequest;
+use bz_cli_proto::new_generic::NewGenericRequest;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::path_arg::PathArg;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_event_log::file_names::get_local_logs;
 use clap::Parser as _;
 use tonic::async_trait;
 
@@ -89,7 +89,7 @@ impl StreamingCommand for ExplainCommand {
 
         // Check things are the same as last build
         let (invocation, _) = build_log.unpack_stream().await?;
-        buck2_client_ctx::eprintln!(
+        bz_client_ctx::eprintln!(
             "\nUsing last build invocation `buck2 {}`\n",
             invocation.command_line_args[1..].join(" ")
         )?;
@@ -150,8 +150,8 @@ impl StreamingCommand for ExplainCommand {
             .await??;
 
         if let Some(p) = manifold_path {
-            buck2_client_ctx::eprintln!(
-                "\nView html in your browser: https://interncache-all.fbcdn.net/manifold/buck2_logs/{} (requires VPN/lighthouse)\n",
+            bz_client_ctx::eprintln!(
+                "\nView html in your browser: https://interncache-all.fbcdn.net/manifold/bz_logs/{} (requires VPN/lighthouse)\n",
                 p
             )?;
         }

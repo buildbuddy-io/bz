@@ -2,7 +2,7 @@
 description = "common utitilies of buck2 profile"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_profile"
+name = "bz_profile"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -11,8 +11,8 @@ inferno = { workspace = true }
 
 starlark = { workspace = true }
 
-buck2_cli_proto = { workspace = true }
-buck2_core = { workspace = true }
-buck2_error = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_interpreter = { workspace = true }
+bz_cli_proto = { workspace = true }
+bz_core = { workspace = true }
+bz_error = { workspace = true }
+bz_fs = { workspace = true }
+bz_interpreter = { workspace = true }

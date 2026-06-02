@@ -10,7 +10,7 @@
 
 use std::fmt;
 
-use buck2_data::error::ErrorTag;
+use bz_data::error::ErrorTag;
 
 use crate::source_location::SourceLocation;
 
@@ -40,7 +40,7 @@ pub(crate) struct ErrorRoot {
     description: String,
     error_tag: ErrorTag,
     source_location: SourceLocation,
-    action_error: Option<buck2_data::ActionError>,
+    action_error: Option<bz_data::ActionError>,
 }
 
 impl ErrorRoot {
@@ -48,7 +48,7 @@ impl ErrorRoot {
         description: String,
         error_tag: ErrorTag,
         source_location: SourceLocation,
-        action_error: Option<buck2_data::ActionError>,
+        action_error: Option<bz_data::ActionError>,
     ) -> Self {
         let id = UniqueRootId(NEXT_ROOT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         Self {
@@ -82,7 +82,7 @@ impl ErrorRoot {
         &self.source_location
     }
 
-    pub fn action_error(&self) -> Option<&buck2_data::ActionError> {
+    pub fn action_error(&self) -> Option<&bz_data::ActionError> {
         self.action_error.as_ref()
     }
 }

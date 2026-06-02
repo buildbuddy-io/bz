@@ -64,7 +64,7 @@ async def test_worker_shared(buck: Buck) -> None:
     # Check worker is shared between multiple actions.
     res = await buck.build(*worker_args, package + ":gen_worker_deps")
     trace_id = json.loads(res.stdout)["trace_id"]
-    worker_dirs = glob.glob(f"/tmp/buck2_worker/{trace_id}*/stderr")
+    worker_dirs = glob.glob(f"/tmp/bz_worker/{trace_id}*/stderr")
     num_workers = len(worker_dirs)
     assert num_workers == 1, f"expected 1 worker, found {worker_dirs} for {trace_id}"
     assert len(await _read_what_ran_for_executor(buck, "WorkerInit")) == 1

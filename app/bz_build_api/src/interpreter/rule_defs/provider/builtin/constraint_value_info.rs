@@ -13,11 +13,11 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_core::configuration::constraints::ConstraintKey;
-use buck2_core::configuration::constraints::ConstraintValue;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::LabelArg;
+use bz_build_api_derive::internal_provider;
+use bz_core::configuration::constraints::ConstraintKey;
+use bz_core::configuration::constraints::ConstraintValue;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::LabelArg;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
@@ -33,7 +33,7 @@ use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::ValueTyped;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::provider::builtin::constraint_setting_info::ConstraintSettingInfo;
 use crate::interpreter::rule_defs::provider::builtin::constraint_setting_info::FrozenConstraintSettingInfo;
 

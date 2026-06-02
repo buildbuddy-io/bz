@@ -8,20 +8,20 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::analysis::registry::AnalysisRegistry;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
-use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
-use buck2_build_api::interpreter::rule_defs::plugins::AnalysisPlugins;
-use buck2_build_api::interpreter::rule_defs::register_rule_defs;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_interpreter::file_type::StarlarkFileType;
-use buck2_interpreter::from_freeze::from_freeze_error;
-use buck2_interpreter::testing::Buck2TestHeapName;
+use bz_build_api::analysis::registry::AnalysisRegistry;
+use bz_build_api::interpreter::rule_defs::context::AnalysisContext;
+use bz_build_api::interpreter::rule_defs::context::BazelCppOptions;
+use bz_build_api::interpreter::rule_defs::plugins::AnalysisPlugins;
+use bz_build_api::interpreter::rule_defs::register_rule_defs;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_core::target::label::label::TargetLabel;
+use bz_execute::digest_config::DigestConfig;
+use bz_interpreter::file_type::StarlarkFileType;
+use bz_interpreter::from_freeze::from_freeze_error;
+use bz_interpreter::testing::Buck2TestHeapName;
 use dupe::Dupe;
 use indoc::indoc;
 use maplit::hashmap;
@@ -37,8 +37,8 @@ use starlark::values::structs::AllocStruct;
 
 fn run_ctx_test(
     content: &str,
-    result_handler: impl FnOnce(starlark::Result<Value>) -> buck2_error::Result<()>,
-) -> buck2_error::Result<()> {
+    result_handler: impl FnOnce(starlark::Result<Value>) -> bz_error::Result<()>,
+) -> bz_error::Result<()> {
     Module::with_temp_heap(|func_mod| {
         let globals = GlobalsBuilder::standard().with(register_rule_defs).build();
         let prelude = indoc!(
@@ -114,7 +114,7 @@ fn run_ctx_test(
 }
 
 #[test]
-fn ctx_instantiates() -> buck2_error::Result<()> {
+fn ctx_instantiates() -> bz_error::Result<()> {
     let content = indoc!(
         r#"
          def test(ctx):
@@ -131,7 +131,7 @@ fn ctx_instantiates() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn declare_output_declares_outputs() -> buck2_error::Result<()> {
+fn declare_output_declares_outputs() -> bz_error::Result<()> {
     let content = indoc!(
         r#"
          def test(c):
@@ -149,7 +149,7 @@ fn declare_output_declares_outputs() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn declare_output_with_prefix() -> buck2_error::Result<()> {
+fn declare_output_with_prefix() -> bz_error::Result<()> {
     let content = indoc!(
         r#"
          def test(c):
@@ -167,7 +167,7 @@ fn declare_output_with_prefix() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn declare_output_dot() -> buck2_error::Result<()> {
+fn declare_output_dot() -> bz_error::Result<()> {
     let content = indoc!(
         r#"
          def test(c):
@@ -183,7 +183,7 @@ fn declare_output_dot() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn declare_output_dot_bad() -> buck2_error::Result<()> {
+fn declare_output_dot_bad() -> bz_error::Result<()> {
     let content = indoc!(
         r#"
          def test(c):
@@ -199,7 +199,7 @@ fn declare_output_dot_bad() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn declare_output_dotdot() -> buck2_error::Result<()> {
+fn declare_output_dotdot() -> bz_error::Result<()> {
     let content = indoc!(
         r#"
          def test(c):
@@ -215,7 +215,7 @@ fn declare_output_dotdot() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn declare_output_require_bound() -> buck2_error::Result<()> {
+fn declare_output_require_bound() -> bz_error::Result<()> {
     let content = indoc!(
         r#"
          def test(c):

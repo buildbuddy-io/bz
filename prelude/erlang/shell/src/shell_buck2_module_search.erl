@@ -6,7 +6,7 @@
 %% of this source tree.
 
 %% @format
--module(shell_buck2_module_search).
+-module(shell_bz_module_search).
 -moduledoc """
 Configurable hook for module discovery
 """.
@@ -36,7 +36,7 @@ find_module(Module) ->
         [found] ->
             available;
         _ ->
-            case shell_buck2_utils:get_app_env(search_module) of
+            case shell_bz_utils:get_app_env(search_module) of
                 {ok, Mod} ->
                     Mod:find_module_source(Module);
                 _ ->
@@ -48,9 +48,9 @@ find_module(Module) ->
     {source, file:filename_all()}
     | {error, not_found | {ambiguous, [file:filename_all()]}}.
 find_module_source(Module) ->
-    Root = shell_buck2_utils:cell_root(),
+    Root = shell_bz_utils:cell_root(),
     io:format("use ~ts as root", [Root]),
-    {ok, Output} = shell_buck2_utils:run_command([
+    {ok, Output} = shell_bz_utils:run_command([
         "find",
         Root,
         "-type",
@@ -86,7 +86,7 @@ find_module_source(Module) ->
             {error, not_found};
         Candidates ->
             %% check if there are actually targets associated
-            {ok, RawOutput} = shell_buck2_utils:buck2_query(
+            {ok, RawOutput} = shell_bz_utils:bz_query(
                 ~|owner(\\"%s\\")|,
                 [~"--json"],
                 Candidates

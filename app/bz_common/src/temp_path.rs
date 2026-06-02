@@ -11,11 +11,11 @@
 use std::env;
 use std::mem;
 
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileNameBuf;
 
 /// Temporary path.
 ///
@@ -26,7 +26,7 @@ pub struct TempPath {
 }
 
 impl TempPath {
-    pub fn new() -> buck2_error::Result<TempPath> {
+    pub fn new() -> bz_error::Result<TempPath> {
         TempPath::new_in(AbsNormPath::new(&env::temp_dir())?)
     }
 
@@ -34,7 +34,7 @@ impl TempPath {
         TempPath { path: Some(path) }
     }
 
-    pub fn new_in(temp_dir: &AbsNormPath) -> buck2_error::Result<TempPath> {
+    pub fn new_in(temp_dir: &AbsNormPath) -> bz_error::Result<TempPath> {
         let mut name = String::with_capacity(10);
         for _ in 0..10 {
             name.push(rand::random_range('a'..='z'));
@@ -49,7 +49,7 @@ impl TempPath {
 
     /// Delete temp file explicitly, because this returns error
     /// and `drop` can only panic or ignore error.
-    pub fn close(mut self) -> buck2_error::Result<()> {
+    pub fn close(mut self) -> bz_error::Result<()> {
         let path = mem::take(&mut self.path).unwrap();
         fs_util::remove_all(path).categorize_internal()?;
         Ok(())

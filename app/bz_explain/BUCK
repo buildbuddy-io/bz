@@ -4,7 +4,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_explain",
+    name = "bz_explain",
     srcs = glob(
         ["src/*"],
     ),
@@ -15,21 +15,21 @@ rust_library(
         ":schema_rust[explain_generated.rs]": "src/explain_generated.rs",
     },
     test_deps = [
-        "//bz/app/bz_interpreter_for_build:buck2_interpreter_for_build",
-        "//bz/app/bz_util:buck2_util",
+        "//bz/app/bz_interpreter_for_build:bz_interpreter_for_build",
+        "//bz/app/bz_util:bz_util",
         "//bz/gazebo/dupe:dupe",
         "//bz/starlark-rust/starlark:starlark",
     ],
     deps = [
         "fbsource//third-party/rust:base64",
         "fbsource//third-party/rust:flatbuffers",
-        "//bz/app/bz_common:buck2_common",
-        "//bz/app/bz_core:buck2_core",
-        "//bz/app/bz_error:buck2_error",
-        "//bz/app/bz_fs:buck2_fs",
-        "//bz/app/bz_node:buck2_node",
-        "//bz/app/bz_query:buck2_query",
-        "//bz/shed/buck2_hash:buck2_hash",
+        "//bz/app/bz_common:bz_common",
+        "//bz/app/bz_core:bz_core",
+        "//bz/app/bz_error:bz_error",
+        "//bz/app/bz_fs:bz_fs",
+        "//bz/app/bz_node:bz_node",
+        "//bz/app/bz_query:bz_query",
+        "//bz/shed/bz_hash:bz_hash",
     ],
 )
 

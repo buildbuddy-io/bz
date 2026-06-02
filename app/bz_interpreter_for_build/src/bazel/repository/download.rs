@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) fn repository_ctx_download_error_result(
     allow_fail: bool,
-    error: buck2_error::Error,
+    error: bz_error::Error,
 ) -> starlark::Result<ModuleCtxDownloadResult> {
     if allow_fail {
         Ok(ModuleCtxDownloadResult::new(
@@ -32,7 +32,7 @@ fn module_ctx_download_auth_string_field(
         return Ok(None);
     };
     let Some(value) = value.unpack_str() else {
-        return Err(buck2_error::Error::from(
+        return Err(bz_error::Error::from(
             BazelRepositoryError::ModuleCtxDownloadAuthFieldUnsupportedValue {
                 url: url.to_owned(),
                 field,
@@ -50,7 +50,7 @@ pub(super) fn module_ctx_download_auth_headers_from_entries(
     let mut headers = Vec::new();
     for (url, auth) in entries.entries.iter() {
         let Some(url) = url.unpack_str() else {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadAuthKeyUnsupportedValue(
                     url.get_type().to_owned(),
                 ),
@@ -58,7 +58,7 @@ pub(super) fn module_ctx_download_auth_headers_from_entries(
             .into());
         };
         let Some(auth) = DictRef::from_value(*auth) else {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadAuthValueUnsupportedValue {
                     url: url.to_owned(),
                     got: auth.get_type().to_owned(),
@@ -73,7 +73,7 @@ pub(super) fn module_ctx_download_auth_headers_from_entries(
             "basic" => {
                 let Some(login) = module_ctx_download_auth_string_field(&auth, url, "login")?
                 else {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         BazelRepositoryError::ModuleCtxDownloadAuthBasicMissingCredentials {
                             url: url.to_owned(),
                         },
@@ -82,7 +82,7 @@ pub(super) fn module_ctx_download_auth_headers_from_entries(
                 };
                 let Some(password) = module_ctx_download_auth_string_field(&auth, url, "password")?
                 else {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         BazelRepositoryError::ModuleCtxDownloadAuthBasicMissingCredentials {
                             url: url.to_owned(),
                         },
@@ -100,7 +100,7 @@ pub(super) fn module_ctx_download_auth_headers_from_entries(
                 let Some(mut authorization) =
                     module_ctx_download_auth_string_field(&auth, url, "pattern")?
                 else {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         BazelRepositoryError::ModuleCtxDownloadAuthPatternMissingPattern {
                             url: url.to_owned(),
                         },
@@ -113,7 +113,7 @@ pub(super) fn module_ctx_download_auth_headers_from_entries(
                         let Some(value) =
                             module_ctx_download_auth_string_field(&auth, url, component)?
                         else {
-                            return Err(buck2_error::Error::from(
+                            return Err(bz_error::Error::from(
                                 BazelRepositoryError::ModuleCtxDownloadAuthPatternMissingComponent {
                                     component: marker,
                                 },
@@ -148,7 +148,7 @@ fn module_ctx_download_header_value_to_strings(
     } else if let Some(tuple) = TupleRef::from_value(value) {
         tuple.iter().collect::<Vec<_>>()
     } else {
-        return Err(buck2_error::Error::from(
+        return Err(bz_error::Error::from(
             BazelRepositoryError::ModuleCtxDownloadHeaderValueUnsupportedValue {
                 header: header.to_owned(),
                 got: value.get_type().to_owned(),
@@ -160,7 +160,7 @@ fn module_ctx_download_header_value_to_strings(
     let mut strings = Vec::with_capacity(values.len());
     for value in values {
         let Some(value) = value.unpack_str() else {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadHeaderValueUnsupportedValue {
                     header: header.to_owned(),
                     got: value.get_type().to_owned(),
@@ -179,7 +179,7 @@ pub(super) fn module_ctx_download_headers_from_entries(
     let mut headers = Vec::new();
     for (name, value) in entries.entries.iter() {
         let Some(name) = name.unpack_str() else {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadHeaderKeyUnsupportedValue(
                     name.get_type().to_owned(),
                 ),
@@ -271,7 +271,7 @@ pub(super) fn repository_ctx_extract_archive(
     strip_prefix: &str,
     strip_components: i32,
     rename_files: &[(String, String)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if strip_components < 0 {
         return Err(BazelRepositoryError::RepositoryCtxExtractArchive {
             archive: archive.to_string_lossy().into_owned(),
@@ -307,15 +307,15 @@ pub(super) fn repository_ctx_renamed_strip_prefix<'a>(
     method: &str,
     strip_prefix: &'a str,
     strip_prefix_legacy: &'a str,
-) -> buck2_error::Result<&'a str> {
+) -> bz_error::Result<&'a str> {
     if strip_prefix_legacy.is_empty() {
         return Ok(strip_prefix);
     }
     if strip_prefix.is_empty() {
         return Ok(strip_prefix_legacy);
     }
-    Err(buck2_error::buck2_error!(
-        buck2_error::ErrorTag::Input,
+    Err(bz_error::bz_error!(
+        bz_error::ErrorTag::Input,
         "{}() got multiple values for parameter 'strip_prefix' (via compatibility alias 'stripPrefix')",
         method
     ))
@@ -327,7 +327,7 @@ pub(super) fn repository_ctx_rename_files_from_entries(
     let mut rename_files = Vec::new();
     for (from, to) in entries.entries.iter() {
         let Some(from) = from.unpack_str() else {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::RepositoryCtxRenameFilesKeyUnsupportedValue(
                     from.get_type().to_owned(),
                 ),
@@ -335,7 +335,7 @@ pub(super) fn repository_ctx_rename_files_from_entries(
             .into());
         };
         let Some(to) = to.unpack_str() else {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::RepositoryCtxRenameFilesValueUnsupportedValue {
                     path: from.to_owned(),
                     got: to.get_type().to_owned(),
@@ -359,12 +359,12 @@ pub(super) fn module_ctx_urls_from_value<'v>(
 
     let mut urls = Vec::new();
     for value in value.iterate(heap).map_err(|_| {
-        buck2_error::Error::from(BazelRepositoryError::ModuleCtxDownloadUrlUnsupportedValue(
+        bz_error::Error::from(BazelRepositoryError::ModuleCtxDownloadUrlUnsupportedValue(
             value.get_type().to_owned(),
         ))
     })? {
         let Some(url) = value.unpack_str() else {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadUrlUnsupportedValue(
                     value.get_type().to_owned(),
                 ),
@@ -374,19 +374,19 @@ pub(super) fn module_ctx_urls_from_value<'v>(
         urls.push(url.to_owned());
     }
     if urls.is_empty() {
-        return Err(buck2_error::Error::from(BazelRepositoryError::ModuleCtxDownloadNoUrls).into());
+        return Err(bz_error::Error::from(BazelRepositoryError::ModuleCtxDownloadNoUrls).into());
     }
     Ok(urls)
 }
 
-fn module_ctx_download_error_is_retryable(error: &buck2_http::HttpError) -> bool {
+fn module_ctx_download_error_is_retryable(error: &bz_http::HttpError) -> bool {
     match error {
-        buck2_http::HttpError::Status { status, .. } => {
+        bz_http::HttpError::Status { status, .. } => {
             let status = status.as_u16();
             matches!(status, 403 | 408 | 429)
                 || (500..600).contains(&status) && status != 501 && status != 505
         }
-        buck2_http::HttpError::SendRequest { .. } | buck2_http::HttpError::Timeout { .. } => true,
+        bz_http::HttpError::SendRequest { .. } | bz_http::HttpError::Timeout { .. } => true,
         _ => false,
     }
 }
@@ -424,11 +424,11 @@ struct RepositoryRemoteAssetEndpoint {
 }
 
 impl RepositoryRemoteAssetEndpoint {
-    fn parse(endpoint: &str) -> buck2_error::Result<Self> {
+    fn parse(endpoint: &str) -> bz_error::Result<Self> {
         let endpoint = endpoint.trim();
         if endpoint.is_empty() {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "invalid remote downloader endpoint: empty endpoint"
             ));
         }
@@ -514,7 +514,7 @@ enum RepositoryRemoteExecutionDigestFunction {
 enum ModuleCtxDownloadAttemptError {
     Retryable(String),
     NonRetryable(String),
-    Fatal(buck2_error::Error),
+    Fatal(bz_error::Error),
 }
 
 enum ModuleCtxChecksumHasher {
@@ -570,7 +570,7 @@ fn module_ctx_download_tmp_path(destination: &Path) -> PathBuf {
     destination.with_file_name(file_name)
 }
 
-fn module_ctx_prepare_download_tmp(destination: &Path) -> buck2_error::Result<PathBuf> {
+fn module_ctx_prepare_download_tmp(destination: &Path) -> bz_error::Result<PathBuf> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| module_ctx_download_write_error(parent, error))?;
@@ -584,7 +584,7 @@ fn module_ctx_publish_download_tmp(
     tmp: &Path,
     destination: &Path,
     executable: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     module_ctx_set_executable(tmp, executable)?;
     if let Err(error) = fs::rename(tmp, destination) {
         module_ctx_remove_partial_download(tmp);
@@ -594,7 +594,7 @@ fn module_ctx_publish_download_tmp(
 }
 
 async fn module_ctx_download_url_to_path(
-    client: &buck2_http::HttpClient,
+    client: &bz_http::HttpClient,
     url: &str,
     destination: &Path,
     expected_checksum: Option<&ModuleCtxChecksum>,
@@ -718,8 +718,8 @@ async fn module_ctx_remote_asset_fetch_blob(
     let endpoint = RepositoryRemoteAssetEndpoint::parse(&config.endpoint)
         .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
     let mut endpoint_builder = Endpoint::from_shared(endpoint.uri.clone()).map_err(|error| {
-        ModuleCtxDownloadAttemptError::Fatal(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        ModuleCtxDownloadAttemptError::Fatal(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "invalid remote downloader endpoint `{}`: {}",
             config.endpoint,
             error
@@ -729,8 +729,8 @@ async fn module_ctx_remote_asset_fetch_blob(
         endpoint_builder = endpoint_builder
             .tls_config(ClientTlsConfig::new().with_native_roots())
             .map_err(|error| {
-                ModuleCtxDownloadAttemptError::Fatal(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                ModuleCtxDownloadAttemptError::Fatal(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "invalid remote downloader endpoint `{}`: {}",
                     config.endpoint,
                     error
@@ -811,7 +811,7 @@ async fn module_ctx_remote_asset_fetch_blob(
 
 fn module_ctx_remote_asset_oldest_content_accepted(
     expected_checksum: Option<&ModuleCtxChecksum>,
-) -> buck2_error::Result<Option<prost_types::Timestamp>> {
+) -> bz_error::Result<Option<prost_types::Timestamp>> {
     if expected_checksum.is_some() {
         return Ok(None);
     }
@@ -821,8 +821,8 @@ fn module_ctx_remote_asset_oldest_content_accepted(
     let timestamp = SystemTime::now()
         .checked_add(Duration::from_secs(60 * 60))
         .ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "system time overflow computing remote downloader cache cutoff"
             )
         })?
@@ -847,8 +847,8 @@ async fn module_ctx_remote_asset_download_blob(
     let endpoint = RepositoryRemoteAssetEndpoint::parse(&config.endpoint)
         .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
     let mut endpoint_builder = Endpoint::from_shared(endpoint.uri.clone()).map_err(|error| {
-        ModuleCtxDownloadAttemptError::Fatal(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        ModuleCtxDownloadAttemptError::Fatal(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "invalid remote downloader endpoint `{}`: {}",
             config.endpoint,
             error
@@ -858,8 +858,8 @@ async fn module_ctx_remote_asset_download_blob(
         endpoint_builder = endpoint_builder
             .tls_config(ClientTlsConfig::new().with_native_roots())
             .map_err(|error| {
-                ModuleCtxDownloadAttemptError::Fatal(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                ModuleCtxDownloadAttemptError::Fatal(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "invalid remote downloader endpoint `{}`: {}",
                     config.endpoint,
                     error
@@ -1012,7 +1012,7 @@ fn module_ctx_remote_asset_finish_download_tmp(
         .map_err(ModuleCtxDownloadAttemptError::Fatal)
 }
 
-fn module_ctx_remote_asset_blob_should_gunzip(url: &str, path: &Path) -> buck2_error::Result<bool> {
+fn module_ctx_remote_asset_blob_should_gunzip(url: &str, path: &Path) -> bz_error::Result<bool> {
     if module_ctx_download_url_has_gzipped_extension(url) {
         return Ok(false);
     }
@@ -1106,7 +1106,7 @@ fn module_ctx_download_response_should_gunzip(url: &str, head: &http::response::
     if module_ctx_download_url_has_gzipped_extension(url) {
         return false;
     }
-    if let Some(final_uri) = head.extensions.get::<buck2_http::ResponseFinalUri>()
+    if let Some(final_uri) = head.extensions.get::<bz_http::ResponseFinalUri>()
         && module_ctx_download_url_has_gzipped_extension(final_uri.as_str())
     {
         return false;
@@ -1140,10 +1140,10 @@ async fn module_ctx_download_to_path_uncached(
     headers: &[(String, String)],
     auth_headers: &[ModuleCtxDownloadAuthHeader],
     remote_downloader: Option<&BazelRepositoryRemoteDownloaderConfig>,
-) -> buck2_error::Result<(Option<String>, String)> {
+) -> bz_error::Result<(Option<String>, String)> {
     const MAX_ATTEMPTS: usize = 8;
 
-    let client = buck2_http::HttpClientBuilder::oss()
+    let client = bz_http::HttpClientBuilder::oss()
         .await?
         .with_max_redirects(MODULE_CTX_HTTP_MAX_REDIRECTS)
         .with_http2(false)
@@ -1159,8 +1159,8 @@ async fn module_ctx_download_to_path_uncached(
                 .acquire()
                 .await
                 .map_err(|error| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "could not acquire module_ctx.download semaphore: {}",
                         error
                     )
@@ -1223,7 +1223,7 @@ fn module_ctx_download_to_path_uncached_blocking(
     headers: &[(String, String)],
     auth_headers: &[ModuleCtxDownloadAuthHeader],
     remote_downloader: Option<&BazelRepositoryRemoteDownloaderConfig>,
-) -> buck2_error::Result<(Option<String>, String)> {
+) -> bz_error::Result<(Option<String>, String)> {
     let urls = urls.to_owned();
     let destination = destination.to_owned();
     let expected_checksum = expected_checksum.cloned();
@@ -1235,8 +1235,8 @@ fn module_ctx_download_to_path_uncached_blocking(
             .enable_all()
             .build()
             .map_err(|e| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "could not create module_ctx.download runtime: {}",
                     e
                 )
@@ -1256,8 +1256,8 @@ fn module_ctx_download_to_path_uncached_blocking(
     })
     .join()
     .map_err(|_| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "module_ctx.download worker thread panicked"
         )
     })?
@@ -1318,7 +1318,7 @@ fn module_ctx_download_cache_verification_key(
 
 fn module_ctx_download_cache_file_metadata(
     file: &Path,
-) -> buck2_error::Result<ModuleCtxVerifiedDownloadCacheMetadata> {
+) -> bz_error::Result<ModuleCtxVerifiedDownloadCacheMetadata> {
     let metadata = fs::metadata(file)
         .map_err(|error| module_ctx_download_cache_io_error("stat", file, error))?;
     Ok(ModuleCtxVerifiedDownloadCacheMetadata {
@@ -1395,9 +1395,9 @@ fn module_ctx_download_cache_io_error(
     action: &str,
     path: &Path,
     error: std::io::Error,
-) -> buck2_error::Error {
-    buck2_error::buck2_error!(
-        buck2_error::ErrorTag::Input,
+) -> bz_error::Error {
+    bz_error::bz_error!(
+        bz_error::ErrorTag::Input,
         "failed to {} Bazel repository cache path `{}`: {}",
         action,
         path.display(),
@@ -1405,7 +1405,7 @@ fn module_ctx_download_cache_io_error(
     )
 }
 
-fn module_ctx_download_write_error(path: &Path, error: std::io::Error) -> buck2_error::Error {
+fn module_ctx_download_write_error(path: &Path, error: std::io::Error) -> bz_error::Error {
     BazelRepositoryError::ModuleCtxDownloadWriteFile {
         path: path.to_string_lossy().into_owned(),
         error: error.to_string(),
@@ -1413,7 +1413,7 @@ fn module_ctx_download_write_error(path: &Path, error: std::io::Error) -> buck2_
     .into()
 }
 
-fn module_ctx_set_executable(path: &Path, executable: bool) -> buck2_error::Result<()> {
+fn module_ctx_set_executable(path: &Path, executable: bool) -> bz_error::Result<()> {
     if executable {
         #[cfg(unix)]
         {
@@ -1430,7 +1430,7 @@ pub(super) fn module_ctx_copy_download_file(
     source: &Path,
     destination: &Path,
     executable: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let tmp = module_ctx_prepare_download_tmp(destination)?;
     match fs::copy(source, &tmp) {
         Ok(_) => module_ctx_publish_download_tmp(&tmp, destination, executable),
@@ -1446,7 +1446,7 @@ fn module_ctx_download_cache_get_to_path(
     canonical_id: &str,
     destination: &Path,
     executable: bool,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let Some(entry) = module_ctx_repository_cache_entry_dir(checksum) else {
         return Ok(false);
     };
@@ -1474,7 +1474,7 @@ fn module_ctx_download_cache_put_verified(
     checksum: &ModuleCtxChecksum,
     canonical_id: &str,
     source: &Path,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let Some(entry) = module_ctx_repository_cache_entry_dir(checksum) else {
         return Ok(());
     };
@@ -1515,7 +1515,7 @@ pub(super) fn module_ctx_download_to_path_blocking(
     headers: &[(String, String)],
     auth_headers: &[ModuleCtxDownloadAuthHeader],
     remote_downloader: Option<&BazelRepositoryRemoteDownloaderConfig>,
-) -> buck2_error::Result<(Option<String>, String)> {
+) -> bz_error::Result<(Option<String>, String)> {
     if let Some(expected_checksum) = expected_checksum {
         if destination.is_file()
             && module_ctx_validate_download_file_checksum(destination, expected_checksum).is_ok()
@@ -1531,7 +1531,7 @@ pub(super) fn module_ctx_download_to_path_blocking(
             canonical_id
         );
         let lock = module_ctx_download_cache_lock(&lock_key);
-        let result: buck2_error::Result<(Option<String>, String)> = {
+        let result: bz_error::Result<(Option<String>, String)> = {
             let _guard = lock
                 .lock()
                 .expect("module ctx download cache entry lock is poisoned");
@@ -1554,8 +1554,8 @@ pub(super) fn module_ctx_download_to_path_blocking(
                     return module_ctx_download_result_checksums_verified(expected_checksum);
                 }
 
-                buck2_events::dispatch::span(
-                    buck2_data::DiceStateUpdateStageStart {
+                bz_events::dispatch::span(
+                    bz_data::DiceStateUpdateStageStart {
                         stage: module_ctx_download_stage_label(urls, destination),
                     },
                     || {
@@ -1569,7 +1569,7 @@ pub(super) fn module_ctx_download_to_path_blocking(
                                 auth_headers,
                                 remote_downloader,
                             ),
-                            buck2_data::DiceStateUpdateStageEnd {},
+                            bz_data::DiceStateUpdateStageEnd {},
                         )
                     },
                 )?;
@@ -1585,8 +1585,8 @@ pub(super) fn module_ctx_download_to_path_blocking(
         return result;
     }
 
-    let checksums = buck2_events::dispatch::span(
-        buck2_data::DiceStateUpdateStageStart {
+    let checksums = bz_events::dispatch::span(
+        bz_data::DiceStateUpdateStageStart {
             stage: module_ctx_download_stage_label(urls, destination),
         },
         || {
@@ -1600,7 +1600,7 @@ pub(super) fn module_ctx_download_to_path_blocking(
                     auth_headers,
                     remote_downloader,
                 ),
-                buck2_data::DiceStateUpdateStageEnd {},
+                bz_data::DiceStateUpdateStageEnd {},
             )
         },
     )?;
@@ -1663,7 +1663,7 @@ pub(super) struct ModuleCtxChecksum {
 pub(super) fn module_ctx_expected_checksum(
     sha256: &str,
     integrity: &str,
-) -> buck2_error::Result<Option<ModuleCtxChecksum>> {
+) -> bz_error::Result<Option<ModuleCtxChecksum>> {
     if !sha256.is_empty() && !integrity.is_empty() {
         return Err(BazelRepositoryError::ModuleCtxDownloadConflictingChecksums.into());
     }
@@ -1678,7 +1678,7 @@ pub(super) fn module_ctx_expected_checksum(
 
 pub(super) fn module_ctx_checksum_from_integrity(
     integrity: &str,
-) -> buck2_error::Result<Option<ModuleCtxChecksum>> {
+) -> bz_error::Result<Option<ModuleCtxChecksum>> {
     if integrity.is_empty() {
         return Ok(None);
     }
@@ -1709,7 +1709,7 @@ pub(super) fn module_ctx_checksum_from_integrity(
 
 fn module_ctx_checksum_to_subresource_integrity(
     checksum: &ModuleCtxChecksum,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let bytes = hex::decode(&checksum.hex)?;
     Ok(format!(
         "{}{}",
@@ -1721,7 +1721,7 @@ fn module_ctx_checksum_to_subresource_integrity(
 fn module_ctx_add_remote_asset_metadata(
     metadata: &mut tonic::metadata::MetadataMap,
     config: &BazelRepositoryRemoteDownloaderConfig,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(api_key) = config
         .api_key
         .as_ref()
@@ -1730,8 +1730,8 @@ fn module_ctx_add_remote_asset_metadata(
         metadata.insert(
             BUILDBUDDY_API_KEY_HEADER,
             MetadataValue::try_from(api_key.as_str()).map_err(|error| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "invalid `{BUILDBUDDY_API_KEY_HEADER}` metadata value: {error}"
                 )
             })?,
@@ -1764,10 +1764,10 @@ fn module_ctx_checksum_hex(kind: ModuleCtxChecksumKind, bytes: &[u8]) -> String 
 fn module_ctx_checksum_hex_file(
     kind: ModuleCtxChecksumKind,
     path: &Path,
-) -> buck2_error::Result<String> {
-    fn read_chunks(path: &Path, mut update: impl FnMut(&[u8])) -> buck2_error::Result<()> {
+) -> bz_error::Result<String> {
+    fn read_chunks(path: &Path, mut update: impl FnMut(&[u8])) -> bz_error::Result<()> {
         let mut file = fs::File::open(path).map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
+            bz_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
                 path: path.to_string_lossy().into_owned(),
                 error: error.to_string(),
             })
@@ -1775,7 +1775,7 @@ fn module_ctx_checksum_hex_file(
         let mut buffer = [0u8; 64 * 1024];
         loop {
             let bytes_read = file.read(&mut buffer).map_err(|error| {
-                buck2_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
+                bz_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
                     path: path.to_string_lossy().into_owned(),
                     error: error.to_string(),
                 })
@@ -1813,7 +1813,7 @@ fn module_ctx_checksum_hex_file(
 
 pub(super) fn module_ctx_integrity_from_checksum(
     checksum: &ModuleCtxChecksum,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let bytes = hex::decode(&checksum.hex).map_err(|_| {
         BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(checksum.hex.clone())
     })?;
@@ -1827,7 +1827,7 @@ pub(super) fn module_ctx_integrity_from_checksum(
 fn module_ctx_validate_download_file_checksum(
     path: &Path,
     expected_checksum: &ModuleCtxChecksum,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let got = module_ctx_checksum_hex_file(expected_checksum.kind, path)?;
     if expected_checksum.hex == got {
         return Ok(());
@@ -1842,7 +1842,7 @@ fn module_ctx_validate_download_file_checksum(
 
 fn module_ctx_download_result_checksums_verified(
     expected_checksum: &ModuleCtxChecksum,
-) -> buck2_error::Result<(Option<String>, String)> {
+) -> bz_error::Result<(Option<String>, String)> {
     let sha256 = (expected_checksum.kind == ModuleCtxChecksumKind::Sha256)
         .then(|| expected_checksum.hex.clone());
     let integrity = module_ctx_integrity_from_checksum(expected_checksum)?;
@@ -2008,7 +2008,7 @@ pub(super) fn module_ctx_pending_download<'v>(
 pub(super) fn module_ctx_download_error_with_block<'v>(
     block: bool,
     allow_fail: bool,
-    error: buck2_error::Error,
+    error: bz_error::Error,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
     let result = repository_ctx_download_error_result(allow_fail, error)?;

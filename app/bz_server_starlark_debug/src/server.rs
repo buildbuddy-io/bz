@@ -14,15 +14,15 @@ use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::starlark_debug::StarlarkDebugController;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_events::dispatch::EventDispatcher;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::starlark_debug::StarlarkDebugController;
 use debugserver_types as dap;
 use dupe::Dupe;
 use futures::StreamExt;
@@ -82,7 +82,7 @@ fn capabilities() -> serde_json::Value {
     })
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum DebuggerError {
     #[error("SetBreakpointsArguments invalid: {0:?}")]
@@ -124,7 +124,7 @@ impl BuckStarlarkDebuggerServer {
         // passed in as we should at the least respect any `-j` flag.
         Self {
             to_state,
-            eval_semaphore: Arc::new(Semaphore::new(buck2_util::threads::available_parallelism())),
+            eval_semaphore: Arc::new(Semaphore::new(bz_util::threads::available_parallelism())),
             next_handle_id: AtomicU32::new(0),
         }
     }
@@ -165,7 +165,7 @@ impl BuckStarlarkDebuggerServer {
         self: &Arc<Self>,
         handle: &BuckStarlarkDebuggerHandle,
         description: &str,
-    ) -> buck2_error::Result<Box<dyn StarlarkDebugController>> {
+    ) -> bz_error::Result<Box<dyn StarlarkDebugController>> {
         debug!("starting debug-hooked eval {}", description);
         let permit = self.eval_semaphore.dupe().acquire_owned().await?;
         let (send, recv) = oneshot::channel();
@@ -215,7 +215,7 @@ impl BuckStarlarkDebuggerServer {
     }
 
     /// Called to forward along requests from the DAP client.
-    pub(crate) fn send_request(&self, req: dap::Request) -> buck2_error::Result<()> {
+    pub(crate) fn send_request(&self, req: dap::Request) -> bz_error::Result<()> {
         // If the state encountered an error or is shutting down, it may never see this
         // request. But that's okay since in that case it will send back the Shutdown message
         // and that'll make its way back to the client.
@@ -224,7 +224,7 @@ impl BuckStarlarkDebuggerServer {
     }
 
     /// Called when the DAP client has disconnected.
-    pub(crate) fn detach(&self) -> buck2_error::Result<()> {
+    pub(crate) fn detach(&self) -> bz_error::Result<()> {
         self.maybe_to_state(ServerMessage::Detach);
         Ok(())
     }
@@ -312,26 +312,26 @@ impl VariableId {
     const MAX_VARIABLE_ID: u32 = 0xFFFFF; // 20 bits
     const MAX_FRAME_ID: u32 = 0x7F; // 7 bits
 
-    pub fn new(frame_id: u32, thread_id: u32, variable_id: u32) -> buck2_error::Result<Self> {
+    pub fn new(frame_id: u32, thread_id: u32, variable_id: u32) -> bz_error::Result<Self> {
         if thread_id > Self::MAX_THREAD_ID {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::StarlarkServer,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::StarlarkServer,
                 "Thread ID exceeds 20-bit limit: max is {}, received {}",
                 Self::MAX_THREAD_ID,
                 thread_id
             ));
         }
         if variable_id > Self::MAX_VARIABLE_ID {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::StarlarkServer,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::StarlarkServer,
                 "Variable ID exceeds 20-bit limit: max is {}, received {}",
                 Self::MAX_VARIABLE_ID,
                 variable_id
             ));
         }
         if frame_id > Self::MAX_FRAME_ID {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::StarlarkServer,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::StarlarkServer,
                 "Frame ID exceeds 7-bit limit: max is {}, received {}",
                 Self::MAX_FRAME_ID,
                 frame_id
@@ -360,14 +360,14 @@ impl VariableId {
 }
 
 impl TryFrom<i64> for VariableId {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn try_from(value: i64) -> Result<Self, Self::Error> {
         if value & VariableId::MASK_53_BITS == value {
             Ok(Self(value))
         } else {
-            Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "value exceeds 53-bit limit. value: {}",
                 value
             ))
@@ -385,14 +385,14 @@ impl DebugServer for ServerState {
     fn initialize(
         &mut self,
         _x: dap::InitializeRequestArguments,
-    ) -> buck2_error::Result<Option<serde_json::Value>> {
+    ) -> bz_error::Result<Option<serde_json::Value>> {
         Ok(Some(capabilities()))
     }
 
     fn set_breakpoints(
         &mut self,
         mut x: dap::SetBreakpointsArguments,
-    ) -> buck2_error::Result<dap::SetBreakpointsResponseBody> {
+    ) -> bz_error::Result<dap::SetBreakpointsResponseBody> {
         // buck will use the project-relative paths when parsing asts with the starlark interpreter. We need to match that.
         let source = x
             .source
@@ -406,12 +406,12 @@ impl DebugServer for ServerState {
 
         // We currently just resolve new breakpoints against the current state of the file. This isn't quite correct, but oh well.
         let resolved = resolve_breakpoints(&x, &self.get_ast(&project_relative)?)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
         for hook_state in self.current_hooks.values() {
             hook_state
                 .adapter
                 .set_breakpoints(&source, &resolved)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
         }
         let response = resolved.to_response();
         self.set_breakpoints.insert(source, resolved);
@@ -421,17 +421,17 @@ impl DebugServer for ServerState {
     fn set_exception_breakpoints(
         &mut self,
         _x: dap::SetExceptionBreakpointsArguments,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // TODO(cjhopman): This may not make sense in starlark and could be a more informative error. Or possibly we
         // could use it to break on `fail()`.
         Err(StarlarkDebuggerError::Unimplemented.into())
     }
 
-    fn attach(&mut self, _x: dap::AttachRequestArguments) -> buck2_error::Result<()> {
+    fn attach(&mut self, _x: dap::AttachRequestArguments) -> bz_error::Result<()> {
         Ok(())
     }
 
-    fn threads(&mut self) -> buck2_error::Result<dap::ThreadsResponseBody> {
+    fn threads(&mut self) -> bz_error::Result<dap::ThreadsResponseBody> {
         let mut threads = Vec::with_capacity(self.current_hooks.len());
         for hook_state in self
             .current_hooks
@@ -446,19 +446,19 @@ impl DebugServer for ServerState {
         Ok(dap::ThreadsResponseBody { threads })
     }
 
-    fn configuration_done(&mut self) -> buck2_error::Result<()> {
+    fn configuration_done(&mut self) -> bz_error::Result<()> {
         Ok(())
     }
 
     fn stack_trace(
         &mut self,
         x: dap::StackTraceArguments,
-    ) -> buck2_error::Result<dap::StackTraceResponseBody> {
+    ) -> bz_error::Result<dap::StackTraceResponseBody> {
         let hook = self.find_hook_by_pseudo_thread(x.thread_id)?;
         let mut trace_response = hook
             .adapter
             .stack_trace(x)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
         for frame in &mut trace_response.stack_frames {
             // rewrite the sources to be absolute (like vscode sent us)
             if let Some(source) = &mut frame.source {
@@ -474,7 +474,7 @@ impl DebugServer for ServerState {
         Ok(trace_response)
     }
 
-    fn scopes(&mut self, x: dap::ScopesArguments) -> buck2_error::Result<dap::ScopesResponseBody> {
+    fn scopes(&mut self, x: dap::ScopesArguments) -> bz_error::Result<dap::ScopesResponseBody> {
         let thread_id = x.frame_id >> 16;
         let frame_id = (x.frame_id & 0xFFFF) as u32;
 
@@ -482,7 +482,7 @@ impl DebugServer for ServerState {
         let scopes_info = hook
             .adapter
             .scopes(frame_id as usize)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
         Ok(dap::ScopesResponseBody {
             scopes: vec![dap::Scope {
                 name: "Locals".to_owned(),
@@ -502,7 +502,7 @@ impl DebugServer for ServerState {
     fn variables(
         &mut self,
         x: dap::VariablesArguments,
-    ) -> buck2_error::Result<dap::VariablesResponseBody> {
+    ) -> bz_error::Result<dap::VariablesResponseBody> {
         let encoded_variable_id = VariableId::try_from(x.variables_reference)?;
         let thread_id = encoded_variable_id.thread_id();
         let frame_id = encoded_variable_id.frame_id();
@@ -514,7 +514,7 @@ impl DebugServer for ServerState {
             let vars_info = hook
                 .adapter
                 .variables(frame_id as usize)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
             let known_variables = self.variables_by_thread.entry(thread_id).or_default();
 
             for v in vars_info.locals {
@@ -540,7 +540,7 @@ impl DebugServer for ServerState {
                 let inspect_result = hook
                     .adapter
                     .inspect_variable(frame_id as usize, path.to_owned())
-                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
                 let current_frame_vars =
                     self.variables_by_thread
                         .get_mut(&thread_id)
@@ -568,52 +568,52 @@ impl DebugServer for ServerState {
         Ok(dap::VariablesResponseBody { variables: result })
     }
 
-    fn source(&mut self, _x: dap::SourceArguments) -> buck2_error::Result<dap::SourceResponseBody> {
+    fn source(&mut self, _x: dap::SourceArguments) -> bz_error::Result<dap::SourceResponseBody> {
         Err(StarlarkDebuggerError::Unimplemented.into())
     }
 
     fn continue_(
         &mut self,
         x: ContinueArguments,
-    ) -> buck2_error::Result<dap::ContinueResponseBody> {
+    ) -> bz_error::Result<dap::ContinueResponseBody> {
         let hook = self.find_hook_by_pseudo_thread(x.thread_id)?;
         hook.adapter
             .continue_()
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
 
         Ok(dap::ContinueResponseBody {
             all_threads_continued: Some(false),
         })
     }
 
-    fn next(&mut self, x: dap::NextArguments) -> buck2_error::Result<()> {
+    fn next(&mut self, x: dap::NextArguments) -> bz_error::Result<()> {
         let hook = self.find_hook_by_pseudo_thread(x.thread_id)?;
         hook.adapter
             .step(StepKind::Over)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
         Ok(())
     }
 
-    fn step_in(&mut self, x: dap::StepInArguments) -> buck2_error::Result<()> {
+    fn step_in(&mut self, x: dap::StepInArguments) -> bz_error::Result<()> {
         let hook = self.find_hook_by_pseudo_thread(x.thread_id)?;
         hook.adapter
             .step(StepKind::Into)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
         Ok(())
     }
 
-    fn step_out(&mut self, x: dap::StepOutArguments) -> buck2_error::Result<()> {
+    fn step_out(&mut self, x: dap::StepOutArguments) -> bz_error::Result<()> {
         let hook = self.find_hook_by_pseudo_thread(x.thread_id)?;
         hook.adapter
             .step(StepKind::Out)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
         Ok(())
     }
 
     fn evaluate(
         &mut self,
         x: dap::EvaluateArguments,
-    ) -> buck2_error::Result<dap::EvaluateResponseBody> {
+    ) -> bz_error::Result<dap::EvaluateResponseBody> {
         let frame_id = match x.frame_id {
             Some(v) => v,
             None => {
@@ -671,7 +671,7 @@ impl DebugServer for ServerState {
         }
     }
 
-    fn disconnect(&mut self, _x: dap::DisconnectArguments) -> buck2_error::Result<()> {
+    fn disconnect(&mut self, _x: dap::DisconnectArguments) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -695,7 +695,7 @@ impl ServerState {
     async fn run(
         &mut self,
         recv: mpsc::UnboundedReceiver<ServerMessage>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut recv = UnboundedReceiverStream::new(recv);
 
         self.to_client
@@ -742,26 +742,26 @@ impl ServerState {
     /// This is sent even when nothing is currently stopped but won't ever be sent if a
     /// debugger isn't attached, and so when a command receives the snapshot it can know
     /// that a debugger is attached to the buck daemon.
-    fn get_snapshot(&self) -> buck2_data::DebugAdapterSnapshot {
+    fn get_snapshot(&self) -> bz_data::DebugAdapterSnapshot {
         let mut current_handles = StdBuckHashMap::default();
 
         for hook_state in self.current_hooks.values() {
             if let Some(v) = &hook_state.stopped_at {
                 let handle_snapshot = current_handles
                     .entry(hook_state.handle_id.0)
-                    .or_insert_with(|| buck2_data::DebugAdapterCommandSnapshot {
+                    .or_insert_with(|| bz_data::DebugAdapterCommandSnapshot {
                         stopped_evals: Vec::new(),
                     });
                 handle_snapshot
                     .stopped_evals
-                    .push(buck2_data::DebugAdapterStoppedEval {
+                    .push(bz_data::DebugAdapterStoppedEval {
                         description: hook_state.pseudo_thread_name.clone(),
                         stopped_at: v.clone(),
                     })
             }
         }
 
-        buck2_data::DebugAdapterSnapshot {
+        bz_data::DebugAdapterSnapshot {
             // this will be changed as appropriate before sending the snapshot.
             this_handle: 0,
             current_handles,
@@ -769,7 +769,7 @@ impl ServerState {
     }
 
     /// Returns `false` on detach to indicate the state thread should stop running.
-    fn handle_message(&mut self, msg: ServerMessage) -> buck2_error::Result<bool> {
+    fn handle_message(&mut self, msg: ServerMessage) -> bz_error::Result<bool> {
         match msg {
             ServerMessage::NewHook {
                 handle,
@@ -778,8 +778,8 @@ impl ServerState {
             } => {
                 let resp = self.new_hook(handle, description)?;
                 response_channel.send(resp).map_err(|_| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::StarlarkServer,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::StarlarkServer,
                         "channel closed"
                     )
                 })?;
@@ -822,7 +822,7 @@ impl ServerState {
         &mut self,
         handle: BuckStarlarkDebuggerHandle,
         description: String,
-    ) -> buck2_error::Result<(HookId, Option<Box<dyn DapAdapterEvalHook>>)> {
+    ) -> bz_error::Result<(HookId, Option<Box<dyn DapAdapterEvalHook>>)> {
         let (hook_id, pseudo_thread_id) = self.next_hook_id();
 
         let client = Box::new(BuckStarlarkDapAdapterClient {
@@ -842,7 +842,7 @@ impl ServerState {
             hook_state
                 .adapter
                 .set_breakpoints(source, breakpoints)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::StarlarkServer))?;
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::StarlarkServer))?;
         }
         self.current_hooks.insert(hook_id, hook_state);
 
@@ -861,7 +861,7 @@ impl ServerState {
         self.current_commands.insert(id, CommandState { events });
     }
 
-    fn drop_hook(&mut self, hook_id: HookId) -> buck2_error::Result<()> {
+    fn drop_hook(&mut self, hook_id: HookId) -> bz_error::Result<()> {
         if let Some(state) = self.current_hooks.remove(&hook_id) {
             self.to_client.send(ToClientMessage::Event(dap_event(
                 "thread",
@@ -879,7 +879,7 @@ impl ServerState {
         self.current_commands.remove(&handle_id);
     }
 
-    fn eval_stopped(&mut self, hook_id: HookId) -> buck2_error::Result<()> {
+    fn eval_stopped(&mut self, hook_id: HookId) -> bz_error::Result<()> {
         debug!("eval stopped {}", hook_id);
         let state = self.current_hooks.get_mut(&hook_id).unwrap();
         let top_frame = state.adapter.top_frame();
@@ -910,25 +910,25 @@ impl ServerState {
         self.current_hooks.clear();
     }
 
-    fn find_hook_by_pseudo_thread(&self, thread_id: i64) -> buck2_error::Result<&HookState> {
+    fn find_hook_by_pseudo_thread(&self, thread_id: i64) -> bz_error::Result<&HookState> {
         let thread_id = thread_id as u32;
         for hook_state in self.current_hooks.values() {
             if hook_state.pseudo_thread_id == thread_id {
                 return Ok(hook_state);
             }
         }
-        Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::StarlarkServer,
+        Err(bz_error::bz_error!(
+            bz_error::ErrorTag::StarlarkServer,
             "can't find evaluator thread"
         ))
     }
 
-    fn get_ast(&self, source: &ProjectRelativePath) -> buck2_error::Result<AstModule> {
+    fn get_ast(&self, source: &ProjectRelativePath) -> bz_error::Result<AstModule> {
         debug!("tried to get ast `{}`", source);
         let abs_path = self.project_root.resolve(source);
         let content = fs_util::read_to_string_if_exists(abs_path)?.ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::StarlarkServer,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::StarlarkServer,
                 "file not found: {}",
                 source
             )

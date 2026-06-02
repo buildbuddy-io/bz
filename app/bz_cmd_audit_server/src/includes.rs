@@ -11,34 +11,34 @@
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::includes::AuditIncludesCommand;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::package::PackageLabel;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_hash::buck_indexmap;
-use buck2_interpreter::file_loader::LoadedModule;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_node::nodes::eval_result::EvaluationResult;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_query::query::graph::node::LabeledNode;
-use buck2_query::query::graph::node::NodeKey;
-use buck2_query::query::graph::successors::AsyncChildVisitor;
-use buck2_query::query::traversal::AsyncNodeLookup;
-use buck2_query::query::traversal::ChildVisitor;
-use buck2_query::query::traversal::async_depth_first_postorder_traversal;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::includes::AuditIncludesCommand;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::package::PackageLabel;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_hash::buck_indexmap;
+use bz_interpreter::file_loader::LoadedModule;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_node::nodes::eval_result::EvaluationResult;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_query::query::graph::node::LabeledNode;
+use bz_query::query::graph::node::NodeKey;
+use bz_query::query::graph::successors::AsyncChildVisitor;
+use bz_query::query::traversal::AsyncNodeLookup;
+use bz_query::query::traversal::ChildVisitor;
+use bz_query::query::traversal::async_depth_first_postorder_traversal;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::LinearRecomputeDiceComputations;
@@ -54,7 +54,7 @@ use serde::ser::SerializeMap;
 
 use crate::ServerAuditSubcommand;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum AuditIncludesError {
     #[error("Error loading buildfile for `{0}` found a mismatched buildfile name (`{1}`)")]
@@ -66,7 +66,7 @@ enum AuditIncludesError {
 async fn get_transitive_includes(
     ctx: &mut DiceComputations<'_>,
     load_result: &EvaluationResult,
-) -> buck2_error::Result<Vec<ImportPath>> {
+) -> bz_error::Result<Vec<ImportPath>> {
     // We define a simple graph of LoadedModules to traverse.
     #[derive(Clone, Dupe)]
     struct Node(LoadedModule);
@@ -100,7 +100,7 @@ async fn get_transitive_includes(
 
     #[async_trait]
     impl AsyncNodeLookup<Node> for Lookup<'_, '_> {
-        async fn get(&self, label: &NodeRef) -> buck2_error::Result<Node> {
+        async fn get(&self, label: &NodeRef) -> bz_error::Result<Node> {
             Ok(Node(
                 self.ctx
                     .get()
@@ -123,7 +123,7 @@ async fn get_transitive_includes(
             &self,
             target: &Node,
             mut func: impl ChildVisitor<Node>,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             for import in target.0.imports() {
                 func.visit(&NodeRef(import.clone()))?;
             }
@@ -149,7 +149,7 @@ async fn get_transitive_includes(
 async fn load_and_collect_includes(
     ctx: &mut DiceComputations<'_>,
     path: &CellPath,
-) -> buck2_error::Result<Vec<ImportPath>> {
+) -> bz_error::Result<Vec<ImportPath>> {
     let parent = path
         .parent()
         .ok_or_else(|| AuditIncludesError::InvalidPath(path.clone()))?;
@@ -178,7 +178,7 @@ fn resolve_path(
     fs: &ProjectRoot,
     current_cell_abs_path: &AbsNormPath,
     path: &str,
-) -> buck2_error::Result<CellPath> {
+) -> bz_error::Result<CellPath> {
     // To match buck1, if the path is absolute we use it as-is, but if not it is treated
     // as relative to the working dir cell root (not the working dir).
     // The easiest way to consistently handle non-canonical paths
@@ -198,9 +198,9 @@ impl ServerAuditSubcommand for AuditIncludesCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(server_ctx
             .with_dice_ctx(|server_ctx, mut ctx| async move {
                 let cells = ctx.get_cell_resolver().await?;
@@ -228,19 +228,19 @@ impl ServerAuditSubcommand for AuditIncludesCommand {
                     })
                     .collect();
 
-                let results: Vec<(_, buck2_error::Result<Vec<_>>)> = futures.collect().await;
+                let results: Vec<(_, bz_error::Result<Vec<_>>)> = futures.collect().await;
                 // This is expected to not return any errors, and so we're not careful about not propagating it.
-                let to_absolute_path = move |include: ImportPath| -> buck2_error::Result<_> {
+                let to_absolute_path = move |include: ImportPath| -> bz_error::Result<_> {
                     let include = include.path();
                     let cell = cells.get(include.cell())?;
                     let path = cell.path().join(include.path());
                     Ok(fs.resolve(&path))
                 };
                 let absolutize_paths =
-                    |paths: Vec<ImportPath>| -> buck2_error::Result<Vec<AbsNormPathBuf>> {
+                    |paths: Vec<ImportPath>| -> bz_error::Result<Vec<AbsNormPathBuf>> {
                         paths.into_try_map(&to_absolute_path)
                     };
-                let results: Vec<(String, buck2_error::Result<Vec<AbsNormPathBuf>>)> = results
+                let results: Vec<(String, bz_error::Result<Vec<AbsNormPathBuf>>)> = results
                     .into_map(|(path, includes)| (path, includes.and_then(absolutize_paths)));
 
                 let mut stdout = stdout.as_writer();

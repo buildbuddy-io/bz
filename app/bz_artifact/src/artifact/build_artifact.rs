@@ -9,10 +9,10 @@
  */
 
 use allocative::Allocative;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_data::ToProtoMessage;
-use buck2_error::internal_error;
-use buck2_execute::execute::request::OutputType;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_data::ToProtoMessage;
+use bz_error::internal_error;
+use bz_execute::execute::request::OutputType;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;
@@ -49,7 +49,7 @@ impl BuildArtifact {
         path: BuildArtifactPath,
         key: ActionKey,
         output_type: OutputType,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         if !key.holder_key().starts_with(path.owner()) {
             return Err(internal_error!(
                 "BaseDeferredKey mismatch: in action key: {}, in path: {}",
@@ -78,10 +78,10 @@ impl BuildArtifact {
 }
 
 impl ToProtoMessage for BuildArtifact {
-    type Message = buck2_data::BuildArtifact;
+    type Message = bz_data::BuildArtifact;
 
     fn as_proto(&self) -> Self::Message {
-        buck2_data::BuildArtifact {
+        bz_data::BuildArtifact {
             key: Some(self.key().as_proto()),
             path: self.get_path().path().to_string(),
         }

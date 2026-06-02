@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
 
 use crate::AuditSubcommand;
 

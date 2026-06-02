@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_core::io_counters::IoCounterKey;
-use buck2_event_observer::humanized::HumanizedBytes;
-use buck2_event_observer::two_snapshots::TwoSnapshots;
+use bz_core::io_counters::IoCounterKey;
+use bz_event_observer::humanized::HumanizedBytes;
+use bz_event_observer::two_snapshots::TwoSnapshots;
 use gazebo::prelude::*;
 use superconsole::Component;
 use superconsole::Dimensions;
@@ -26,9 +26,9 @@ pub(crate) struct IoHeader<'s> {
 }
 
 impl Component for IoHeader<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         render(
             self.two_snapshots,
             mode,
@@ -63,7 +63,7 @@ fn words_to_lines(words: Vec<String>, width: usize) -> Vec<String> {
 }
 
 pub fn io_in_flight_non_zero_counters(
-    snapshot: &buck2_data::Snapshot,
+    snapshot: &bz_data::Snapshot,
 ) -> impl Iterator<Item = (IoCounterKey, u32)> + '_ {
     IoCounterKey::ALL
         .iter()
@@ -95,18 +95,18 @@ pub fn io_in_flight_non_zero_counters(
 
 fn do_render(
     two_snapshots: &TwoSnapshots,
-    snapshot: &buck2_data::Snapshot,
+    snapshot: &bz_data::Snapshot,
     width: usize,
-) -> buck2_error::Result<Lines> {
+) -> bz_error::Result<Lines> {
     let mut lines = Vec::new();
     let mut parts = Vec::new();
-    if let Some(buck2_rss) = snapshot.buck2_rss {
-        parts.push(format!("RSS = {}", HumanizedBytes::new(buck2_rss)));
+    if let Some(bz_rss) = snapshot.bz_rss {
+        parts.push(format!("RSS = {}", HumanizedBytes::new(bz_rss)));
     } else {
-        // buck2_rss is only available on Linux. On other platforms, buck2 keeps track of buck2_max_rss so show that instead.
+        // bz_rss is only available on Linux. On other platforms, buck2 keeps track of bz_max_rss so show that instead.
         parts.push(format!(
             "Max RSS = {}",
-            HumanizedBytes::new(snapshot.buck2_max_rss)
+            HumanizedBytes::new(snapshot.bz_max_rss)
         ));
     }
 
@@ -172,7 +172,7 @@ fn render(
     draw_mode: DrawMode,
     width: usize,
     enabled: bool,
-) -> buck2_error::Result<Lines> {
+) -> bz_error::Result<Lines> {
     if !enabled {
         return Ok(Lines::new());
     }

@@ -10,43 +10,43 @@
 
 use std::sync::Arc;
 
-use buck2_analysis::analysis::calculation::AnalysisKey;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::actions::registry::RecordedActions;
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_build_api::analysis::registry::RecordedAnalysisValues;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::artifact_groups::TransitiveSetProjectionKey;
-use buck2_build_api::artifact_groups::TransitiveSetProjectionWrapper;
-use buck2_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
-use buck2_build_api::artifact_groups::deferred::TransitiveSetKey;
-use buck2_build_api::context::SetBuildContextData;
-use buck2_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSet;
-use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSetOrdering;
-use buck2_build_api::keep_going::HasKeepGoing;
-use buck2_common::dice::cells::SetCellResolver;
-use buck2_common::dice::data::testing::SetTestingIoProvider;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_common::file_ops::testing::TestFileOps;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::dice::inject_legacy_config_for_test;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_root_path::CellRootPathBuf;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::fs::project::ProjectRootTemp;
-use buck2_core::package::source_path::SourcePath;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::digest_config::SetDigestConfig;
-use buck2_hash::StdBuckHashMap;
+use bz_analysis::analysis::calculation::AnalysisKey;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_build_api::actions::registry::RecordedActions;
+use bz_build_api::analysis::AnalysisResult;
+use bz_build_api::analysis::registry::RecordedAnalysisValues;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::artifact_groups::TransitiveSetProjectionKey;
+use bz_build_api::artifact_groups::TransitiveSetProjectionWrapper;
+use bz_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
+use bz_build_api::artifact_groups::deferred::TransitiveSetKey;
+use bz_build_api::context::SetBuildContextData;
+use bz_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSet;
+use bz_build_api::interpreter::rule_defs::transitive_set::TransitiveSetOrdering;
+use bz_build_api::keep_going::HasKeepGoing;
+use bz_common::dice::cells::SetCellResolver;
+use bz_common::dice::data::testing::SetTestingIoProvider;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::file_ops::testing::TestFileOps;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::dice::inject_legacy_config_for_test;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_root_path::CellRootPathBuf;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::fs::project::ProjectRootTemp;
+use bz_core::package::source_path::SourcePath;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::SetDigestConfig;
+use bz_hash::StdBuckHashMap;
 use dice::UserComputationData;
 use dice::testing::DiceBuilder;
 use dupe::Dupe;
@@ -83,7 +83,7 @@ fn mock_analysis_for_tsets(
     for (target, tsets) in by_target.into_iter() {
         dice_builder = dice_builder.mock_and_return(
             AnalysisKey(target.dupe()),
-            buck2_error::Ok(MaybeCompatible::Compatible(AnalysisResult::new(
+            bz_error::Ok(MaybeCompatible::Compatible(AnalysisResult::new(
                 RecordedAnalysisValues::testing_new(
                     DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(target)),
                     tsets,
@@ -103,7 +103,7 @@ fn mock_analysis_for_tsets(
 
 #[tokio::test]
 #[allow(clippy::await_holding_lock)] // Intentional: serializing test access via global lock
-async fn test_ensure_artifact_group() -> buck2_error::Result<()> {
+async fn test_ensure_artifact_group() -> bz_error::Result<()> {
     // Serialize with other tests that use make_tset() and its shared global counter
     let _guard = TSET_TEST_LOCK.lock().unwrap();
 

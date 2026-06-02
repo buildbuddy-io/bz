@@ -16,106 +16,106 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_ARCH_ENV;
-use buck2_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_NAME_ENV;
-use buck2_common::bazel::bzlmod::BzlmodModuleExtensionRepoMappingBase;
-use buck2_common::bazel::bzlmod::GetBzlmodModuleExtensionRepoMappingBase;
-use buck2_common::bazel::bzlmod::GetBzlmodRepositoryEnvironmentVariable;
-use buck2_common::bazel::bzlmod::archive::archive_kind_from_type_or_url;
-use buck2_common::bazel::bzlmod::archive::extract_archive as extract_bazel_archive;
-use buck2_common::bazel::bzlmod::integrity::BzlmodIntegrityKind;
-use buck2_common::bazel::bzlmod::integrity::parse_bzlmod_integrity;
-use buck2_common::bazel::bzlmod::patch::apply_unified_patch_file;
-use buck2_common::cas_digest::DigestAlgorithm;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_common::file_ops::delegate::FileOpsDelegate;
-use buck2_common::file_ops::dice::ReadFileProxy;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileDigestConfig;
-use buck2_common::file_ops::metadata::FileType;
-use buck2_common::file_ops::metadata::RawDirEntry;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
-use buck2_common::file_ops::metadata::RawSymlink;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_common::init::BUILDBUDDY_API_KEY_HEADER;
-use buck2_common::init::RemoteExecutionStartupConfig;
-use buck2_common::io::IoProvider;
-use buck2_common::io::NoWatchFsMetadataCache;
-use buck2_common::io::fs::FsIoProvider;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::external::BZLMOD_EXTERNAL_CELL_KIND;
-use buck2_core::cells::external::BZLMOD_GENERATED_EXTERNAL_CELL_PATH_MARKER;
-use buck2_core::cells::external::BzlmodBazelFeaturesGlobalsSetup;
-use buck2_core::cells::external::BzlmodBazelFeaturesVersionSetup;
-use buck2_core::cells::external::BzlmodCcAutoconfSetup;
-use buck2_core::cells::external::BzlmodCcAutoconfToolchainsSetup;
-use buck2_core::cells::external::BzlmodCellSetup;
-use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
-use buck2_core::cells::external::BzlmodGeneratedCellSetup;
-use buck2_core::cells::external::BzlmodHostPlatformSetup;
-use buck2_core::cells::external::BzlmodHttpArchiveSetup;
-use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
-use buck2_core::cells::external::BzlmodPythonHubSetup;
-use buck2_core::cells::external::BzlmodRepositoryRuleFile;
-use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
-use buck2_core::cells::external::BzlmodRepositoryRuleSetup;
-use buck2_core::cells::external::BzlmodShellConfigSetup;
-use buck2_core::cells::external::BzlmodXcodeConfigSetup;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
-use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
-use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::cells::external::external_cell_source_path;
-use buck2_core::cells::external::register_bzlmod_cell_aliases;
-use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
-use buck2_core::cells::external::register_external_cell_origin;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::directory::Directory;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::span_async_simple;
-use buck2_events::dispatch::span_simple;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::INTERNER;
-use buck2_execute::entry::build_entry_from_disk;
-use buck2_execute::execute::blocking::HasBlockingExecutor;
-use buck2_execute::execute::blocking::IoRequest;
-use buck2_execute::materialize::http::Checksum;
-use buck2_execute::materialize::http::bazel_repository_download_headers;
-use buck2_execute::materialize::http::http_download_with_headers;
-use buck2_execute::materialize::materializer::DeclareArtifactPayload;
-use buck2_execute::materialize::materializer::HasMaterializer;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_http::HttpClient;
-use buck2_http::HttpClientBuilder;
-use buck2_interpreter_for_build::bazel::repository::BazelRepositoryRuleCacheInfo;
-use buck2_interpreter_for_build::bazel::repository::BazelRepositoryRuleProgress;
-use buck2_interpreter_for_build::bazel::repository::bzlmod_module_extension_bazel_bzl_transitive_digest;
-use buck2_interpreter_for_build::bazel::repository::bzlmod_module_extension_bazel_usages_digest;
-use buck2_interpreter_for_build::bazel::repository::bzlmod_module_extension_eval_factor_deps;
-use buck2_interpreter_for_build::bazel::repository::bzlmod_repository_rule_cache_info;
-use buck2_interpreter_for_build::bazel::repository::bzlmod_repository_rule_invocation_from_setup;
-use buck2_interpreter_for_build::bazel::repository::bzlmod_repository_rule_invocation_to_setup;
-use buck2_interpreter_for_build::bazel::repository::evaluate_bzlmod_module_extension_repo;
-use buck2_interpreter_for_build::bazel::repository::evaluate_bzlmod_repository_rule_with_recorded_inputs;
-use buck2_interpreter_for_build::interpreter::build_context::BazelModuleExtensionEvaluationResult;
-use buck2_interpreter_for_build::interpreter::build_context::BazelRepositoryRecordedInput;
-use buck2_interpreter_for_build::interpreter::build_context::BazelRepositoryRuleInvocation;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_ARCH_ENV;
+use bz_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_NAME_ENV;
+use bz_common::bazel::bzlmod::BzlmodModuleExtensionRepoMappingBase;
+use bz_common::bazel::bzlmod::GetBzlmodModuleExtensionRepoMappingBase;
+use bz_common::bazel::bzlmod::GetBzlmodRepositoryEnvironmentVariable;
+use bz_common::bazel::bzlmod::archive::archive_kind_from_type_or_url;
+use bz_common::bazel::bzlmod::archive::extract_archive as extract_bazel_archive;
+use bz_common::bazel::bzlmod::integrity::BzlmodIntegrityKind;
+use bz_common::bazel::bzlmod::integrity::parse_bzlmod_integrity;
+use bz_common::bazel::bzlmod::patch::apply_unified_patch_file;
+use bz_common::cas_digest::DigestAlgorithm;
+use bz_common::dice::data::HasIoProvider;
+use bz_common::file_ops::delegate::FileOpsDelegate;
+use bz_common::file_ops::dice::ReadFileProxy;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileDigestConfig;
+use bz_common::file_ops::metadata::FileType;
+use bz_common::file_ops::metadata::RawDirEntry;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
+use bz_common::file_ops::metadata::RawSymlink;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::init::BUILDBUDDY_API_KEY_HEADER;
+use bz_common::init::RemoteExecutionStartupConfig;
+use bz_common::io::IoProvider;
+use bz_common::io::NoWatchFsMetadataCache;
+use bz_common::io::fs::FsIoProvider;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::external::BZLMOD_EXTERNAL_CELL_KIND;
+use bz_core::cells::external::BZLMOD_GENERATED_EXTERNAL_CELL_PATH_MARKER;
+use bz_core::cells::external::BzlmodBazelFeaturesGlobalsSetup;
+use bz_core::cells::external::BzlmodBazelFeaturesVersionSetup;
+use bz_core::cells::external::BzlmodCcAutoconfSetup;
+use bz_core::cells::external::BzlmodCcAutoconfToolchainsSetup;
+use bz_core::cells::external::BzlmodCellSetup;
+use bz_core::cells::external::BzlmodGeneratedCellGenerator;
+use bz_core::cells::external::BzlmodGeneratedCellSetup;
+use bz_core::cells::external::BzlmodHostPlatformSetup;
+use bz_core::cells::external::BzlmodHttpArchiveSetup;
+use bz_core::cells::external::BzlmodModuleExtensionRepoSetup;
+use bz_core::cells::external::BzlmodPythonHubSetup;
+use bz_core::cells::external::BzlmodRepositoryRuleFile;
+use bz_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
+use bz_core::cells::external::BzlmodRepositoryRuleSetup;
+use bz_core::cells::external::BzlmodShellConfigSetup;
+use bz_core::cells::external::BzlmodXcodeConfigSetup;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::cells::external::bzlmod_cell_aliases_for_cell;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::cells::external::external_cell_source_path;
+use bz_core::cells::external::register_bzlmod_cell_aliases;
+use bz_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
+use bz_core::cells::external::register_external_cell_origin;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::fs::buck_out_path::BuckOutPathResolver;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::directory::Directory;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::span_async_simple;
+use bz_events::dispatch::span_simple;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::INTERNER;
+use bz_execute::entry::build_entry_from_disk;
+use bz_execute::execute::blocking::HasBlockingExecutor;
+use bz_execute::execute::blocking::IoRequest;
+use bz_execute::materialize::http::Checksum;
+use bz_execute::materialize::http::bazel_repository_download_headers;
+use bz_execute::materialize::http::http_download_with_headers;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_execute::materialize::materializer::HasMaterializer;
+use bz_execute::materialize::materializer::Materializer;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_http::HttpClient;
+use bz_http::HttpClientBuilder;
+use bz_interpreter_for_build::bazel::repository::BazelRepositoryRuleCacheInfo;
+use bz_interpreter_for_build::bazel::repository::BazelRepositoryRuleProgress;
+use bz_interpreter_for_build::bazel::repository::bzlmod_module_extension_bazel_bzl_transitive_digest;
+use bz_interpreter_for_build::bazel::repository::bzlmod_module_extension_bazel_usages_digest;
+use bz_interpreter_for_build::bazel::repository::bzlmod_module_extension_eval_factor_deps;
+use bz_interpreter_for_build::bazel::repository::bzlmod_repository_rule_cache_info;
+use bz_interpreter_for_build::bazel::repository::bzlmod_repository_rule_invocation_from_setup;
+use bz_interpreter_for_build::bazel::repository::bzlmod_repository_rule_invocation_to_setup;
+use bz_interpreter_for_build::bazel::repository::evaluate_bzlmod_module_extension_repo;
+use bz_interpreter_for_build::bazel::repository::evaluate_bzlmod_repository_rule_with_recorded_inputs;
+use bz_interpreter_for_build::interpreter::build_context::BazelModuleExtensionEvaluationResult;
+use bz_interpreter_for_build::interpreter::build_context::BazelRepositoryRecordedInput;
+use bz_interpreter_for_build::interpreter::build_context::BazelRepositoryRuleInvocation;
 use cmp_any::PartialEqAny;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -191,7 +191,7 @@ const BZLMOD_GENERATED_LATEST_ENTRY: &str = "latest";
 
 type BzlmodProgressState = Arc<Mutex<String>>;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum BzlmodError {
     #[error("Unsupported bzlmod archive type for `{0}`")]
@@ -293,7 +293,7 @@ fn bzlmod_report_progress(progress_state: &BzlmodProgressState, progress: impl I
     *progress_state
         .lock()
         .expect("bzlmod progress state poisoned") = progress.clone();
-    buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress { progress });
+    bz_events::dispatch::instant_event(bz_data::BzlmodProgress { progress });
 }
 
 fn bzlmod_current_progress(progress_state: &BzlmodProgressState) -> String {
@@ -325,7 +325,7 @@ struct ParsedRemoteAssetEndpoint {
 }
 
 impl ParsedRemoteAssetEndpoint {
-    fn parse(endpoint: &str) -> buck2_error::Result<Self> {
+    fn parse(endpoint: &str) -> bz_error::Result<Self> {
         let endpoint = endpoint.trim();
         if endpoint.is_empty() {
             return Err(BzlmodError::InvalidRemoteDownloaderEndpoint {
@@ -467,8 +467,8 @@ struct BzlmodRepositoryRuleMaterializationResult {
 }
 
 async fn run_bzlmod_cache_io<T>(
-    op: impl FnOnce() -> buck2_error::Result<T> + Send + 'static,
-) -> buck2_error::Result<T>
+    op: impl FnOnce() -> bz_error::Result<T> + Send + 'static,
+) -> bz_error::Result<T>
 where
     T: Send + 'static,
 {
@@ -502,7 +502,7 @@ struct BzlmodOverlayFile {
 }
 
 impl IoRequest for BzlmodExtractIoRequest {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         if bzlmod_repo_contents_cache_exists(project_fs, &self.cache_repo)? {
             record_bzlmod_repo_contents_cache_alias(
                 project_fs,
@@ -570,7 +570,7 @@ struct BzlmodPrepareExternalCellRootIoRequest {
 }
 
 impl IoRequest for BzlmodPrepareExternalCellRootIoRequest {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         if let Some(cache_alias) = &self.cache_alias {
             record_bzlmod_repo_contents_cache_alias(project_fs, cache_alias, &self.cache_repo)?;
         }
@@ -597,7 +597,7 @@ struct BzlmodGeneratedHttpArchiveIoRequest {
 }
 
 impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         let archive = project_fs.resolve(&self.archive);
         let temp = project_fs.resolve(&self.temp);
         let dest = project_fs.resolve(&self.dest);
@@ -627,7 +627,7 @@ impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
 }
 
 impl IoRequest for BzlmodGeneratedPublishIoRequest {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         let src = project_fs.resolve(&self.src);
         let dest = project_fs.resolve(&self.dest);
         if let Some(parent) = dest.parent() {
@@ -643,7 +643,7 @@ impl IoRequest for BzlmodGeneratedPublishIoRequest {
 }
 
 impl IoRequest for BzlmodGeneratedIoRequest {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         let dest = project_fs.resolve(&self.dest);
         fs_util::create_dir_all(dest.clone())?;
         match &self.setup.generator {
@@ -695,7 +695,7 @@ impl IoRequest for BzlmodGeneratedIoRequest {
 
 fn module_extension_repo_not_materialized(
     setup: &BzlmodModuleExtensionRepoSetup,
-) -> buck2_error::Error {
+) -> bz_error::Error {
     BzlmodError::ModuleExtensionRepoNotMaterialized {
         parent_canonical_repo_name: setup.parent_canonical_repo_name.to_string(),
         extension_bzl_file: setup.extension_bzl_file.to_string(),
@@ -707,7 +707,7 @@ fn module_extension_repo_not_materialized(
 
 fn repository_rule_invocation_not_materialized(
     setup: &BzlmodRepositoryRuleInvocationSetup,
-) -> buck2_error::Error {
+) -> bz_error::Error {
     BzlmodError::RepositoryRuleInvocationNotMaterialized {
         repo_name: setup.repo_name.to_string(),
     }
@@ -716,8 +716,8 @@ fn repository_rule_invocation_not_materialized(
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::cells::external::BzlmodPatch;
-    use buck2_core::fs::project::ProjectRootTemp;
+    use bz_core::cells::external::BzlmodPatch;
+    use bz_core::fs::project::ProjectRootTemp;
 
     use super::*;
 
@@ -840,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn bzlmod_host_platform_repo_writes_effective_constraints() -> buck2_error::Result<()> {
+    fn bzlmod_host_platform_repo_writes_effective_constraints() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let dest_rel = ProjectRelativePathBuf::testing_new("host_platform");
         let dest = project_root.path().resolve(&dest_rel);
@@ -889,7 +889,7 @@ toolchain(
     }
 
     #[test]
-    fn bzlmod_repo_contents_cache_alias_is_published_atomically() -> buck2_error::Result<()> {
+    fn bzlmod_repo_contents_cache_alias_is_published_atomically() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let cache_repo_a =
             ProjectRelativePathBuf::testing_new("buck-out/v2/cache/bzlmod_repo_contents/a");
@@ -921,7 +921,7 @@ toolchain(
     }
 
     #[test]
-    fn bzlmod_repo_contents_cache_alias_rejects_missing_repo() -> buck2_error::Result<()> {
+    fn bzlmod_repo_contents_cache_alias_rejects_missing_repo() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let missing_cache_repo =
             ProjectRelativePathBuf::testing_new("buck-out/v2/cache/bzlmod_repo_contents/missing");
@@ -946,7 +946,7 @@ toolchain(
     }
 
     #[test]
-    fn repository_rule_build_directory_is_not_mirrored_as_build_bazel() -> buck2_error::Result<()> {
+    fn repository_rule_build_directory_is_not_mirrored_as_build_bazel() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let dest_rel = ProjectRelativePath::new("repo")?;
         let dest = project_root.path().resolve(dest_rel);
@@ -973,7 +973,7 @@ toolchain(
 
     #[test]
     #[cfg(unix)]
-    fn copy_dir_contents_rewrites_in_tree_absolute_symlink() -> buck2_error::Result<()> {
+    fn copy_dir_contents_rewrites_in_tree_absolute_symlink() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let from = project_root
             .path()
@@ -1006,7 +1006,7 @@ toolchain(
 
     #[test]
     #[cfg(unix)]
-    fn generated_repo_symlink_check_rejects_broken_link() -> buck2_error::Result<()> {
+    fn generated_repo_symlink_check_rejects_broken_link() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let repo = project_root
             .path()
@@ -1102,7 +1102,7 @@ toolchain(
     }
 
     #[test]
-    fn hidden_lockfile_update_skips_unchanged_logical_value() -> buck2_error::Result<()> {
+    fn hidden_lockfile_update_skips_unchanged_logical_value() -> bz_error::Result<()> {
         let extension_key = "//:extensions.bzl%extension";
         let contents = bzlmod_update_hidden_lockfile_json(
             None,
@@ -1126,7 +1126,7 @@ toolchain(
     }
 
     #[test]
-    fn hidden_lockfile_update_skips_empty_non_reproducible_extension() -> buck2_error::Result<()> {
+    fn hidden_lockfile_update_skips_empty_non_reproducible_extension() -> bz_error::Result<()> {
         assert!(
             bzlmod_update_hidden_lockfile_json(
                 None,
@@ -1174,7 +1174,7 @@ fn bazel_version_numbers(version: &str) -> Vec<u64> {
         .collect()
 }
 
-fn write_generated_module_file(dest: &AbsNormPath, name: &str) -> buck2_error::Result<()> {
+fn write_generated_module_file(dest: &AbsNormPath, name: &str) -> bz_error::Result<()> {
     fs_util::write(
         dest.join(ForwardRelativePath::new("MODULE.bazel")?),
         format!("module(name = {name:?})\n"),
@@ -1187,7 +1187,7 @@ fn extract_archive(
     setup: &BzlmodCellSetup,
     archive: &AbsNormPath,
     temp: &AbsNormPath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let primary_url = bzlmod_cell_setup_primary_url(setup);
     let archive_type = setup.archive_type.as_deref();
     let kind = archive_kind_from_type_or_url(archive_type, primary_url)
@@ -1231,13 +1231,13 @@ fn apply_patch(
     dest: &AbsNormPath,
     patch: &ProjectRelativePath,
     patch_strip: u32,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let patch = project_fs.resolve(patch);
     apply_unified_patch_file(dest.as_path(), patch.as_path(), patch_strip)
         .buck_error_context("Could not apply patch for bzlmod external cell")
 }
 
-fn copy_dir_contents(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Result<()> {
+fn copy_dir_contents(from: &AbsNormPath, to: &AbsNormPath) -> bz_error::Result<()> {
     copy_dir_contents_impl(from, to, from, to)
 }
 
@@ -1246,7 +1246,7 @@ fn copy_dir_contents_impl(
     root_to: &AbsNormPath,
     from: &AbsNormPath,
     to: &AbsNormPath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for entry in fs_util::read_dir(from).categorize_internal()? {
         let entry = entry?;
         let from_path = entry.path();
@@ -1306,7 +1306,7 @@ fn path_relative_to_link(target: &Path, link: &Path) -> PathBuf {
     relative
 }
 
-fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Result<()> {
+fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> bz_error::Result<()> {
     match fs::hard_link(from, to) {
         Ok(()) => Ok(()),
         Err(_) => {
@@ -1316,7 +1316,7 @@ fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Resul
     }
 }
 
-fn checksum_from_integrity(integrity: &str) -> buck2_error::Result<Checksum> {
+fn checksum_from_integrity(integrity: &str) -> bz_error::Result<Checksum> {
     let Some(integrity) = parse_bzlmod_integrity(integrity)? else {
         return Ok(Checksum::none());
     };
@@ -1423,7 +1423,7 @@ fn bzlmod_repo_contents_cache_alias_path(canonical_repo_name: &str) -> ProjectRe
 fn bzlmod_repo_contents_cache_exists(
     project_fs: &ProjectRoot,
     cache_repo: &ProjectRelativePath,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let cache_repo = project_fs.resolve(cache_repo);
     Ok(matches!(
         fs_util::symlink_metadata_if_exists(&cache_repo)?,
@@ -1445,7 +1445,7 @@ fn write_bzlmod_generated_repo_contents_cache_latest(
     project_fs: &ProjectRoot,
     cache_info: &BazelRepositoryRuleCacheInfo,
     entry_name: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let latest_path =
         project_fs.resolve(bzlmod_generated_repo_contents_cache_latest_path(cache_info));
     let latest_parent = latest_path.parent().ok_or_else(|| {
@@ -1476,7 +1476,7 @@ fn write_bzlmod_generated_recorded_inputs_json(
     project_fs: &ProjectRoot,
     recorded_inputs_path: &ProjectRelativePath,
     recorded_inputs_json: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let recorded_inputs_path = project_fs.resolve(recorded_inputs_path);
     if let Some(parent) = recorded_inputs_path.parent() {
         fs_util::create_dir_all(parent)?;
@@ -1488,7 +1488,7 @@ fn record_bzlmod_repo_contents_cache_alias(
     project_fs: &ProjectRoot,
     cache_alias: &ProjectRelativePath,
     cache_repo: &ProjectRelativePath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let cache_repo_abs = project_fs.resolve(cache_repo);
     let cache_repo_metadata = fs_util::metadata(&cache_repo_abs)
         .categorize_internal()
@@ -1500,8 +1500,8 @@ fn record_bzlmod_repo_contents_cache_alias(
             )
         })?;
     if !cache_repo_metadata.is_dir() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Tier0,
             "Cannot publish bzlmod cache alias `{}` to non-directory cache repo `{}`",
             cache_alias.as_str(),
             cache_repo.as_str()
@@ -1550,7 +1550,7 @@ fn prepare_bzlmod_external_cell_root(
     project_fs: &ProjectRoot,
     cache_repo: &ProjectRelativePath,
     dest: &ProjectRelativePath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let stamp_path = bzlmod_external_cell_root_stamp_path(dest);
     let stamp_content = bzlmod_external_cell_root_stamp_content(cache_repo);
     prepare_bzlmod_external_cell_root_with_stamp(
@@ -1568,7 +1568,7 @@ fn prepare_bzlmod_generated_external_cell_root_with_repository_rule_stamp(
     dest: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
     cache_info: &BazelRepositoryRuleCacheInfo,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let stamp_path = bzlmod_generated_materialization_stamp_path(setup, dest);
     let stamp_content =
         bzlmod_generated_repository_rule_materialization_stamp_content(setup, cache_info);
@@ -1584,12 +1584,12 @@ fn prepare_bzlmod_generated_external_cell_root_with_repository_rule_stamp(
 async fn bzlmod_generated_repo_contents_cache_candidates(
     ctx: &mut DiceComputations<'_>,
     cache_info: &BazelRepositoryRuleCacheInfo,
-) -> buck2_error::Result<Vec<BzlmodGeneratedRepoContentsCacheCandidate>> {
+) -> bz_error::Result<Vec<BzlmodGeneratedRepoContentsCacheCandidate>> {
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let entry_dir = bzlmod_generated_repo_contents_cache_entry_dir(cache_info);
     let cache_info = cache_info.clone();
     run_bzlmod_cache_io(move || {
-        let candidate_for_entry = |entry_name: &str| -> buck2_error::Result<
+        let candidate_for_entry = |entry_name: &str| -> bz_error::Result<
             Option<(u128, BzlmodGeneratedRepoContentsCacheCandidate)>,
         > {
             let recorded_inputs_path =
@@ -1713,7 +1713,7 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
 fn touch_bzlmod_generated_repo_contents_cache_recorded_inputs(
     project_fs: &ProjectRoot,
     recorded_inputs_path: &ProjectRelativePath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let recorded_inputs_path = project_fs.resolve(recorded_inputs_path);
     let file = fs::File::options().write(true).open(recorded_inputs_path)?;
     file.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
@@ -1726,7 +1726,7 @@ async fn prepare_bzlmod_generated_external_cell_root_from_cache_candidate(
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
     cache_info: &BazelRepositoryRuleCacheInfo,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let path = path.to_owned();
     let setup = setup.dupe();
@@ -1768,7 +1768,7 @@ async fn prepare_bzlmod_generated_external_cell_root_from_repo_contents_cache(
     cache_info: &BazelRepositoryRuleCacheInfo,
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let candidates = bzlmod_generated_repo_contents_cache_candidates(ctx, cache_info).await?;
     for candidate in candidates {
         if bzlmod_recorded_inputs_are_current(ctx, &candidate.recorded_inputs).await? {
@@ -1788,7 +1788,7 @@ fn prepare_bzlmod_external_cell_root_with_stamp(
     dest: &ProjectRelativePath,
     stamp_path: &ProjectRelativePath,
     stamp_content: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if bzlmod_external_cell_root_is_current_with_stamp(
         project_fs,
         cache_repo,
@@ -1865,7 +1865,7 @@ fn bzlmod_external_cell_root_is_current_with_stamp(
     dest: &ProjectRelativePath,
     stamp_path: &ProjectRelativePath,
     stamp_content: &str,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let cache_repo_abs = project_fs.resolve(cache_repo);
     if !matches!(
         fs_util::symlink_metadata_if_exists(&cache_repo_abs)?,
@@ -1900,7 +1900,7 @@ fn bzlmod_external_cell_root_is_current_with_stamp(
     ))
 }
 
-fn bzlmod_generated_repo_symlink_targets_exist(path: &AbsNormPath) -> buck2_error::Result<bool> {
+fn bzlmod_generated_repo_symlink_targets_exist(path: &AbsNormPath) -> bz_error::Result<bool> {
     for entry in fs_util::read_dir(path).categorize_internal()? {
         let entry = entry?;
         let entry_path = entry.path();
@@ -1928,8 +1928,8 @@ fn bzlmod_generated_repo_symlink_targets_exist(path: &AbsNormPath) -> buck2_erro
                     return Ok(false);
                 }
                 Err(error) => {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Tier0,
                         "Error checking generated bzlmod symlink target `{}`: {}",
                         target_path.display(),
                         error
@@ -2094,7 +2094,7 @@ async fn bzlmod_generated_materialization_is_current(
     ctx: &mut DiceComputations<'_>,
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     bzlmod_generated_materialization_is_current_with_stamp_content(
         ctx,
         path,
@@ -2109,7 +2109,7 @@ async fn bzlmod_generated_materialization_is_current_with_stamp_content(
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
     stamp_content: String,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let io = ctx.global_data().get_io_provider().dupe();
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let repo_path = project_root.resolve(path);
@@ -2161,7 +2161,7 @@ async fn write_bzlmod_generated_recorded_inputs(
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
     recorded_inputs: &[BazelRepositoryRecordedInput],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let recorded_inputs_path = bzlmod_generated_recorded_inputs_path(setup, path);
     let recorded_inputs_json = serde_json::to_string(recorded_inputs)
@@ -2181,7 +2181,7 @@ async fn write_bzlmod_generated_materialization_stamp(
     ctx: &mut DiceComputations<'_>,
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     write_bzlmod_generated_materialization_stamp_content(
         ctx,
         path,
@@ -2196,7 +2196,7 @@ async fn write_bzlmod_generated_materialization_stamp_content(
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
     stamp_content: String,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let stamp_path =
         project_root.resolve(&bzlmod_generated_materialization_stamp_path(setup, path));
@@ -2224,7 +2224,7 @@ async fn write_new_bzlmod_generated_materialization_value_stamp(
     ctx: &mut DiceComputations<'_>,
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let value_path =
         project_root.resolve(&bzlmod_generated_materialization_value_path(setup, path));
@@ -2249,7 +2249,7 @@ async fn bzlmod_generated_materialization_value(
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
     stamp_content: &str,
-) -> buck2_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>> {
+) -> bz_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>> {
     let io = ctx.global_data().get_io_provider().dupe();
     let value_stamp_path = bzlmod_generated_materialization_value_path(setup, path);
     let value_stamp_content = (&*io)
@@ -2297,7 +2297,7 @@ fn bzlmod_module_extension_evaluation_cache_key(setup: &BzlmodModuleExtensionRep
 fn bzlmod_recorded_input_path(
     project_root: &ProjectRoot,
     path: &str,
-) -> buck2_error::Result<PathBuf> {
+) -> bz_error::Result<PathBuf> {
     if Path::new(path).is_absolute() {
         return Ok(PathBuf::from(path));
     }
@@ -2307,7 +2307,7 @@ fn bzlmod_recorded_input_path(
         .to_owned())
 }
 
-fn bzlmod_recorded_file_value(path: &Path) -> buck2_error::Result<String> {
+fn bzlmod_recorded_file_value(path: &Path) -> bz_error::Result<String> {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
@@ -2340,7 +2340,7 @@ fn bzlmod_recorded_file_value(path: &Path) -> buck2_error::Result<String> {
     Ok("OTHER".to_owned())
 }
 
-fn bzlmod_recorded_dirents_value(path: &Path) -> buck2_error::Result<String> {
+fn bzlmod_recorded_dirents_value(path: &Path) -> bz_error::Result<String> {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
@@ -2377,8 +2377,8 @@ fn bzlmod_recorded_dirents_value(path: &Path) -> buck2_error::Result<String> {
     Ok(format!("DIRENTS:{}", hasher.finalize().to_hex()))
 }
 
-fn bzlmod_recorded_dir_tree_value(path: &Path) -> buck2_error::Result<String> {
-    fn visit(base: &Path, path: &Path, hasher: &mut blake3::Hasher) -> buck2_error::Result<()> {
+fn bzlmod_recorded_dir_tree_value(path: &Path) -> bz_error::Result<String> {
+    fn visit(base: &Path, path: &Path, hasher: &mut blake3::Hasher) -> bz_error::Result<()> {
         let metadata = match fs::metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => {
@@ -2450,7 +2450,7 @@ fn bzlmod_current_repo_mapping(source_cell_name: &str, apparent_name: &str) -> O
 async fn bzlmod_recorded_inputs_are_current(
     ctx: &mut DiceComputations<'_>,
     recorded_inputs: &[BazelRepositoryRecordedInput],
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     for input in recorded_inputs {
         match input {
@@ -2539,7 +2539,7 @@ struct BzlmodWorkspaceLockfileJsonKey;
 
 #[async_trait::async_trait]
 impl Key for BzlmodWorkspaceLockfileJsonKey {
-    type Value = buck2_error::Result<Arc<serde_json::Value>>;
+    type Value = bz_error::Result<Arc<serde_json::Value>>;
 
     async fn compute(
         &self,
@@ -2589,7 +2589,7 @@ struct BzlmodHiddenLockfileJsonKey;
 
 #[async_trait::async_trait]
 impl Key for BzlmodHiddenLockfileJsonKey {
-    type Value = buck2_error::Result<Arc<serde_json::Value>>;
+    type Value = bz_error::Result<Arc<serde_json::Value>>;
 
     async fn compute(
         &self,
@@ -2645,7 +2645,7 @@ impl BzlmodModuleExtensionEvalFactors {
     async fn from_setup(
         ctx: &mut DiceComputations<'_>,
         setup: &BzlmodModuleExtensionRepoSetup,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let deps = bzlmod_module_extension_eval_factor_deps(ctx, setup).await?;
         Ok(Self {
             os: if deps.os_dependent {
@@ -2678,7 +2678,7 @@ impl BzlmodModuleExtensionEvalFactors {
 
 async fn bzlmod_bazel_current_os_name(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     Ok(
         match ctx
             .get_bzlmod_repository_environment_variable(BZLMOD_REPOSITORY_OS_NAME_ENV)
@@ -2703,7 +2703,7 @@ async fn bzlmod_bazel_current_os_name(
 
 async fn bzlmod_bazel_current_arch_name(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let arch = ctx
         .get_bzlmod_repository_environment_variable(BZLMOD_REPOSITORY_OS_ARCH_ENV)
         .await?
@@ -2726,13 +2726,13 @@ fn bzlmod_bzl_path_to_label_path(path: &str) -> String {
 
 fn bzlmod_lockfile_extension_key_from_setup(
     setup: &BzlmodModuleExtensionRepoSetup,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let canonical_repo_name = if setup.extension_bzl_cell.as_ref() == "root" {
         String::new()
     } else {
         bzlmod_canonical_repo_name_for_cell(&setup.extension_bzl_cell).ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "bzlmod module extension `{}//{}%{}` resolves to unknown cell `{}`",
                 setup.extension_bzl_cell,
                 setup.extension_bzl_path,
@@ -2824,7 +2824,7 @@ fn bzlmod_hidden_lockfile_extension_evaluation_from_result(
     evaluation: &BazelModuleExtensionEvaluationResult,
     bzl_transitive_digest: String,
     usages_digest: String,
-) -> buck2_error::Result<BzlmodHiddenLockfileModuleExtensionEvaluation> {
+) -> bz_error::Result<BzlmodHiddenLockfileModuleExtensionEvaluation> {
     let mut generated_repo_specs = BTreeMap::new();
     for invocation in &evaluation.repository_rule_invocations {
         generated_repo_specs.insert(
@@ -2845,7 +2845,7 @@ fn bzlmod_hidden_lockfile_extension_evaluation_from_result(
 
 fn bzlmod_hidden_lockfile_extension_evaluation_to_result(
     evaluation: BzlmodHiddenLockfileModuleExtensionEvaluation,
-) -> buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
+) -> bz_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
     let reproducible = evaluation.reproducible();
     let mut repository_rule_invocations = Vec::new();
     for (repo_name, setup) in evaluation.generated_repo_specs {
@@ -2863,7 +2863,7 @@ fn bzlmod_hidden_lockfile_extension_evaluation_to_result(
 
 fn bzlmod_workspace_lockfile_extension_evaluation_to_result(
     evaluation: BzlmodWorkspaceLockfileModuleExtensionEvaluation,
-) -> buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
+) -> bz_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
     let reproducible = evaluation.reproducible();
     let mut repository_rule_invocations = Vec::new();
     for (repo_name, spec) in evaluation.generated_repo_specs {
@@ -2884,7 +2884,7 @@ fn bzlmod_hidden_lockfile_extension_evaluation_from_lockfile(
     lockfile: &serde_json::Value,
     extension_key: &str,
     factor_key: &str,
-) -> buck2_error::Result<Option<BzlmodHiddenLockfileModuleExtensionEvaluation>> {
+) -> bz_error::Result<Option<BzlmodHiddenLockfileModuleExtensionEvaluation>> {
     let Some(evaluation) = lockfile
         .get("moduleExtensions")
         .and_then(|module_extensions| module_extensions.get(extension_key))
@@ -2902,7 +2902,7 @@ fn bzlmod_workspace_lockfile_extension_evaluation_from_lockfile(
     lockfile: &serde_json::Value,
     extension_key: &str,
     factor_key: &str,
-) -> buck2_error::Result<Option<BzlmodWorkspaceLockfileModuleExtensionEvaluation>> {
+) -> bz_error::Result<Option<BzlmodWorkspaceLockfileModuleExtensionEvaluation>> {
     let Some(evaluation) = lockfile
         .get("moduleExtensions")
         .and_then(|module_extensions| module_extensions.get(extension_key))
@@ -2923,7 +2923,7 @@ fn bzlmod_cell_name_for_lockfile_repo_name(canonical_repo_name: &str) -> String 
     }
 }
 
-fn bzlmod_label_package_target_to_path(package_target: &str) -> buck2_error::Result<String> {
+fn bzlmod_label_package_target_to_path(package_target: &str) -> bz_error::Result<String> {
     if let Some((package, target)) = package_target.split_once(':') {
         if package.is_empty() {
             Ok(target.to_owned())
@@ -2937,26 +2937,26 @@ fn bzlmod_label_package_target_to_path(package_target: &str) -> buck2_error::Res
 
 fn bzlmod_workspace_lockfile_repo_rule_id_parts(
     repo_rule_id: &str,
-) -> buck2_error::Result<(String, String, String)> {
+) -> bz_error::Result<(String, String, String)> {
     let (label, rule_name) = repo_rule_id.rsplit_once('%').ok_or_else(|| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "bzlmod lockfile repoRuleId `{}` is missing `%<rule>`",
             repo_rule_id
         )
     })?;
     let (canonical_repo_name, package_target) = if let Some(label) = label.strip_prefix("@@") {
         label.split_once("//").ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "bzlmod lockfile repoRuleId `{}` is missing `//`",
                 repo_rule_id
             )
         })?
     } else if let Some(label) = label.strip_prefix('@') {
         label.split_once("//").ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "bzlmod lockfile repoRuleId `{}` is missing `//`",
                 repo_rule_id
             )
@@ -2964,8 +2964,8 @@ fn bzlmod_workspace_lockfile_repo_rule_id_parts(
     } else if let Some(package_target) = label.strip_prefix("//") {
         ("", package_target)
     } else {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "bzlmod lockfile repoRuleId `{}` is not an absolute label",
             repo_rule_id
         ));
@@ -2980,19 +2980,19 @@ fn bzlmod_workspace_lockfile_repo_rule_id_parts(
 fn bzlmod_workspace_lockfile_generated_repo_spec_to_setup(
     repo_name: &str,
     spec: BzlmodWorkspaceLockfileGeneratedRepoSpec,
-) -> buck2_error::Result<BzlmodRepositoryRuleInvocationSetup> {
+) -> bz_error::Result<BzlmodRepositoryRuleInvocationSetup> {
     let (rule_bzl_cell, rule_bzl_path, rule_name) =
         bzlmod_workspace_lockfile_repo_rule_id_parts(&spec.repo_rule_id)?;
     let mut attrs = spec
         .attributes
         .iter()
         .map(|(key, value)| {
-            buck2_error::Ok((
+            bz_error::Ok((
                 Arc::from(key.as_str()),
                 Arc::from(bzlmod_workspace_lockfile_attr_expression(value)?.as_str()),
             ))
         })
-        .collect::<buck2_error::Result<Vec<(Arc<str>, Arc<str>)>>>()?;
+        .collect::<bz_error::Result<Vec<(Arc<str>, Arc<str>)>>>()?;
     attrs.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(BzlmodRepositoryRuleInvocationSetup {
         repo_name: Arc::from(repo_name),
@@ -3007,7 +3007,7 @@ fn bzlmod_workspace_lockfile_generated_repo_spec_to_setup(
 
 fn bzlmod_workspace_lockfile_attr_expression(
     value: &serde_json::Value,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     match value {
         serde_json::Value::Null => Ok("None".to_owned()),
         serde_json::Value::Bool(value) => Ok(if *value { "True" } else { "False" }.to_owned()),
@@ -3017,7 +3017,7 @@ fn bzlmod_workspace_lockfile_attr_expression(
             let values = values
                 .iter()
                 .map(bzlmod_workspace_lockfile_attr_expression)
-                .collect::<buck2_error::Result<Vec<_>>>()?;
+                .collect::<bz_error::Result<Vec<_>>>()?;
             Ok(format!("[{}]", values.join(", ")))
         }
         serde_json::Value::Object(values) => {
@@ -3027,16 +3027,16 @@ fn bzlmod_workspace_lockfile_attr_expression(
                     let key = serde_json::to_string(key)
                         .buck_error_context("Error serializing bzlmod lockfile attr key")?;
                     let value = bzlmod_workspace_lockfile_attr_expression(value)?;
-                    buck2_error::Ok(format!("{key}: {value}"))
+                    bz_error::Ok(format!("{key}: {value}"))
                 })
-                .collect::<buck2_error::Result<Vec<_>>>()?;
+                .collect::<bz_error::Result<Vec<_>>>()?;
             entries.sort();
             Ok(format!("{{{}}}", entries.join(", ")))
         }
     }
 }
 
-fn bzlmod_workspace_lockfile_string_attr_expression(value: &str) -> buck2_error::Result<String> {
+fn bzlmod_workspace_lockfile_string_attr_expression(value: &str) -> bz_error::Result<String> {
     serde_json::to_string(value)
         .buck_error_context("Error serializing bzlmod lockfile string repository-rule attribute")
 }
@@ -3119,15 +3119,15 @@ fn bzlmod_workspace_lockfile_recorded_input_from_str(
 fn bzlmod_workspace_recorded_input_path(
     project_root: &ProjectRoot,
     path: &str,
-) -> buck2_error::Result<PathBuf> {
+) -> bz_error::Result<PathBuf> {
     if Path::new(path).is_absolute() {
         return Ok(PathBuf::from(path));
     }
     let label = path.strip_prefix("@@").or_else(|| path.strip_prefix('@'));
     if let Some(label) = label {
         let (canonical_repo_name, repo_path) = label.split_once("//").ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "bzlmod lockfile recorded input path `{}` is not a repository path",
                 path
             )
@@ -3154,7 +3154,7 @@ fn bzlmod_workspace_recorded_input_path(
         .to_owned())
 }
 
-fn bzlmod_workspace_recorded_file_value(path: &Path) -> buck2_error::Result<String> {
+fn bzlmod_workspace_recorded_file_value(path: &Path) -> bz_error::Result<String> {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
@@ -3192,7 +3192,7 @@ fn bzlmod_workspace_recorded_file_value(path: &Path) -> buck2_error::Result<Stri
 async fn bzlmod_workspace_lockfile_recorded_inputs_are_current(
     ctx: &mut DiceComputations<'_>,
     recorded_inputs: &[String],
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     for input in recorded_inputs {
         let Some(input) = bzlmod_workspace_lockfile_recorded_input_from_str(input) else {
@@ -3243,7 +3243,7 @@ async fn read_bzlmod_workspace_lockfile_extension_candidate(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
     eval_factors: &BzlmodModuleExtensionEvalFactors,
-) -> buck2_error::Result<Option<BzlmodWorkspaceLockfileModuleExtensionEvaluation>> {
+) -> bz_error::Result<Option<BzlmodWorkspaceLockfileModuleExtensionEvaluation>> {
     let extension_key = bzlmod_lockfile_extension_key_from_setup(setup)?;
     let factor_key = eval_factors.lockfile_key();
     let lockfile = ctx.compute(&BzlmodWorkspaceLockfileJsonKey).await??;
@@ -3259,7 +3259,7 @@ async fn validate_bzlmod_workspace_lockfile_extension(
     evaluation: BzlmodWorkspaceLockfileModuleExtensionEvaluation,
     bzl_transitive_digest: &str,
     usages_digest: &str,
-) -> buck2_error::Result<Option<Arc<BazelModuleExtensionEvaluationResult>>> {
+) -> bz_error::Result<Option<Arc<BazelModuleExtensionEvaluationResult>>> {
     if evaluation.bzl_transitive_digest != bzl_transitive_digest {
         return Ok(None);
     }
@@ -3280,7 +3280,7 @@ async fn read_bzlmod_hidden_lockfile_extension(
     eval_factors: &BzlmodModuleExtensionEvalFactors,
     bzl_transitive_digest: &str,
     usages_digest: &str,
-) -> buck2_error::Result<Option<Arc<BazelModuleExtensionEvaluationResult>>> {
+) -> bz_error::Result<Option<Arc<BazelModuleExtensionEvaluationResult>>> {
     let extension_key = bzlmod_lockfile_extension_key_from_setup(setup)?;
     let factor_key = eval_factors.lockfile_key();
     let lockfile = ctx.compute(&BzlmodHiddenLockfileJsonKey).await??;
@@ -3309,7 +3309,7 @@ fn bzlmod_update_hidden_lockfile_json(
     extension_key: &str,
     factor_key: &str,
     evaluation: Option<BzlmodHiddenLockfileModuleExtensionEvaluation>,
-) -> buck2_error::Result<Option<String>> {
+) -> bz_error::Result<Option<String>> {
     let mut lockfile: serde_json::Value = match contents {
         Some(contents) => serde_json::from_str(&contents)
             .buck_error_context("Error parsing hidden bzlmod lockfile")?,
@@ -3381,7 +3381,7 @@ async fn write_bzlmod_hidden_lockfile_extension(
     evaluation: &BazelModuleExtensionEvaluationResult,
     bzl_transitive_digest: String,
     usages_digest: String,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let extension_key = bzlmod_lockfile_extension_key_from_setup(setup)?;
     let factor_key = eval_factors.lockfile_key();
     let lockfile_evaluation = bzlmod_hidden_lockfile_extension_evaluation_from_result(
@@ -3440,7 +3440,7 @@ async fn write_bzlmod_hidden_lockfile_extension(
 
 fn bzlmod_module_extension_evaluation_usages_key(
     setup: &BzlmodModuleExtensionRepoSetup,
-) -> buck2_error::Result<Arc<str>> {
+) -> bz_error::Result<Arc<str>> {
     let mut usages: serde_json::Value = serde_json::from_str(&setup.extension_usages_json)
         .buck_error_context("Error parsing bzlmod module extension usages")?;
     if let Some(usages) = usages.as_object_mut() {
@@ -3455,7 +3455,7 @@ fn bzlmod_module_extension_evaluation_usages_key(
 
 fn bzlmod_module_extension_evaluation_setup(
     setup: &BzlmodModuleExtensionRepoSetup,
-) -> buck2_error::Result<BzlmodModuleExtensionRepoSetup> {
+) -> bz_error::Result<BzlmodModuleExtensionRepoSetup> {
     Ok(BzlmodModuleExtensionRepoSetup {
         parent_canonical_repo_name: setup.parent_canonical_repo_name.dupe(),
         parent_is_root: setup.parent_is_root,
@@ -3498,7 +3498,7 @@ struct BzlmodSingleExtensionEvalKey {
 
 #[async_trait::async_trait]
 impl Key for BzlmodSingleExtensionEvalKey {
-    type Value = buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>>;
+    type Value = bz_error::Result<Arc<BazelModuleExtensionEvaluationResult>>;
 
     async fn compute(
         &self,
@@ -3541,7 +3541,7 @@ impl Key for BzlmodSingleExtensionEvalKey {
         let repo = self.setup.repo_name.to_string();
         let working_dir = self.working_dir.to_string();
         let evaluation = span_async_simple(
-            buck2_data::BzlmodModuleExtensionStart {
+            bz_data::BzlmodModuleExtensionStart {
                 extension_bzl_file: extension_bzl_file.clone(),
                 extension_name: extension_name.clone(),
                 repo: repo.clone(),
@@ -3552,14 +3552,14 @@ impl Key for BzlmodSingleExtensionEvalKey {
                 ctx.get_blocking_executor()
                     .execute_io(
                         Box::new(
-                            buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                            bz_execute::execute::clean_output_paths::CleanOutputPaths {
                                 paths: vec![self.working_dir.clone()],
                             },
                         ),
                         cancellations,
                     )
                     .await?;
-                buck2_error::Ok(Arc::new(
+                bz_error::Ok(Arc::new(
                     evaluate_bzlmod_module_extension_repo(
                         ctx,
                         &self.setup,
@@ -3570,7 +3570,7 @@ impl Key for BzlmodSingleExtensionEvalKey {
                     .await?,
                 ))
             },
-            buck2_data::BzlmodModuleExtensionEnd {
+            bz_data::BzlmodModuleExtensionEnd {
                 extension_bzl_file,
                 extension_name,
                 repo,
@@ -3626,7 +3626,7 @@ struct BzlmodSingleExtensionKey {
 fn validate_bzlmod_single_extension(
     setup: &BzlmodModuleExtensionRepoSetup,
     evaluation: &BazelModuleExtensionEvaluationResult,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let config: BzlmodModuleExtensionValidationConfig =
         serde_json::from_str(&setup.extension_usages_json)
             .buck_error_context("Error parsing bzlmod module extension usages for validation")?;
@@ -3649,8 +3649,8 @@ fn validate_bzlmod_single_extension(
             {
                 continue;
             }
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "bzlmod module extension `{}%{}` does not generate repository `{}`, yet it is imported as `{}`; emitted repositories: {}",
                 setup.extension_bzl_file,
                 setup.extension_name,
@@ -3665,8 +3665,8 @@ fn validate_bzlmod_single_extension(
         for repo_override in &usage.repo_overrides {
             let repo_exists = emitted_set.contains(&repo_override.repo_name);
             if repo_exists && !repo_override.must_exist {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "bzlmod module extension `{}%{}` generates repository `{}`, yet it is injected via inject_repo(); use override_repo() instead",
                     setup.extension_bzl_file,
                     setup.extension_name,
@@ -3674,8 +3674,8 @@ fn validate_bzlmod_single_extension(
                 ));
             }
             if !repo_exists && repo_override.must_exist {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "bzlmod module extension `{}%{}` does not generate repository `{}`, yet it is overridden via override_repo(); use inject_repo() instead",
                     setup.extension_bzl_file,
                     setup.extension_name,
@@ -3690,7 +3690,7 @@ fn validate_bzlmod_single_extension(
 
 #[async_trait::async_trait]
 impl Key for BzlmodSingleExtensionKey {
-    type Value = buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>>;
+    type Value = bz_error::Result<Arc<BazelModuleExtensionEvaluationResult>>;
 
     async fn compute(
         &self,
@@ -3747,7 +3747,7 @@ async fn evaluate_cached_bzlmod_module_extension(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
     _generated_repo_path: &ProjectRelativePath,
-) -> buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
+) -> bz_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
     let working_dir = bzlmod_module_extension_evaluation_working_dir(setup);
     ctx.compute(&BzlmodSingleExtensionKey {
         setup: setup.dupe(),
@@ -3759,7 +3759,7 @@ async fn evaluate_cached_bzlmod_module_extension(
 pub(crate) async fn evaluate_module_extension(
     ctx: &mut DiceComputations<'_>,
     setup: BzlmodModuleExtensionRepoSetup,
-) -> buck2_error::Result<Vec<String>> {
+) -> bz_error::Result<Vec<String>> {
     let eval_setup = bzlmod_module_extension_evaluation_setup(&setup)?;
     let working_dir = bzlmod_module_extension_evaluation_working_dir(&eval_setup);
     let evaluation = ctx
@@ -3782,7 +3782,7 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
     kind: &'static str,
     invocation: &BazelRepositoryRuleInvocation,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<BzlmodRepositoryRuleMaterializationResult> {
+) -> bz_error::Result<BzlmodRepositoryRuleMaterializationResult> {
     let working_dir =
         bzlmod_generated_scratch_path_for_canonical(canonical_repo_name, "repository_ctx");
     let materialized_dir =
@@ -3790,7 +3790,7 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
     ctx.get_blocking_executor()
         .execute_io(
             Box::new(
-                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                bz_execute::execute::clean_output_paths::CleanOutputPaths {
                     paths: vec![working_dir.clone(), materialized_dir.clone()],
                 },
             ),
@@ -3874,7 +3874,7 @@ async fn download_impl(
     cache_alias: &ProjectRelativePath,
     cancellations: &CancellationContext,
     progress_state: &BzlmodProgressState,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if bzlmod_progress_step(
         progress_state,
         "checking repository contents cache",
@@ -3925,7 +3925,7 @@ async fn download_impl(
         "cleaning repository materialization paths",
         io.execute_io(
             Box::new(
-                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                bz_execute::execute::clean_output_paths::CleanOutputPaths {
                     paths: vec![
                         stamp,
                         dest.to_owned(),
@@ -4042,7 +4042,7 @@ async fn prepare_bzlmod_external_cell_root_if_cache_exists(
     cache_alias: &ProjectRelativePath,
     dest: &ProjectRelativePath,
     _cancellations: &CancellationContext,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let cache_repo = cache_repo.to_owned();
     let cache_alias = cache_alias.to_owned();
@@ -4064,7 +4064,7 @@ async fn prepare_bzlmod_external_cell_root_from_source(
     source: &ProjectRelativePath,
     dest: &ProjectRelativePath,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     ctx.get_blocking_executor()
         .execute_io(
             Box::new(BzlmodPrepareExternalCellRootIoRequest {
@@ -4081,7 +4081,7 @@ async fn bzlmod_download_any_with_headers(
     remote_downloader: Option<&BzlmodRemoteDownloaderConfig>,
     client: &HttpClient,
     fs: &ProjectRoot,
-    digest_config: buck2_execute::digest_config::DigestConfig,
+    digest_config: bz_execute::digest_config::DigestConfig,
     path: &ProjectRelativePath,
     urls: &[String],
     checksum: &Checksum,
@@ -4089,7 +4089,7 @@ async fn bzlmod_download_any_with_headers(
     headers: &[(String, String)],
     progress_state: Option<&BzlmodProgressState>,
     progress_subject: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(remote_downloader) = remote_downloader {
         return remote_asset_download_any_with_headers(
             remote_downloader,
@@ -4139,7 +4139,7 @@ async fn bzlmod_download_with_headers(
     remote_downloader: Option<&BzlmodRemoteDownloaderConfig>,
     client: &HttpClient,
     fs: &ProjectRoot,
-    digest_config: buck2_execute::digest_config::DigestConfig,
+    digest_config: bz_execute::digest_config::DigestConfig,
     path: &ProjectRelativePath,
     url: &str,
     checksum: &Checksum,
@@ -4147,7 +4147,7 @@ async fn bzlmod_download_with_headers(
     headers: &[(String, String)],
     progress_state: Option<&BzlmodProgressState>,
     progress_subject: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(remote_downloader) = remote_downloader {
         return remote_asset_download_any_with_headers(
             remote_downloader,
@@ -4182,7 +4182,7 @@ async fn bzlmod_download_with_headers(
 async fn bzlmod_http_download_with_headers(
     client: &HttpClient,
     fs: &ProjectRoot,
-    digest_config: buck2_execute::digest_config::DigestConfig,
+    digest_config: bz_execute::digest_config::DigestConfig,
     path: &ProjectRelativePath,
     url: &str,
     checksum: &Checksum,
@@ -4190,7 +4190,7 @@ async fn bzlmod_http_download_with_headers(
     headers: &[(String, String)],
     progress_state: Option<&BzlmodProgressState>,
     progress_subject: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(progress_state) = progress_state {
         bzlmod_report_progress(
             progress_state,
@@ -4221,7 +4221,7 @@ async fn bzlmod_http_download_with_headers(
 async fn remote_asset_download_any_with_headers(
     config: &BzlmodRemoteDownloaderConfig,
     fs: &ProjectRoot,
-    digest_config: buck2_execute::digest_config::DigestConfig,
+    digest_config: bz_execute::digest_config::DigestConfig,
     path: &ProjectRelativePath,
     urls: &[String],
     checksum: &Checksum,
@@ -4229,7 +4229,7 @@ async fn remote_asset_download_any_with_headers(
     headers: &[(String, String)],
     progress_state: Option<&BzlmodProgressState>,
     progress_subject: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(progress_state) = progress_state {
         bzlmod_report_progress(
             progress_state,
@@ -4270,7 +4270,7 @@ async fn remote_asset_fetch_blob(
     urls: &[String],
     checksum: &Checksum,
     headers: &[(String, String)],
-) -> buck2_error::Result<RemoteExecutionDigest> {
+) -> bz_error::Result<RemoteExecutionDigest> {
     let endpoint = ParsedRemoteAssetEndpoint::parse(&config.endpoint)?;
     let mut endpoint_builder = Endpoint::from_shared(endpoint.uri.clone()).map_err(|error| {
         BzlmodError::InvalidRemoteDownloaderEndpoint {
@@ -4364,7 +4364,7 @@ async fn remote_asset_fetch_blob(
 
 fn remote_asset_oldest_content_accepted(
     checksum: &Checksum,
-) -> buck2_error::Result<Option<prost_types::Timestamp>> {
+) -> bz_error::Result<Option<prost_types::Timestamp>> {
     if !matches!(checksum, Checksum::None) {
         return Ok(None);
     }
@@ -4374,8 +4374,8 @@ fn remote_asset_oldest_content_accepted(
     let timestamp = SystemTime::now()
         .checked_add(Duration::from_secs(60 * 60))
         .ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "system time overflow computing remote downloader cache cutoff"
             )
         })?
@@ -4392,10 +4392,10 @@ fn remote_asset_oldest_content_accepted(
 async fn remote_asset_download_blob(
     config: &BzlmodRemoteDownloaderConfig,
     fs: &ProjectRoot,
-    digest_config: buck2_execute::digest_config::DigestConfig,
+    digest_config: bz_execute::digest_config::DigestConfig,
     path: &ProjectRelativePath,
     digest: &RemoteExecutionDigest,
-) -> buck2_error::Result<TrackedFileDigest> {
+) -> bz_error::Result<TrackedFileDigest> {
     let endpoint = ParsedRemoteAssetEndpoint::parse(&config.endpoint)?;
     let mut endpoint_builder = Endpoint::from_shared(endpoint.uri.clone()).map_err(|error| {
         BzlmodError::InvalidRemoteDownloaderEndpoint {
@@ -4470,7 +4470,7 @@ async fn remote_asset_download_blob(
 fn add_remote_asset_metadata(
     metadata: &mut tonic::metadata::MetadataMap,
     config: &BzlmodRemoteDownloaderConfig,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(api_key) = config
         .api_key
         .as_ref()
@@ -4479,8 +4479,8 @@ fn add_remote_asset_metadata(
         metadata.insert(
             BUILDBUDDY_API_KEY_HEADER,
             MetadataValue::try_from(api_key.as_str()).map_err(|error| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "invalid `{BUILDBUDDY_API_KEY_HEADER}` metadata value: {error}"
                 )
             })?,
@@ -4501,7 +4501,7 @@ fn bytestream_download_resource_name(
     }
 }
 
-fn checksum_to_subresource_integrity(checksum: &Checksum) -> buck2_error::Result<Option<String>> {
+fn checksum_to_subresource_integrity(checksum: &Checksum) -> bz_error::Result<Option<String>> {
     let Some((algorithm, hex_digest)) = (match checksum {
         Checksum::None => None,
         Checksum::Sha1(sha1) => Some(("sha1", sha1.as_ref())),
@@ -4518,7 +4518,7 @@ fn checksum_to_subresource_integrity(checksum: &Checksum) -> buck2_error::Result
     Ok(Some(format!("{algorithm}-{encoded}")))
 }
 
-async fn bzlmod_download_http_client() -> buck2_error::Result<HttpClient> {
+async fn bzlmod_download_http_client() -> bz_error::Result<HttpClient> {
     let mut builder = HttpClientBuilder::oss().await?;
     builder
         .with_max_redirects(BZLMOD_DOWNLOAD_MAX_REDIRECTS)
@@ -4530,7 +4530,7 @@ async fn bzlmod_download_http_client() -> buck2_error::Result<HttpClient> {
     Ok(builder.build())
 }
 
-async fn shared_bzlmod_download_http_client() -> buck2_error::Result<HttpClient> {
+async fn shared_bzlmod_download_http_client() -> bz_error::Result<HttpClient> {
     Ok(BZLMOD_DOWNLOAD_HTTP_CLIENT
         .get_or_try_init(bzlmod_download_http_client)
         .await?
@@ -4541,7 +4541,7 @@ async fn declare_existing_directory(
     ctx: &mut DiceComputations<'_>,
     dest: &ProjectRelativePath,
     materializer: &dyn Materializer,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let io = ctx.get_blocking_executor();
     let io_provider = ctx.global_data().get_io_provider();
     let project_root = io_provider.project_root();
@@ -4574,7 +4574,7 @@ async fn declare_observed_source_artifact(
     ctx: &mut DiceComputations<'_>,
     path: ProjectRelativePathBuf,
     metadata: &RawPathMetadata<ProjectRelativePathBuf>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let member = match metadata {
         RawPathMetadata::File(metadata) => ActionDirectoryMember::File(metadata.clone()),
         RawPathMetadata::Symlink {
@@ -4604,7 +4604,7 @@ async fn materialize_observed_bzlmod_source_path(
     _source_path: ProjectRelativePathBuf,
     _dest_path: ProjectRelativePathBuf,
     metadata: &RawPathMetadata<ProjectRelativePathBuf>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match metadata {
         RawPathMetadata::File(_) | RawPathMetadata::Symlink { .. } => {}
         RawPathMetadata::Directory => return Ok(()),
@@ -4621,13 +4621,13 @@ async fn download_and_materialize(
     path: &ProjectRelativePath,
     setup: &BzlmodCellSetup,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let repo = setup.canonical_repo_name.to_string();
     let path_str = path.to_string();
     let kind = "module archive".to_owned();
     let progress_state = Arc::new(Mutex::new("starting".to_owned()));
     span_async_simple(
-        buck2_data::BzlmodRepoStart {
+        bz_data::BzlmodRepoStart {
             repo: repo.clone(),
             path: path_str.clone(),
             kind: kind.clone(),
@@ -4694,7 +4694,7 @@ async fn download_and_materialize(
                 }
             }
         },
-        buck2_data::BzlmodRepoEnd {
+        bz_data::BzlmodRepoEnd {
             repo,
             path: path_str,
             kind,
@@ -4707,7 +4707,7 @@ async fn bzlmod_generated_repo_contents_cache_info(
     ctx: &mut DiceComputations<'_>,
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<Option<BazelRepositoryRuleCacheInfo>> {
+) -> bz_error::Result<Option<BazelRepositoryRuleCacheInfo>> {
     let invocation = match &setup.generator {
         BzlmodGeneratedCellGenerator::ModuleExtensionRepo(module_extension) => {
             let evaluation =
@@ -4761,7 +4761,7 @@ async fn materialize_generated(
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>> {
+) -> bz_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>> {
     let lock = bzlmod_materialization_lock(path);
     let _guard = lock.lock().await;
     if let Some(cache_info) = bzlmod_generated_repo_contents_cache_info(ctx, path, setup).await? {
@@ -4787,7 +4787,7 @@ async fn materialize_generated(
             ctx.get_blocking_executor()
                 .execute_io(
                     Box::new(
-                        buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                        bz_execute::execute::clean_output_paths::CleanOutputPaths {
                             paths: vec![stamp_path, value_path],
                         },
                     ),
@@ -4807,7 +4807,7 @@ async fn promote_current_bzlmod_generated_repo_to_cache(
     cache_info: &BazelRepositoryRuleCacheInfo,
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let recorded_inputs_path = bzlmod_generated_recorded_inputs_path(setup, path);
     let Some(recorded_inputs_json) = (&*ctx.global_data().get_io_provider())
         .read_file_if_exists(recorded_inputs_path)
@@ -4875,7 +4875,7 @@ async fn materialize_generated_with_repo_contents_cache(
     setup: &BzlmodGeneratedCellSetup,
     cache_info: &BazelRepositoryRuleCacheInfo,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>> {
+) -> bz_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>> {
     let cache_dir = bzlmod_generated_repo_contents_cache_entry_dir(cache_info);
     let cache_lock = bzlmod_materialization_lock(&cache_dir);
     let _cache_guard = cache_lock.lock().await;
@@ -4914,7 +4914,7 @@ async fn materialize_generated_with_repo_contents_cache(
             ctx.get_blocking_executor()
                 .execute_io(
                     Box::new(
-                        buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                        bz_execute::execute::clean_output_paths::CleanOutputPaths {
                             paths: vec![stamp_path, value_path],
                         },
                     ),
@@ -5005,7 +5005,7 @@ struct BzlmodModuleExtensionRepoMappingEntriesKey {
 
 #[async_trait::async_trait]
 impl Key for BzlmodModuleExtensionRepoMappingEntriesKey {
-    type Value = buck2_error::Result<Arc<BzlmodModuleExtensionRepoMappingEntries>>;
+    type Value = bz_error::Result<Arc<BzlmodModuleExtensionRepoMappingEntries>>;
 
     async fn compute(
         &self,
@@ -5054,7 +5054,7 @@ fn bzlmod_module_extension_repo_mapping_entries(
     module_extension: &BzlmodModuleExtensionRepoSetup,
     evaluation: &BazelModuleExtensionEvaluationResult,
     mapping_base: &BzlmodModuleExtensionRepoMappingBase,
-) -> buck2_error::Result<BzlmodModuleExtensionRepoMappingEntries> {
+) -> bz_error::Result<BzlmodModuleExtensionRepoMappingEntries> {
     if extension_unique_name.is_empty() {
         return Ok(BzlmodModuleExtensionRepoMappingEntries::new(
             None,
@@ -5174,7 +5174,7 @@ fn bzlmod_module_extension_repo_mapping_entries_fingerprint(
 
 fn register_bzlmod_module_extension_repo_mapping_entries(
     entries: &BzlmodModuleExtensionRepoMappingEntries,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(registration_key) = &entries.registration_key {
         let registrations = BZLMOD_MODULE_EXTENSION_REPO_MAPPING_REGISTRATIONS
             .get_or_init(|| Mutex::new(BTreeMap::new()));
@@ -5197,9 +5197,9 @@ fn register_bzlmod_module_extension_repo_mapping_entries(
 
 fn register_bzlmod_module_extension_repo_mapping_entries_uncached(
     entries: &BzlmodModuleExtensionRepoMappingEntries,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     span_simple(
-        buck2_data::DiceStateUpdateStageStart {
+        bz_data::DiceStateUpdateStageStart {
             stage: format!(
                 "registering bzlmod repo mappings ({} repos, {} alias maps)",
                 entries.sibling_origins.len(),
@@ -5219,7 +5219,7 @@ fn register_bzlmod_module_extension_repo_mapping_entries_uncached(
             }
             Ok(())
         },
-        buck2_data::DiceStateUpdateStageEnd {},
+        bz_data::DiceStateUpdateStageEnd {},
     )
 }
 
@@ -5228,7 +5228,7 @@ async fn compute_bzlmod_module_extension_repo_mapping_entries(
     setup: &BzlmodGeneratedCellSetup,
     module_extension: &BzlmodModuleExtensionRepoSetup,
     _generated_repo_path: &ProjectRelativePath,
-) -> buck2_error::Result<Arc<BzlmodModuleExtensionRepoMappingEntries>> {
+) -> bz_error::Result<Arc<BzlmodModuleExtensionRepoMappingEntries>> {
     let Some(extension_unique_name) = bzlmod_module_extension_unique_name(setup, module_extension)
     else {
         return Ok(Arc::new(BzlmodModuleExtensionRepoMappingEntries::new(
@@ -5252,7 +5252,7 @@ pub(crate) async fn ensure_generated_cell_alias_resolver_ready(
     ctx: &mut DiceComputations<'_>,
     _cell: CellName,
     setup: BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let BzlmodGeneratedCellGenerator::ModuleExtensionRepo(module_extension) = &setup.generator
     else {
         return Ok(());
@@ -5280,7 +5280,7 @@ async fn materialize_generated_contents(
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<BzlmodGeneratedMaterializationResult> {
+) -> bz_error::Result<BzlmodGeneratedMaterializationResult> {
     match &setup.generator {
         BzlmodGeneratedCellGenerator::ModuleExtensionRepo(module_extension) => {
             let evaluation =
@@ -5361,7 +5361,7 @@ async fn materialize_generated_contents(
             ctx.get_blocking_executor()
                 .execute_io(
                     Box::new(
-                        buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                        bz_execute::execute::clean_output_paths::CleanOutputPaths {
                             paths: vec![path.to_owned(), archive.clone(), temp.clone()],
                         },
                     ),
@@ -5406,7 +5406,7 @@ async fn materialize_generated_contents(
             ctx.get_blocking_executor()
                 .execute_io(
                     Box::new(
-                        buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                        bz_execute::execute::clean_output_paths::CleanOutputPaths {
                             paths: vec![path.to_owned()],
                         },
                     ),
@@ -5446,7 +5446,7 @@ struct BzlmodGeneratedCellMaterializationKey {
 
 #[async_trait::async_trait]
 impl Key for BzlmodGeneratedCellMaterializationKey {
-    type Value = buck2_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>>;
+    type Value = bz_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>>;
 
     async fn compute(
         &self,
@@ -5476,7 +5476,7 @@ async fn ensure_generated_materialized(
     ctx: &mut DiceComputations<'_>,
     path: ProjectRelativePathBuf,
     setup: BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let setup = bzlmod_generated_effective_setup(ctx, setup).await?;
     ctx.compute(&BzlmodGeneratedCellMaterializationKey { path, setup })
         .await??;
@@ -5486,7 +5486,7 @@ async fn ensure_generated_materialized(
 async fn bzlmod_generated_effective_setup(
     ctx: &mut DiceComputations<'_>,
     setup: BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<BzlmodGeneratedCellSetup> {
+) -> bz_error::Result<BzlmodGeneratedCellSetup> {
     let BzlmodGeneratedCellSetup {
         canonical_repo_name,
         generator,
@@ -5546,7 +5546,7 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         &self,
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<ReadFileProxy> {
+    ) -> bz_error::Result<ReadFileProxy> {
         Ok(ReadFileProxy::new_with_captures(
             (self.resolve_backing(path), self.io.dupe()),
             |(project_path, io)| async move {
@@ -5561,7 +5561,7 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         &self,
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_without_dice(path).await
     }
 
@@ -5569,7 +5569,7 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         &self,
         _io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_without_dice(path).await
     }
 
@@ -5577,7 +5577,7 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         let project_path = self.resolve_backing(path);
         let Some(metadata) = (&self.io as &dyn IoProvider)
             .read_path_metadata_if_exists(project_path.clone())
@@ -5613,7 +5613,7 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         &self,
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         let project_path = self.resolve_backing(path);
         let Some(metadata) = (&self.io as &dyn IoProvider)
             .read_path_metadata_if_exists(project_path)
@@ -5640,7 +5640,7 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         &self,
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(None, path)
             .await
     }
@@ -5650,7 +5650,7 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(cache, path)
             .await
     }
@@ -5660,7 +5660,7 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         _io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(cache, path)
             .await
     }
@@ -5674,7 +5674,7 @@ impl BzlmodFileOpsDelegate {
     async fn read_dir_without_dice(
         &self,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         let project_path = self.resolve_backing(path);
         let mut entries = (&self.io as &dyn IoProvider)
             .read_dir(project_path)
@@ -5694,7 +5694,7 @@ impl BzlmodFileOpsDelegate {
         &self,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         let project_path = self.resolve_backing(path);
         let Some(metadata) = (&self.io as &dyn IoProvider)
             .read_path_metadata_if_exists_for_no_watchfs_with_cache(project_path, cache)
@@ -5738,7 +5738,7 @@ impl BzlmodGeneratedFileOpsDelegate {
         self.resolve(CellRelativePath::empty())
     }
 
-    fn get_backing_base_path(&self) -> buck2_error::Result<ProjectRelativePathBuf> {
+    fn get_backing_base_path(&self) -> bz_error::Result<ProjectRelativePathBuf> {
         let base_path = self.get_base_path();
         let base_abs = self.io.project_root().resolve(&base_path);
         let Some(metadata) = fs_util::symlink_metadata_if_exists(&base_abs)? else {
@@ -5767,7 +5767,7 @@ fn follow_bzlmod_symlinked_directory_entries(
     project_root: &ProjectRoot,
     project_path: &ProjectRelativePath,
     entries: &mut [RawDirEntry],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for entry in entries {
         if !entry.file_type.is_symlink() {
             continue;
@@ -5795,7 +5795,7 @@ async fn wait_for_bzlmod_generated_materialization_if_in_progress(
     project_root: &ProjectRoot,
     setup: &BzlmodGeneratedCellSetup,
     base_path: &ProjectRelativePath,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let stamp_path = bzlmod_generated_materialization_stamp_path(setup, base_path);
     if fs_util::symlink_metadata_if_exists(project_root.resolve(&stamp_path))?.is_some() {
         return Ok(false);
@@ -5816,7 +5816,7 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<ReadFileProxy> {
+    ) -> bz_error::Result<ReadFileProxy> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         Ok(ReadFileProxy::new_with_captures(
             (
@@ -5849,7 +5849,7 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         let project_path = self.resolve(path);
         let mut entries = (&self.io as &dyn IoProvider)
@@ -5870,7 +5870,7 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         self.read_dir_for_no_watchfs_without_dice_impl(path).await
     }
@@ -5879,7 +5879,7 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         &self,
         _io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_for_no_watchfs_without_dice_impl(path).await
     }
 
@@ -5887,7 +5887,7 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         let backing_base_path = self.get_backing_base_path()?;
         let project_path = backing_base_path.join(path.as_forward_relative_path());
@@ -5915,7 +5915,7 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         let backing_base_path = self.get_backing_base_path()?;
         let project_path = backing_base_path.join(path.as_forward_relative_path());
@@ -5942,7 +5942,7 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(None, path)
             .await
@@ -5953,7 +5953,7 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
         _cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(None, path)
             .await
@@ -5964,7 +5964,7 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         _io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(cache, path)
             .await
     }
@@ -5975,7 +5975,7 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
 }
 
 impl BzlmodGeneratedFileOpsDelegate {
-    async fn wait_for_materialization_if_in_progress(&self) -> buck2_error::Result<bool> {
+    async fn wait_for_materialization_if_in_progress(&self) -> bz_error::Result<bool> {
         wait_for_bzlmod_generated_materialization_if_in_progress(
             self.io.project_root(),
             &self.setup,
@@ -5987,7 +5987,7 @@ impl BzlmodGeneratedFileOpsDelegate {
     async fn read_dir_for_no_watchfs_without_dice_impl(
         &self,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         let project_path = self.resolve(path);
         let mut entries = loop {
             match (&self.io as &dyn IoProvider)
@@ -6018,7 +6018,7 @@ impl BzlmodGeneratedFileOpsDelegate {
         &self,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         let (backing_base_path, metadata) = loop {
             let backing_base_path = self.get_backing_base_path()?;
             let project_path = backing_base_path.join(path.as_forward_relative_path());
@@ -6055,7 +6055,7 @@ pub(crate) async fn get_file_ops_delegate(
     ctx: &mut DiceComputations<'_>,
     cell: CellName,
     setup: BzlmodCellSetup,
-) -> buck2_error::Result<Arc<BzlmodFileOpsDelegate>> {
+) -> bz_error::Result<Arc<BzlmodFileOpsDelegate>> {
     #[derive(
         dupe::Dupe,
         Clone,
@@ -6073,7 +6073,7 @@ pub(crate) async fn get_file_ops_delegate(
 
     #[async_trait::async_trait]
     impl Key for BzlmodFileOpsDelegateKey {
-        type Value = buck2_error::Result<Arc<BzlmodFileOpsDelegate>>;
+        type Value = bz_error::Result<Arc<BzlmodFileOpsDelegate>>;
 
         async fn compute(
             &self,
@@ -6129,7 +6129,7 @@ pub(crate) async fn prepare_cached_cell_root(
     cell: CellName,
     setup: BzlmodCellSetup,
     _cancellations: &CancellationContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if setup.local_path.is_some() {
         return Ok(());
     }
@@ -6154,7 +6154,7 @@ pub(crate) async fn get_generated_file_ops_delegate(
     ctx: &mut DiceComputations<'_>,
     cell: CellName,
     setup: BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<Arc<BzlmodGeneratedFileOpsDelegate>> {
+) -> bz_error::Result<Arc<BzlmodGeneratedFileOpsDelegate>> {
     #[derive(
         dupe::Dupe,
         Clone,
@@ -6172,7 +6172,7 @@ pub(crate) async fn get_generated_file_ops_delegate(
 
     #[async_trait::async_trait]
     impl Key for BzlmodGeneratedFileOpsDelegateKey {
-        type Value = buck2_error::Result<Arc<BzlmodGeneratedFileOpsDelegate>>;
+        type Value = bz_error::Result<Arc<BzlmodGeneratedFileOpsDelegate>>;
 
         async fn compute(
             &self,
@@ -6210,7 +6210,7 @@ pub(crate) async fn prepare_cached_generated_cell_root(
     _cell: CellName,
     _setup: BzlmodGeneratedCellSetup,
     _cancellations: &CancellationContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     Ok(())
 }
 
@@ -6218,7 +6218,7 @@ pub(crate) async fn materialize_all(
     ctx: &mut DiceComputations<'_>,
     cell: CellName,
     setup: BzlmodCellSetup,
-) -> buck2_error::Result<ProjectRelativePathBuf> {
+) -> bz_error::Result<ProjectRelativePathBuf> {
     let ops = get_file_ops_delegate(ctx, cell, setup.dupe()).await?;
     let materializer = ctx.per_transaction_data().get_materializer();
     declare_existing_directory(ctx, &ops.backing_base_path, &*materializer).await?;
@@ -6229,7 +6229,7 @@ pub(crate) async fn materialize_generated_all(
     ctx: &mut DiceComputations<'_>,
     cell: CellName,
     setup: BzlmodGeneratedCellSetup,
-) -> buck2_error::Result<ProjectRelativePathBuf> {
+) -> bz_error::Result<ProjectRelativePathBuf> {
     let ops = get_generated_file_ops_delegate(ctx, cell, setup.dupe()).await?;
     ensure_generated_materialized(ctx, ops.get_base_path(), setup).await?;
     let materializer = ctx.per_transaction_data().get_materializer();

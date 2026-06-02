@@ -10,11 +10,11 @@
 
 use std::time::SystemTime;
 
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileName;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileName;
 use once_cell::sync::Lazy;
 
 use crate::invocation_roots::home_buck_dir;
@@ -22,8 +22,8 @@ use crate::invocation_roots::home_buck_dir;
 /// `~/.buck/tmp` after old files removed.
 ///
 /// We use this directory when we need tmp dir with short file names (to connect to unix socket).
-pub fn home_buck_tmp_dir() -> buck2_error::Result<&'static AbsNormPath> {
-    fn remove_old_files(tmp_dir: &AbsNormPath) -> buck2_error::Result<()> {
+pub fn home_buck_tmp_dir() -> bz_error::Result<&'static AbsNormPath> {
+    fn remove_old_files(tmp_dir: &AbsNormPath) -> bz_error::Result<()> {
         let mut now = None;
 
         for entry in fs_util::read_dir(tmp_dir).categorize_internal()? {
@@ -46,7 +46,7 @@ pub fn home_buck_tmp_dir() -> buck2_error::Result<&'static AbsNormPath> {
         Ok(())
     }
 
-    fn find_dir() -> buck2_error::Result<AbsNormPathBuf> {
+    fn find_dir() -> bz_error::Result<AbsNormPathBuf> {
         let home_buck_dir = home_buck_dir()?;
         let tmp_dir = home_buck_dir.join(FileName::new("tmp")?);
         fs_util::create_dir_all(&tmp_dir)?;
@@ -54,7 +54,7 @@ pub fn home_buck_tmp_dir() -> buck2_error::Result<&'static AbsNormPath> {
         Ok(tmp_dir)
     }
 
-    static DIR: Lazy<buck2_error::Result<AbsNormPathBuf>> = Lazy::new(find_dir);
+    static DIR: Lazy<bz_error::Result<AbsNormPathBuf>> = Lazy::new(find_dir);
 
     Ok(Lazy::force(&DIR).as_ref().map_err(dupe::Dupe::dupe)?)
 }

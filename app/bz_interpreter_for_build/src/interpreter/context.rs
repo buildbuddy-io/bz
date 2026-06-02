@@ -45,14 +45,14 @@ impl InjectedKey for BuildContextKey {
 pub trait HasInterpreterContext {
     async fn get_interpreter_configuror(
         &mut self,
-    ) -> buck2_error::Result<Arc<BuildInterpreterConfiguror>>;
+    ) -> bz_error::Result<Arc<BuildInterpreterConfiguror>>;
 }
 
 #[async_trait]
 impl HasInterpreterContext for DiceComputations<'_> {
     async fn get_interpreter_configuror(
         &mut self,
-    ) -> buck2_error::Result<Arc<BuildInterpreterConfiguror>> {
+    ) -> bz_error::Result<Arc<BuildInterpreterConfiguror>> {
         Ok(self.compute(&BuildContextKey()).await?.dupe())
     }
 }
@@ -61,14 +61,14 @@ pub trait SetInterpreterContext {
     fn set_interpreter_context(
         &mut self,
         interpreter_configuror: Arc<BuildInterpreterConfiguror>,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }
 
 impl SetInterpreterContext for DiceTransactionUpdater {
     fn set_interpreter_context(
         &mut self,
         interpreter_configuror: Arc<BuildInterpreterConfiguror>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(self.changed_to(vec![(BuildContextKey(), interpreter_configuror)])?)
     }
 }

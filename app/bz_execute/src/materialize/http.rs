@@ -15,27 +15,27 @@ use std::time::Duration;
 
 use allocative::Allocative;
 use async_compression::tokio::bufread::GzipDecoder;
-use buck2_common::cas_digest::CasDigestConfig;
-use buck2_common::cas_digest::DigestAlgorithmFamily;
-use buck2_common::cas_digest::SHA1_SIZE;
-use buck2_common::cas_digest::SHA256_SIZE;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING;
-use buck2_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER;
-use buck2_core::cells::external::BAZEL_REPOSITORY_USER_AGENT_HEADER;
-use buck2_core::cells::external::bazel_repository_user_agent;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_error::BuckErrorContext;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_http::HttpClient;
-use buck2_http::ResponseFinalUri;
-use buck2_http::retries::HttpError;
-use buck2_http::retries::HttpErrorForRetry;
-use buck2_http::retries::IntoBuck2Error;
-use buck2_http::retries::http_retry;
+use bz_common::cas_digest::CasDigestConfig;
+use bz_common::cas_digest::DigestAlgorithmFamily;
+use bz_common::cas_digest::SHA1_SIZE;
+use bz_common::cas_digest::SHA256_SIZE;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING;
+use bz_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER;
+use bz_core::cells::external::BAZEL_REPOSITORY_USER_AGENT_HEADER;
+use bz_core::cells::external::bazel_repository_user_agent;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_error::BuckErrorContext;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_http::HttpClient;
+use bz_http::ResponseFinalUri;
+use bz_http::retries::HttpError;
+use bz_http::retries::HttpErrorForRetry;
+use bz_http::retries::IntoBuck2Error;
+use bz_http::retries::http_retry;
 use bytes::Bytes;
 use digest::DynDigest;
 use dupe::Dupe;
@@ -67,7 +67,7 @@ pub enum Checksum {
     Both { sha1: Arc<str>, sha256: Arc<str> },
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum DownloadFileError {
     #[error("Must pass in at least one checksum (e.g. `sha1 = ...`)")]
@@ -102,7 +102,7 @@ impl Checksum {
         digest: &str,
         digest_len: usize,
         digest_type: &'static str,
-    ) -> buck2_error::Result<Arc<str>> {
+    ) -> bz_error::Result<Arc<str>> {
         let expected_len = digest_len * 2;
         if digest.len() != expected_len {
             return Err(DownloadFileError::InvalidDigestLength {
@@ -123,12 +123,12 @@ impl Checksum {
         Ok(Arc::from(digest.to_ascii_lowercase()))
     }
 
-    pub fn new(sha1: Option<&str>, sha256: Option<&str>) -> buck2_error::Result<Self> {
+    pub fn new(sha1: Option<&str>, sha256: Option<&str>) -> bz_error::Result<Self> {
         fn validate_digest(
             digest: Option<&str>,
             digest_len: usize,
             digest_type: &'static str,
-        ) -> buck2_error::Result<Option<Arc<str>>> {
+        ) -> bz_error::Result<Option<Arc<str>>> {
             match digest {
                 None => Ok(None),
                 Some(digest) => {
@@ -148,11 +148,11 @@ impl Checksum {
         }
     }
 
-    pub fn new_sha384(sha384: &str) -> buck2_error::Result<Self> {
+    pub fn new_sha384(sha384: &str) -> bz_error::Result<Self> {
         Ok(Self::Sha384(Self::validate_digest(sha384, 48, "sha384")?))
     }
 
-    pub fn new_sha512(sha512: &str) -> buck2_error::Result<Self> {
+    pub fn new_sha512(sha512: &str) -> bz_error::Result<Self> {
         Ok(Self::Sha512(Self::validate_digest(sha512, 64, "sha512")?))
     }
 
@@ -201,7 +201,7 @@ impl Checksum {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Http)]
 enum HttpHeadError {
     #[error("Error performing http_head request")]
@@ -214,7 +214,7 @@ impl From<HttpError> for HttpHeadError {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Http)]
 enum HttpDownloadError {
     #[error("Error performing http_download request")]
@@ -244,7 +244,7 @@ enum HttpDownloadError {
     },
 
     #[error(transparent)]
-    IoError(buck2_error::Error),
+    IoError(bz_error::Error),
 }
 
 impl HttpDownloadError {
@@ -290,18 +290,18 @@ impl HttpErrorForRetry for HttpDownloadError {
 }
 
 impl IntoBuck2Error for HttpHeadError {
-    fn into_buck2_error(self) -> buck2_error::Error {
-        buck2_error::Error::from(self)
+    fn into_bz_error(self) -> bz_error::Error {
+        bz_error::Error::from(self)
     }
 }
 
 impl IntoBuck2Error for HttpDownloadError {
-    fn into_buck2_error(self) -> buck2_error::Error {
-        buck2_error::Error::from(self)
+    fn into_bz_error(self) -> bz_error::Error {
+        bz_error::Error::from(self)
     }
 }
 
-pub async fn http_head(client: &HttpClient, url: &str) -> buck2_error::Result<Response<()>> {
+pub async fn http_head(client: &HttpClient, url: &str) -> bz_error::Result<Response<()>> {
     let response = http_retry(
         || async {
             client
@@ -323,7 +323,7 @@ pub async fn http_download(
     url: &str,
     checksum: &Checksum,
     executable: bool,
-) -> buck2_error::Result<TrackedFileDigest> {
+) -> bz_error::Result<TrackedFileDigest> {
     http_download_with_headers(
         client,
         fs,
@@ -368,7 +368,7 @@ pub async fn http_download_with_headers(
     checksum: &Checksum,
     executable: bool,
     headers: &[(String, String)],
-) -> buck2_error::Result<TrackedFileDigest> {
+) -> bz_error::Result<TrackedFileDigest> {
     let abs_path = fs.resolve(path);
     if let Some(dir) = abs_path.parent() {
         fs_util::create_dir_all(dir)?;
@@ -538,7 +538,7 @@ async fn copy_and_hash_from_reader(
         )
         .await
         .map_err(|_| {
-            HttpDownloadError::Client(HttpError::Client(buck2_http::HttpError::Timeout {
+            HttpDownloadError::Client(HttpError::Client(bz_http::HttpError::Timeout {
                 uri: url.to_owned(),
                 duration: HTTP_DOWNLOAD_READ_IDLE_TIMEOUT.as_secs(),
             }))
@@ -751,7 +751,7 @@ impl fmt::Display for MaybeResponseDebugInfo {
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use buck2_common::cas_digest::testing;
+    use bz_common::cas_digest::testing;
     use futures::stream;
 
     use super::*;
@@ -778,7 +778,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy_and_hash_ok() -> buck2_error::Result<()> {
+    async fn test_copy_and_hash_ok() -> bz_error::Result<()> {
         let (digest, bytes) = do_test(
             testing::blake3(),
             &Checksum::Both {
@@ -817,7 +817,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy_and_hash_invalid_primary_hash() -> buck2_error::Result<()> {
+    async fn test_copy_and_hash_invalid_primary_hash() -> bz_error::Result<()> {
         assert_matches!(
             do_test(testing::sha1(), &Checksum::Sha1(Arc::from("oops"))).await,
             Err(HttpDownloadError::InvalidChecksum { .. })
@@ -832,7 +832,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy_and_hash_invalid_secondary_hash() -> buck2_error::Result<()> {
+    async fn test_copy_and_hash_invalid_secondary_hash() -> bz_error::Result<()> {
         assert_matches!(
             do_test(testing::blake3(), &Checksum::Sha1(Arc::from("oops"))).await,
             Err(HttpDownloadError::InvalidChecksum { .. })

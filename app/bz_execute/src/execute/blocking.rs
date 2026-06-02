@@ -12,14 +12,14 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::buck2_env;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::current_span;
-use buck2_events::dispatch::maybe_proxy_current_span;
-use buck2_events::span::SpanId;
-use buck2_util::threads::thread_spawn;
+use bz_core::bz_env;
+use bz_core::fs::project::ProjectRoot;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::current_span;
+use bz_events::dispatch::maybe_proxy_current_span;
+use bz_events::span::SpanId;
+use bz_util::threads::thread_spawn;
 use crossbeam_channel::unbounded;
 use dice::DiceComputations;
 use dice::UserComputationData;
@@ -38,8 +38,8 @@ pub trait BlockingExecutor: Allocative + Send + Sync + 'static {
     /// fairly high concurrency as they aren't expected to contend with each other.
     async fn execute_dyn_io_inline<'a>(
         &self,
-        f: Box<dyn FnOnce() -> buck2_error::Result<()> + Send + 'a>,
-    ) -> buck2_error::Result<()>;
+        f: Box<dyn FnOnce() -> bz_error::Result<()> + Send + 'a>,
+    ) -> bz_error::Result<()>;
 
     /// Execute a blocking I/O operation, possibly on a dedicated I/O pool. This should be used as
     /// the default for I/O. The operations executed here must perform _only_ I/O (since if they do
@@ -48,16 +48,16 @@ pub trait BlockingExecutor: Allocative + Send + Sync + 'static {
         &self,
         io: Box<dyn IoRequest>,
         cancellations: &'a CancellationContext,
-    ) -> BoxFuture<'a, buck2_error::Result<()>>;
+    ) -> BoxFuture<'a, bz_error::Result<()>>;
 
     /// The size of the queue of pending I/O.
     fn queue_size(&self) -> usize;
 }
 
 impl dyn BlockingExecutor {
-    pub async fn execute_io_inline<F, T>(&self, f: F) -> buck2_error::Result<T>
+    pub async fn execute_io_inline<F, T>(&self, f: F) -> bz_error::Result<T>
     where
-        F: FnOnce() -> buck2_error::Result<T> + Send,
+        F: FnOnce() -> bz_error::Result<T> + Send,
         T: Send,
     {
         let mut res = None;
@@ -66,19 +66,19 @@ impl dyn BlockingExecutor {
             Ok(())
         }))
         .await
-        .tag(buck2_error::ErrorTag::IoBlockingExecutor)?;
+        .tag(bz_error::ErrorTag::IoBlockingExecutor)?;
         res.ok_or_else(|| internal_error!("Inline I/O did not execute"))
     }
 }
 
 pub trait IoRequest: Send + Sync + 'static {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()>;
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()>;
 }
 
 struct ThreadPoolIoRequest {
     io: Box<dyn IoRequest>,
     parent_id: Option<SpanId>,
-    sender: oneshot::Sender<buck2_error::Result<()>>,
+    sender: oneshot::Sender<bz_error::Result<()>>,
 }
 
 #[derive(Allocative)]
@@ -102,9 +102,9 @@ impl BuckBlockingExecutor {
     ///   host. This is because those operations often have to do CPU bound work to generate the data
     ///   they are trying to write, and writing to multiple files doesn't have the negative scaling
     ///   issues modifying the directory structure does.
-    pub fn default_concurrency(fs: ProjectRoot) -> buck2_error::Result<Self> {
-        let io_threads = buck2_env!("BUCK2_IO_THREADS", type=usize, default=4)?;
-        let io_semaphore = buck2_env!("BUCK2_IO_SEMAPHORE", type=usize, default=buck2_util::threads::available_parallelism())?;
+    pub fn default_concurrency(fs: ProjectRoot) -> bz_error::Result<Self> {
+        let io_threads = bz_env!("BUCK2_IO_THREADS", type=usize, default=4)?;
+        let io_semaphore = bz_env!("BUCK2_IO_SEMAPHORE", type=usize, default=bz_util::threads::available_parallelism())?;
 
         let (command_sender, command_receiver) = unbounded();
 
@@ -136,8 +136,8 @@ impl BuckBlockingExecutor {
 impl BlockingExecutor for BuckBlockingExecutor {
     async fn execute_dyn_io_inline<'a>(
         &self,
-        f: Box<dyn FnOnce() -> buck2_error::Result<()> + Send + 'a>,
-    ) -> buck2_error::Result<()> {
+        f: Box<dyn FnOnce() -> bz_error::Result<()> + Send + 'a>,
+    ) -> bz_error::Result<()> {
         let _permit = self
             .io_data_semaphore
             .acquire()
@@ -151,7 +151,7 @@ impl BlockingExecutor for BuckBlockingExecutor {
         &self,
         io: Box<dyn IoRequest>,
         cancellations: &'a CancellationContext,
-    ) -> BoxFuture<'a, buck2_error::Result<()>> {
+    ) -> BoxFuture<'a, bz_error::Result<()>> {
         let (sender, receiver) = oneshot::channel();
 
         // Ignore errors sending as they'll translate to an error receiving once we drop the
@@ -184,7 +184,7 @@ pub struct DirectIoExecutor {
 }
 
 impl DirectIoExecutor {
-    pub fn new(project_fs: ProjectRoot) -> buck2_error::Result<Self> {
+    pub fn new(project_fs: ProjectRoot) -> bz_error::Result<Self> {
         Ok(Self { project_fs })
     }
 }
@@ -193,8 +193,8 @@ impl DirectIoExecutor {
 impl BlockingExecutor for DirectIoExecutor {
     async fn execute_dyn_io_inline<'a>(
         &self,
-        f: Box<dyn FnOnce() -> buck2_error::Result<()> + Send + 'a>,
-    ) -> buck2_error::Result<()> {
+        f: Box<dyn FnOnce() -> bz_error::Result<()> + Send + 'a>,
+    ) -> bz_error::Result<()> {
         tokio::task::block_in_place(f)
     }
 
@@ -202,7 +202,7 @@ impl BlockingExecutor for DirectIoExecutor {
         &self,
         io: Box<dyn IoRequest>,
         cancellations: &'a CancellationContext,
-    ) -> BoxFuture<'a, buck2_error::Result<()>> {
+    ) -> BoxFuture<'a, bz_error::Result<()>> {
         let project_fs = self.project_fs.dupe();
 
         cancellations
@@ -258,8 +258,8 @@ pub mod testing {
     impl BlockingExecutor for DummyBlockingExecutor {
         async fn execute_dyn_io_inline<'a>(
             &self,
-            f: Box<dyn FnOnce() -> buck2_error::Result<()> + Send + 'a>,
-        ) -> buck2_error::Result<()> {
+            f: Box<dyn FnOnce() -> bz_error::Result<()> + Send + 'a>,
+        ) -> bz_error::Result<()> {
             f()
         }
 
@@ -267,7 +267,7 @@ pub mod testing {
             &self,
             io: Box<dyn IoRequest>,
             _cancellations: &'a CancellationContext,
-        ) -> BoxFuture<'a, buck2_error::Result<()>> {
+        ) -> BoxFuture<'a, bz_error::Result<()>> {
             futures::future::ready(io.execute(&self.fs)).boxed()
         }
 

@@ -10,18 +10,18 @@
 
 use std::collections::BTreeMap;
 
-use buck2_core::configuration::config_setting::ConfigSettingData;
-use buck2_core::configuration::constraints::ConstraintKey;
-use buck2_core::configuration::constraints::ConstraintValue;
-use buck2_node::attrs::attr_type::bool::BoolLiteral;
-use buck2_node::attrs::attr_type::string::StringLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coerced_attr::CoercedConcat;
-use buck2_node::attrs::coerced_attr::CoercedSelector;
-use buck2_node::attrs::fmt_context::AttrFmtContext;
-use buck2_node::configuration::resolved::ConfigurationSettingKey;
-use buck2_util::arc_str::ArcSlice;
-use buck2_util::arc_str::ArcStr;
+use bz_core::configuration::config_setting::ConfigSettingData;
+use bz_core::configuration::constraints::ConstraintKey;
+use bz_core::configuration::constraints::ConstraintValue;
+use bz_node::attrs::attr_type::bool::BoolLiteral;
+use bz_node::attrs::attr_type::string::StringLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coerced_attr::CoercedConcat;
+use bz_node::attrs::coerced_attr::CoercedSelector;
+use bz_node::attrs::fmt_context::AttrFmtContext;
+use bz_node::configuration::resolved::ConfigurationSettingKey;
+use bz_util::arc_str::ArcSlice;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 
 #[test]

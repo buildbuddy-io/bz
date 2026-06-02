@@ -9,24 +9,24 @@
  */
 
 use allocative::Allocative;
-use buck2_core::buck2_env;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::working_dir::AbsWorkingDir;
+use bz_core::bz_env;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::working_dir::AbsWorkingDir;
 use once_cell::sync::Lazy;
 
 use crate::invocation_paths::InvocationPaths;
 use crate::invocation_paths_result::InvocationPathsResult;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 enum BuckCliError {
     #[error(
         "Couldn't find a buck project root for directory `{}`. Expected to find a .buckconfig, MODULE.bazel, WORKSPACE.bazel, or WORKSPACE file.", _0.path().display()
@@ -42,13 +42,13 @@ pub struct InvocationRoots {
 }
 
 impl InvocationRoots {
-    pub fn common_buckd_dir(&self) -> buck2_error::Result<AbsNormPathBuf> {
+    pub fn common_buckd_dir(&self) -> bz_error::Result<AbsNormPathBuf> {
         Ok(home_buck_dir()?.join(FileName::unchecked_new("buckd")))
     }
 
-    pub fn paranoid_info_path(&self) -> buck2_error::Result<AbsPathBuf> {
+    pub fn paranoid_info_path(&self) -> bz_error::Result<AbsPathBuf> {
         // Used in tests
-        if let Some(p) = buck2_env!("BUCK2_PARANOID_PATH")? {
+        if let Some(p) = bz_env!("BUCK2_PARANOID_PATH")? {
             return AbsPathBuf::try_from(p.to_owned());
         }
 
@@ -67,7 +67,7 @@ impl InvocationRoots {
 ///
 /// We also look for .buckroot files, and if we find one of them, we don't traverse further upwards.
 /// The contents of the .buckroot file is entirely ignored.
-fn get_roots(from: &AbsWorkingDir) -> buck2_error::Result<Option<InvocationRoots>> {
+fn get_roots(from: &AbsWorkingDir) -> bz_error::Result<Option<InvocationRoots>> {
     let mut project_root = None;
     let mut bazel_project_root = None;
 
@@ -116,7 +116,7 @@ fn get_roots(from: &AbsWorkingDir) -> buck2_error::Result<Option<InvocationRoots
     })
 }
 
-pub fn find_invocation_roots(from: &AbsWorkingDir) -> buck2_error::Result<InvocationRoots> {
+pub fn find_invocation_roots(from: &AbsWorkingDir) -> bz_error::Result<InvocationRoots> {
     get_roots(from)?.ok_or_else(|| BuckCliError::NoBuckRoot(from.to_owned()).into())
 }
 
@@ -151,8 +151,8 @@ pub fn get_invocation_paths_result(
 ///
 /// 2. Keep user-owned .buckd directory, use some other mechanism to move ownership of
 ///    output directories between different buckd instances.
-pub(crate) fn home_buck_dir() -> buck2_error::Result<&'static AbsNormPath> {
-    fn find_dir() -> buck2_error::Result<AbsNormPathBuf> {
+pub(crate) fn home_buck_dir() -> bz_error::Result<&'static AbsNormPath> {
+    fn find_dir() -> bz_error::Result<AbsNormPathBuf> {
         let home = dirs::home_dir()
             .ok_or_else(|| internal_error!("Expected a HOME directory to be available"))?;
         let home =
@@ -160,7 +160,7 @@ pub(crate) fn home_buck_dir() -> buck2_error::Result<&'static AbsNormPath> {
         Ok(home.join(FileName::new(".buck")?))
     }
 
-    static DIR: Lazy<buck2_error::Result<AbsNormPathBuf>> = Lazy::new(find_dir);
+    static DIR: Lazy<bz_error::Result<AbsNormPathBuf>> = Lazy::new(find_dir);
 
     Ok(Lazy::force(&DIR).as_ref().map_err(dupe::Dupe::dupe)?)
 }
@@ -170,18 +170,18 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 
     use super::*;
 
-    fn working_dir(path: &Path) -> buck2_error::Result<AbsWorkingDir> {
+    fn working_dir(path: &Path) -> bz_error::Result<AbsWorkingDir> {
         Ok(AbsWorkingDir::unchecked_new(AbsNormPathBuf::new(
             path.canonicalize()?,
         )?))
     }
 
     #[test]
-    fn module_bazel_is_project_root_without_buckconfig() -> buck2_error::Result<()> {
+    fn module_bazel_is_project_root_without_buckconfig() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
         fs::write(
             dir.path().join("MODULE.bazel"),
@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn buckconfig_takes_precedence_over_nested_bazel_root() -> buck2_error::Result<()> {
+    fn buckconfig_takes_precedence_over_nested_bazel_root() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
         fs::write(dir.path().join(".buckconfig"), "[cells]\nroot = .\n")?;
         fs::create_dir_all(dir.path().join("nested/a"))?;

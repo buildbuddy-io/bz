@@ -11,12 +11,12 @@
 //! Implementation of the cli and query_* attr query language.
 use std::sync::Arc;
 
-use buck2_common::events::HasEvents;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
-use buck2_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
+use bz_common::events::HasEvents;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationResult;
+use bz_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
 use dice::LinearRecomputeDiceComputations;
 use dupe::Dupe;
 
@@ -36,7 +36,7 @@ impl UqueryEvaluator<'_, '_> {
         &self,
         query: &str,
         query_args: &[String],
-    ) -> buck2_error::Result<QueryEvaluationResult<TargetNode>> {
+    ) -> bz_error::Result<QueryEvaluationResult<TargetNode>> {
         eval_query(
             self.dice_query_delegate
                 .ctx()
@@ -68,7 +68,7 @@ impl UqueryEvaluator<'_, '_> {
 pub(crate) async fn get_uquery_evaluator<'a, 'c: 'a, 'd>(
     ctx: &'c LinearRecomputeDiceComputations<'d>,
     working_dir: &'a ProjectRelativePath,
-) -> buck2_error::Result<UqueryEvaluator<'c, 'd>> {
+) -> bz_error::Result<UqueryEvaluator<'c, 'd>> {
     let dice_query_delegate =
         get_dice_query_delegate(ctx, working_dir, GlobalCfgOptions::default()).await?;
     let functions = DefaultQueryFunctionsModule::new();

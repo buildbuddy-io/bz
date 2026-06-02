@@ -43,7 +43,7 @@ impl StarlarkBuckRegex {
         }
     }
 
-    fn is_match(&self, s: &str) -> buck2_error::Result<bool> {
+    fn is_match(&self, s: &str) -> bz_error::Result<bool> {
         match self {
             StarlarkBuckRegex::Regular(r) => Ok(r.is_match(s)),
             StarlarkBuckRegex::Fancy(r) => Ok(r.is_match(s)?),
@@ -137,10 +137,10 @@ pub fn register_buck_regex(builder: &mut GlobalsBuilder) {
     ) -> starlark::Result<StarlarkBuckRegex> {
         match fancy {
             false => Ok(StarlarkBuckRegex::Regular(
-                regex::Regex::new(regex).map_err(buck2_error::Error::from)?,
+                regex::Regex::new(regex).map_err(bz_error::Error::from)?,
             )),
             true => Ok(StarlarkBuckRegex::Fancy(
-                fancy_regex::Regex::new(regex).map_err(buck2_error::Error::from)?,
+                fancy_regex::Regex::new(regex).map_err(bz_error::Error::from)?,
             )),
         }
     }

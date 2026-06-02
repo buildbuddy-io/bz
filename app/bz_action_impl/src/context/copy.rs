@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
-use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_execute::execute::request::OutputType;
-use buck2_hash::buck_indexset;
+use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use bz_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_execute::execute::request::OutputType;
+use bz_hash::buck_indexset;
 use dupe::OptionDupedExt;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
@@ -35,7 +35,7 @@ fn create_dir_tree<'v>(
     srcs: UnpackDictEntries<&'v str, ValueAsInputArtifactLike<'v>>,
     copy: CopyMode,
     has_content_based_path: Option<bool>,
-) -> buck2_error::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+) -> bz_error::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
     let action = UnregisteredSymlinkedDirAction::new(copy, srcs)?;
     let unioned_associated_artifacts = action.unioned_associated_artifacts();
 
@@ -55,7 +55,7 @@ fn copy_file_impl<'v>(
     copy: CopyMode,
     output_type: OutputType,
     has_content_based_path: Option<bool>,
-) -> buck2_error::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+) -> bz_error::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
     let src = src.0;
 
     let artifact = src.get_artifact_group()?;
@@ -161,8 +161,8 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
         let use_exec_root_for_source = use_exec_root_for_source.into_option().unwrap_or(false);
 
         if target_file.is_some() == target_path.is_some() {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Exactly one of `target_file` or `target_path` is required"
             )
             .into());
@@ -170,8 +170,8 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
 
         if let Some(target_path) = target_path {
             if is_executable {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "`is_executable` cannot be True when using `target_path`"
                 )
                 .into());
@@ -180,8 +180,8 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
                 && target_type != "file"
                 && target_type != "directory"
             {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "`target_type` must be one of `file` or `directory`"
                 )
                 .into());
@@ -210,8 +210,8 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
         }
 
         if target_type.is_some() {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "`target_type` cannot be used with `target_file`"
             )
             .into());

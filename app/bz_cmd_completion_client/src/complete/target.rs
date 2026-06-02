@@ -10,26 +10,26 @@
 
 use std::sync::Arc;
 
-use buck2_cli_proto::ClientContext;
-use buck2_cli_proto::new_generic::CompleteRequest;
-use buck2_cli_proto::new_generic::NewGenericRequest;
-use buck2_cli_proto::new_generic::NewGenericResponse;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::command_outcome::CommandOutcome;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::target_cfg::TargetCfgOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::FlushingBuckdClient;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_common::invocation_roots::InvocationRoots;
-use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
-use buck2_fs::working_dir::AbsWorkingDir;
+use bz_cli_proto::ClientContext;
+use bz_cli_proto::new_generic::CompleteRequest;
+use bz_cli_proto::new_generic::NewGenericRequest;
+use bz_cli_proto::new_generic::NewGenericResponse;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::command_outcome::CommandOutcome;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::target_cfg::TargetCfgOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::FlushingBuckdClient;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_common::invocation_roots::InvocationRoots;
+use bz_common::legacy_configs::cells::BuckConfigBasedCells;
+use bz_fs::working_dir::AbsWorkingDir;
 use futures::FutureExt;
 use futures::future::LocalBoxFuture;
 
@@ -126,7 +126,7 @@ impl<'a> TargetCompleter<'a> {
         cwd: &AbsWorkingDir,
         roots: &'a InvocationRoots,
         target_resolver: &'a mut dyn TargetResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let cell_configs =
             Arc::new(BuckConfigBasedCells::parse_with_config_args(&roots.project_root, &[]).await?);
         Ok(Self {

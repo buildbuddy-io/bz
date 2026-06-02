@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::buck2_error;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::bz_error;
 use futures::stream;
 use futures::stream::BoxStream;
 use futures::stream::StreamExt;
@@ -47,7 +47,7 @@ impl Materializer for NoDiskMaterializer {
     async fn declare_existing(
         &self,
         _artifacts: Vec<DeclareArtifactPayload>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // Nothing to do, we don't keep track of state;
         Ok(())
     }
@@ -58,7 +58,7 @@ impl Materializer for NoDiskMaterializer {
         _value: ArtifactValue,
         _srcs: Vec<CopiedArtifact>,
         _configuration_path: Option<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
@@ -66,7 +66,7 @@ impl Materializer for NoDiskMaterializer {
         &self,
         _info: Arc<CasDownloadInfo>,
         _artifacts: Vec<DeclareArtifactPayload>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
@@ -75,29 +75,29 @@ impl Materializer for NoDiskMaterializer {
         _path: ProjectRelativePathBuf,
         _info: HttpDownloadInfo,
         _configuration_path: Option<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
     async fn declare_match(
         &self,
         _artifacts: Vec<(ProjectRelativePathBuf, ArtifactValue)>,
-    ) -> buck2_error::Result<DeclareMatchOutcome> {
+    ) -> bz_error::Result<DeclareMatchOutcome> {
         // This materializer does not keep track of state
         Ok(DeclareMatchOutcome::NotMatch)
     }
 
-    async fn has_artifact_at(&self, _path: ProjectRelativePathBuf) -> buck2_error::Result<bool> {
+    async fn has_artifact_at(&self, _path: ProjectRelativePathBuf) -> bz_error::Result<bool> {
         // This materializer does not keep track of state
         Ok(false)
     }
 
     async fn declare_write<'a>(
         &self,
-        _gen: Box<dyn FnOnce() -> buck2_error::Result<Vec<WriteRequest>> + Send + 'a>,
-    ) -> buck2_error::Result<Vec<ArtifactValue>> {
-        Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        _gen: Box<dyn FnOnce() -> bz_error::Result<Vec<WriteRequest>> + Send + 'a>,
+    ) -> bz_error::Result<Vec<ArtifactValue>> {
+        Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "NoDiskMaterializer cannot write"
         ))
     }
@@ -105,28 +105,28 @@ impl Materializer for NoDiskMaterializer {
     async fn invalidate_many(
         &self,
         _paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
     async fn materialize_many(
         &self,
         artifact_paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<BoxStream<'static, Result<(), MaterializationError>>> {
+    ) -> bz_error::Result<BoxStream<'static, Result<(), MaterializationError>>> {
         Ok(stream::iter(artifact_paths.into_iter().map(|_| Ok(()))).boxed())
     }
 
     async fn try_materialize_final_artifact(
         &self,
         _artifact_path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         Ok(false)
     }
 
     async fn get_materialized_file_paths(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<Vec<Result<ProjectRelativePathBuf, ArtifactNotMaterializedReason>>>
+    ) -> bz_error::Result<Vec<Result<ProjectRelativePathBuf, ArtifactNotMaterializedReason>>>
     {
         Ok(paths.into_map(Ok))
     }
@@ -135,7 +135,7 @@ impl Materializer for NoDiskMaterializer {
         &self,
         paths: Vec<ProjectRelativePathBuf>,
         _fetch_root_artifact_entries_for_subpaths: bool,
-    ) -> buck2_error::Result<
+    ) -> bz_error::Result<
         Vec<
             Option<(
                 ProjectRelativePathBuf,

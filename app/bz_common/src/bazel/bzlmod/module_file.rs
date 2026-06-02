@@ -164,7 +164,7 @@ fn bzlmod_module_dialect() -> Dialect {
         enable_types: DialectTypes::Disable,
         enable_load_reexport: false,
         enable_top_level_stmt: false,
-        enable_f_strings: buck2_core::is_open_source(),
+        enable_f_strings: bz_core::is_open_source(),
         ..Dialect::Standard
     }
 }
@@ -172,9 +172,9 @@ fn bzlmod_module_dialect() -> Dialect {
 pub(super) fn compile_bzlmod_module_file(
     module_file: String,
     module_text: String,
-) -> buck2_error::Result<BzlmodCompiledModuleFile> {
+) -> bz_error::Result<BzlmodCompiledModuleFile> {
     let ast = AstModule::parse(&module_file, module_text.clone(), &bzlmod_module_dialect())
-        .map_err(|error| buck2_error!(buck2_error::ErrorTag::Input, "{}", error))
+        .map_err(|error| bz_error!(bz_error::ErrorTag::Input, "{}", error))
         .with_buck_error_context(|| format!("Error parsing `{module_file}` as MODULE.bazel"))?;
     let includes = bzlmod_module_includes_from_ast(&module_file, &ast)?;
     Ok(BzlmodCompiledModuleFile {
@@ -188,7 +188,7 @@ pub(super) fn compile_bzlmod_module_file(
 pub(super) fn eval_bzlmod_module_file(
     compiled: &BzlmodCompiledModuleFile,
     options: BzlmodModuleEvalOptions,
-) -> buck2_error::Result<BzlmodEvaluatedModuleFile> {
+) -> bz_error::Result<BzlmodEvaluatedModuleFile> {
     let context = BzlmodModuleEvalContext::new(compiled.module_file.clone(), options);
     Module::with_temp_heap(|module| {
         let globals = bzlmod_module_globals();
@@ -197,7 +197,7 @@ pub(super) fn eval_bzlmod_module_file(
         eval.eval_module(compiled.ast.clone(), &globals)?;
         starlark::Result::Ok(())
     })
-    .map_err(|error| buck2_error!(buck2_error::ErrorTag::Input, "{}", error))
+    .map_err(|error| bz_error!(bz_error::ErrorTag::Input, "{}", error))
     .with_buck_error_context(|| {
         format!(
             "Error evaluating `{}` as MODULE.bazel",
@@ -210,7 +210,7 @@ pub(super) fn eval_bzlmod_module_file(
 fn bzlmod_module_includes_from_ast(
     module_file: &str,
     ast: &AstModule,
-) -> buck2_error::Result<Vec<String>> {
+) -> bz_error::Result<Vec<String>> {
     let mut includes = Vec::new();
     let mut include_was_assigned = false;
     bzlmod_validate_stmt_for_includes(
@@ -227,7 +227,7 @@ fn bzlmod_validate_stmt_for_includes(
     stmt: &AstStmt,
     include_was_assigned: &mut bool,
     includes: &mut Vec<String>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match &stmt.node {
         StmtP::Statements(stmts) => {
             for stmt in stmts {
@@ -267,36 +267,36 @@ fn bzlmod_validate_stmt_for_includes(
             bzlmod_validate_expr_for_module_file(module_file, expr, *include_was_assigned)?;
         }
         StmtP::If(..) | StmtP::IfElse(..) => {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid MODULE.bazel syntax in `{}`: `if` statements are not allowed",
                 module_file
             ));
         }
         StmtP::For(..) => {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid MODULE.bazel syntax in `{}`: `for` statements are not allowed",
                 module_file
             ));
         }
         StmtP::Def(..) => {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid MODULE.bazel syntax in `{}`: functions may not be defined",
                 module_file
             ));
         }
         StmtP::Return(..) => {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid MODULE.bazel syntax in `{}`: return statements are not allowed",
                 module_file
             ));
         }
         StmtP::Load(_) => {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid MODULE.bazel syntax in `{}`: `load` statements may not be used",
                 module_file
             ));
@@ -310,11 +310,11 @@ fn bzlmod_validate_expr_for_module_file(
     module_file: &str,
     expr: &AstExpr,
     include_was_assigned: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match &expr.node {
         ExprP::Identifier(ident) if !include_was_assigned && ident.ident == "include" => {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid MODULE.bazel syntax in `{}`: the `include` directive must be called directly at the top level",
                 module_file
             ));
@@ -393,8 +393,8 @@ fn bzlmod_validate_expr_for_module_file(
             }
         }
         ExprP::Lambda(_) => {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid MODULE.bazel syntax in `{}`: functions may not be defined",
                 module_file
             ));
@@ -408,7 +408,7 @@ fn bzlmod_validate_for_clause_for_module_file(
     module_file: &str,
     clause: &ForClauseP<AstNoPayload>,
     include_was_assigned: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     bzlmod_validate_assign_target_for_include(module_file, &clause.var, include_was_assigned)?;
     bzlmod_validate_expr_for_module_file(module_file, &clause.over, include_was_assigned)
 }
@@ -417,7 +417,7 @@ fn bzlmod_validate_clause_for_module_file(
     module_file: &str,
     clause: &ClauseP<AstNoPayload>,
     include_was_assigned: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match clause {
         ClauseP::For(clause) => {
             bzlmod_validate_for_clause_for_module_file(module_file, clause, include_was_assigned)
@@ -432,7 +432,7 @@ fn bzlmod_validate_assign_target_for_include(
     module_file: &str,
     target: &AstAssignTarget,
     include_was_assigned: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if include_was_assigned {
         return Ok(());
     }
@@ -450,8 +450,8 @@ fn bzlmod_validate_assign_target_for_include(
             bzlmod_validate_expr_for_module_file(module_file, base, include_was_assigned)?;
         }
         AssignTargetP::Identifier(ident) if ident.ident == "include" => {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid MODULE.bazel syntax in `{}`: the `include` directive must be called directly at the top level",
                 module_file
             ));
@@ -464,19 +464,19 @@ fn bzlmod_validate_assign_target_for_include(
 fn bzlmod_validate_call_args(
     module_file: &str,
     args: &CallArgsP<AstNoPayload>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for arg in &args.args {
         match &arg.node {
             ArgumentP::Args(_) => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Invalid MODULE.bazel syntax in `{}`: *args arguments are not allowed",
                     module_file
                 ));
             }
             ArgumentP::KwArgs(value) if !matches!(value.node, ExprP::Dict(_)) => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Invalid MODULE.bazel syntax in `{}`: **kwargs arguments must be a literal dict",
                     module_file
                 ));
@@ -490,24 +490,24 @@ fn bzlmod_validate_call_args(
 fn bzlmod_include_arg(
     module_file: &str,
     args: &CallArgsP<AstNoPayload>,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let [arg] = args.args.as_slice() else {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid MODULE.bazel syntax in `{}`: include() must be called with exactly one positional string literal",
             module_file
         ));
     };
     let ArgumentP::Positional(expr) = &arg.node else {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid MODULE.bazel syntax in `{}`: include() must be called with exactly one positional string literal",
             module_file
         ));
     };
     let ExprP::Literal(AstLiteral::String(label)) = &expr.node else {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid MODULE.bazel syntax in `{}`: include() must be called with exactly one positional string literal",
             module_file
         ));
@@ -527,18 +527,18 @@ fn bzlmod_assign_target_is_identifier(target: &AstAssignTarget, name: &str) -> b
 pub(super) fn bzlmod_include_label_to_path(
     module_file: &str,
     label: &str,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     if !label.starts_with("//") {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "bad include label `{}` in `{}`: include() must be called with repo-relative labels starting with `//`",
             label,
             module_file
         ));
     }
     let path = module_include_to_path(module_file, label).ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error!(
+            bz_error::ErrorTag::Input,
             "bad include label `{}` in `{}`: invalid repo-relative label",
             label,
             module_file
@@ -546,16 +546,16 @@ pub(super) fn bzlmod_include_label_to_path(
     })?;
     let basename = path.rsplit('/').next().unwrap_or(path.as_str());
     if !basename.ends_with(".MODULE.bazel") {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "bad include label `{}` in `{}`: the file to be included must have a name ending in `.MODULE.bazel`",
             label,
             module_file
         ));
     }
     if basename.starts_with('.') {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "bad include label `{}` in `{}`: the name of the file to be included must not start with `.`",
             label,
             module_file
@@ -596,7 +596,7 @@ fn bzlmod_module_globals() -> Globals {
 }
 
 fn bzlmod_starlark_error(message: impl fmt::Display) -> starlark::Error {
-    buck2_error!(buck2_error::ErrorTag::Input, "{}", message).into()
+    bz_error!(bz_error::ErrorTag::Input, "{}", message).into()
 }
 
 fn bzlmod_eval_context<'v, 'a, 'e>(

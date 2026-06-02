@@ -10,22 +10,22 @@
 
 use std::sync::Arc;
 
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::soft_error;
-use buck2_directory::directory::directory_ref::DirectoryRef;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_execute::materialize::materializer::ArtifactNotMaterializedReason;
-use buck2_execute::materialize::materializer::CasDownloadInfo;
-use buck2_execute::materialize::materializer::CopiedArtifact;
-use buck2_execute::materialize::materializer::HttpDownloadInfo;
-use buck2_execute::materialize::utils::dynamic_priority_handle::DynamicPriorityHandle;
-use buck2_execute::output_size::OutputSize;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::soft_error;
+use bz_directory::directory::directory_ref::DirectoryRef;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_execute::materialize::materializer::ArtifactNotMaterializedReason;
+use bz_execute::materialize::materializer::CasDownloadInfo;
+use bz_execute::materialize::materializer::CopiedArtifact;
+use bz_execute::materialize::materializer::HttpDownloadInfo;
+use bz_execute::materialize::utils::dynamic_priority_handle::DynamicPriorityHandle;
+use bz_execute::output_size::OutputSize;
 use chrono::DateTime;
 use chrono::Utc;
 use derive_more::Display;
@@ -45,7 +45,7 @@ use crate::sqlite::materializer_db::MaterializerStateSqliteDb;
 pub(crate) type MaterializingFuture =
     Shared<BoxFuture<'static, Result<(), SharedMaterializingError>>>;
 /// A future that is cleaning paths on a separate task spawned by the materializer
-pub(crate) type CleaningFuture = Shared<BoxFuture<'static, buck2_error::Result<()>>>;
+pub(crate) type CleaningFuture = Shared<BoxFuture<'static, bz_error::Result<()>>>;
 
 #[derive(Clone)]
 pub(crate) enum ProcessingFuture {
@@ -204,21 +204,21 @@ pub enum ArtifactMaterializationMethod {
 }
 
 pub(crate) trait MaterializationMethodToProto {
-    fn to_proto(&self) -> buck2_data::MaterializationMethod;
+    fn to_proto(&self) -> bz_data::MaterializationMethod;
 }
 
 impl MaterializationMethodToProto for ArtifactMaterializationMethod {
-    fn to_proto(&self) -> buck2_data::MaterializationMethod {
+    fn to_proto(&self) -> bz_data::MaterializationMethod {
         match self {
             ArtifactMaterializationMethod::LocalCopy { .. } => {
-                buck2_data::MaterializationMethod::LocalCopy
+                bz_data::MaterializationMethod::LocalCopy
             }
             ArtifactMaterializationMethod::CasDownload { .. } => {
-                buck2_data::MaterializationMethod::CasDownload
+                bz_data::MaterializationMethod::CasDownload
             }
-            ArtifactMaterializationMethod::Write { .. } => buck2_data::MaterializationMethod::Write,
+            ArtifactMaterializationMethod::Write { .. } => bz_data::MaterializationMethod::Write,
             ArtifactMaterializationMethod::HttpDownload { .. } => {
-                buck2_data::MaterializationMethod::HttpDownload
+                bz_data::MaterializationMethod::HttpDownload
             }
             #[cfg(test)]
             ArtifactMaterializationMethod::Test => unimplemented!(),
@@ -379,7 +379,7 @@ impl ArtifactTree {
         &mut self,
         paths: Vec<ProjectRelativePathBuf>,
         sqlite_db: Option<&mut MaterializerStateSqliteDb>,
-    ) -> buck2_error::Result<InvalidationResult> {
+    ) -> bz_error::Result<InvalidationResult> {
         let mut invalidated_paths = Vec::new();
         let mut futs = Vec::new();
 
@@ -394,10 +394,10 @@ impl ArtifactTree {
 
         #[cfg(test)]
         {
-            use buck2_error::buck2_error;
+            use bz_error::bz_error;
             for path in &invalidated_paths {
                 if path.as_str() == "test/invalidate/failure" {
-                    return Err(buck2_error!(buck2_error::ErrorTag::Tier0, "Injected error"));
+                    return Err(bz_error!(bz_error::ErrorTag::Tier0, "Injected error"));
                 }
             }
         }

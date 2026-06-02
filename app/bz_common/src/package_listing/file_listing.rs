@@ -9,8 +9,8 @@
  */
 
 use allocative::Allocative;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_util::arc_str::ArcS;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_util::arc_str::ArcS;
 use dupe::Dupe;
 use pagable::Pagable;
 use serde::Deserialize;
@@ -90,7 +90,7 @@ impl PackageFileListing {
 }
 
 pub mod testing {
-    use buck2_core::package::package_relative_path::PackageRelativePath;
+    use bz_core::package::package_relative_path::PackageRelativePath;
     use starlark_map::sorted_set::SortedSet;
 
     use crate::package_listing::file_listing::PackageFileListing;

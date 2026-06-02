@@ -11,7 +11,7 @@
 use std::io::Write;
 use std::sync::Arc;
 
-use buck2_events::dispatch::console_message;
+use bz_events::dispatch::console_message;
 use starlark::eval::Evaluator;
 use starlark::values::ProvidesStaticType;
 
@@ -35,7 +35,7 @@ pub(crate) struct BxlEvalExtra<'d> {
     eval_extra_type: BxlEvalExtraType,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum BxlScopeError {
     #[error("This function can only be called from Bxl")]
@@ -76,7 +76,7 @@ impl<'d> BxlEvalExtra<'d> {
 
     pub(crate) fn from_context<'s, 'v, 'a>(
         eval: &'s mut Evaluator<'v, 'a, 'd>,
-    ) -> buck2_error::Result<&'s mut BxlEvalExtra<'d>> {
+    ) -> bz_error::Result<&'s mut BxlEvalExtra<'d>> {
         match &mut eval.extra_mut {
             Some(extra) => extra.downcast_mut::<BxlEvalExtra>(),
             None => None,
@@ -86,7 +86,7 @@ impl<'d> BxlEvalExtra<'d> {
 }
 
 impl<'e> ErrorPrinter for BxlEvalExtra<'e> {
-    fn print_to_error_stream(&self, msg: String) -> buck2_error::Result<()> {
+    fn print_to_error_stream(&self, msg: String) -> bz_error::Result<()> {
         match &self.eval_extra_type {
             BxlEvalExtraType::Root { stream_state } => writeln!(stream_state.error(), "{msg}")?,
             BxlEvalExtraType::Dynamic => console_message(msg),

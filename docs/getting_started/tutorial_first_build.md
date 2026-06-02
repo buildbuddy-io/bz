@@ -39,13 +39,13 @@ We will only use a few basics of Rust.
 <FbInternalOnly>
 
 First, we need a place for our project files. We will put it in
-`fbcode/scripts/$USER/buck2_lab`
+`fbcode/scripts/$USER/bz_lab`
 
 1. Create a new directory. In fbsource root
 
 ```bash
-mkdir -p fbcode/scripts/$USER/buck2_lab
-cd fbcode/scripts/$USER/buck2_lab
+mkdir -p fbcode/scripts/$USER/bz_lab
+cd fbcode/scripts/$USER/bz_lab
 ```
 
 </FbInternalOnly>
@@ -56,19 +56,19 @@ First, we need to create a new buck2 project directory and set up a folder to
 put all our files in.
 
 1. Create a new buck2 project directory and create a new directory named
-   `buck2_lab` inside it.
+   `bz_lab` inside it.
 
 ```bash
 buck2 init hello_world
 
-mkdir hello_world/buck2_lab
+mkdir hello_world/bz_lab
 
-cd hello_world/buck2_lab
+cd hello_world/bz_lab
 ```
 
 </OssOnly>
 
-2. Inside `buck2_lab`, create another directory named `greeter_bin`, this is
+2. Inside `bz_lab`, create another directory named `greeter_bin`, this is
    where all files of our Buck2 binary package will be stored.
 
 ```bash
@@ -87,7 +87,7 @@ Our project structure should look like this:
 <FbInternalOnly>
 
 ```
-fbcode/scripts/$USER/buck2_lab
+fbcode/scripts/$USER/bz_lab
 └── greeter_bin
     └── src
 ```
@@ -97,7 +97,7 @@ fbcode/scripts/$USER/buck2_lab
 <OssOnly>
 
 ```
-buck2_lab
+bz_lab
 └── greeter_bin
     └── src
 ```
@@ -171,7 +171,7 @@ for this step! ):
 Our project structure should look like this:
 
 ```
-buck2_lab
+bz_lab
 └── greeter_bin
     ├── BUCK
     └── src
@@ -188,7 +188,7 @@ With our Rust code and BUCK file in place, let's build the application!
 2. Run the following command:
 
 ```bash
-buck2 build fbcode//scripts/$USER/buck2_lab/greeter_bin:main --show-output
+buck2 build fbcode//scripts/$USER/bz_lab/greeter_bin:main --show-output
 ```
 
 </FbInternalOnly>
@@ -216,7 +216,7 @@ buck2 build :main --show-output
 ```
 ...
 BUILD SUCCEEDED
-fbcode//scripts/$USER/buck2_lab/greeter_bin:main buck-out/v2/gen/fbcode/c32808b9d4f0fdd0/scripts/$USER/buck2_lab/greeter_bin/__main__/main
+fbcode//scripts/$USER/bz_lab/greeter_bin:main buck-out/v2/gen/fbcode/c32808b9d4f0fdd0/scripts/$USER/bz_lab/greeter_bin/__main__/main
 ```
 
 </FbInternalOnly>
@@ -226,14 +226,14 @@ fbcode//scripts/$USER/buck2_lab/greeter_bin:main buck-out/v2/gen/fbcode/c32808b9
 ```
 ...
 BUILD SUCCEEDED
-root//buck2_lab/greeter_bin:main /.../buck2_lab/buck-out/v2/gen/root/200212f73efcd57d/buck2_lab/greeter_bin/__main__/main
+root//bz_lab/greeter_bin:main /.../bz_lab/buck-out/v2/gen/root/200212f73efcd57d/bz_lab/greeter_bin/__main__/main
 ```
 
 </OssOnly>
 
 export const TARGET_NAME = isInternal() ?
-<code>fbcode//scripts/$USER/buck2_lab/greeter_bin:main</code> :
-<code>root//buck2_lab/greeter_bin:main</code>;
+<code>fbcode//scripts/$USER/bz_lab/greeter_bin:main</code> :
+<code>root//bz_lab/greeter_bin:main</code>;
 
 - `BUILD SUCCEEDED` indicates that Buck2 successfully built our target.
 - {TARGET_NAME} is the full target label name of our target.
@@ -254,7 +254,7 @@ Since our target is a runnable target, we can run it by `buck2 run`
 1. In your terminal (still in the fbsource root directory), execute:
 
 ```bash
-buck2 run fbcode//scripts/$USER/buck2_lab/greeter_bin:main
+buck2 run fbcode//scripts/$USER/bz_lab/greeter_bin:main
 ```
 
 </FbInternalOnly>
@@ -292,7 +292,7 @@ targets you've defined.
    run:
 
 ```bash
-buck2 targets fbcode//scripts/$USER/buck2_lab/greeter_bin:
+buck2 targets fbcode//scripts/$USER/bz_lab/greeter_bin:
 ```
 
 </FbInternalOnly>
@@ -315,7 +315,7 @@ This will show all the targets we defined,
 <FbInternalOnly>
 
 ```
-fbcode//scripts/$USER/buck2_lab/greeter_bin:main
+fbcode//scripts/$USER/bz_lab/greeter_bin:main
 ... other targets might be listed here ...
 ```
 
@@ -327,7 +327,7 @@ just focus on the `main` target.
 <OssOnly>
 
 ```
-root//buck2_lab/greeter_bin:main
+root//bz_lab/greeter_bin:main
 ```
 
 </OssOnly>

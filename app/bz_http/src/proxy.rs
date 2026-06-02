@@ -11,7 +11,7 @@
 use std::net::IpAddr;
 use std::str::FromStr;
 
-use buck2_error::BuckErrorContext;
+use bz_error::BuckErrorContext;
 use http::Uri;
 use http::uri::InvalidUri;
 use http::uri::PathAndQuery;
@@ -22,27 +22,27 @@ use ipnetwork::IpNetwork;
 
 /// Lookup environment variable and return string value. Checks first for uppercase
 /// and falls back to lowercase if unset.
-fn env_to_string(env: &'static str) -> buck2_error::Result<Option<String>> {
+fn env_to_string(env: &'static str) -> bz_error::Result<Option<String>> {
     std::env::var_os(env)
         .or_else(|| std::env::var_os(env.to_lowercase()))
         .map(|s| s.into_string())
         .transpose()
         .map_err(|original| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "Invalid utf8 string: '{:?}'",
                 original
             )
         })
 }
 
-fn noproxy_from_env(scheme: Scheme) -> buck2_error::Result<Option<NoProxy>> {
+fn noproxy_from_env(scheme: Scheme) -> bz_error::Result<Option<NoProxy>> {
     Ok(env_to_string("NO_PROXY")?.map(|no_proxy| NoProxy::new(scheme, no_proxy)))
 }
 
 /// Returns a hyper_http_proxy::Proxy struct that proxies connections to the uri at
 /// $HTTPS_PROXY (or $https_proxy if the former is unset). Respects $NO_PROXY.
-pub(super) fn https_proxy_from_env() -> buck2_error::Result<Option<Proxy>> {
+pub(super) fn https_proxy_from_env() -> bz_error::Result<Option<Proxy>> {
     if let Some(https_proxy) = env_to_string("HTTPS_PROXY")? {
         let uri: DefaultSchemeUri = https_proxy
             .parse()
@@ -62,7 +62,7 @@ pub(super) fn https_proxy_from_env() -> buck2_error::Result<Option<Proxy>> {
 
 /// Returns a hyper_http_proxy::Proxy struct that proxies connections to the uri at
 /// $HTTP_PROXY (or $http_proxy if the former is unset). Respects $NO_PROXY.
-pub(super) fn http_proxy_from_env() -> buck2_error::Result<Option<Proxy>> {
+pub(super) fn http_proxy_from_env() -> bz_error::Result<Option<Proxy>> {
     if let Some(http_proxy) = env_to_string("HTTP_PROXY")? {
         let uri: DefaultSchemeUri = http_proxy
             .parse()

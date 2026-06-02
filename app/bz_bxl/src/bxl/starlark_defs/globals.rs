@@ -10,8 +10,8 @@
 
 //! Starlark globals for BXL.
 
-use buck2_build_api::bxl::select::register_select_types;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BXL_GLOBALS;
+use bz_build_api::bxl::select::register_select_types;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BXL_GLOBALS;
 use starlark::environment::GlobalsBuilder;
 
 use crate::bxl::starlark_defs::bxl_function::register_bxl_main_function;

@@ -10,13 +10,13 @@
 
 use std::sync::Arc;
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_core::logging::LogConfigurationReloadHandle;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_core::logging::LogConfigurationReloadHandle;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 use clap::ArgGroup;
 
 #[cfg(unix)]
@@ -52,7 +52,7 @@ impl ForkserverCommand {
         log_reload_handle: Arc<dyn LogConfigurationReloadHandle>,
     ) -> ExitResult {
         let state_dir = AbsNormPathBuf::from(self.state_dir)?;
-        fs_util::create_dir_all(&state_dir).map_err(buck2_error::Error::from)?;
+        fs_util::create_dir_all(&state_dir).map_err(bz_error::Error::from)?;
         events_ctx.log_invocation_record = false;
 
         #[cfg(unix)]
@@ -67,7 +67,7 @@ impl ForkserverCommand {
                 .enable_all()
                 .build()?;
 
-            rt.block_on(buck2_forkserver::command::run_forkserver(
+            rt.block_on(bz_forkserver::command::run_forkserver(
                 self.fd,
                 self.socket_path,
                 log_reload_handle,

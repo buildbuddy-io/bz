@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_error::internal_error;
-use buck2_events::BuckEvent;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_error::internal_error;
+use bz_events::BuckEvent;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_wrapper_common::invocation_id::TraceId;
 use chrono::DateTime;
 use chrono::Utc;
 use futures::StreamExt;
@@ -29,7 +29,7 @@ pub(crate) fn get_logfile_name(
     event: &BuckEvent,
     encoding: Encoding,
     command_name: &str,
-) -> buck2_error::Result<FileNameBuf> {
+) -> bz_error::Result<FileNameBuf> {
     let time_str = {
         let datetime: DateTime<Utc> = event.timestamp().into();
         datetime.format("%Y%m%d-%H%M%S").to_string()
@@ -57,21 +57,21 @@ pub(crate) async fn remove_old_logs(logdir: &AbsNormPath, retained_event_logs: u
 }
 
 /// List files in logdir, ordered from oldest to newest.
-fn get_files_in_log_dir(logdir: &AbsNormPath) -> buck2_error::Result<Vec<AbsNormPathBuf>> {
+fn get_files_in_log_dir(logdir: &AbsNormPath) -> bz_error::Result<Vec<AbsNormPathBuf>> {
     Ok(fs_util::read_dir_if_exists(logdir)?
         .map(sort_logs)
         .unwrap_or_default())
 }
 
 /// List logs in logdir, ordered from oldest to newest.
-pub fn get_local_logs(logdir: &AbsNormPath) -> buck2_error::Result<Vec<EventLogPathBuf>> {
+pub fn get_local_logs(logdir: &AbsNormPath) -> bz_error::Result<Vec<EventLogPathBuf>> {
     Ok(get_files_in_log_dir(logdir)?
         .into_iter()
         .filter_map(|path| EventLogPathBuf::infer(path.into_abs_path_buf()).ok())
         .collect())
 }
 
-fn sort_logs(dir: buck2_fs::fs_util::ReadDir) -> Vec<AbsNormPathBuf> {
+fn sort_logs(dir: bz_fs::fs_util::ReadDir) -> Vec<AbsNormPathBuf> {
     let mut logfiles = dir
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().ok().is_some_and(|ft| ft.is_file()))
@@ -92,7 +92,7 @@ fn sort_logs(dir: buck2_fs::fs_util::ReadDir) -> Vec<AbsNormPathBuf> {
 pub fn find_log_by_trace_id(
     log_dir: &AbsNormPath,
     trace_id: &TraceId,
-) -> buck2_error::Result<Option<EventLogPathBuf>> {
+) -> bz_error::Result<Option<EventLogPathBuf>> {
     let trace_id = trace_id.to_string();
     Ok(get_local_logs(log_dir)?.into_iter().rev().find(|log| {
         let log_name = log.path.file_name().unwrap();
@@ -104,7 +104,7 @@ pub fn find_log_by_trace_id(
 pub fn do_find_log_by_trace_id(
     log_dir: &AbsNormPath,
     trace_id: &TraceId,
-) -> buck2_error::Result<EventLogPathBuf> {
+) -> bz_error::Result<EventLogPathBuf> {
     find_log_by_trace_id(log_dir, trace_id)?
         .ok_or_else(|| internal_error!("Error finding log by trace id"))
 }
@@ -112,7 +112,7 @@ pub fn do_find_log_by_trace_id(
 pub fn retrieve_nth_recent_log(
     paths: &InvocationPaths,
     n: usize,
-) -> buck2_error::Result<EventLogPathBuf> {
+) -> bz_error::Result<EventLogPathBuf> {
     let log_dir = paths.log_dir();
     let mut logfiles = get_local_logs(&log_dir)?;
     logfiles.reverse(); // newest first
@@ -126,7 +126,7 @@ pub fn retrieve_nth_recent_log(
     Ok(chosen.clone())
 }
 
-pub fn retrieve_all_logs(paths: &InvocationPaths) -> buck2_error::Result<Vec<EventLogPathBuf>> {
+pub fn retrieve_all_logs(paths: &InvocationPaths) -> bz_error::Result<Vec<EventLogPathBuf>> {
     let log_dir = paths.log_dir();
     get_local_logs(&log_dir)
 }
@@ -138,14 +138,14 @@ mod tests {
     use std::time::Duration;
     use std::time::SystemTime;
 
-    use buck2_fs::fs_util::uncategorized as fs_util;
-    use buck2_fs::paths::abs_norm_path::AbsNormPath;
-    use buck2_fs::paths::abs_path::AbsPath;
+    use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::paths::abs_norm_path::AbsNormPath;
+    use bz_fs::paths::abs_path::AbsPath;
 
     use super::*;
 
     #[tokio::test]
-    async fn test_remove_old_logs_with_mix_of_files_and_folders() -> buck2_error::Result<()> {
+    async fn test_remove_old_logs_with_mix_of_files_and_folders() -> bz_error::Result<()> {
         let logdir = tempfile::tempdir()?;
         let logdir_path = AbsPath::new(logdir.path())?;
         let logdir_norm = AbsNormPath::new(logdir_path)?;

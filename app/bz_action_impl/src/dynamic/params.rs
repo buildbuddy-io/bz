@@ -9,14 +9,14 @@
  */
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::dynamic_value::DynamicValue;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::plugins::AnalysisPlugins;
-use buck2_build_api::interpreter::rule_defs::plugins::FrozenAnalysisPlugins;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_error::internal_error;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::dynamic_value::DynamicValue;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use bz_build_api::interpreter::rule_defs::plugins::AnalysisPlugins;
+use bz_build_api::interpreter::rule_defs::plugins::FrozenAnalysisPlugins;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_error::internal_error;
 use gazebo::prelude::OptionExt;
 use starlark::any::ProvidesStaticType;
 use starlark::values::Freeze;
@@ -77,7 +77,7 @@ pub struct FrozenDynamicLambdaParams {
 impl FrozenDynamicLambdaParams {
     pub(crate) fn attributes<'v>(
         &'v self,
-    ) -> buck2_error::Result<Option<ValueOfUnchecked<'v, StructRef<'static>>>> {
+    ) -> bz_error::Result<Option<ValueOfUnchecked<'v, StructRef<'static>>>> {
         let Some(attributes) = self.attributes else {
             return Ok(None);
         };
@@ -86,7 +86,7 @@ impl FrozenDynamicLambdaParams {
 
     pub(crate) fn plugins<'v>(
         &'v self,
-    ) -> buck2_error::Result<Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>> {
+    ) -> bz_error::Result<Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>> {
         let Some(plugins) = self.plugins else {
             return Ok(None);
         };

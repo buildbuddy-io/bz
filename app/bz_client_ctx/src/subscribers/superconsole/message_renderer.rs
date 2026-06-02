@@ -13,7 +13,7 @@ use crossterm::style::Stylize;
 use superconsole::Line;
 use superconsole::Span;
 
-pub fn warning_styled(text: &str) -> buck2_error::Result<Line> {
+pub fn warning_styled(text: &str) -> bz_error::Result<Line> {
     // cross term doesn't directly define orange as a color
     let orange = Color::Rgb {
         r: (244),
@@ -65,7 +65,7 @@ pub fn render_rich_message_lines(
     header: &str,
     body: &str,
     footer: Option<&str>,
-) -> buck2_error::Result<Vec<Line>> {
+) -> bz_error::Result<Vec<Line>> {
     render_rich_message_lines_impl(header, body, footer, true)
 }
 
@@ -73,7 +73,7 @@ pub fn render_rich_message_lines_compact(
     header: &str,
     body: &str,
     footer: Option<&str>,
-) -> buck2_error::Result<Vec<Line>> {
+) -> bz_error::Result<Vec<Line>> {
     render_rich_message_lines_impl(header, body, footer, false)
 }
 
@@ -82,7 +82,7 @@ fn render_rich_message_lines_impl(
     body: &str,
     footer: Option<&str>,
     section_padding: bool,
-) -> buck2_error::Result<Vec<Line>> {
+) -> bz_error::Result<Vec<Line>> {
     const MIN_BOX_WIDTH: usize = 50;
     const MAX_BOX_WIDTH: usize = 120; // Maximum width to prevent overly wide boxes
     const SIDE_PADDING: usize = 2; // Space for single space padding on each side (║ ... ║)

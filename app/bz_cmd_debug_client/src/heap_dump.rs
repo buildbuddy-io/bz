@@ -9,20 +9,20 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::UnstableHeapDumpRequest;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::connect::BuckdProcessInfo;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_core::is_open_source;
+use bz_cli_proto::UnstableHeapDumpRequest;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::connect::BuckdProcessInfo;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::path_arg::PathArg;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_core::is_open_source;
 
 /// Write jemalloc heap profile to a file.
 ///
@@ -66,7 +66,7 @@ impl StreamingCommand for HeapDumpCommand {
                 UnstableHeapDumpRequest {
                     destination_path: path.to_str()?.to_owned(),
                     test_executor_destination_path: test_executor_path
-                        .map(|v| -> buck2_error::Result<String> { Ok(v.to_str()?.to_owned()) })
+                        .map(|v| -> bz_error::Result<String> { Ok(v.to_str()?.to_owned()) })
                         .transpose()?,
                 },
                 events_ctx,
@@ -76,7 +76,7 @@ impl StreamingCommand for HeapDumpCommand {
         let daemon_dir = ctx.paths()?.daemon_dir()?;
         let process_info = BuckdProcessInfo::load(&daemon_dir)?;
         if !is_open_source() {
-            buck2_client_ctx::eprint!(
+            bz_client_ctx::eprint!(
                 "\
                 Consider using this command to upload heap profile to Scuba:\n\
                 stackstoscuba --heap {} --heap_pid {}\n",
@@ -84,7 +84,7 @@ impl StreamingCommand for HeapDumpCommand {
                 process_info.pid()?,
             )?;
         } else {
-            buck2_client_ctx::eprintln!("Heap dump written to `{}`", path.to_str()?)?;
+            bz_client_ctx::eprintln!("Heap dump written to `{}`", path.to_str()?)?;
         }
 
         ExitResult::success()

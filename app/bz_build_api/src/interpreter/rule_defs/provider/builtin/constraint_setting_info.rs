@@ -17,12 +17,12 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_core::configuration::constraints::ConstraintKey;
-use buck2_core::configuration::constraints::ConstraintValue;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::LabelArg;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_build_api_derive::internal_provider;
+use bz_core::configuration::constraints::ConstraintKey;
+use bz_core::configuration::constraints::ConstraintValue;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::LabelArg;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
@@ -40,7 +40,7 @@ use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 
 /// Provider that signals that a target can be used as a constraint key. This is the only provider
 /// returned by a `constraint_setting()` target.

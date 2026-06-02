@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 use windows_sys::Win32::System::SystemInformation::GetSystemInfo;
 use windows_sys::Win32::System::SystemInformation::SYSTEM_INFO;
 
-pub fn page_size() -> buck2_error::Result<usize> {
+pub fn page_size() -> bz_error::Result<usize> {
     static PAGE_SIZE: OnceLock<usize> = OnceLock::new();
     PAGE_SIZE
         .get_or_try_init(|| {
@@ -26,8 +26,8 @@ pub fn page_size() -> buck2_error::Result<usize> {
             };
             let size = info.dwPageSize as usize;
             if size == 0 || !size.is_power_of_two() {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Environment,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Environment,
                     "Invalid page size from GetSystemInfo: {}",
                     size
                 ));

@@ -8,34 +8,34 @@
  * above-listed licenses.
  */
 
-use buck2_util::late_binding::LateBinding;
+use bz_util::late_binding::LateBinding;
 use starlark::environment::GlobalsBuilder;
 
-/// Globals defined in `buck2_build_api`.
+/// Globals defined in `bz_build_api`.
 pub static REGISTER_BUCK2_BUILD_API_GLOBALS: LateBinding<fn(&mut GlobalsBuilder)> =
     LateBinding::new("REGISTER_BUCK2_BUILD_API_GLOBALS");
 
-/// `__internal__`s defined in `buck2_build_api`.
+/// `__internal__`s defined in `bz_build_api`.
 pub static REGISTER_BUCK2_BUILD_API_INTERNALS: LateBinding<fn(&mut GlobalsBuilder)> =
     LateBinding::new("REGISTER_BUCK2_BUILD_API_INTERNALS");
 
-/// Globals defined in `buck2_transitions` crate.
+/// Globals defined in `bz_transitions` crate.
 pub static REGISTER_BUCK2_TRANSITION_GLOBALS: LateBinding<fn(&mut GlobalsBuilder)> =
     LateBinding::new("REGISTER_BUCK2_TRANSITION_GLOBALS");
 
-/// Globals defined in `buck2_action_impl` crate.
+/// Globals defined in `bz_action_impl` crate.
 pub static REGISTER_BUCK2_ACTION_IMPL_GLOBALS: LateBinding<fn(&mut GlobalsBuilder)> =
     LateBinding::new("REGISTER_BUCK2_ACTION_IMPL_GLOBALS");
 
-/// Globals defined in `buck2_anon_targets` crate.
+/// Globals defined in `bz_anon_targets` crate.
 pub static REGISTER_BUCK2_ANON_TARGETS_GLOBALS: LateBinding<fn(&mut GlobalsBuilder)> =
     LateBinding::new("REGISTER_BUCK2_ANON_TARGETS_GLOBALS");
 
-/// Globals defined in `buck2_bxl` crate,
+/// Globals defined in `bz_bxl` crate,
 /// which are used to create the context for `.bxl` evaluation.
 pub static REGISTER_BUCK2_BXL_GLOBALS: LateBinding<fn(&mut GlobalsBuilder)> =
     LateBinding::new("REGISTER_BUCK2_BXL_GLOBALS");
 
-/// Globals defined in `buck2_cfg_constructor` crate.
+/// Globals defined in `bz_cfg_constructor` crate.
 pub static REGISTER_BUCK2_CFG_CONSTRUCTOR_GLOBALS: LateBinding<fn(&mut GlobalsBuilder)> =
     LateBinding::new("REGISTER_BUCK2_CFG_CONSTRUCTOR_GLOBALS");

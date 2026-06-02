@@ -10,11 +10,11 @@
 
 use std::iter;
 
-use buck2_node::attrs::attr_type::tuple::TupleAttrType;
-use buck2_node::attrs::attr_type::tuple::TupleLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::attr_type::tuple::TupleAttrType;
+use bz_node::attrs::attr_type::tuple::TupleLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use dupe::IterDupedExt;
 use gazebo::prelude::SliceExt;
 use starlark::values::UnpackValue;
@@ -26,7 +26,7 @@ use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum TupleError {
     #[error("Expected tuple of at most {0} elements")]
@@ -39,7 +39,7 @@ impl AttrTypeCoerce for TupleAttrType {
         configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         let coerce = |items: &[Value]| {
             // Use comparison rather than equality below. If the tuple is too short,
             // it is implicitly extended using None.

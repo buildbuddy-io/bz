@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::attr_type::enumeration::EnumAttrType;
-use buck2_node::attrs::attr_type::string::StringLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::attr_type::enumeration::EnumAttrType;
+use bz_node::attrs::attr_type::string::StringLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use dupe::Dupe;
 use starlark::typing::Ty;
 use starlark::values::Value;
@@ -27,7 +27,7 @@ impl AttrTypeCoerce for EnumAttrType {
         _configurable: AttrIsConfigurable,
         _ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         let s = value.unpack_str_err()?;
         // Enum names in Buck can be specified upper or lower case,
         // so we normalise them to lowercase to make rule implementations easier

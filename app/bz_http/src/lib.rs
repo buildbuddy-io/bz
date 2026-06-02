@@ -10,7 +10,7 @@
 
 #![feature(error_generic_member_access)]
 
-use buck2_error::ErrorTag;
+use bz_error::ErrorTag;
 use hyper::StatusCode;
 
 mod client;
@@ -48,11 +48,11 @@ fn tag_from_status(status: StatusCode) -> Vec<ErrorTag> {
         }
         tags
     } else {
-        vec![buck2_error::ErrorTag::Http]
+        vec![bz_error::ErrorTag::Http]
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Http)]
 pub enum HttpError {
     #[error("HTTP URI Error: URI {uri} is malformed: {source:?}")]
@@ -86,7 +86,7 @@ pub enum HttpError {
     #[error("HTTP Error: Exceeded max redirects ({max_redirects}) while fetching URI: {uri}. ")]
     TooManyRedirects { uri: String, max_redirects: usize },
     #[error("HTTP: Error mutating request")]
-    MutateRequest(#[source] buck2_error::Error),
+    MutateRequest(#[source] bz_error::Error),
     #[error("HTTP: Timed out while making request to URI: {uri} after {duration} seconds.")]
     #[buck2(tier0)]
     Timeout { uri: String, duration: u64 },
@@ -104,8 +104,8 @@ impl From<http::Error> for HttpError {
     }
 }
 
-impl From<buck2_error::Error> for HttpError {
-    fn from(err: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for HttpError {
+    fn from(err: bz_error::Error) -> Self {
         Self::MutateRequest(err)
     }
 }

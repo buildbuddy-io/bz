@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::package::PackageLabel;
-use buck2_query::query::environment::AttrFmtOptions;
+use bz_core::package::PackageLabel;
+use bz_query::query::environment::AttrFmtOptions;
 
 /// Attribute formatting context (for `Display` or `Serialize`).
 pub struct AttrFmtContext {

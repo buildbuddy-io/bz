@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::actions::query::ActionQueryNode;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::unconfigured::TargetNode;
+use bz_build_api::actions::query::ActionQueryNode;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::unconfigured::TargetNode;
 use starlark::values::Heap;
 use starlark::values::Value;
 

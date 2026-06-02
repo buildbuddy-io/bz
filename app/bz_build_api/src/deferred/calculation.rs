@@ -14,12 +14,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_util::late_binding::LateBinding;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 use dupe::Dupe;
 use futures::Future;
@@ -42,20 +42,20 @@ pub static EVAL_ANON_TARGET: LateBinding<
         &'c mut DiceComputations,
         Arc<dyn BaseDeferredKeyDyn>,
     )
-        -> Pin<Box<dyn Future<Output = buck2_error::Result<AnalysisResult>> + Send + 'c>>,
+        -> Pin<Box<dyn Future<Output = bz_error::Result<AnalysisResult>> + Send + 'c>>,
 > = LateBinding::new("EVAL_ANON_TARGET");
 
 pub static GET_PROMISED_ARTIFACT: LateBinding<
     for<'c> fn(
         &'c PromiseArtifact,
         &'c mut DiceComputations,
-    ) -> Pin<Box<dyn Future<Output = buck2_error::Result<Artifact>> + Send + 'c>>,
+    ) -> Pin<Box<dyn Future<Output = bz_error::Result<Artifact>> + Send + 'c>>,
 > = LateBinding::new("GET_PROMISED_ARTIFACT");
 
 async fn lookup_deferred_inner(
     key: &BaseDeferredKey,
     dice: &mut DiceComputations<'_>,
-) -> buck2_error::Result<DeferredHolder> {
+) -> bz_error::Result<DeferredHolder> {
     match key {
         BaseDeferredKey::TargetLabel(target) => {
             let analysis = dice
@@ -83,7 +83,7 @@ async fn lookup_deferred_inner(
 pub async fn lookup_deferred_holder(
     dice: &mut DiceComputations<'_>,
     key: &DeferredHolderKey,
-) -> buck2_error::Result<DeferredHolder> {
+) -> bz_error::Result<DeferredHolder> {
     Ok(match key {
         DeferredHolderKey::Base(key) => lookup_deferred_inner(key, dice).await?,
         DeferredHolderKey::DynamicLambda(lambda) => {
@@ -105,11 +105,11 @@ impl DeferredHolder {
     pub(crate) fn lookup_transitive_set(
         &self,
         key: &TransitiveSetKey,
-    ) -> buck2_error::Result<OwnedFrozenValueTyped<FrozenTransitiveSet>> {
+    ) -> bz_error::Result<OwnedFrozenValueTyped<FrozenTransitiveSet>> {
         self.analysis_values().lookup_transitive_set(key)
     }
 
-    pub(crate) fn lookup_action(&self, key: &ActionKey) -> buck2_error::Result<ActionLookup> {
+    pub(crate) fn lookup_action(&self, key: &ActionKey) -> bz_error::Result<ActionLookup> {
         self.analysis_values().lookup_action(key)
     }
 

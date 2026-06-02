@@ -10,14 +10,14 @@
 
 use std::collections::HashMap;
 
-use buck2_build_signals::env::CriticalPathBackendName;
-use buck2_build_signals::env::NodeDuration;
-use buck2_build_signals::env::WaitingData;
-use buck2_build_signals::error::CriticalPathError;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_data::QuickUnstableE2eData;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::span::SpanId;
+use bz_build_signals::env::CriticalPathBackendName;
+use bz_build_signals::env::NodeDuration;
+use bz_build_signals::env::WaitingData;
+use bz_build_signals::error::CriticalPathError;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_data::QuickUnstableE2eData;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::span::SpanId;
 use serde::Deserialize;
 use serde::Serialize;
 use smallvec::SmallVec;

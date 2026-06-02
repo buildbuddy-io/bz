@@ -11,11 +11,11 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use starlark_map::small_map::SmallMap;
 
 use crate::sqlite::incremental_state_db::IncrementalDbState;

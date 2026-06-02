@@ -20,124 +20,124 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::actions::execute::dice_data::SetCommandExecutor;
-use buck2_build_api::actions::execute::dice_data::SetReClient;
-use buck2_build_api::actions::execute::dice_data::set_fallback_executor_config;
-use buck2_build_api::actions::impls::run_action_knobs::HasRunActionKnobs;
-use buck2_build_api::actions::impls::run_action_knobs::RunActionKnobs;
-use buck2_build_api::build::HasBuildEventSink;
-use buck2_build_api::build::HasCreateUnhashedSymlinkLock;
-use buck2_build_api::build::detailed_aggregated_metrics::dice::SetDetailedAggregatedMetricsEventsHolder;
-use buck2_build_api::build::eager::HasEagerBuildExecution;
-use buck2_build_api::build::overlap::HasBuildOverlapTracker;
-use buck2_build_api::build_signals::BuildSignalsInstaller;
-use buck2_build_api::build_signals::SetBuildSignals;
-use buck2_build_api::build_signals::create_build_signals;
-use buck2_build_api::context::SetBuildContextData;
-use buck2_build_api::keep_going::HasKeepGoing;
-use buck2_build_api::materialize::HasMaterializationQueueTracker;
-use buck2_build_api::spawner::BuckSpawner;
-use buck2_build_signals::env::CriticalPathBackendName;
-use buck2_build_signals::env::EarlyCommandTimingBuilder;
-use buck2_build_signals::env::FILE_WATCHER_WAIT;
-use buck2_build_signals::env::HasCriticalPathBackend;
-use buck2_certs::validate::CertState;
-use buck2_cli_proto::ClientContext;
-use buck2_cli_proto::ClientEnvironmentVariable;
-use buck2_cli_proto::CommonBuildOptions;
-use buck2_cli_proto::ConfigOverride;
-use buck2_cli_proto::client_context::ExitWhen;
-use buck2_cli_proto::client_context::HostArchOverride;
-use buck2_cli_proto::client_context::HostPlatformOverride;
-use buck2_cli_proto::client_context::PreemptibleWhen;
-use buck2_cli_proto::common_build_options::ExecutionStrategy;
-use buck2_cli_proto::config_override::ConfigType;
-use buck2_common::bazel::bzlmod::BZLMOD_ALLOWED_YANKED_VERSIONS_ENV;
-use buck2_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_ARCH_ENV;
-use buck2_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_NAME_ENV;
-use buck2_common::bazel::bzlmod::SetBzlmodClientEnvironment;
-use buck2_common::bazel::bzlmod::SetBzlmodRegistryInvalidation;
-use buck2_common::bazel::bzlmod::SetBzlmodRepositoryEnvironment;
-use buck2_common::bazel::bzlmod::SetBzlmodRepositoryEnvironmentData;
-use buck2_common::dice::cycles::CycleDetectorAdapter;
-use buck2_common::dice::cycles::PairDiceCycleDetector;
-use buck2_common::file_ops::dice::invalidate_changed_external_file_state;
-use buck2_common::file_ops::io::initialize_read_dir_cache;
-use buck2_common::http::SetHttpClient;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::io::trace::TracingIoProvider;
-use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
-use buck2_common::legacy_configs::file_ops::ConfigPath;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_configured::cycle::ConfiguredGraphCycleDescriptor;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_core::facebook_only;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
-use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
-use buck2_core::rollout_percentage::RolloutPercentage;
-use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
-use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::metadata;
-use buck2_events::schedule_type::SandcastleScheduleType;
-use buck2_execute::execute::blocking::SetBlockingExecutor;
-use buck2_execute::knobs::ExecutorGlobalKnobs;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::materialize::materializer::SetMaterializer;
-use buck2_execute::re::client::RemoteExecutionClient;
-use buck2_execute::re::manager::ReConnectionHandle;
-use buck2_execute::re::manager::ReConnectionObserver;
-use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
-use buck2_execute_impl::executors::worker::WorkerPool;
-use buck2_execute_impl::low_pass_filter::LowPassFilter;
-use buck2_file_watcher::mergebase::SetMergebase;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::working_dir::AbsWorkingDir;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::dice::starlark_debug::SetStarlarkDebugger;
-use buck2_interpreter::extra::InterpreterHostArchitecture;
-use buck2_interpreter::extra::InterpreterHostPlatform;
-use buck2_interpreter::extra::xcode::XcodeVersionInfo;
-use buck2_interpreter::factory::SetProfileEventListener;
-use buck2_interpreter::prelude_path::PreludePath;
-use buck2_interpreter::prelude_path::prelude_path;
-use buck2_interpreter_for_build::interpreter::configuror::BuildInterpreterConfiguror;
-use buck2_interpreter_for_build::interpreter::cycles::LoadCycleDescriptor;
-use buck2_interpreter_for_build::interpreter::interpreter_setup::setup_interpreter;
-use buck2_resource_control::HasResourceControl;
-use buck2_server_ctx::bxl::InitBxlStreamingTracker;
-use buck2_server_ctx::concurrency::DiceUpdater;
-use buck2_server_ctx::ctx::DiceAccessor;
-use buck2_server_ctx::ctx::LockedPreviousCommandData;
-use buck2_server_ctx::ctx::PrivateStruct;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::stderr_output_guard::StderrOutputGuard;
-use buck2_server_ctx::stderr_output_guard::StderrOutputWriter;
-use buck2_server_starlark_debug::BuckStarlarkDebuggerHandle;
-use buck2_server_starlark_debug::create_debugger_handle;
-use buck2_test::local_resource_registry::InitLocalResourceRegistry;
-use buck2_util::arc_str::ArcS;
-use buck2_util::system_stats::SystemMemoryStats;
-use buck2_util::truncate::truncate_container;
-use buck2_validation::enabled_optional_validations_key::SetEnabledOptionalValidations;
+use bz_build_api::actions::execute::dice_data::SetCommandExecutor;
+use bz_build_api::actions::execute::dice_data::SetReClient;
+use bz_build_api::actions::execute::dice_data::set_fallback_executor_config;
+use bz_build_api::actions::impls::run_action_knobs::HasRunActionKnobs;
+use bz_build_api::actions::impls::run_action_knobs::RunActionKnobs;
+use bz_build_api::build::HasBuildEventSink;
+use bz_build_api::build::HasCreateUnhashedSymlinkLock;
+use bz_build_api::build::detailed_aggregated_metrics::dice::SetDetailedAggregatedMetricsEventsHolder;
+use bz_build_api::build::eager::HasEagerBuildExecution;
+use bz_build_api::build::overlap::HasBuildOverlapTracker;
+use bz_build_api::build_signals::BuildSignalsInstaller;
+use bz_build_api::build_signals::SetBuildSignals;
+use bz_build_api::build_signals::create_build_signals;
+use bz_build_api::context::SetBuildContextData;
+use bz_build_api::keep_going::HasKeepGoing;
+use bz_build_api::materialize::HasMaterializationQueueTracker;
+use bz_build_api::spawner::BuckSpawner;
+use bz_build_signals::env::CriticalPathBackendName;
+use bz_build_signals::env::EarlyCommandTimingBuilder;
+use bz_build_signals::env::FILE_WATCHER_WAIT;
+use bz_build_signals::env::HasCriticalPathBackend;
+use bz_certs::validate::CertState;
+use bz_cli_proto::ClientContext;
+use bz_cli_proto::ClientEnvironmentVariable;
+use bz_cli_proto::CommonBuildOptions;
+use bz_cli_proto::ConfigOverride;
+use bz_cli_proto::client_context::ExitWhen;
+use bz_cli_proto::client_context::HostArchOverride;
+use bz_cli_proto::client_context::HostPlatformOverride;
+use bz_cli_proto::client_context::PreemptibleWhen;
+use bz_cli_proto::common_build_options::ExecutionStrategy;
+use bz_cli_proto::config_override::ConfigType;
+use bz_common::bazel::bzlmod::BZLMOD_ALLOWED_YANKED_VERSIONS_ENV;
+use bz_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_ARCH_ENV;
+use bz_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_NAME_ENV;
+use bz_common::bazel::bzlmod::SetBzlmodClientEnvironment;
+use bz_common::bazel::bzlmod::SetBzlmodRegistryInvalidation;
+use bz_common::bazel::bzlmod::SetBzlmodRepositoryEnvironment;
+use bz_common::bazel::bzlmod::SetBzlmodRepositoryEnvironmentData;
+use bz_common::dice::cycles::CycleDetectorAdapter;
+use bz_common::dice::cycles::PairDiceCycleDetector;
+use bz_common::file_ops::dice::invalidate_changed_external_file_state;
+use bz_common::file_ops::io::initialize_read_dir_cache;
+use bz_common::http::SetHttpClient;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_common::io::trace::TracingIoProvider;
+use bz_common::legacy_configs::cells::BuckConfigBasedCells;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::dice::HasInjectedLegacyConfigs;
+use bz_common::legacy_configs::file_ops::ConfigPath;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_configured::cycle::ConfiguredGraphCycleDescriptor;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_core::facebook_only;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern::ParsedPatternWithModifiers;
+use bz_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
+use bz_core::rollout_percentage::RolloutPercentage;
+use bz_core::target::label::interner::ConcurrentTargetLabelInterner;
+use bz_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::metadata;
+use bz_events::schedule_type::SandcastleScheduleType;
+use bz_execute::execute::blocking::SetBlockingExecutor;
+use bz_execute::knobs::ExecutorGlobalKnobs;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::materialize::materializer::SetMaterializer;
+use bz_execute::re::client::RemoteExecutionClient;
+use bz_execute::re::manager::ReConnectionHandle;
+use bz_execute::re::manager::ReConnectionObserver;
+use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+use bz_execute_impl::executors::worker::WorkerPool;
+use bz_execute_impl::low_pass_filter::LowPassFilter;
+use bz_file_watcher::mergebase::SetMergebase;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::working_dir::AbsWorkingDir;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::dice::starlark_debug::SetStarlarkDebugger;
+use bz_interpreter::extra::InterpreterHostArchitecture;
+use bz_interpreter::extra::InterpreterHostPlatform;
+use bz_interpreter::extra::xcode::XcodeVersionInfo;
+use bz_interpreter::factory::SetProfileEventListener;
+use bz_interpreter::prelude_path::PreludePath;
+use bz_interpreter::prelude_path::prelude_path;
+use bz_interpreter_for_build::interpreter::configuror::BuildInterpreterConfiguror;
+use bz_interpreter_for_build::interpreter::cycles::LoadCycleDescriptor;
+use bz_interpreter_for_build::interpreter::interpreter_setup::setup_interpreter;
+use bz_resource_control::HasResourceControl;
+use bz_server_ctx::bxl::InitBxlStreamingTracker;
+use bz_server_ctx::concurrency::DiceUpdater;
+use bz_server_ctx::ctx::DiceAccessor;
+use bz_server_ctx::ctx::LockedPreviousCommandData;
+use bz_server_ctx::ctx::PrivateStruct;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::stderr_output_guard::StderrOutputGuard;
+use bz_server_ctx::stderr_output_guard::StderrOutputWriter;
+use bz_server_starlark_debug::BuckStarlarkDebuggerHandle;
+use bz_server_starlark_debug::create_debugger_handle;
+use bz_test::local_resource_registry::InitLocalResourceRegistry;
+use bz_util::arc_str::ArcS;
+use bz_util::system_stats::SystemMemoryStats;
+use bz_util::truncate::truncate_container;
+use bz_validation::enabled_optional_validations_key::SetEnabledOptionalValidations;
 use dice::DiceComputations;
 use dice::DiceData;
 use dice::DiceTransactionUpdater;
@@ -164,7 +164,7 @@ use crate::profile_patterns::FileWritingProfileEventListener;
 use crate::profiling_manager::StarlarkProfilingManager;
 use crate::snapshot::SnapshotCollector;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Environment)]
 enum DaemonCommunicationError {
     #[error("Got invalid working directory `{0}`")]
@@ -203,13 +203,13 @@ impl ActionConcurrencySource {
 }
 
 fn default_action_concurrency() -> usize {
-    let base = buck2_util::threads::available_parallelism_fresh();
+    let base = bz_util::threads::available_parallelism_fresh();
     action_concurrency_from_host_headroom(
         base,
         // Match Bazel's CPU-load scheduling model: use recent CPU utilization, not
         // Unix load average, to decide whether extra local actions can start.
-        buck2_util::system_stats::system_cpu_usage(),
-        buck2_util::system_stats::system_memory_stats_detailed(),
+        bz_util::system_stats::system_cpu_usage(),
+        bz_util::system_stats::system_memory_stats_detailed(),
     )
 }
 
@@ -345,7 +345,7 @@ pub struct ServerCommandContext<'a> {
     pub(crate) sanitized_argv: Vec<String>,
 
     /// Agent context key=value pairs from --agent-context.
-    pub(crate) agent_context: Vec<buck2_data::AgentContextEntry>,
+    pub(crate) agent_context: Vec<bz_data::AgentContextEntry>,
 
     /// Client environment variables that are DICE inputs.
     client_environment: Vec<ClientEnvironmentVariable>,
@@ -373,13 +373,13 @@ impl<'a> ServerCommandContext<'a> {
         snapshot_collector: SnapshotCollector,
         cancellations: &'a CancellationContext,
         command_start: Instant,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let working_dir = AbsNormPath::new(&client_context.working_dir)?;
 
         let working_dir_project_relative = working_dir
             .strip_prefix(base_context.project_root.root())
             .map_err(|_| {
-                Into::<buck2_error::Error>::into(DaemonCommunicationError::InvalidWorkingDirectory(
+                Into::<bz_error::Error>::into(DaemonCommunicationError::InvalidWorkingDirectory(
                     client_context.working_dir.clone(),
                 ))
             })?;
@@ -404,7 +404,7 @@ impl<'a> ServerCommandContext<'a> {
                 };
 
                 self.events
-                    .instant_event(buck2_data::RemoteExecutionSessionCreated {
+                    .instant_event(bz_data::RemoteExecutionSessionCreated {
                         session_id: session_id.to_owned(),
                         experiment_name,
                         persistent_cache_mode: client.get_persistent_cache_mode(),
@@ -487,7 +487,7 @@ impl<'a> ServerCommandContext<'a> {
     async fn dice_updater<'s>(
         &'s self,
         build_signals: BuildSignalsInstaller,
-    ) -> buck2_error::Result<DiceCommandUpdater<'s, 'a>> {
+    ) -> bz_error::Result<DiceCommandUpdater<'s, 'a>> {
         let execution_strategy = self
             .build_options
             .as_ref()
@@ -595,7 +595,7 @@ impl<'a> ServerCommandContext<'a> {
     }
 
     // Called at the end of the command to perform any necessary final actions or cleanup.
-    pub(crate) async fn finalize(mut self) -> buck2_error::Result<()> {
+    pub(crate) async fn finalize(mut self) -> bz_error::Result<()> {
         self.starlark_profiling_manager.finalize()?;
         self.heartbeat_guard_handle.take().unwrap().finalize().await;
         Ok(())
@@ -606,7 +606,7 @@ impl ServerCommandContext<'_> {
     async fn load_new_configs(
         &self,
         dice_ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<BuckConfigBasedCells> {
+    ) -> bz_error::Result<BuckConfigBasedCells> {
         if let Some(cached_configs) = dice_update_stage("checking buckconfig cache", async {
             let cached_configs = self
                 .base_context
@@ -699,7 +699,7 @@ impl ServerCommandContext<'_> {
     fn report_traced_config_paths(
         &self,
         paths: &StdBuckHashSet<ConfigPath>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(tracing_provider) = TracingIoProvider::from_io(&*self.base_context.daemon.io) {
             for config_path in paths {
                 match config_path {
@@ -720,7 +720,7 @@ impl ServerCommandContext<'_> {
         Ok(())
     }
 
-    async fn store_cached_configs(&self, cells: &BuckConfigBasedCells) -> buck2_error::Result<()> {
+    async fn store_cached_configs(&self, cells: &BuckConfigBasedCells) -> bz_error::Result<()> {
         let snapshots =
             snapshot_config_paths(&self.base_context.project_root, &cells.config_paths)?;
         *self
@@ -738,15 +738,15 @@ impl ServerCommandContext<'_> {
     }
 }
 
-async fn dice_update_stage<T, Fut>(stage: impl Into<String>, fut: Fut) -> buck2_error::Result<T>
+async fn dice_update_stage<T, Fut>(stage: impl Into<String>, fut: Fut) -> bz_error::Result<T>
 where
-    Fut: Future<Output = buck2_error::Result<T>>,
+    Fut: Future<Output = bz_error::Result<T>>,
 {
-    buck2_events::dispatch::span_async(
-        buck2_data::DiceStateUpdateStageStart {
+    bz_events::dispatch::span_async(
+        bz_data::DiceStateUpdateStageStart {
             stage: stage.into(),
         },
-        async { (fut.await, buck2_data::DiceStateUpdateStageEnd {}) },
+        async { (fut.await, bz_data::DiceStateUpdateStageEnd {}) },
     )
     .await
 }
@@ -754,7 +754,7 @@ where
 fn config_path_snapshots_match(
     project_root: &ProjectRoot,
     snapshots: &StdBuckHashMap<ConfigPath, ConfigPathSnapshot>,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     for (path, old_snapshot) in snapshots {
         if &snapshot_config_path(project_root, path)? != old_snapshot {
             return Ok(false);
@@ -766,7 +766,7 @@ fn config_path_snapshots_match(
 fn snapshot_config_paths(
     project_root: &ProjectRoot,
     paths: &StdBuckHashSet<ConfigPath>,
-) -> buck2_error::Result<StdBuckHashMap<ConfigPath, ConfigPathSnapshot>> {
+) -> bz_error::Result<StdBuckHashMap<ConfigPath, ConfigPathSnapshot>> {
     paths
         .iter()
         .map(|path| {
@@ -782,7 +782,7 @@ fn snapshot_config_paths(
 fn snapshot_config_path(
     project_root: &ProjectRoot,
     path: &ConfigPath,
-) -> buck2_error::Result<ConfigPathSnapshot> {
+) -> bz_error::Result<ConfigPathSnapshot> {
     let path = match path {
         ConfigPath::Project(path) => project_root.resolve(path).into_abs_path_buf(),
         ConfigPath::Global(path) => path.clone(),
@@ -845,7 +845,7 @@ fn create_cycle_detector() -> Arc<dyn UserCycleDetector> {
 fn configured_prelude_path(
     cell_resolver: &CellResolver,
     root_config: &LegacyBuckConfig,
-) -> buck2_error::Result<Option<PreludePath>> {
+) -> bz_error::Result<Option<PreludePath>> {
     let bazel_compat = root_config.get(BuckconfigKeyRef {
         section: "bazel",
         property: "compatibility",
@@ -953,16 +953,16 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
         &self,
         mut ctx: DiceTransactionUpdater,
         early_timings: &mut EarlyCommandTimingBuilder,
-    ) -> buck2_error::Result<(DiceTransactionUpdater, UserComputationData)> {
+    ) -> bz_error::Result<(DiceTransactionUpdater, UserComputationData)> {
         let existing_state = &mut ctx.existing_state().await.clone();
-        let cells_and_configs = buck2_events::dispatch::span_async(
-            buck2_data::DiceStateUpdateStageStart {
+        let cells_and_configs = bz_events::dispatch::span_async(
+            bz_data::DiceStateUpdateStageStart {
                 stage: "loading buckconfigs".to_owned(),
             },
             async {
                 (
                     self.cmd_ctx.load_new_configs(existing_state).await,
-                    buck2_data::DiceStateUpdateStageEnd {},
+                    bz_data::DiceStateUpdateStageEnd {},
                 )
             },
         )
@@ -1063,14 +1063,14 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             .sync(ctx)
             .await?;
         let mut ctx = ctx;
-        let _external_file_state_stats = buck2_events::dispatch::span_async(
-            buck2_data::DiceStateUpdateStageStart {
+        let _external_file_state_stats = bz_events::dispatch::span_async(
+            bz_data::DiceStateUpdateStageStart {
                 stage: "checking external file state".to_owned(),
             },
             async {
                 (
                     invalidate_changed_external_file_state(&mut ctx).await,
-                    buck2_data::DiceStateUpdateStageEnd {},
+                    bz_data::DiceStateUpdateStageEnd {},
                 )
             },
         )
@@ -1088,7 +1088,7 @@ impl DiceCommandUpdater<'_, '_> {
     fn make_user_computation_data(
         &self,
         root_config: &LegacyBuckConfig,
-    ) -> buck2_error::Result<UserComputationData> {
+    ) -> bz_error::Result<UserComputationData> {
         let config_threads = root_config
             .parse(BuckconfigKeyRef {
                 section: "build",
@@ -1121,7 +1121,7 @@ impl DiceCommandUpdater<'_, '_> {
         })? {
             self.cmd_ctx
                 .events()
-                .instant_event(buck2_data::ConsolePreferences { max_lines });
+                .instant_event(bz_data::ConsolePreferences { max_lines });
         }
 
         let enable_miniperf = root_config
@@ -1258,7 +1258,7 @@ impl DiceCommandUpdater<'_, '_> {
             fingerprint_re_output_trees_eagerly,
         );
 
-        buck2_core::faster_directories::VALUE.store(
+        bz_core::faster_directories::VALUE.store(
             root_config
                 .parse::<bool>(BuckconfigKeyRef {
                     section: "buck2",
@@ -1397,13 +1397,13 @@ impl DiceCommandUpdater<'_, '_> {
         ];
         self.cmd_ctx
             .events()
-            .instant_event(buck2_data::TagEvent { tags });
+            .instant_event(bz_data::TagEvent { tags });
 
         self.cmd_ctx
             .events()
-            .instant_event(buck2_data::CommandOptions {
+            .instant_event(bz_data::CommandOptions {
                 configured_parallelism: concurrency as _,
-                available_parallelism: buck2_util::threads::available_parallelism() as _,
+                available_parallelism: bz_util::threads::available_parallelism() as _,
             });
 
         collect_config_metadata_into(root_config, &mut data);
@@ -1495,12 +1495,12 @@ fn collect_config_metadata_into(config: &LegacyBuckConfig, data: &mut UserComput
         section: "client",
         property: "id",
     }) {
-        use buck2_core::soft_error;
+        use bz_core::soft_error;
 
         soft_error!(
             "client_id_in_buckconfig",
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Setting `client.id` via config (`-c|--config client.id={}`) is deprecated \
                  because it invalidates the DICE graph which causes performance loss. \
                  Please migrate to `--client-metadata=id={}` instead. \
@@ -1565,7 +1565,7 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
     async fn dice_accessor<'s>(
         &'s self,
         _private: PrivateStruct,
-    ) -> buck2_error::Result<DiceAccessor<'s>> {
+    ) -> bz_error::Result<DiceAccessor<'s>> {
         let (build_signals_installer, deferred_build_signals) = create_build_signals();
 
         let is_nested_invocation = if let Some(uuid) = &self.daemon_uuid_from_client {
@@ -1593,7 +1593,7 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
         self.base_context.daemon.previous_command_data.clone()
     }
 
-    fn stderr(&self) -> buck2_error::Result<StderrOutputGuard<'_>> {
+    fn stderr(&self) -> bz_error::Result<StderrOutputGuard<'_>> {
         Ok(StderrOutputGuard {
             _phantom: PhantomData,
             inner: BufWriter::with_capacity(
@@ -1607,9 +1607,9 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
     /// Create command start event with metadata
     async fn command_start_event(
         &self,
-        data: buck2_data::command_start::Data,
-    ) -> buck2_error::Result<buck2_data::CommandStart> {
-        Ok(buck2_data::CommandStart {
+        data: bz_data::command_start::Data,
+    ) -> bz_error::Result<bz_data::CommandStart> {
+        Ok(bz_data::CommandStart {
             metadata: self.request_metadata().await?,
             data: Some(data),
             cli_args: self.sanitized_argv.clone(),
@@ -1618,7 +1618,7 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
     }
 
     /// Gathers metadata to attach to events for when a command starts and stops.
-    async fn request_metadata(&self) -> buck2_error::Result<StdBuckHashMap<String, String>> {
+    async fn request_metadata(&self) -> bz_error::Result<StdBuckHashMap<String, String>> {
         // Facebook only: metadata collection for Scribe writes
         facebook_only();
 
@@ -1668,24 +1668,24 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
     async fn config_metadata(
         &self,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<StdBuckHashMap<String, String>> {
+    ) -> bz_error::Result<StdBuckHashMap<String, String>> {
         ctx.per_transaction_data()
             .data
             .get::<ConfigMetadataHolder>()
             .map(|holder| holder.0.clone())
-            .map_err(|_| buck2_error::internal_error!("Config metadata not set"))
+            .map_err(|_| bz_error::internal_error!("Config metadata not set"))
     }
 
     fn log_target_pattern(
         &self,
         providers_patterns: &[ParsedPattern<ConfiguredProvidersPatternExtra>],
     ) {
-        let patterns = providers_patterns.map(|pat| buck2_data::TargetPattern {
+        let patterns = providers_patterns.map(|pat| bz_data::TargetPattern {
             value: format!("{pat}"),
         });
 
         self.events()
-            .instant_event(buck2_data::ParsedTargetPatterns {
+            .instant_event(bz_data::ParsedTargetPatterns {
                 target_patterns: patterns,
             })
     }
@@ -1702,11 +1702,11 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
 
         let patterns = seen_values
             .into_iter()
-            .map(|pat| buck2_data::TargetPattern { value: pat })
+            .map(|pat| bz_data::TargetPattern { value: pat })
             .collect();
 
         self.events()
-            .instant_event(buck2_data::ParsedTargetPatterns {
+            .instant_event(bz_data::ParsedTargetPatterns {
                 target_patterns: patterns,
             })
     }
@@ -1824,8 +1824,8 @@ mod tests {
     }
 
     #[test]
-    fn bzlmod_repository_environment_applies_bazelrc_repo_env() -> buck2_error::Result<()> {
-        let root_config = buck2_common::legacy_configs::configs::testing::parse(
+    fn bzlmod_repository_environment_applies_bazelrc_repo_env() -> bz_error::Result<()> {
+        let root_config = bz_common::legacy_configs::configs::testing::parse(
             &[(
                 "config",
                 r#"

@@ -11,7 +11,7 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
+use bz_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -30,7 +30,7 @@ use starlark::values::ValueTypedComplex;
 use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use crate::interpreter::rule_defs::provider::builtin::worker_info::FrozenWorkerInfo;

@@ -11,8 +11,8 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 use dupe::Dupe;
 use pagable::Pagable;
 
@@ -29,7 +29,7 @@ pub(crate) enum CachedValidationResultData {
     Failure(ValidationFailedUserFacingError),
 }
 
-#[derive(buck2_error::Error, Debug, PartialEq, Allocative, Clone, Pagable)]
+#[derive(bz_error::Error, Debug, PartialEq, Allocative, Clone, Pagable)]
 #[buck2(input)]
 #[error(
     "Validation for `{target}` failed:\n\n{}\n\nFull validation result is located at: `{result_path}`", self.rendered_message()
@@ -104,9 +104,9 @@ fn shorten_message(mut message: String, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
-    use buck2_core::configuration::data::ConfigurationData;
+    use bz_core::configuration::data::ConfigurationData;
     #[cfg(unix)]
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 
     use super::*;
 
@@ -128,7 +128,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_error_rendering() -> buck2_error::Result<()> {
+    fn test_error_rendering() -> bz_error::Result<()> {
         let target =
             ConfiguredTargetLabel::testing_parse("cell//pkg:foo", ConfigurationData::testing_new());
         let path = AbsNormPathBuf::from("/my/path/to/validation/result".to_owned())?;

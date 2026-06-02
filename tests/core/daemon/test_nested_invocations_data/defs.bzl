@@ -10,11 +10,11 @@ def _normal_impl(ctx):
     out = ctx.actions.declare_output("out.txt", has_content_based_path = False)
 
     cmd = cmd_args(
-        ctx.attrs.buck2_path,
+        ctx.attrs.bz_path,
         "build",
         "root//:trivial",
         "-c",
-        "nested.buck2_path=" + ctx.attrs.buck2_path,
+        "nested.bz_path=" + ctx.attrs.bz_path,
         "--out",
         out.as_output(),
     )
@@ -44,7 +44,7 @@ subprocess.run([buck_path, "debug", "trace-io", "enable"])
         [
             "fbpython",
             script,
-            ctx.attrs.buck2_path,
+            ctx.attrs.bz_path,
             trace_out.as_output(),
         ],
         local_only = True,
@@ -52,11 +52,11 @@ subprocess.run([buck_path, "debug", "trace-io", "enable"])
     )
 
     nested_cmd = cmd_args(
-        ctx.attrs.buck2_path,
+        ctx.attrs.bz_path,
         "build",
         "root//:trivial",
         "-c",
-        "nested.buck2_path=" + ctx.attrs.buck2_path,
+        "nested.bz_path=" + ctx.attrs.bz_path,
         "--out",
         nested_out.as_output(),
         hidden = trace_out,
@@ -71,13 +71,13 @@ subprocess.run([buck_path, "debug", "trace-io", "enable"])
 normal_nested_invocation = rule(
     impl = _normal_impl,
     attrs = {
-        "buck2_path": attrs.string(),
+        "bz_path": attrs.string(),
     },
 )
 
 trace_nested_invocation = rule(
     impl = _trace_impl,
     attrs = {
-        "buck2_path": attrs.string(),
+        "bz_path": attrs.string(),
     },
 )

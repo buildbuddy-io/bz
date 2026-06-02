@@ -12,12 +12,12 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use async_trait::async_trait;
-use buck2_common::argv::Argv;
-use buck2_common::argv::SanitizedArgv;
-use buck2_common::init::DEFAULT_RETAINED_EVENT_LOGS;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_error::ExitCode;
-use buck2_event_observer::span_tracker::EventTimestamp;
+use bz_common::argv::Argv;
+use bz_common::argv::SanitizedArgv;
+use bz_common::init::DEFAULT_RETAINED_EVENT_LOGS;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_error::ExitCode;
+use bz_event_observer::span_tracker::EventTimestamp;
 use dupe::Dupe;
 
 use crate::client_ctx::BuckSubcommand;
@@ -56,7 +56,7 @@ fn update_events_ctx<T: StreamingCommand>(
     matches: BuckArgMatches<'_>,
     ctx: &ClientCommandContext,
     events_ctx: &mut EventsCtx,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let console_opts = cmd.console_opts();
     let event_log_opts = cmd.event_log_opts();
     let mut subscribers = vec![];
@@ -281,7 +281,7 @@ impl<T: StreamingCommand> BuckSubcommand for T {
                 }
             };
 
-            events_ctx.cgroup_path_of_buck2_daemon = buckd.cgroup_path_of_buck2_daemon.clone();
+            events_ctx.cgroup_path_of_bz_daemon = buckd.cgroup_path_of_bz_daemon.clone();
 
             let command_result = self
                 .exec_impl(&mut buckd, matches, &mut ctx, events_ctx)
@@ -303,7 +303,7 @@ impl<T: StreamingCommand> BuckSubcommand for T {
         matches: BuckArgMatches<'_>,
         ctx: &ClientCommandContext,
         events_ctx: &mut EventsCtx,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         update_events_ctx(self, matches, ctx, events_ctx)
     }
 

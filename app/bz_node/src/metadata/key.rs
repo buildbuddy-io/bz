@@ -11,14 +11,14 @@
 use std::borrow::Borrow;
 
 use allocative::Allocative;
-use buck2_util::arc_str::ArcStr;
+use bz_util::arc_str::ArcStr;
 use derive_more::Display;
 use dupe::Dupe;
 use pagable::Pagable;
 use ref_cast::RefCast;
 use serde::Serialize;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum MetadataKeyError {
     #[error("key must contain exactly one dot: `{0}`")]

@@ -18,25 +18,25 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabel;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckIndexMap;
-use buck2_node::attrs::configured_attr::ConfiguredAttr;
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::graph::node::LabeledNode;
-use buck2_query::query::graph::node::NodeKey;
-use buck2_util::late_binding::LateBinding;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabel;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckIndexMap;
+use bz_node::attrs::configured_attr::ConfiguredAttr;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::graph::node::LabeledNode;
+use bz_query::query::graph::node::NodeKey;
+use bz_util::late_binding::LateBinding;
 use derivative::Derivative;
 use dice::DiceComputations;
 use dupe::Dupe;
@@ -203,7 +203,7 @@ pub struct AnalysisData {
 }
 
 impl AnalysisData {
-    pub fn providers(&self) -> buck2_error::Result<FrozenProviderCollectionValue> {
+    pub fn providers(&self) -> bz_error::Result<FrozenProviderCollectionValue> {
         self.analysis.lookup_inner(&self.target)
     }
 
@@ -301,10 +301,10 @@ pub enum PackageLabelOption {
 impl NodeKey for ActionQueryNodeRef {}
 
 impl ActionQueryNodeRef {
-    pub fn require_action(&self) -> buck2_error::Result<&ActionKey> {
+    pub fn require_action(&self) -> bz_error::Result<&ActionKey> {
         match self {
-            Self::Analysis(a) => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            Self::Analysis(a) => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "Not an action: {}",
                 a
             )),
@@ -331,7 +331,7 @@ impl QueryTarget for ActionQueryNode {
 
     /// Return the path to the buildfile that defines this target, e.g. `fbcode//foo/bar/TARGETS`
     fn buildfile_path(&self) -> &BuildFilePath {
-        // TODO(cjhopman): In addition to implementing this, we should be able to return an buck2_error::Error here rather than panicking.
+        // TODO(cjhopman): In addition to implementing this, we should be able to return an bz_error::Error here rather than panicking.
         unimplemented!("buildfile not yet implemented in aquery")
     }
 
@@ -365,8 +365,8 @@ impl QueryTarget for ActionQueryNode {
 
     fn attr_any_matches(
         attr: &Self::Attr<'_>,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         filter(&attr.0)
     }
 
@@ -419,7 +419,7 @@ impl QueryTarget for ActionQueryNode {
             if k == key {
                 res = Some(func(Some(attr)));
             }
-            Ok::<(), buck2_error::Error>(())
+            Ok::<(), bz_error::Error>(())
         })
         .unwrap();
         match res {
@@ -432,7 +432,7 @@ impl QueryTarget for ActionQueryNode {
         &self,
         mut _func: F,
     ) -> Result<(), E> {
-        // TODO(cjhopman): In addition to implementing this, we should be able to return an buck2_error::Error here rather than panicking.
+        // TODO(cjhopman): In addition to implementing this, we should be able to return an bz_error::Error here rather than panicking.
         unimplemented!("inputs not yet implemented in aquery")
     }
 
@@ -503,11 +503,11 @@ pub static FIND_MATCHING_ACTION: LateBinding<
         // short_path
         ForwardRelativePathBuf,
     ) -> Pin<
-        Box<dyn Future<Output = buck2_error::Result<Option<ActionQueryNode>>> + Send + 'c>,
+        Box<dyn Future<Output = bz_error::Result<Option<ActionQueryNode>>> + Send + 'c>,
     >,
 > = LateBinding::new("FIND_MATCHING_ACTION");
 
-/// Hook to link printer in `buck2_server_commands` from `buck2_cmd_audit_server`.
+/// Hook to link printer in `bz_server_commands` from `bz_cmd_audit_server`.
 pub static PRINT_ACTION_NODE: LateBinding<
     for<'a> fn(
         stdout: &'a mut (dyn Write + Send),
@@ -515,14 +515,14 @@ pub static PRINT_ACTION_NODE: LateBinding<
         json: bool,
         output_attributes: &'a [String],
         cell_resolver: &'a CellResolver,
-    ) -> Pin<Box<dyn Future<Output = buck2_error::Result<()>> + Send + 'a>>,
+    ) -> Pin<Box<dyn Future<Output = bz_error::Result<()>> + Send + 'a>>,
 > = LateBinding::new("PRINT_ACTION_NODE");
 
-/// Use of "configured_attr_to_value" in `buck2_transition` from `buck2_analysis`.
+/// Use of "configured_attr_to_value" in `bz_transition` from `bz_analysis`.
 pub static CONFIGURED_ATTR_TO_VALUE: LateBinding<
     for<'v> fn(
         this: &ConfiguredAttr,
         pkg: PackageLabelOption,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<Value<'v>>,
+    ) -> bz_error::Result<Value<'v>>,
 > = LateBinding::new("CONFIGURED_ATTR_TO_VALUE");

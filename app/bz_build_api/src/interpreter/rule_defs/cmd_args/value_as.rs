@@ -10,11 +10,11 @@
 
 use std::convert::Infallible;
 
-use buck2_interpreter::types::cell_path::StarlarkCellPath;
-use buck2_interpreter::types::cell_root::CellRoot;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::project_root::StarlarkProjectRoot;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_interpreter::types::cell_path::StarlarkCellPath;
+use bz_interpreter::types::cell_root::CellRoot;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::project_root::StarlarkProjectRoot;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
 use starlark::typing::Ty;
 use starlark::values::UnpackValue;
@@ -55,7 +55,7 @@ impl<'v> ValueAsCommandLineLike<'v> {
         // These are exceptions:
         // * either providers, where `StarlarkValue` is generated,
         //   and plugging in `provide` is tricky
-        // * or live outside of `buck2_build_api` crate,
+        // * or live outside of `bz_build_api` crate,
         //   so `impl StarlarkValue` cannot provide `CommandLineArgLike`
         check!(RunInfo);
         check!(FrozenRunInfo);

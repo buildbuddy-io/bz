@@ -12,9 +12,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_hash::BuckIndexMap;
-use buck2_util::time_span::TimeSpan;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_hash::BuckIndexMap;
+use bz_util::time_span::TimeSpan;
 use dice_futures::cancellation::CancellationContext;
 use sorted_vector_map::SortedVectorMap;
 
@@ -90,7 +90,7 @@ impl PreparedCommandExecutor for DryRunExecutor {
                 self.fs.fs().write_file(&path, "", false)?;
                 Ok((x.cloned(), ArtifactValue::file(digest_config.empty_file())))
             })
-            .collect::<buck2_error::Result<_>>()
+            .collect::<bz_error::Result<_>>()
         {
             Ok(outputs) => manager.success(
                 exec_kind,

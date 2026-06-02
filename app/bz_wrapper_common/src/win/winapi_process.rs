@@ -13,7 +13,7 @@
 use std::io;
 use std::time::Duration;
 
-use buck2_error::BuckErrorContext;
+use bz_error::BuckErrorContext;
 use windows_sys::Win32::Foundation::FILETIME;
 use windows_sys::Win32::Foundation::STILL_ACTIVE;
 use windows_sys::Win32::System::Threading::GetExitCodeProcess;
@@ -54,7 +54,7 @@ impl WinapiProcessHandle {
     }
 
     /// Terminate the process. Do not fail if process is already dead.
-    pub(crate) fn terminate(&self) -> buck2_error::Result<()> {
+    pub(crate) fn terminate(&self) -> bz_error::Result<()> {
         unsafe {
             if TerminateProcess(self.handle.handle(), 1) == 0 {
                 // Stash the error before calling `exit_code` to avoid overwriting it.
@@ -74,7 +74,7 @@ impl WinapiProcessHandle {
         }
     }
 
-    pub(crate) fn process_creation_time(&self) -> buck2_error::Result<Duration> {
+    pub(crate) fn process_creation_time(&self) -> bz_error::Result<Duration> {
         let mut creation_time: FILETIME = unsafe { std::mem::zeroed() };
         let mut exit_time: FILETIME = unsafe { std::mem::zeroed() };
         let mut kernel_time: FILETIME = unsafe { std::mem::zeroed() };
@@ -104,7 +104,7 @@ impl WinapiProcessHandle {
     }
 
     /// Exit code, or `None` if process is still running.
-    fn exit_code(&self) -> buck2_error::Result<Option<u32>> {
+    fn exit_code(&self) -> bz_error::Result<Option<u32>> {
         let mut exit_code = 0;
 
         if unsafe { GetExitCodeProcess(self.handle.handle(), &mut exit_code) } != 0 {
@@ -120,7 +120,7 @@ impl WinapiProcessHandle {
         })
     }
 
-    pub(crate) fn has_exited(&self) -> buck2_error::Result<bool> {
+    pub(crate) fn has_exited(&self) -> bz_error::Result<bool> {
         Ok(self.exit_code()?.is_some())
     }
 }

@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use buck2_interpreter::starlark_debug::StarlarkDebugController;
+use bz_interpreter::starlark_debug::StarlarkDebugController;
 use dupe::Dupe;
 use starlark::debug::DapAdapterEvalHook;
 use tokio::sync::OwnedSemaphorePermit;
@@ -42,7 +42,7 @@ pub struct BuckStarlarkDebugController {
 
 impl StarlarkDebugController for BuckStarlarkDebugController {
     /// Initializes the Evaluator. This can only be used once for a particular controller.
-    fn initialize(&mut self, eval: &mut starlark::eval::Evaluator) -> buck2_error::Result<()> {
+    fn initialize(&mut self, eval: &mut starlark::eval::Evaluator) -> bz_error::Result<()> {
         match self.eval_wrapper.take()? {
             Some(v) => {
                 debug!("adding dap hooks for {}", &self.description);
@@ -97,7 +97,7 @@ enum EvalWrapperHolder {
 }
 
 impl EvalWrapperHolder {
-    fn take(&mut self) -> buck2_error::Result<Option<Box<dyn DapAdapterEvalHook>>> {
+    fn take(&mut self) -> bz_error::Result<Option<Box<dyn DapAdapterEvalHook>>> {
         match self {
             EvalWrapperHolder::ShuttingDown => Ok(None),
             EvalWrapperHolder::Used => {

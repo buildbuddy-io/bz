@@ -8,24 +8,24 @@
  * above-listed licenses.
  */
 
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::provider::label::NonDefaultProvidersName;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_query::query::syntax::simple::functions::QueryLiteralVisitor;
-use buck2_query_parser::Expr;
-use buck2_query_parser::spanned::Spanned;
-use buck2_util::arc_str::ArcSlice;
-use buck2_util::arc_str::ArcStr;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::provider::label::NonDefaultProvidersName;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::target::label::label::TargetLabel;
+use bz_query::query::syntax::simple::functions::QueryLiteralVisitor;
+use bz_query_parser::Expr;
+use bz_query_parser::spanned::Spanned;
+use bz_util::arc_str::ArcSlice;
+use bz_util::arc_str::ArcStr;
 
 use super::coerced_attr::CoercedAttr;
 use crate::attrs::coerced_path::CoercedPath;
 use crate::configuration::resolved::ConfigurationSettingKey;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum AttrCoercionContextError {
     #[error("Expected target label without name. Got `{0}`")]
@@ -35,7 +35,7 @@ enum AttrCoercionContextError {
 /// The context for attribute coercion. Mostly just contains information about
 /// the current package (to support things like parsing targets from strings).
 pub trait AttrCoercionContext {
-    fn coerce_target_label(&self, value: &str) -> buck2_error::Result<TargetLabel> {
+    fn coerce_target_label(&self, value: &str) -> bz_error::Result<TargetLabel> {
         let label = self.coerce_providers_label(value)?;
 
         if let ProvidersName::NonDefault(flavor) = label.name()
@@ -48,7 +48,7 @@ pub trait AttrCoercionContext {
     }
 
     /// Attempt to convert a string into a label
-    fn coerce_providers_label(&self, value: &str) -> buck2_error::Result<ProvidersLabel>;
+    fn coerce_providers_label(&self, value: &str) -> bz_error::Result<ProvidersLabel>;
 
     /// Reuse previously allocated string if possible.
     fn intern_str(&self, value: &str) -> ArcStr;
@@ -69,7 +69,7 @@ pub trait AttrCoercionContext {
     ) -> ArcSlice<(CoercedAttr, CoercedAttr)>;
 
     /// Attempt to convert a string into a BuckPath
-    fn coerce_path(&self, value: &str, allow_directory: bool) -> buck2_error::Result<CoercedPath>;
+    fn coerce_path(&self, value: &str, allow_directory: bool) -> bz_error::Result<CoercedPath>;
 
     /// Attempt to convert a string into a BuckPath only if the path is present in
     /// the package listing.
@@ -77,17 +77,17 @@ pub trait AttrCoercionContext {
         &self,
         value: &str,
         allow_directory: bool,
-    ) -> buck2_error::Result<Option<CoercedPath>>;
+    ) -> bz_error::Result<Option<CoercedPath>>;
 
     fn coerce_target_pattern(
         &self,
         pattern: &str,
-    ) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>>;
+    ) -> bz_error::Result<ParsedPattern<TargetPatternExtra>>;
 
     fn coerce_visibility_pattern(
         &self,
         pattern: &str,
-    ) -> buck2_error::Result<Option<ParsedPattern<TargetPatternExtra>>> {
+    ) -> bz_error::Result<Option<ParsedPattern<TargetPatternExtra>>> {
         Ok(Some(self.coerce_target_pattern(pattern)?))
     }
 
@@ -104,5 +104,5 @@ pub trait AttrCoercionContext {
         visitor: &mut dyn QueryLiteralVisitor<'q>,
         expr: &Spanned<Expr<'q>>,
         query: &'q str,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }

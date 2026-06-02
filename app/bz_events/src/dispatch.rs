@@ -24,13 +24,13 @@ use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 
-use buck2_core::event::EventDispatch;
-use buck2_data::SpanEndEvent;
-use buck2_data::SpanStartEvent;
-use buck2_data::buck_event;
-use buck2_data::span_end_event;
-use buck2_data::span_start_event;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_core::event::EventDispatch;
+use bz_data::SpanEndEvent;
+use bz_data::SpanStartEvent;
+use bz_data::buck_event;
+use bz_data::span_end_event;
+use bz_data::span_start_event;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use futures::Future;
 use pin_project::pin_project;
@@ -101,28 +101,28 @@ impl EventDispatcher {
     }
 
     /// Emits an InstantEvent annotated with the current trace ID
-    pub fn instant_event<E: Into<buck2_data::instant_event::Data>>(&self, data: E) {
-        let instant = buck2_data::InstantEvent {
+    pub fn instant_event<E: Into<bz_data::instant_event::Data>>(&self, data: E) {
+        let instant = bz_data::InstantEvent {
             data: Some(data.into()),
         };
         self.event_with_span_id(instant, None, current_span());
     }
 
     pub fn console_message(&self, message: String) {
-        self.instant_event(buck2_data::ConsoleMessage { message })
+        self.instant_event(bz_data::ConsoleMessage { message })
     }
 
     pub fn console_warning(&self, message: String) {
-        self.instant_event(buck2_data::ConsoleWarning { message })
+        self.instant_event(bz_data::ConsoleWarning { message })
     }
 
     pub fn streaming_output(&self, message: String) {
-        self.instant_event(buck2_data::StdoutStreamingOutput { message })
+        self.instant_event(bz_data::StdoutStreamingOutput { message })
     }
 
     /// Like `instant_event`, but bypasses internal buffering. See [`EventSink::send_now`].
-    pub async fn instant_event_send_now<E: Into<buck2_data::instant_event::Data>>(&self, data: E) {
-        let instant = buck2_data::InstantEvent {
+    pub async fn instant_event_send_now<E: Into<bz_data::instant_event::Data>>(&self, data: E) {
+        let instant = bz_data::InstantEvent {
             data: Some(data.into()),
         };
         let now = SystemTime::now();
@@ -148,11 +148,11 @@ impl EventDispatcher {
         self.sink.send(Event::Buck(event));
     }
 
-    pub fn partial_result(&self, data: buck2_cli_proto::PartialResult) {
+    pub fn partial_result(&self, data: bz_cli_proto::PartialResult) {
         self.sink.send(Event::PartialResult(data));
     }
 
-    pub fn command_result(&self, data: buck2_cli_proto::CommandResult) {
+    pub fn command_result(&self, data: bz_cli_proto::CommandResult) {
         self.sink.send(Event::CommandResult(Box::new(data)));
     }
 
@@ -210,7 +210,7 @@ impl EventDispatcher {
 pub struct EventDispatcherLateBinding;
 
 impl EventDispatch for EventDispatcherLateBinding {
-    fn emit_instant_event_for_data(&self, data: buck2_data::instant_event::Data) {
+    fn emit_instant_event_for_data(&self, data: bz_data::instant_event::Data) {
         get_dispatcher().instant_event(data);
     }
 }
@@ -417,14 +417,14 @@ impl Span {
         ret
     }
 
-    fn send(&mut self, data: buck2_data::span_end_event::Data) {
+    fn send(&mut self, data: bz_data::span_end_event::Data) {
         self.sent = true;
 
         self.dispatcher.event_with_span_id(
             SpanEndEvent {
                 duration: (Instant::now() - self.start_instant).try_into().ok(),
                 data: Some(data),
-                stats: Some(buck2_data::SpanStats {
+                stats: Some(bz_data::SpanStats {
                     max_poll_time_us: self.stats.max_poll_time.as_micros() as u64,
                     total_poll_time_us: self.stats.total_poll_time.as_micros() as u64,
                 }),
@@ -440,7 +440,7 @@ impl Drop for Span {
     /// even if we never `end()` a Span, we notify clients (if any exist).
     fn drop(&mut self) {
         if !self.sent {
-            self.send(buck2_data::SpanCancelled {}.into())
+            self.send(bz_data::SpanCancelled {}.into())
         }
     }
 }
@@ -495,7 +495,7 @@ thread_local! {
 }
 
 use allocative::Allocative;
-use buck2_core::buck2_env;
+use bz_core::bz_env;
 
 tokio::task_local! {
     pub static EVENTS: EventDispatcher;
@@ -526,7 +526,7 @@ pub fn get_dispatcher_opt() -> Option<EventDispatcher> {
 }
 
 pub fn get_dispatcher() -> EventDispatcher {
-    let enforce_event_dispatcher_set = buck2_env!("ENFORCE_DISPATCHER_SET", bool).unwrap();
+    let enforce_event_dispatcher_set = bz_env!("ENFORCE_DISPATCHER_SET", bool).unwrap();
 
     match get_dispatcher_opt() {
         Some(dispatcher) => dispatcher,
@@ -535,7 +535,7 @@ pub fn get_dispatcher() -> EventDispatcher {
                 panic!("dispatcher is not set")
             } else {
                 // TODO: This is firing millions of times, needs to fix this up before it's made a soft error.
-                // let _ignored = soft_error!(buck2_error::buck2_error!([], "Task local event dispatcher not set."));
+                // let _ignored = soft_error!(bz_error::bz_error!([], "Task local event dispatcher not set."));
                 EventDispatcher::null()
             }
         }
@@ -569,7 +569,7 @@ where
 }
 
 /// Emits an InstantEvent annotated with the current trace ID
-pub fn instant_event<E: Into<buck2_data::instant_event::Data>>(data: E) {
+pub fn instant_event<E: Into<bz_data::instant_event::Data>>(data: E) {
     get_dispatcher().instant_event(data)
 }
 
@@ -728,8 +728,8 @@ pub fn async_record_root_spans<Fut>(fut: Fut) -> RootSpansRecordingFuture<Fut> {
 
 #[cfg(test)]
 mod tests {
-    use buck2_data::CommandEnd;
-    use buck2_data::CommandStart;
+    use bz_data::CommandEnd;
+    use bz_data::CommandStart;
     use tokio::task::JoinHandle;
 
     use super::*;

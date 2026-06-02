@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-use buck2_error::BuckErrorContext as _;
+use bz_error::BuckErrorContext as _;
 use futures::future;
 use pin_project::pin_project;
 use tokio::io::AsyncRead;
@@ -81,7 +81,7 @@ impl<R, W> Connected for DuplexChannel<R, W> {
 
 /// Create a channel using a pre-existing I/O instance. This will not support reconnecting since
 /// there is no way to establish connections here. We're just using one that already exists.
-pub async fn make_channel<T>(io: T, name: &str) -> buck2_error::Result<Channel>
+pub async fn make_channel<T>(io: T, name: &str) -> bz_error::Result<Channel>
 where
     T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
 {

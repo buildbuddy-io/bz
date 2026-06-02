@@ -10,7 +10,7 @@
 
 use std::path::Path;
 
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
 
 use crate::cells::CellAliasResolver;
 use crate::cells::CellResolver;
@@ -25,7 +25,7 @@ pub fn parse_query_file_literal(
     cell_resolver: &CellResolver,
     working_dir_abs: &AbsNormPath,
     project_root: &ProjectRoot,
-) -> buck2_error::Result<CellPath> {
+) -> bz_error::Result<CellPath> {
     match maybe_split_cell_alias_and_relative_path(literal)? {
         Some((alias, path)) => {
             let cell_name = cell_alias_resolver.resolve(alias.as_str())?;

@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
-use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_interpreter_for_build::interpreter::build_context::BuildContext;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+use bz_build_api::interpreter::rule_defs::provider::dependency::Dependency;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_interpreter_for_build::interpreter::build_context::BuildContext;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
@@ -48,9 +48,9 @@ fn dependency_creator(builder: &mut GlobalsBuilder) {
 }
 
 #[test]
-fn dependency_works() -> buck2_error::Result<()> {
+fn dependency_works() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
-    tester.additional_globals(buck2_build_api::interpreter::rule_defs::register_rule_defs);
+    tester.additional_globals(bz_build_api::interpreter::rule_defs::register_rule_defs);
     tester.additional_globals(dependency_creator);
     tester.run_starlark_bzl_test(indoc!(
         r#"

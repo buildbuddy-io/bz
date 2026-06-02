@@ -13,7 +13,7 @@ use std::fmt::Display;
 use std::iter;
 
 use allocative::Allocative;
-use buck2_error::internal_error;
+use bz_error::internal_error;
 use display_container::display_pair;
 use display_container::fmt_container;
 use display_container::iter_display_chain;
@@ -79,7 +79,7 @@ impl<'v, V: ValueLike<'v>> Display for TransitiveSetJsonProjectionGen<V> {
 }
 
 impl<'v, V: ValueLike<'v>> TransitiveSetJsonProjectionGen<V> {
-    fn projection_name(&self) -> buck2_error::Result<&'v str> {
+    fn projection_name(&self) -> bz_error::Result<&'v str> {
         TransitiveSet::from_value(self.transitive_set.get().to_value())
             .ok_or_else(|| internal_error!("Invalid transitive_set"))?
             .projection_name(self.projection)
@@ -87,7 +87,7 @@ impl<'v, V: ValueLike<'v>> TransitiveSetJsonProjectionGen<V> {
 
     pub(crate) fn to_projection_key_wrapper(
         &self,
-    ) -> buck2_error::Result<TransitiveSetProjectionWrapper> {
+    ) -> bz_error::Result<TransitiveSetProjectionWrapper> {
         let set = TransitiveSet::from_value(self.transitive_set.get().to_value())
             .ok_or_else(|| internal_error!("Invalid transitive_set"))?;
 
@@ -106,7 +106,7 @@ impl<'v, V: ValueLike<'v>> TransitiveSetJsonProjectionGen<V> {
 impl<'v, V: ValueLike<'v>> TransitiveSetJsonProjectionGen<V> {
     pub fn iter_values<'a>(
         &'a self,
-    ) -> buck2_error::Result<Box<dyn Iterator<Item = Value<'v>> + 'a>>
+    ) -> bz_error::Result<Box<dyn Iterator<Item = Value<'v>> + 'a>>
     where
         'v: 'a,
     {

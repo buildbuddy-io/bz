@@ -16,17 +16,17 @@ mod target;
 
 use std::time::Duration;
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::command_outcome::CommandOutcome;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_core::buck2_env;
-use buck2_error::ErrorTag;
-use buck2_error::buck2_error;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPath;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::command_outcome::CommandOutcome;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_core::bz_env;
+use bz_error::ErrorTag;
+use bz_error::bz_error;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPath;
 use package::PackageCompleter;
 use target::CompleteTargetCommand;
 
@@ -83,7 +83,7 @@ impl CompleteCommand {
         ctx: ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
-        let lockfile = buck2_env!("COMPLETION_VERIFY_LOCKFILE", applicability = testing)?
+        let lockfile = bz_env!("COMPLETION_VERIFY_LOCKFILE", applicability = testing)?
             .map(AbsPath::new)
             .transpose()?;
 
@@ -132,7 +132,7 @@ impl CompleteCommand {
                 );
                 ctx.exec_async(completer, matches, events_ctx).await
             }
-            _ => buck2_error!(
+            _ => bz_error!(
                 ErrorTag::Input,
                 "Malformed target string (expected [[cell]//][path/to/package][:target_name])",
             )

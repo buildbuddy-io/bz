@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-pub fn create_listener() -> buck2_error::Result<(
-    buck2_common::buckd_connection::ConnectionType,
+pub fn create_listener() -> bz_error::Result<(
+    bz_common::buckd_connection::ConnectionType,
     std::net::TcpListener,
 )> {
     use std::net::Ipv4Addr;
     use std::net::SocketAddr;
 
-    use buck2_common::buckd_connection::ConnectionType;
+    use bz_common::buckd_connection::ConnectionType;
 
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
     let tcp_listener = std::net::TcpListener::bind(addr)?;
@@ -32,7 +32,7 @@ pub fn create_listener() -> buck2_error::Result<(
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use buck2_common::buckd_connection::ConnectionType;
+    use bz_common::buckd_connection::ConnectionType;
 
     use crate::daemon::daemon_tcp::create_listener;
 

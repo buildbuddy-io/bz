@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-pub fn get_execution_time_ms(commands: &[buck2_data::CommandExecution]) -> Option<u64> {
+pub fn get_execution_time_ms(commands: &[bz_data::CommandExecution]) -> Option<u64> {
     if let Some(command_execution) = commands.last() {
         if let Some(details) = &command_execution.details {
             if let Some(metadata) = &details.metadata {

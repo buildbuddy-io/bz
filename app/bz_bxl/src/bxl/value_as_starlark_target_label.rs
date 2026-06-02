@@ -8,16 +8,16 @@
  * above-listed licenses.
  */
 
-use buck2_common::target_aliases::BuckConfigTargetAliasResolver;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_common::target_aliases::BuckConfigTargetAliasResolver;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::label::label::TargetLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
 use starlark::values::UnpackValue;
 use starlark::values::none::NoneType;
@@ -40,7 +40,7 @@ impl<'v> ValueAsStarlarkTargetLabel<'v> {
         cell_alias_resolver: &CellAliasResolver,
         cell_name: CellName,
         default_target_platform: &Option<TargetLabel>,
-    ) -> buck2_error::Result<Option<TargetLabel>> {
+    ) -> bz_error::Result<Option<TargetLabel>> {
         match self {
             ValueAsStarlarkTargetLabel::None(_) => Ok(default_target_platform.clone()),
             ValueAsStarlarkTargetLabel::Str(s) => {

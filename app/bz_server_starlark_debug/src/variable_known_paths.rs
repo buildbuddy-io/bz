@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashMap;
 use starlark::debug::VariablePath;
 
 /// Maps variable IDs to their access paths for tree-structured DAP protocol variables.

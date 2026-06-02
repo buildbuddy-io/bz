@@ -15,23 +15,23 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use buck2_common::convert::ProstDurationExt;
-use buck2_data::ActionKey;
-use buck2_data::ActionName;
-use buck2_data::AnonTarget;
-use buck2_data::BxlFunctionKey;
-use buck2_data::BxlFunctionLabel;
-use buck2_data::ConfiguredTargetLabel;
-use buck2_data::FileWatcherKind;
-use buck2_data::TargetLabel;
-use buck2_data::action_key;
-use buck2_data::span_start_event::Data;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::BuckEvent;
-use buck2_test_api::data::TestStatus;
-use buck2_util::commas::commas;
-use buck2_util::truncate::truncate;
+use bz_common::convert::ProstDurationExt;
+use bz_data::ActionKey;
+use bz_data::ActionName;
+use bz_data::AnonTarget;
+use bz_data::BxlFunctionKey;
+use bz_data::BxlFunctionLabel;
+use bz_data::ConfiguredTargetLabel;
+use bz_data::FileWatcherKind;
+use bz_data::TargetLabel;
+use bz_data::action_key;
+use bz_data::span_start_event::Data;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::BuckEvent;
+use bz_test_api::data::TestStatus;
+use bz_util::commas::commas;
+use bz_util::truncate::truncate;
 use dupe::Dupe;
 use starlark_map::ordered_set::OrderedSet;
 use superconsole::Line;
@@ -79,7 +79,7 @@ impl TargetDisplayOptions {
 pub fn display_configured_target_label(
     ctl: &ConfiguredTargetLabel,
     opts: TargetDisplayOptions,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     if let ConfiguredTargetLabel {
         label: Some(TargetLabel { package, name }),
         configuration: Some(configuration),
@@ -100,7 +100,7 @@ pub fn display_configured_target_label(
 fn display_configured_target_label_opt(
     ctl: Option<&ConfiguredTargetLabel>,
     opts: TargetDisplayOptions,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     Ok(match ctl {
         Some(ctl) => display_configured_target_label(ctl, opts)?,
         None => {
@@ -110,7 +110,7 @@ fn display_configured_target_label_opt(
     })
 }
 
-pub fn display_anon_target(ctl: &AnonTarget) -> buck2_error::Result<String> {
+pub fn display_anon_target(ctl: &AnonTarget) -> bz_error::Result<String> {
     if let AnonTarget {
         name: Some(TargetLabel { package, name }),
         // We currently never display execution configurations, only normal configurations
@@ -125,15 +125,15 @@ pub fn display_anon_target(ctl: &AnonTarget) -> buck2_error::Result<String> {
 }
 
 pub fn display_analysis_target(
-    target: &buck2_data::analysis_start::Target,
+    target: &bz_data::analysis_start::Target,
     opts: TargetDisplayOptions,
-) -> buck2_error::Result<String> {
-    use buck2_data::analysis_start::Target;
+) -> bz_error::Result<String> {
+    use bz_data::analysis_start::Target;
     match target {
         Target::StandardTarget(ctl) => display_configured_target_label(ctl, opts),
         Target::AnonTarget(anon) => display_anon_target(anon),
         Target::DynamicLambda(dynamic) => {
-            use buck2_data::dynamic_lambda_owner::Owner;
+            use bz_data::dynamic_lambda_owner::Owner;
             match dynamic
                 .owner
                 .as_ref()
@@ -149,7 +149,7 @@ pub fn display_analysis_target(
     }
 }
 
-pub fn display_bxl_key(ctl: &BxlFunctionKey) -> buck2_error::Result<String> {
+pub fn display_bxl_key(ctl: &BxlFunctionKey) -> bz_error::Result<String> {
     if let BxlFunctionKey {
         label: Some(BxlFunctionLabel { bxl_path, name }),
     } = ctl
@@ -163,7 +163,7 @@ pub fn display_bxl_key(ctl: &BxlFunctionKey) -> buck2_error::Result<String> {
 pub fn display_action_owner(
     owner: &action_key::Owner,
     opts: TargetDisplayOptions,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     match owner {
         action_key::Owner::TargetLabel(target_label)
         | action_key::Owner::TestTargetLabel(target_label)
@@ -178,7 +178,7 @@ pub fn display_action_owner(
 pub fn display_action_key(
     action_key: &ActionKey,
     opts: TargetDisplayOptions,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     if let ActionKey {
         owner: Some(owner), ..
     } = action_key
@@ -201,7 +201,7 @@ pub fn display_action_identity(
     action_key: Option<&ActionKey>,
     name: Option<&ActionName>,
     opts: TargetDisplayOptions,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let key_string = match action_key {
         Some(key) => display_action_key(key, opts),
         None => Err(ParseEventError::MissingActionKey.into()),
@@ -219,14 +219,14 @@ pub fn display_action_identity(
 }
 
 /// Formats event payloads for display.
-pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_error::Result<String> {
-    let res: buck2_error::Result<_> = try {
+pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> bz_error::Result<String> {
+    let res: bz_error::Result<_> = try {
         let data = match event.data() {
-            buck2_data::buck_event::Data::SpanStart(start) => start.data.as_ref().unwrap(),
-            _ => Err(buck2_error::Error::from(ParseEventError::UnexpectedEvent))?,
+            bz_data::buck_event::Data::SpanStart(start) => start.data.as_ref().unwrap(),
+            _ => Err(bz_error::Error::from(ParseEventError::UnexpectedEvent))?,
         };
 
-        let res: buck2_error::Result<_> = match data {
+        let res: bz_error::Result<_> = match data {
             Data::ActionExecution(action) => match &action.key {
                 Some(key) => {
                     let string = display_action_key(key, opts)?;
@@ -239,17 +239,17 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_err
                 let build = &materialization
                     .artifact
                     .as_ref()
-                    .ok_or_else(|| buck2_error::Error::from(ParseEventError::MissingArtifact))?;
+                    .ok_or_else(|| bz_error::Error::from(ParseEventError::MissingArtifact))?;
 
                 let key = display_action_key(
                     build.key.as_ref().ok_or_else(|| {
-                        buck2_error::Error::from(ParseEventError::MissingActionKey)
+                        bz_error::Error::from(ParseEventError::MissingActionKey)
                     })?,
                     opts,
                 )?;
                 let path = {
                     if build.path.is_empty() {
-                        Err(buck2_error::Error::from(
+                        Err(bz_error::Error::from(
                             ParseEventError::MissingMaterializationPath,
                         ))
                     } else {
@@ -340,7 +340,7 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_err
                 "Syncing file changes via {}",
                 display_file_watcher(x.provider)
             )),
-            Data::MatchDepFiles(buck2_data::MatchDepFilesStart {
+            Data::MatchDepFiles(bz_data::MatchDepFilesStart {
                 checking_filtered_inputs,
                 remote_cache,
             }) => {
@@ -356,7 +356,7 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_err
                 };
                 Ok(format!("dep_files({detail},{location})"))
             }
-            Data::SharedTask(buck2_data::SharedTaskStart { owner_trace_id }) => Ok(format!(
+            Data::SharedTask(bz_data::SharedTaskStart { owner_trace_id }) => Ok(format!(
                 "Waiting on task from another command: {owner_trace_id}"
             )),
             Data::CacheUpload(_) => Ok("upload (action)".to_owned()),
@@ -376,7 +376,7 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_err
             )),
             Data::DiceSynchronizeSection(..) => Ok("Synchronizing buck2 internal state".to_owned()),
             Data::DiceCleanup(..) => Ok("Cleaning up graph state".to_owned()),
-            Data::ExclusiveCommandWait(buck2_data::ExclusiveCommandWaitStart { command_name }) => {
+            Data::ExclusiveCommandWait(bz_data::ExclusiveCommandWaitStart { command_name }) => {
                 if let Some(name) = command_name {
                     Ok(format!("Waiting for command [{name}] to finish"))
                 } else {
@@ -384,7 +384,7 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_err
                 }
             }
             Data::DeferredPreparationStage(prep) => {
-                use buck2_data::deferred_preparation_stage_start::Stage;
+                use bz_data::deferred_preparation_stage_start::Stage;
                 match prep
                     .stage
                     .as_ref()
@@ -394,7 +394,7 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_err
                 }
             }
             Data::DynamicLambda(lambda) => {
-                use buck2_data::dynamic_lambda_start::Owner;
+                use bz_data::dynamic_lambda_start::Owner;
 
                 let label = match lambda
                     .owner
@@ -415,7 +415,7 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_err
             }
             Data::BxlDiceInvocation(..) => Ok("Waiting for graph computations".to_owned()),
             Data::ReUpload(..) => Ok("re_upload".to_owned()),
-            Data::ConnectToInstaller(buck2_data::ConnectToInstallerStart { tcp_port }) => {
+            Data::ConnectToInstaller(bz_data::ConnectToInstallerStart { tcp_port }) => {
                 Ok(format!("Connecting to installer on port {tcp_port}"))
             }
             Data::Fake(fake) => Ok(format!("{} -- speak of the devil", fake.caramba)),
@@ -442,25 +442,25 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_err
 }
 
 fn display_file_watcher(provider: i32) -> &'static str {
-    match buck2_data::FileWatcherProvider::try_from(provider) {
-        Ok(buck2_data::FileWatcherProvider::Watchman) => "Watchman",
-        Ok(buck2_data::FileWatcherProvider::RustNotify) => "notify",
-        Ok(buck2_data::FileWatcherProvider::FsHashCrawler) => "fs_hash_crawler",
-        Ok(buck2_data::FileWatcherProvider::EdenFs) => "EdenFS",
-        Ok(buck2_data::FileWatcherProvider::NoWatchFs) => "no_watchfs",
+    match bz_data::FileWatcherProvider::try_from(provider) {
+        Ok(bz_data::FileWatcherProvider::Watchman) => "Watchman",
+        Ok(bz_data::FileWatcherProvider::RustNotify) => "notify",
+        Ok(bz_data::FileWatcherProvider::FsHashCrawler) => "fs_hash_crawler",
+        Ok(bz_data::FileWatcherProvider::EdenFs) => "EdenFS",
+        Ok(bz_data::FileWatcherProvider::NoWatchFs) => "no_watchfs",
         Err(_) => "unknown mechanism",
     }
 }
 
-pub fn display_analysis_stage(stage: &buck2_data::analysis_stage_start::Stage) -> &'static str {
-    use buck2_data::analysis_stage_start::Stage;
+pub fn display_analysis_stage(stage: &bz_data::analysis_stage_start::Stage) -> &'static str {
+    use bz_data::analysis_stage_start::Stage;
 
     match stage {
         Stage::EvaluateRule(()) => "evaluate_rule",
     }
 }
 
-pub fn display_file_watcher_end(file_watcher_end: &buck2_data::FileWatcherEnd) -> Vec<String> {
+pub fn display_file_watcher_end(file_watcher_end: &bz_data::FileWatcherEnd) -> Vec<String> {
     const MAX_PRINT_MESSAGES: usize = 3;
     const MAX_ADDITIONAL_PATHS: usize = 3;
     let mut res = Vec::new();
@@ -551,21 +551,21 @@ pub fn display_file_watcher_end(file_watcher_end: &buck2_data::FileWatcherEnd) -
 }
 
 pub fn display_executor_stage(
-    stage: &buck2_data::executor_stage_start::Stage,
+    stage: &bz_data::executor_stage_start::Stage,
 ) -> Option<&'static str> {
-    use buck2_data::executor_stage_start::Stage;
+    use bz_data::executor_stage_start::Stage;
 
     let label = match stage {
         Stage::Prepare(..) => "prepare",
         Stage::CacheQuery(cache_query) => {
-            match buck2_data::CacheType::try_from(cache_query.cache_type).unwrap() {
-                buck2_data::CacheType::ActionCache => "remote_cache_check",
-                buck2_data::CacheType::RemoteDepFileCache => "remote_dep_file_cache_check",
+            match bz_data::CacheType::try_from(cache_query.cache_type).unwrap() {
+                bz_data::CacheType::ActionCache => "remote_cache_check",
+                bz_data::CacheType::RemoteDepFileCache => "remote_dep_file_cache_check",
             }
         }
         Stage::CacheHit(..) => "re_download",
         Stage::Re(re) => {
-            use buck2_data::re_stage::Stage;
+            use bz_data::re_stage::Stage;
 
             match re.stage.as_ref()? {
                 Stage::Execute(..) => "re_execute",
@@ -584,7 +584,7 @@ pub fn display_executor_stage(
             }
         }
         Stage::Local(local) => {
-            use buck2_data::local_stage::Stage;
+            use bz_data::local_stage::Stage;
 
             match local.stage.as_ref()? {
                 Stage::Queued(..) => "local_queued",
@@ -603,7 +603,7 @@ pub fn display_executor_stage(
     Some(label)
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum ParseEventError {
     #[error("Missing configured target label")]
@@ -628,16 +628,16 @@ enum ParseEventError {
     UnexpectedEvent,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[error("Invalid buck event: `{0:?}`")]
 #[buck2(tag = Tier0)]
 pub struct InvalidBuckEvent(pub Arc<BuckEvent>);
 
 pub fn format_test_result(
-    test_result: &buck2_data::TestResult,
+    test_result: &bz_data::TestResult,
     verbosity: Verbosity,
-) -> buck2_error::Result<Option<Lines>> {
-    let buck2_data::TestResult {
+) -> bz_error::Result<Option<Lines>> {
+    let bz_data::TestResult {
         name,
         status,
         duration,
@@ -693,8 +693,8 @@ pub fn format_test_result(
 pub struct ActionErrorDisplay<'a> {
     pub action_id: String,
     pub reason: String,
-    pub command: Option<&'a buck2_data::CommandExecutionDetails>,
-    pub error_diagnostics: Option<&'a buck2_data::ActionErrorDiagnostics>,
+    pub command: Option<&'a bz_data::CommandExecutionDetails>,
+    pub error_diagnostics: Option<&'a bz_data::ActionErrorDiagnostics>,
 }
 
 fn strip_trailing_newline(stream_contents: &str) -> &str {
@@ -760,7 +760,7 @@ impl ActionErrorDisplay<'_> {
             return s;
         };
         if let Some(command_kind) = command_failed.command_kind.as_ref() {
-            use buck2_data::command_execution_kind::Command;
+            use bz_data::command_execution_kind::Command;
             match command_kind.command.as_ref() {
                 Some(Command::LocalCommand(local_command)) => {
                     append!("Local command: {}", command_to_string(local_command));
@@ -778,7 +778,7 @@ impl ActionErrorDisplay<'_> {
                     );
                 }
                 Some(Command::RemoteCommand(remote_command)) => {
-                    if buck2_core::is_open_source() {
+                    if bz_core::is_open_source() {
                         append!("Remote action digest: '{}'", remote_command.action_digest);
                     } else {
                         append!(
@@ -828,7 +828,7 @@ impl ActionErrorDisplay<'_> {
 
         if let Some(error_diagnostics) = self.error_diagnostics {
             match error_diagnostics.data.as_ref().unwrap() {
-                buck2_data::action_error_diagnostics::Data::SubErrors(sub_errors) => {
+                bz_data::action_error_diagnostics::Data::SubErrors(sub_errors) => {
                     let sub_errors = &sub_errors.sub_errors;
                     if !sub_errors.is_empty() {
                         let mut all_sub_errors = String::new();
@@ -848,7 +848,7 @@ impl ActionErrorDisplay<'_> {
                         }
                     }
                 }
-                buck2_data::action_error_diagnostics::Data::HandlerInvocationError(error) => {
+                bz_data::action_error_diagnostics::Data::HandlerInvocationError(error) => {
                     append_stream("\nCould not produce error diagnostics", error);
                 }
             };
@@ -865,8 +865,8 @@ impl ActionErrorDisplay<'_> {
     }
 }
 
-pub fn get_action_error_reason(error: &buck2_data::ActionError) -> buck2_error::Result<String> {
-    use buck2_data::action_error::Error;
+pub fn get_action_error_reason(error: &bz_data::ActionError) -> bz_error::Result<String> {
+    use bz_data::action_error::Error;
 
     Ok(
         match error
@@ -878,7 +878,7 @@ pub fn get_action_error_reason(error: &buck2_data::ActionError) -> buck2_error::
                 format!("Required outputs are missing: {}", missing_outputs.message)
             }
             Error::Unknown(error_string) => error_string.to_owned(),
-            Error::CommandExecutionError(buck2_data::CommandExecutionError {}) => {
+            Error::CommandExecutionError(bz_data::CommandExecutionError {}) => {
                 match &error.last_command {
                     Some(c) => failure_reason_for_command_execution(c)?,
                     None => "Unexpected command status".to_owned(),
@@ -889,9 +889,9 @@ pub fn get_action_error_reason(error: &buck2_data::ActionError) -> buck2_error::
 }
 
 pub fn display_action_error(
-    error: &buck2_data::ActionError,
+    error: &bz_data::ActionError,
     opts: TargetDisplayOptions,
-) -> buck2_error::Result<ActionErrorDisplay<'_>> {
+) -> bz_error::Result<ActionErrorDisplay<'_>> {
     let command = error.last_command.as_ref().and_then(|c| c.details.as_ref());
 
     let reason = get_action_error_reason(error)?;
@@ -905,15 +905,15 @@ pub fn display_action_error(
 }
 
 fn failure_reason_for_command_execution(
-    command_execution: &buck2_data::CommandExecution,
-) -> buck2_error::Result<String> {
-    use buck2_data::command_execution::Cancelled;
-    use buck2_data::command_execution::Error;
-    use buck2_data::command_execution::Failure;
-    use buck2_data::command_execution::Status;
-    use buck2_data::command_execution::Success;
-    use buck2_data::command_execution::Timeout;
-    use buck2_data::command_execution::WorkerFailure;
+    command_execution: &bz_data::CommandExecution,
+) -> bz_error::Result<String> {
+    use bz_data::command_execution::Cancelled;
+    use bz_data::command_execution::Error;
+    use bz_data::command_execution::Failure;
+    use bz_data::command_execution::Status;
+    use bz_data::command_execution::Success;
+    use bz_data::command_execution::Timeout;
+    use bz_data::command_execution::WorkerFailure;
 
     let command = command_execution
         .details
@@ -926,7 +926,7 @@ fn failure_reason_for_command_execution(
         .ok_or_else(|| internal_error!("CommandExecution did not include a `status`"))?;
 
     let locality = if let Some(command_kind) = command.command_kind.as_ref() {
-        use buck2_data::command_execution_kind::Command;
+        use bz_data::command_execution_kind::Command;
         match command_kind.command {
             Some(Command::RemoteCommand(..)) => "Remote ",
             Some(Command::LocalCommand(..)) | Some(Command::OmittedLocalCommand(..)) => "Local ",
@@ -986,9 +986,9 @@ fn failure_reason_for_command_execution(
 }
 
 pub fn success_stderr(
-    action: &buck2_data::ActionExecutionEnd,
+    action: &bz_data::ActionExecutionEnd,
     verbosity: Verbosity,
-) -> buck2_error::Result<Option<&str>> {
+) -> bz_error::Result<Option<&str>> {
     if !(verbosity.print_success_stderr() || action.always_print_stderr) {
         return Ok(None);
     }
@@ -1044,10 +1044,10 @@ pub struct CriticalPathEntryDisplay<'a> {
 impl<'a> CriticalPathEntryDisplay<'a> {
     /// Extracts display information from a CriticalPathEntry2.
     pub fn from_entry(
-        entry: &'a buck2_data::CriticalPathEntry2,
+        entry: &'a bz_data::CriticalPathEntry2,
         opts: TargetDisplayOptions,
-    ) -> buck2_error::Result<Option<Self>> {
-        use buck2_data::critical_path_entry2::Entry;
+    ) -> bz_error::Result<Option<Self>> {
+        use bz_data::critical_path_entry2::Entry;
 
         let entry_data = match &entry.entry {
             Some(entry) => entry,
@@ -1056,7 +1056,7 @@ impl<'a> CriticalPathEntryDisplay<'a> {
 
         let (kind, name, category, identifier, execution_kind) = match entry_data {
             Entry::Analysis(analysis) => {
-                use buck2_data::critical_path_entry2::analysis::Target;
+                use bz_data::critical_path_entry2::analysis::Target;
 
                 let name = match &analysis.target {
                     Some(Target::StandardTarget(t)) => display_configured_target_label(t, opts)?,
@@ -1082,7 +1082,7 @@ impl<'a> CriticalPathEntryDisplay<'a> {
                 (kind, name, None, None, None)
             }
             Entry::DynamicAnalysis(analysis) => {
-                use buck2_data::critical_path_entry2::dynamic_analysis::Target;
+                use bz_data::critical_path_entry2::dynamic_analysis::Target;
 
                 let name = match &analysis.target {
                     Some(Target::StandardTarget(t)) => display_configured_target_label(t, opts)?,
@@ -1091,7 +1091,7 @@ impl<'a> CriticalPathEntryDisplay<'a> {
                 ("dynamic_analysis", name, None, None, None)
             }
             Entry::ActionExecution(action_execution) => {
-                use buck2_data::critical_path_entry2::action_execution::Owner;
+                use bz_data::critical_path_entry2::action_execution::Owner;
 
                 let category = action_execution.name.as_ref().map(|n| n.category.as_str());
                 let identifier = action_execution
@@ -1100,8 +1100,8 @@ impl<'a> CriticalPathEntryDisplay<'a> {
                     .map(|n| n.identifier.as_str());
 
                 let execution_kind = Some(
-                    buck2_data::ActionExecutionKind::try_from(action_execution.execution_kind)
-                        .unwrap_or(buck2_data::ActionExecutionKind::NotSet)
+                    bz_data::ActionExecutionKind::try_from(action_execution.execution_kind)
+                        .unwrap_or(bz_data::ActionExecutionKind::NotSet)
                         .as_str_name(),
                 );
 
@@ -1114,7 +1114,7 @@ impl<'a> CriticalPathEntryDisplay<'a> {
                 ("action", name, category, identifier, execution_kind)
             }
             Entry::FinalMaterialization(materialization) => {
-                use buck2_data::critical_path_entry2::final_materialization::Owner;
+                use bz_data::critical_path_entry2::final_materialization::Owner;
 
                 let identifier = Some(materialization.path.as_str());
 
@@ -1184,9 +1184,9 @@ impl<'a> CriticalPathEntryDisplay<'a> {
 mod tests {
     use super::*;
 
-    fn file_watcher_event(path: &str) -> buck2_data::FileWatcherEvent {
-        buck2_data::FileWatcherEvent {
-            event: buck2_data::FileWatcherEventType::Modify as i32,
+    fn file_watcher_event(path: &str) -> bz_data::FileWatcherEvent {
+        bz_data::FileWatcherEvent {
+            event: bz_data::FileWatcherEventType::Modify as i32,
             kind: FileWatcherKind::File as i32,
             path: path.to_owned(),
         }
@@ -1194,8 +1194,8 @@ mod tests {
 
     #[test]
     fn displays_sample_paths_for_additional_file_changes() {
-        let file_watcher_end = buck2_data::FileWatcherEnd {
-            stats: Some(buck2_data::FileWatcherStats {
+        let file_watcher_end = bz_data::FileWatcherEnd {
+            stats: Some(bz_data::FileWatcherStats {
                 events_processed: 5,
                 events: vec![
                     file_watcher_event("first"),
@@ -1221,8 +1221,8 @@ mod tests {
 
     #[test]
     fn omits_sample_paths_when_only_unknown_file_changes_are_unprinted() {
-        let file_watcher_end = buck2_data::FileWatcherEnd {
-            stats: Some(buck2_data::FileWatcherStats {
+        let file_watcher_end = bz_data::FileWatcherEnd {
+            stats: Some(bz_data::FileWatcherStats {
                 events_processed: 5,
                 events: vec![
                     file_watcher_event("first"),
@@ -1246,8 +1246,8 @@ mod tests {
 
     #[test]
     fn displays_sample_paths_for_fresh_instance_file_changes() {
-        let file_watcher_end = buck2_data::FileWatcherEnd {
-            stats: Some(buck2_data::FileWatcherStats {
+        let file_watcher_end = bz_data::FileWatcherEnd {
+            stats: Some(bz_data::FileWatcherStats {
                 fresh_instance: true,
                 events_processed: 4,
                 events: vec![

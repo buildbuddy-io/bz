@@ -35,7 +35,7 @@ buck2 test fbcode//bz/tests/core/analysis:test_cmd_args
 # Discover more information about writing and executing integration tests
 cat tests/core/README.md
 # Run some unittests
-buck2 test fbcode//bz/app/bz_core:buck2_core
+buck2 test fbcode//bz/app/bz_core:bz_core
 ```
 
 In OSS, standard cargo tooling mostly applies. Exceptions are that integration tests do not run in
@@ -48,7 +48,7 @@ of nearby code.
 
 Standard `rustfmt` conventions apply. Beyond that:
 
-- **HashMaps**: use `buck2_hash::BuckHashMap`, not `fxhash::FxHashMap`.
+- **HashMaps**: use `bz_hash::BuckHashMap`, not `fxhash::FxHashMap`.
 - **Cloning**: prefer `.dupe()` over `.clone()` for types that implement `Dupe`
   (e.g. `Arc`-wrapped types). Use `gazebo` utilities — particularly `dupe` —
   where they fit.
@@ -71,12 +71,12 @@ Standard `rustfmt` conventions apply. Beyond that:
 
 ## Error handling
 
-Buck2 uses `buck2_error` replacing both `anyhow` and `thiserror`. The must-knows:
+Buck2 uses `bz_error` replacing both `anyhow` and `thiserror`. The must-knows:
 
-- Return `buck2_error::Result<T>`.
-- Define error types with `#[derive(Debug, buck2_error::Error)]` and tag them
+- Return `bz_error::Result<T>`.
+- Define error types with `#[derive(Debug, bz_error::Error)]` and tag them
   with `#[buck2(tag = ...)]` (no `thiserror::Error`).
-- Use the `buck2_error!` macro for ad-hoc errors.
+- Use the `bz_error!` macro for ad-hoc errors.
 - `.expect()`, `.unwrap()`, etc. are ok for file-local invariant violations/"this should never
   happen" cases. If not file-local, prefer `internal_error!()`, `.internal_error("...")?` or
   `.with_internal_error(|| ...)` if possible.
@@ -100,7 +100,7 @@ At Meta, common third party Rust libraries are generally just available.
 
 ```bash
 # Build buck2
-buck2 build @fbcode//mode/opt fbcode//bz:bz --out /tmp/buck2_dest
+buck2 build @fbcode//mode/opt fbcode//bz:bz --out /tmp/bz_dest
 # Build buck2 from source and run a command with it in a different isolation dir
 ./buck2.py build :foo
 ```

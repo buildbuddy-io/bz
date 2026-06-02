@@ -9,14 +9,14 @@
  */
 
 use allocative::Allocative;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::nested::NestedCells;
-use buck2_core::cells::unchecked_cell_rel_path::UncheckedCellRelativePath;
+use bz_core::cells::name::CellName;
+use bz_core::cells::nested::NestedCells;
+use bz_core::cells::unchecked_cell_rel_path::UncheckedCellRelativePath;
 use pagable::Pagable;
 
 use crate::ignores::ignore_set::IgnoreSet;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum FileOpsError {
     #[error("Tried to read ignored dir `{0}` (reason: {1}).")]
@@ -52,7 +52,7 @@ impl FileIgnoreResult {
     /// Converts the FileIgnoreResult to a Result<()> where any ignored case is converted to an Err
     /// with appropriate message. This should be used when it would be an error to interact with an
     /// ignored file.
-    pub fn into_result(self) -> buck2_error::Result<()> {
+    pub fn into_result(self) -> bz_error::Result<()> {
         match self {
             FileIgnoreResult::Ok => Ok(()),
             FileIgnoreResult::Ignored(FileIgnoreReason::IgnoredByPattern { path, pattern }) => {
@@ -90,7 +90,7 @@ impl CellFileIgnores {
         ignore_spec: &str,
         nested_cells: NestedCells,
         root_cell: bool,
-    ) -> buck2_error::Result<CellFileIgnores> {
+    ) -> bz_error::Result<CellFileIgnores> {
         Ok(CellFileIgnores {
             ignores: IgnoreSet::from_ignore_spec(ignore_spec, root_cell)?,
             cell_ignores: nested_cells,
@@ -120,16 +120,16 @@ impl CellFileIgnores {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::cells::cell_root_path::CellRootPath;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::cells::nested::NestedCells;
-    use buck2_core::cells::unchecked_cell_rel_path::UncheckedCellRelativePath;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_core::cells::cell_root_path::CellRootPath;
+    use bz_core::cells::name::CellName;
+    use bz_core::cells::nested::NestedCells;
+    use bz_core::cells::unchecked_cell_rel_path::UncheckedCellRelativePath;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
 
     use crate::ignores::file_ignores::CellFileIgnores;
 
     #[test]
-    fn file_ignores() -> buck2_error::Result<()> {
+    fn file_ignores() -> bz_error::Result<()> {
         let cells = &[
             (
                 CellName::testing_new("root"),

@@ -11,18 +11,18 @@
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_build_api::actions::query::ActionQueryNode;
-use buck2_build_api::query::oneshot::QUERY_FRONTEND;
-use buck2_cli_proto::HasClientContext;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_error::internal_error;
-use buck2_query::query::environment::AttrFmtOptions;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_build_api::actions::query::ActionQueryNode;
+use bz_build_api::query::oneshot::QUERY_FRONTEND;
+use bz_cli_proto::HasClientContext;
+use bz_common::dice::cells::HasCellResolver;
+use bz_error::internal_error;
+use bz_query::query::environment::AttrFmtOptions;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationResult;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::DiceTransaction;
 
 use crate::query::printer::QueryResultPrinter;
@@ -58,29 +58,29 @@ impl QueryCommandTarget for ActionQueryNode {
 
 pub(crate) async fn aquery_command(
     ctx: &dyn ServerCommandContextTrait,
-    partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-    req: buck2_cli_proto::AqueryRequest,
-) -> buck2_error::Result<buck2_cli_proto::AqueryResponse> {
+    partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+    req: bz_cli_proto::AqueryRequest,
+) -> bz_error::Result<bz_cli_proto::AqueryResponse> {
     run_server_command(AqueryServerCommand { req }, ctx, partial_result_dispatcher).await
 }
 
 struct AqueryServerCommand {
-    req: buck2_cli_proto::AqueryRequest,
+    req: bz_cli_proto::AqueryRequest,
 }
 
 #[async_trait]
 impl ServerCommandTemplate for AqueryServerCommand {
-    type StartEvent = buck2_data::AqueryCommandStart;
-    type EndEvent = buck2_data::AqueryCommandEnd;
-    type Response = buck2_cli_proto::AqueryResponse;
-    type PartialResult = buck2_cli_proto::StdoutBytes;
+    type StartEvent = bz_data::AqueryCommandStart;
+    type EndEvent = bz_data::AqueryCommandEnd;
+    type Response = bz_cli_proto::AqueryResponse;
+    type PartialResult = bz_cli_proto::StdoutBytes;
 
     async fn command(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
         mut partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         aquery(
             server_ctx,
             partial_result_dispatcher.as_writer(),
@@ -95,8 +95,8 @@ async fn aquery(
     server_ctx: &dyn ServerCommandContextTrait,
     mut stdout: impl Write,
     mut ctx: DiceTransaction,
-    request: &buck2_cli_proto::AqueryRequest,
-) -> buck2_error::Result<buck2_cli_proto::AqueryResponse> {
+    request: &bz_cli_proto::AqueryRequest,
+) -> bz_error::Result<bz_cli_proto::AqueryResponse> {
     let cell_resolver = ctx.get_cell_resolver().await?;
 
     let output_configuration = QueryResultPrinter::from_request_options(
@@ -106,7 +106,7 @@ async fn aquery(
         request.client_context()?.trace_id.clone(),
     )?;
 
-    let buck2_cli_proto::AqueryRequest {
+    let bz_cli_proto::AqueryRequest {
         query, query_args, ..
     } = request;
 
@@ -143,5 +143,5 @@ async fn aquery(
                 .await?
         }
     };
-    Ok(buck2_cli_proto::AqueryResponse {})
+    Ok(bz_cli_proto::AqueryResponse {})
 }

@@ -61,7 +61,7 @@ async def test_noop() -> None:
 
 def write_config(buck: Buck, *, resource_control: bool) -> None:
     with open(buck.cwd / ".buckconfig", "a") as buckconfig:
-        buckconfig.write("[buck2_resource_control]\n")
+        buckconfig.write("[bz_resource_control]\n")
         buckconfig.write(f"status = {'required' if resource_control else 'off'}\n")
 
 

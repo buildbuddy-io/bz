@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::pattern::parse_from_cli::parse_patterns_from_cli_args_typed;
-use buck2_core::pattern::package::PackagePredicate;
-use buck2_core::pattern::pattern::ParsedPatternPredicate;
-use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::pattern::unparsed::UnparsedPatternPredicate;
-use buck2_fs::paths::abs_path::AbsPathBuf;
+use bz_common::pattern::parse_from_cli::parse_patterns_from_cli_args_typed;
+use bz_core::pattern::package::PackagePredicate;
+use bz_core::pattern::pattern::ParsedPatternPredicate;
+use bz_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::pattern::unparsed::UnparsedPatternPredicate;
+use bz_fs::paths::abs_path::AbsPathBuf;
 use dice::DiceComputations;
 use dice::DiceProjectionComputations;
 use dice::DiceTransactionUpdater;
@@ -67,7 +67,7 @@ pub enum StarlarkProfilerConfiguration {
 #[derive(Clone, Debug, Allocative)]
 pub struct ProfileRegex(#[allocative(skip)] Regex);
 impl ProfileRegex {
-    pub fn new(patterns: &[String]) -> buck2_error::Result<Self> {
+    pub fn new(patterns: &[String]) -> bz_error::Result<Self> {
         Ok(Self(Regex::new(&patterns.iter().join("|"))?))
     }
     fn matches(&self, arg: &StarlarkEvalKind) -> bool {
@@ -108,7 +108,7 @@ struct StarlarkProfilerConfigurationResolvedKey;
 
 #[async_trait]
 impl Key for StarlarkProfilerConfigurationResolvedKey {
-    type Value = buck2_error::Result<Arc<StarlarkProfilerConfigurationResolved>>;
+    type Value = bz_error::Result<Arc<StarlarkProfilerConfigurationResolved>>;
 
     async fn compute(
         &self,
@@ -213,7 +213,7 @@ struct StarlarkProfileModeForKind(StarlarkEvalKind);
 impl ProjectionKey for StarlarkProfileModeForKind {
     type DeriveFromKey = StarlarkProfilerConfigurationResolvedKey;
 
-    type Value = buck2_error::Result<StarlarkProfileMode>;
+    type Value = bz_error::Result<StarlarkProfileMode>;
 
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
         OkPagableValueSerialize::<Self::Value>::new()
@@ -221,9 +221,9 @@ impl ProjectionKey for StarlarkProfileModeForKind {
 
     fn compute(
         &self,
-        configuration: &buck2_error::Result<Arc<StarlarkProfilerConfigurationResolved>>,
+        configuration: &bz_error::Result<Arc<StarlarkProfilerConfigurationResolved>>,
         _ctx: &DiceProjectionComputations,
-    ) -> buck2_error::Result<StarlarkProfileMode> {
+    ) -> bz_error::Result<StarlarkProfileMode> {
         match &**(configuration.as_ref().map_err(|e| e.dupe())?) {
             StarlarkProfilerConfigurationResolved::None => Ok(StarlarkProfileMode::None),
             StarlarkProfilerConfigurationResolved::ProfileLastLoading(mode, patterns) => {
@@ -311,7 +311,7 @@ pub trait SetStarlarkProfilerInstrumentation {
     fn set_starlark_profiler_configuration(
         &mut self,
         instrumentation: StarlarkProfilerConfiguration,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }
 
 #[async_trait]
@@ -319,7 +319,7 @@ pub trait GetStarlarkProfilerInstrumentation {
     async fn get_starlark_profiler_mode(
         &mut self,
         eval_kind: &StarlarkEvalKind,
-    ) -> buck2_error::Result<StarlarkProfileMode>;
+    ) -> bz_error::Result<StarlarkProfileMode>;
 }
 
 #[async_trait]
@@ -327,7 +327,7 @@ impl SetStarlarkProfilerInstrumentation for DiceTransactionUpdater {
     fn set_starlark_profiler_configuration(
         &mut self,
         configuration: StarlarkProfilerConfiguration,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(self.changed_to([(StarlarkProfilerConfigurationKey, Arc::new(configuration))])?)
     }
 }
@@ -337,7 +337,7 @@ impl GetStarlarkProfilerInstrumentation for DiceComputations<'_> {
     async fn get_starlark_profiler_mode(
         &mut self,
         eval_kind: &StarlarkEvalKind,
-    ) -> buck2_error::Result<StarlarkProfileMode> {
+    ) -> bz_error::Result<StarlarkProfileMode> {
         let cfg_value = self
             .compute(&StarlarkProfilerConfigurationResolvedKey)
             .await?;

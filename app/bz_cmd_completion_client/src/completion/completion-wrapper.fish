@@ -11,7 +11,7 @@
 # %INSERT_OPTION_COMPLETION%
 # clap_complete generated content ENDS
 
-function __buck2_subcommand
+function __bz_subcommand
     for w in $argv[2..]
         switch $w
         case --
@@ -28,19 +28,19 @@ function __buck2_subcommand
     return 1
 end
 
-function __buck2_takes_target
+function __bz_takes_target
     set -l cmd (commandline --current-process --tokenize --cut-at-cursor)
     if contains -- -- $cmd[..-1]
         return 1
     end
-    set -l subcommand (__buck2_subcommand $cmd)
+    set -l subcommand (__bz_subcommand $cmd)
     test -n $subcommand || return
 
     contains $subcommand build ctargets install run targets test utargets
     return $status
 end
 
-function __buck2_add_target_completions
+function __bz_add_target_completions
     set -l cur (commandline --current-token)
 
     string match --quiet -- '-*' $cur && return
@@ -48,5 +48,5 @@ function __buck2_add_target_completions
     buck2 complete --target="$cur" 2>/dev/null
 end
 
-complete -c buck2 -n '__buck2_takes_target' -f -a '(__buck2_add_target_completions)'
+complete -c buck2 -n '__bz_takes_target' -f -a '(__bz_add_target_completions)'
 complete -c buck -w buck2

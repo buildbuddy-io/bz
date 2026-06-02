@@ -5,7 +5,7 @@ oncall("build_infra")
 source_listing()
 
 erlang_application(
-    name = "buck2_shell_utils",
+    name = "bz_shell_utils",
     srcs = glob(["src/*.erl"]),
     applications = [
         "kernel",

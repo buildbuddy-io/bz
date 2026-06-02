@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileName;
 
 use crate::directory::directory_ref::DirectoryRef;
 use crate::directory::entry::DirectoryEntry;
 use crate::directory::path_accumulator::PathAccumulator;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 pub enum DirectoryFindError {
     #[error("Find would traverse a leaf at path: `{}`", .path)]
@@ -43,7 +43,7 @@ impl<T> FindConflict<T> for PathAccumulator {
 
 struct PrefixLookupContainer<T> {
     leaf: T,
-    path: buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf,
+    path: bz_fs::paths::forward_rel_path::ForwardRelativePathBuf,
 }
 
 impl<T> FindConflict<T> for PrefixLookupContainer<T> {
@@ -81,7 +81,7 @@ pub fn find_prefix<'a, 'b, D: DirectoryRef<'a>>(
     Option<(
         DirectoryEntry<D, &'a D::Leaf>,
         // Remaining path.
-        buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf,
+        bz_fs::paths::forward_rel_path::ForwardRelativePathBuf,
     )>,
     DirectoryFindError,
 > {
@@ -92,7 +92,7 @@ pub fn find_prefix<'a, 'b, D: DirectoryRef<'a>>(
         None => {
             return Ok(Some((
                 DirectoryEntry::Dir(dir),
-                buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf::default(),
+                bz_fs::paths::forward_rel_path::ForwardRelativePathBuf::default(),
             )));
         }
     };
@@ -101,7 +101,7 @@ pub fn find_prefix<'a, 'b, D: DirectoryRef<'a>>(
         Ok(maybe_leaf) => Ok(maybe_leaf.map(|l| {
             (
                 l,
-                buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf::default(),
+                bz_fs::paths::forward_rel_path::ForwardRelativePathBuf::default(),
             )
         })),
         Err(PrefixLookupContainer { leaf, path }) => Ok(Some((DirectoryEntry::Leaf(leaf), path))),
@@ -146,7 +146,7 @@ mod tests {
     use crate::directory::test::path;
 
     #[test]
-    fn test_find() -> buck2_error::Result<()> {
+    fn test_find() -> bz_error::Result<()> {
         let mut a = TestDirectoryBuilder::empty();
         a.insert(path("a/b/c"), DirectoryEntry::Leaf(NopEntry))?;
 
@@ -169,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn test_find_prefix() -> buck2_error::Result<()> {
+    fn test_find_prefix() -> bz_error::Result<()> {
         let mut a = TestDirectoryBuilder::empty();
         a.insert(path("a/b/c"), DirectoryEntry::Leaf(NopEntry))?;
 

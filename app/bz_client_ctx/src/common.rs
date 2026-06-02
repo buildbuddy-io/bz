@@ -31,14 +31,14 @@ pub mod ui;
 
 use std::path::Path;
 
-use buck2_cli_proto::ConfigOverride;
-use buck2_cli_proto::RepresentativeConfigFlag;
-use buck2_cli_proto::config_override::ConfigType;
-use buck2_cli_proto::representative_config_flag::Source as RepresentativeConfigFlagSource;
-use buck2_common::argv::ExpandedArgSource;
-use buck2_common::argv::ExpandedArgv;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::working_dir::AbsWorkingDir;
+use bz_cli_proto::ConfigOverride;
+use bz_cli_proto::RepresentativeConfigFlag;
+use bz_cli_proto::config_override::ConfigType;
+use bz_cli_proto::representative_config_flag::Source as RepresentativeConfigFlagSource;
+use bz_common::argv::ExpandedArgSource;
+use bz_common::argv::ExpandedArgv;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::working_dir::AbsWorkingDir;
 use dupe::Dupe;
 use gazebo::prelude::*;
 
@@ -56,9 +56,9 @@ const BAZEL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:java_runtime_ver
 const BAZEL_TOOL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:tool_java_language_version";
 const BAZEL_TOOL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:tool_java_runtime_version";
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[error("indices len is not equal to collection len for flag `{flag_name}`")]
-#[buck2(tag = buck2_error::ErrorTag::InternalError)]
+#[buck2(tag = bz_error::ErrorTag::InternalError)]
 struct IndicesLengthMismatchError {
     flag_name: String,
 }
@@ -259,13 +259,13 @@ impl CommonEventLogOptions {
             .or_else(|| (self.bep || buildbuddy).then_some(BUILDBUDDY_BES_RESULTS_URL))
     }
 
-    pub(crate) fn bes_timeout_duration(&self) -> buck2_error::Result<Option<std::time::Duration>> {
+    pub(crate) fn bes_timeout_duration(&self) -> bz_error::Result<Option<std::time::Duration>> {
         self.bes_timeout
             .as_deref()
             .map(|timeout| {
                 humantime::parse_duration(timeout).map_err(|error| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "invalid --bes_timeout `{}`: {}",
                         timeout,
                         error
@@ -659,12 +659,12 @@ impl CommonBuildConfigurationOptions {
         matches: BuckArgMatches<'_>,
         immediate_ctx: &ImmediateConfigContext<'_>,
         cwd: &AbsWorkingDir,
-    ) -> buck2_error::Result<Vec<ConfigOverride>> {
+    ) -> bz_error::Result<Vec<ConfigOverride>> {
         fn with_indices<'a, T>(
             collection: &'a [T],
             name: &str,
             matches: BuckArgMatches<'a>,
-        ) -> buck2_error::Result<impl Iterator<Item = (usize, &'a T)> + use<'a, T>> {
+        ) -> bz_error::Result<impl Iterator<Item = (usize, &'a T)> + use<'a, T>> {
             let indices: Vec<usize> = if collection.is_empty() {
                 Vec::new()
             } else {
@@ -673,7 +673,7 @@ impl CommonBuildConfigurationOptions {
                 indices.into_iter().collect()
             };
             if indices.len() != collection.len() {
-                return Err(buck2_error::Error::from(IndicesLengthMismatchError {
+                return Err(bz_error::Error::from(IndicesLengthMismatchError {
                     flag_name: name.to_owned(),
                 }));
             }
@@ -737,7 +737,7 @@ impl CommonBuildConfigurationOptions {
                     },
                 ))
             })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
+            .collect::<bz_error::Result<Vec<_>>>()?;
 
         bazel_command_line_build_setting_args.extend(
             with_indices(&self.bazel_cpu, "bazel_cpu", matches)?.map(|(index, cpu)| {
@@ -1029,7 +1029,7 @@ pub struct CommonStarlarkOptions {
     /// Enables profiling for all evaluations whose evaluation identifier matches one of the provided patterns.
     ///
     /// Some examples identifiers:
-    ///    analysis/cell//bz/app/bz_action_impl:buck2_action_impl (cfg:linux-x86_64#27ac5723e0c99706)
+    ///    analysis/cell//bz/app/bz_action_impl:bz_action_impl (cfg:linux-x86_64#27ac5723e0c99706)
     ///    load/cell//build_defs/json.bzl
     ///    load/prelude//playground/test.bxl
     ///    load/cell//build_defs/json.bzl@other_cell
@@ -1091,9 +1091,9 @@ impl CommonStarlarkOptions {
     pub(crate) fn profile_pattern_opts(
         &self,
         working_dir: &AbsWorkingDir,
-    ) -> Option<buck2_cli_proto::client_context::ProfilePatternOptions> {
+    ) -> Option<bz_cli_proto::client_context::ProfilePatternOptions> {
         self.profile_patterns.as_ref().map(|v| {
-            buck2_cli_proto::client_context::ProfilePatternOptions {
+            bz_cli_proto::client_context::ProfilePatternOptions {
                 profile_patterns: v.clone(),
                 profile_mode: self.profile_patterns_mode.as_ref().unwrap().to_proto() as i32,
                 profile_output: self
@@ -1160,13 +1160,13 @@ impl<'a> BuckArgMatches<'a> {
     }
 
     pub fn get_representative_config_flags(&self) -> Vec<String> {
-        buck2_common::argv::get_representative_config_flags(self.expanded_argv)
+        bz_common::argv::get_representative_config_flags(self.expanded_argv)
     }
 
     pub fn get_representative_config_flags_by_source(&self) -> Vec<RepresentativeConfigFlag> {
-        use buck2_common::argv::ConfigFlagValue;
-        use buck2_common::argv::get_flagfile_for_logging;
-        use buck2_common::argv::parse_config_flags;
+        use bz_common::argv::ConfigFlagValue;
+        use bz_common::argv::get_flagfile_for_logging;
+        use bz_common::argv::parse_config_flags;
 
         let mut args: Vec<RepresentativeConfigFlag> = Vec::new();
         let mut last_flagfile = None;
@@ -1217,14 +1217,14 @@ impl<'a> BuckArgMatches<'a> {
 
 #[cfg(test)]
 mod tests {
-    use buck2_cli_proto::RepresentativeConfigFlag;
-    use buck2_cli_proto::representative_config_flag::Source as RepresentativeConfigFlagSource;
-    use buck2_common::argv::ArgFileKind;
-    use buck2_common::argv::ArgFilePath;
-    use buck2_common::argv::ExpandedArgvBuilder;
-    use buck2_core::cells::cell_path::CellPath;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_cli_proto::RepresentativeConfigFlag;
+    use bz_cli_proto::representative_config_flag::Source as RepresentativeConfigFlagSource;
+    use bz_common::argv::ArgFileKind;
+    use bz_common::argv::ArgFilePath;
+    use bz_common::argv::ExpandedArgvBuilder;
+    use bz_core::cells::cell_path::CellPath;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     use clap::CommandFactory;
     use clap::FromArgMatches;
 
@@ -1240,9 +1240,9 @@ mod tests {
         config: CommonBuildConfigurationOptions,
     }
 
-    fn test_cwd() -> buck2_fs::working_dir::AbsWorkingDir {
-        use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-        use buck2_fs::working_dir::AbsWorkingDir;
+    fn test_cwd() -> bz_fs::working_dir::AbsWorkingDir {
+        use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+        use bz_fs::working_dir::AbsWorkingDir;
 
         if cfg!(windows) {
             AbsWorkingDir::unchecked_new(AbsNormPathBuf::new("C:\\tmp".into()).unwrap())
@@ -1344,7 +1344,7 @@ mod tests {
     }
 
     #[test]
-    fn test_linux_alias_does_not_override_java_runtime() -> buck2_error::Result<()> {
+    fn test_linux_alias_does_not_override_java_runtime() -> bz_error::Result<()> {
         let clap = TestConfigOpts::command()
             .try_get_matches_from(["test", "--linux"])
             .unwrap();
@@ -1385,7 +1385,7 @@ mod tests {
     }
 
     #[test]
-    fn test_java_runtime_flags_become_build_settings() -> buck2_error::Result<()> {
+    fn test_java_runtime_flags_become_build_settings() -> bz_error::Result<()> {
         let clap = TestConfigOpts::command()
             .try_get_matches_from([
                 "test",
@@ -1414,7 +1414,7 @@ mod tests {
     }
 
     #[test]
-    fn test_java_runtime_flag_with_linux_alias_becomes_build_setting() -> buck2_error::Result<()> {
+    fn test_java_runtime_flag_with_linux_alias_becomes_build_setting() -> bz_error::Result<()> {
         let clap = TestConfigOpts::command()
             .try_get_matches_from(["test", "--linux", "--java_runtime_version=local_jdk"])
             .unwrap();
@@ -1441,7 +1441,7 @@ mod tests {
     }
 
     #[test]
-    fn test_os_and_arch_aliases_set_bazel_cpu_defaults() -> buck2_error::Result<()> {
+    fn test_os_and_arch_aliases_set_bazel_cpu_defaults() -> bz_error::Result<()> {
         let clap = TestConfigOpts::command()
             .try_get_matches_from(["test", "--os=linux", "--arch=aarch64"])
             .unwrap();
@@ -1468,7 +1468,7 @@ mod tests {
     }
 
     #[test]
-    fn test_explicit_cpu_after_linux_alias_wins() -> buck2_error::Result<()> {
+    fn test_explicit_cpu_after_linux_alias_wins() -> bz_error::Result<()> {
         let clap = TestConfigOpts::command()
             .try_get_matches_from(["test", "--linux", "--cpu=custom"])
             .unwrap();
@@ -1523,7 +1523,7 @@ mod tests {
     }
 
     #[test]
-    fn test_by_source_inline_flags() -> buck2_error::Result<()> {
+    fn test_by_source_inline_flags() -> bz_error::Result<()> {
         let mut argv = ExpandedArgvBuilder::new();
         argv.push("-c".to_owned());
         argv.push("section.key=val".to_owned());
@@ -1564,7 +1564,7 @@ mod tests {
     }
 
     #[test]
-    fn test_by_source_argfile_collapsing() -> buck2_error::Result<()> {
+    fn test_by_source_argfile_collapsing() -> bz_error::Result<()> {
         let project_argfile = |path: &str| ArgFilePath::Project(CellPath::testing_new(path));
         let external_root = ProjectRootTemp::new().unwrap();
         let external_root = external_root.path();
@@ -1616,7 +1616,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_overrides_with_default_opts_and_unregistered_args() -> buck2_error::Result<()> {
+    fn test_config_overrides_with_default_opts_and_unregistered_args() -> bz_error::Result<()> {
         use crate::immediate_config::ImmediateConfigContext;
 
         let cwd = test_cwd();
@@ -1633,7 +1633,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bazel_native_flags_become_build_settings() -> buck2_error::Result<()> {
+    fn test_bazel_native_flags_become_build_settings() -> bz_error::Result<()> {
         let clap = TestConfigOpts::command()
             .try_get_matches_from([
                 "test",

@@ -13,11 +13,11 @@ use std::fmt::Debug;
 use std::iter;
 
 use async_trait::async_trait;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::package::PackageLabel;
-use buck2_error::BuckErrorContext;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::package::PackageLabel;
+use bz_error::BuckErrorContext;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use futures::stream::FuturesUnordered;
@@ -37,7 +37,7 @@ use crate::query::traversal::AsyncNodeLookup;
 use crate::query::traversal::ChildVisitor;
 mod tests;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 pub enum QueryEnvironmentError {
     #[error("Missing target `{}`. Targets in the package: <{}>", .0, .1.join(", "))]
@@ -114,8 +114,8 @@ pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
 
     fn attr_any_matches(
         attr: &Self::Attr<'_>,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool>;
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool>;
 
     fn special_attrs_for_each<E, F: FnMut(&str, &Self::Attr<'_>) -> Result<(), E>>(
         &self,
@@ -143,7 +143,7 @@ pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
 #[async_trait]
 pub trait TraversalFilter<T: QueryTarget>: Send + Sync {
     /// Returns a the children that pass this filter.
-    async fn get_children(&self, target: &T) -> buck2_error::Result<TargetSet<T>>;
+    async fn get_children(&self, target: &T) -> bz_error::Result<TargetSet<T>>;
 }
 
 /// The environment of a Buck query that can evaluate queries to produce a
@@ -155,19 +155,19 @@ pub trait QueryEnvironment: Send + Sync {
     async fn get_node(
         &self,
         node_ref: &<Self::Target as LabeledNode>::Key,
-    ) -> buck2_error::Result<Self::Target>;
+    ) -> bz_error::Result<Self::Target>;
 
     async fn get_node_for_default_configured_target(
         &self,
         node_ref: &<Self::Target as LabeledNode>::Key,
-    ) -> buck2_error::Result<MaybeCompatible<Self::Target>>;
+    ) -> bz_error::Result<MaybeCompatible<Self::Target>>;
 
-    /// Evaluates a literal target pattern. See buck2_common::pattern
+    /// Evaluates a literal target pattern. See bz_common::pattern
     async fn eval_literals(&self, literal: &[&str])
-    -> buck2_error::Result<TargetSet<Self::Target>>;
+    -> bz_error::Result<TargetSet<Self::Target>>;
 
     /// Evaluates a file literal
-    async fn eval_file_literal(&self, literal: &str) -> buck2_error::Result<FileSet>;
+    async fn eval_file_literal(&self, literal: &str) -> bz_error::Result<FileSet>;
 
     /// Performs a depth first traversal, with a post-order callback. The
     /// delegate defines the traversal and receives the callback.
@@ -175,23 +175,23 @@ pub trait QueryEnvironment: Send + Sync {
         &self,
         root: &TargetSet<Self::Target>,
         successors: impl AsyncChildVisitor<Self::Target>,
-        visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
-    ) -> buck2_error::Result<()>;
+        visit: impl FnMut(Self::Target) -> bz_error::Result<()> + Send,
+    ) -> bz_error::Result<()>;
 
     async fn depth_limited_traversal(
         &self,
         root: &TargetSet<Self::Target>,
         successors: impl AsyncChildVisitor<Self::Target>,
-        visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
+        visit: impl FnMut(Self::Target) -> bz_error::Result<()> + Send,
         depth: u32,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     async fn allpaths(
         &self,
         from: &TargetSet<Self::Target>,
         to: &TargetSet<Self::Target>,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         self.rdeps(from, to, QueryValueDepth::Unbounded, filter)
             .await
     }
@@ -201,7 +201,7 @@ pub trait QueryEnvironment: Send + Sync {
         from: &TargetSet<Self::Target>,
         to: &TargetSet<Self::Target>,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         let path = async_bfs_find_path(
             from.iter(),
             QueryEnvironmentAsNodeLookup { env: self },
@@ -218,7 +218,7 @@ pub trait QueryEnvironment: Send + Sync {
     async fn allbuildfiles(
         &self,
         _universe: &TargetSet<Self::Target>,
-    ) -> buck2_error::Result<FileSet> {
+    ) -> bz_error::Result<FileSet> {
         Err(QueryError::FunctionUnimplemented(
             "allbuildfiles() is implemented only for uquery and cquery.",
         )
@@ -229,7 +229,7 @@ pub trait QueryEnvironment: Send + Sync {
         &self,
         _universe: &FileSet,
         _argset: &FileSet,
-    ) -> buck2_error::Result<FileSet> {
+    ) -> bz_error::Result<FileSet> {
         Err(QueryError::FunctionUnimplemented(
             "rbuildfiles() is implemented only for uquery and cquery.",
         )
@@ -242,7 +242,7 @@ pub trait QueryEnvironment: Send + Sync {
         from: &TargetSet<Self::Target>,
         depth: QueryValueDepth,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         let graph = Graph::build_stable_dfs(
             &QueryEnvironmentAsNodeLookup { env: self },
             universe.iter().map(|n| n.node_key().clone()),
@@ -286,7 +286,7 @@ pub trait QueryEnvironment: Send + Sync {
     async fn testsof(
         &self,
         targets: &TargetSet<Self::Target>,
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         let target_tests = targets
             .iter()
             .map(|target| {
@@ -294,7 +294,7 @@ pub trait QueryEnvironment: Send + Sync {
                     .tests()
                     .ok_or(QueryError::FunctionUnimplemented("testsof"))?;
 
-                buck2_error::Ok((target, tests))
+                bz_error::Ok((target, tests))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -308,7 +308,7 @@ pub trait QueryEnvironment: Send + Sync {
                             LabeledNode::node_key(target),
                         )
                     })?;
-                    buck2_error::Ok(test)
+                    bz_error::Ok(test)
                 })
             })
             .collect::<FuturesUnordered<_>>();
@@ -324,7 +324,7 @@ pub trait QueryEnvironment: Send + Sync {
     async fn testsof_with_default_target_platform(
         &self,
         targets: &TargetSet<Self::Target>,
-    ) -> buck2_error::Result<Vec<MaybeCompatible<Self::Target>>> {
+    ) -> bz_error::Result<Vec<MaybeCompatible<Self::Target>>> {
         let target_tests = targets
             .iter()
             .map(|target| {
@@ -332,7 +332,7 @@ pub trait QueryEnvironment: Send + Sync {
                     .tests()
                     .ok_or(QueryError::FunctionUnimplemented("testsof"))?;
 
-                buck2_error::Ok((target, tests))
+                bz_error::Ok((target, tests))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -349,7 +349,7 @@ pub trait QueryEnvironment: Send + Sync {
                                 LabeledNode::node_key(target),
                             )
                         })?;
-                    buck2_error::Ok(test)
+                    bz_error::Ok(test)
                 })
             })
             .collect::<FuturesUnordered<_>>();
@@ -367,16 +367,16 @@ pub trait QueryEnvironment: Send + Sync {
         targets: &TargetSet<Self::Target>,
         depth: QueryValueDepth,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         deps(self, targets, depth, filter).await
     }
 
-    async fn owner(&self, _paths: &FileSet) -> buck2_error::Result<TargetSet<Self::Target>>;
+    async fn owner(&self, _paths: &FileSet) -> bz_error::Result<TargetSet<Self::Target>>;
 
     async fn targets_in_buildfile(
         &self,
         paths: &FileSet,
-    ) -> buck2_error::Result<TargetSet<Self::Target>>;
+    ) -> bz_error::Result<TargetSet<Self::Target>>;
 }
 
 pub async fn deps<Env: QueryEnvironment + ?Sized>(
@@ -384,7 +384,7 @@ pub async fn deps<Env: QueryEnvironment + ?Sized>(
     targets: &TargetSet<Env::Target>,
     depth: QueryValueDepth,
     filter: Option<&dyn TraversalFilter<Env::Target>>,
-) -> buck2_error::Result<TargetSet<Env::Target>> {
+) -> bz_error::Result<TargetSet<Env::Target>> {
     let mut deps = TargetSet::new();
 
     let visitor = QueryTargetFilteredDepsSuccesors { filter };
@@ -413,7 +413,7 @@ impl<T: QueryTarget> AsyncChildVisitor<T> for QueryTargetDepsSuccessors {
         &self,
         node: &T,
         mut children: impl ChildVisitor<T>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for dep in node.deps() {
             children.visit(dep)?;
         }
@@ -440,7 +440,7 @@ pub struct QueryEnvironmentAsNodeLookup<'q, Q: QueryEnvironment + ?Sized> {
 impl<'q, Q: QueryEnvironment + ?Sized> AsyncNodeLookup<Q::Target>
     for QueryEnvironmentAsNodeLookup<'q, Q>
 {
-    async fn get(&self, label: &<Q::Target as LabeledNode>::Key) -> buck2_error::Result<Q::Target> {
+    async fn get(&self, label: &<Q::Target as LabeledNode>::Key) -> bz_error::Result<Q::Target> {
         self.env.get_node(label).await
     }
 }
@@ -454,8 +454,8 @@ impl<'a, Q: QueryTarget> AsyncChildVisitor<Q> for QueryTargetFilteredDepsSucceso
         &self,
         target: &Q,
         mut func: impl ChildVisitor<Q>,
-    ) -> buck2_error::Result<()> {
-        let res: buck2_error::Result<_> = try {
+    ) -> bz_error::Result<()> {
+        let res: bz_error::Result<_> = try {
             match self.filter {
                 Some(filter) => {
                     for dep in filter.get_children(target).await?.iter() {

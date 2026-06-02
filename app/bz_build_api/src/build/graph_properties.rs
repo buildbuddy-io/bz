@@ -12,14 +12,14 @@ use std::fmt;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::configuration::compatibility::ResultMaybeCompatible;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_sketches::DependencyGraphSketch;
-use buck2_sketches::MemoryUsageSketch;
-use buck2_util::commas::commas;
+use bz_core::configuration::compatibility::ResultMaybeCompatible;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_sketches::DependencyGraphSketch;
+use bz_sketches::MemoryUsageSketch;
+use bz_util::commas::commas;
 use dice::CancellationContext;
 use dice::DiceComputations;
 use dice::Key;
@@ -31,8 +31,8 @@ use pagable::Pagable;
 use pagable::PagablePanic;
 use pagable::pagable_typetag;
 
-use crate::build::detailed_aggregated_metrics::buck2_sketches::AnalysisGraphPropertiesKey;
-use crate::build::detailed_aggregated_metrics::buck2_sketches::compute_configured_graph_sketch;
+use crate::build::detailed_aggregated_metrics::bz_sketches::AnalysisGraphPropertiesKey;
+use crate::build::detailed_aggregated_metrics::bz_sketches::compute_configured_graph_sketch;
 use crate::build::sketch_impl::MergeableGraphSketch;
 
 #[derive(

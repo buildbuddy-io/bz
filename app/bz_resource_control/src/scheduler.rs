@@ -12,10 +12,10 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
-use buck2_common::init::ActionSuspendStrategy;
-use buck2_common::init::ResourceControlConfig;
-use buck2_events::daemon_id::DaemonId;
-use buck2_hash::StdBuckHashMap;
+use bz_common::init::ActionSuspendStrategy;
+use bz_common::init::ResourceControlConfig;
+use bz_events::daemon_id::DaemonId;
+use bz_hash::StdBuckHashMap;
 use dupe::Dupe;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -650,7 +650,7 @@ impl Scheduler {
 fn suspend_scene(
     cgroup: RunningScene,
     now: Instant,
-) -> (SuspendedScene, buck2_data::ResourceControlEventKind) {
+) -> (SuspendedScene, bz_data::ResourceControlEventKind) {
     let (wake_implementation, event_kind) = match cgroup.suspend_implementation {
         SuspendImplementation::CgroupFreeze(kill_sender, freeze_sender) => {
             drop(freeze_sender.send(ActionFreezeEvent::Freeze));
@@ -659,7 +659,7 @@ fn suspend_scene(
                     unfreeze_sender: freeze_sender,
                     kill_sender,
                 },
-                buck2_data::ResourceControlEventKind::SuspendFreeze,
+                bz_data::ResourceControlEventKind::SuspendFreeze,
             )
         }
         SuspendImplementation::KillAndRetry(kill_sender) => {
@@ -667,7 +667,7 @@ fn suspend_scene(
             drop(kill_sender.send(RetryFuture(retry_rx)));
             (
                 WakeImplementation::KillAndRetry(retry_tx),
-                buck2_data::ResourceControlEventKind::SuspendKill,
+                bz_data::ResourceControlEventKind::SuspendKill,
             )
         }
     };
@@ -685,7 +685,7 @@ fn suspend_scene(
 fn wake_scene(
     cgroup: Scene,
     wake_implementation: WakeImplementation,
-) -> (RunningScene, buck2_data::ResourceControlEventKind) {
+) -> (RunningScene, bz_data::ResourceControlEventKind) {
     let (retry_tx, event_kind) = match wake_implementation {
         WakeImplementation::CgroupUnfreeze {
             unfreeze_sender,
@@ -700,15 +700,15 @@ fn wake_scene(
                         unfreeze_sender,
                     ),
                 },
-                buck2_data::ResourceControlEventKind::WakeUnfreeze,
+                bz_data::ResourceControlEventKind::WakeUnfreeze,
             );
         }
         WakeImplementation::KillAndRetry(retry_tx) => {
-            (retry_tx, buck2_data::ResourceControlEventKind::WakeRetry)
+            (retry_tx, bz_data::ResourceControlEventKind::WakeRetry)
         }
         WakeImplementation::UnblockStart(retry_tx) => (
             retry_tx,
-            buck2_data::ResourceControlEventKind::WakeDelayedStart,
+            bz_data::ResourceControlEventKind::WakeDelayedStart,
         ),
     };
     let (freeze_tx, freeze_rx) = mpsc::unbounded_channel();
@@ -781,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn test_peak_memory_and_swap() -> buck2_error::Result<()> {
+    fn test_peak_memory_and_swap() -> bz_error::Result<()> {
         let (mut scheduler, timeline) = TestTimeline::new();
         let scene1 = scheduler
             .scene_started(
@@ -838,7 +838,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_freeze() -> buck2_error::Result<()> {
+    async fn test_freeze() -> bz_error::Result<()> {
         let (mut scheduler, timeline) = TestTimeline::new();
 
         // First create 60 seconds of pressure. 80 is high enough that with the baseline

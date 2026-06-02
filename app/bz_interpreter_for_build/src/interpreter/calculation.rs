@@ -14,33 +14,33 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::bazel::skyframe::BazelSkyframeFunction;
-use buck2_common::bazel::skyframe::mark_bazel_skyframe_key;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::file_ops::error::FileReadErrorContext;
-use buck2_common::package_listing::dice::DicePackageListingResolver;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::package::PackageLabel;
-use buck2_events::dispatch::async_record_root_spans;
-use buck2_events::span::SpanId;
-use buck2_interpreter::file_loader::LoadedModule;
-use buck2_interpreter::file_loader::ModuleDeps;
-use buck2_interpreter::load_module::INTERPRETER_CALCULATION_IMPL;
-use buck2_interpreter::load_module::InterpreterCalculationImpl;
-use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_interpreter::paths::package::PackageFilePath;
-use buck2_interpreter::paths::path::OwnedStarlarkPath;
-use buck2_interpreter::paths::path::StarlarkPath;
-use buck2_interpreter::prelude_path::PreludePath;
-use buck2_node::metadata::key::MetadataKey;
-use buck2_node::nodes::eval_result::EvaluationResult;
-use buck2_node::nodes::frontend::TARGET_GRAPH_CALCULATION_IMPL;
-use buck2_node::nodes::frontend::TargetGraphCalculationImpl;
-use buck2_node::package_values_calculation::PACKAGE_VALUES_CALCULATION;
-use buck2_node::package_values_calculation::PackageValuesCalculation;
-use buck2_util::time_span::TimeSpan;
+use bz_common::bazel::skyframe::BazelSkyframeFunction;
+use bz_common::bazel::skyframe::mark_bazel_skyframe_key;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::file_ops::error::FileReadErrorContext;
+use bz_common::package_listing::dice::DicePackageListingResolver;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::package::PackageLabel;
+use bz_events::dispatch::async_record_root_spans;
+use bz_events::span::SpanId;
+use bz_interpreter::file_loader::LoadedModule;
+use bz_interpreter::file_loader::ModuleDeps;
+use bz_interpreter::load_module::INTERPRETER_CALCULATION_IMPL;
+use bz_interpreter::load_module::InterpreterCalculationImpl;
+use bz_interpreter::paths::module::OwnedStarlarkModulePath;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_interpreter::paths::package::PackageFilePath;
+use bz_interpreter::paths::path::OwnedStarlarkPath;
+use bz_interpreter::paths::path::StarlarkPath;
+use bz_interpreter::prelude_path::PreludePath;
+use bz_node::metadata::key::MetadataKey;
+use bz_node::nodes::eval_result::EvaluationResult;
+use bz_node::nodes::frontend::TARGET_GRAPH_CALCULATION_IMPL;
+use bz_node::nodes::frontend::TargetGraphCalculationImpl;
+use bz_node::package_values_calculation::PACKAGE_VALUES_CALCULATION;
+use bz_node::package_values_calculation::PackageValuesCalculation;
+use bz_util::time_span::TimeSpan;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::Key;
@@ -124,7 +124,7 @@ pub(crate) fn init_target_graph_calculation_impl() {
 
 #[async_trait]
 impl Key for InterpreterResultsKey {
-    type Value = buck2_error::Result<Arc<EvaluationResult>>;
+    type Value = bz_error::Result<Arc<EvaluationResult>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -149,7 +149,7 @@ impl Key for InterpreterResultsKey {
 
 #[async_trait]
 impl Key for BazelPackageKey {
-    type Value = buck2_error::Result<Arc<EvaluationResult>>;
+    type Value = bz_error::Result<Arc<EvaluationResult>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -174,7 +174,7 @@ impl Key for BazelPackageKey {
 
 #[async_trait]
 impl Key for BazelNonFinalizerPackagePiecesKey {
-    type Value = buck2_error::Result<Arc<EvaluationResult>>;
+    type Value = bz_error::Result<Arc<EvaluationResult>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -200,7 +200,7 @@ impl Key for BazelNonFinalizerPackagePiecesKey {
 
 #[async_trait]
 impl Key for BazelPackageDeclarationsKey {
-    type Value = buck2_error::Result<Arc<EvaluationResult>>;
+    type Value = bz_error::Result<Arc<EvaluationResult>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -236,7 +236,7 @@ impl Key for BazelPackageDeclarationsKey {
 
 #[async_trait]
 impl Key for BazelPackageErrorKey {
-    type Value = buck2_error::Result<()>;
+    type Value = bz_error::Result<()>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -285,7 +285,7 @@ impl Key for BazelPackageErrorMessageKey {
 
 #[async_trait]
 impl Key for BazelBzlCompileKey {
-    type Value = buck2_error::Result<Arc<ParseData>>;
+    type Value = bz_error::Result<Arc<ParseData>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -294,7 +294,7 @@ impl Key for BazelBzlCompileKey {
         let starlark_path = self.0.borrow();
         match starlark_path {
             StarlarkModulePath::JsonFile(_) | StarlarkModulePath::TomlFile(_) => {
-                Err(buck2_error::internal_error!(
+                Err(bz_error::internal_error!(
                     "BZL_COMPILE called for non-Starlark module `{}`",
                     starlark_path
                 ))
@@ -332,7 +332,7 @@ async fn compute_interpreter_results_uncached(
     ctx: &mut DiceComputations<'_>,
     package: PackageLabel,
     cancellation: &CancellationContext,
-) -> (TimeSpan, buck2_error::Result<Arc<EvaluationResult>>) {
+) -> (TimeSpan, bz_error::Result<Arc<EvaluationResult>>) {
     match ctx
         .get_interpreter_calculator(OwnedStarlarkPath::PackageFile(
             PackageFilePath::package_file_for_dir(package.as_cell_path()),
@@ -355,7 +355,7 @@ impl TargetGraphCalculationImpl for TargetGraphCalculationInstance {
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
         cancellation: &CancellationContext,
-    ) -> (TimeSpan, buck2_error::Result<Arc<EvaluationResult>>) {
+    ) -> (TimeSpan, bz_error::Result<Arc<EvaluationResult>>) {
         compute_interpreter_results_uncached(ctx, package, cancellation).await
     }
 
@@ -363,7 +363,7 @@ impl TargetGraphCalculationImpl for TargetGraphCalculationInstance {
         &self,
         ctx: &'a mut DiceComputations,
         package: PackageLabel,
-    ) -> BoxFuture<'a, buck2_error::Result<Arc<EvaluationResult>>> {
+    ) -> BoxFuture<'a, bz_error::Result<Arc<EvaluationResult>>> {
         ctx.compute(&BazelPackageKey(package.dupe()))
             .map(|v| v?)
             .boxed()
@@ -380,7 +380,7 @@ pub(crate) fn init_interpreter_calculation_impl() {
 
 #[async_trait]
 impl Key for EvalImportKey {
-    type Value = buck2_error::Result<LoadedModule>;
+    type Value = bz_error::Result<LoadedModule>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -407,7 +407,7 @@ impl Key for EvalImportKey {
 
 #[async_trait]
 impl Key for BazelBzlLoadKey {
-    type Value = buck2_error::Result<LoadedModule>;
+    type Value = bz_error::Result<LoadedModule>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -455,7 +455,7 @@ impl Key for BazelBzlLoadKey {
 
 #[async_trait]
 impl Key for BazelStarlarkBuiltinsKey {
-    type Value = buck2_error::Result<Globals>;
+    type Value = bz_error::Result<Globals>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -483,7 +483,7 @@ impl InterpreterCalculationImpl for InterpreterCalculationInstance {
         &self,
         ctx: &mut DiceComputations<'_>,
         starlark_path: StarlarkModulePath<'_>,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         ctx.compute(&BazelBzlLoadKey(OwnedStarlarkModulePath::new(
             starlark_path,
         )))
@@ -494,7 +494,7 @@ impl InterpreterCalculationImpl for InterpreterCalculationInstance {
         &self,
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
-    ) -> buck2_error::Result<ModuleDeps> {
+    ) -> bz_error::Result<ModuleDeps> {
         let build_file_name = DicePackageListingResolver(ctx)
             .resolve_package_listing(package.dupe())
             .await?
@@ -521,7 +521,7 @@ impl InterpreterCalculationImpl for InterpreterCalculationInstance {
         &self,
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
-    ) -> buck2_error::Result<Option<(PackageFilePath, Vec<ImportPath>)>> {
+    ) -> bz_error::Result<Option<(PackageFilePath, Vec<ImportPath>)>> {
         // These aren't cached on the DICE graph, since in normal evaluation there aren't that many, and we can cache at a higher level.
         // Therefore we re-parse the file, if it exists.
         // Fortunately, there are only a small number (currently a few hundred)
@@ -540,14 +540,14 @@ impl InterpreterCalculationImpl for InterpreterCalculationInstance {
         )))
     }
 
-    async fn global_env(&self, ctx: &mut DiceComputations<'_>) -> buck2_error::Result<Globals> {
+    async fn global_env(&self, ctx: &mut DiceComputations<'_>) -> bz_error::Result<Globals> {
         ctx.compute(&BazelStarlarkBuiltinsKey).await?
     }
 
     async fn prelude_import(
         &self,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<Option<PreludePath>> {
+    ) -> bz_error::Result<Option<PreludePath>> {
         Ok(ctx
             .get_global_interpreter_state()
             .await?
@@ -563,7 +563,7 @@ impl PackageValuesCalculation for PackageValuesCalculationInstance {
         &self,
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
-    ) -> buck2_error::Result<SmallMap<MetadataKey, serde_json::Value>> {
+    ) -> bz_error::Result<SmallMap<MetadataKey, serde_json::Value>> {
         ctx.eval_package_file(package)
             .await?
             .package_values()
@@ -574,6 +574,6 @@ impl PackageValuesCalculation for PackageValuesCalculationInstance {
 pub struct InterpreterResultsKeyActivationData {
     /// TimeSpan of just the starlark evaluation of the build file.
     pub time_span: TimeSpan,
-    pub result: buck2_error::Result<Arc<EvaluationResult>>,
+    pub result: bz_error::Result<Arc<EvaluationResult>>,
     pub spans: SmallVec<[SpanId; 1]>,
 }

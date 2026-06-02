@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::attr_type::list::ListAttrType;
-use buck2_node::attrs::attr_type::list::ListLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::attr_type::list::ListAttrType;
+use bz_node::attrs::attr_type::list::ListLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use gazebo::prelude::*;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
@@ -29,7 +29,7 @@ impl AttrTypeCoerce for ListAttrType {
         configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         let list = coerce_list(value)?;
         Ok(CoercedAttr::List(ListLiteral(ctx.intern_list(
             list.try_map(|v| (self.inner).coerce(configurable, ctx, *v))?,
@@ -41,7 +41,7 @@ impl AttrTypeCoerce for ListAttrType {
     }
 }
 
-pub(crate) fn coerce_list<'v>(value: Value<'v>) -> buck2_error::Result<&'v [Value<'v>]> {
+pub(crate) fn coerce_list<'v>(value: Value<'v>) -> bz_error::Result<&'v [Value<'v>]> {
     if let Some(list) = TupleRef::from_value(value) {
         Ok(list.content())
     } else {

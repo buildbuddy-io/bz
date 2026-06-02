@@ -13,10 +13,10 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use allocative::Allocative;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_error::internal_error;
-use buck2_hash::BuckDashMap;
-use buck2_test_api::data::ConfiguredTargetHandle;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_error::internal_error;
+use bz_hash::BuckDashMap;
+use bz_test_api::data::ConfiguredTargetHandle;
 use dupe::Dupe;
 use pagable::Pagable;
 
@@ -74,7 +74,7 @@ impl TestSession {
     }
 
     /// Retrieve the provider for a given handle.
-    pub fn get(&self, id: ConfiguredTargetHandle) -> buck2_error::Result<ConfiguredProvidersLabel> {
+    pub fn get(&self, id: ConfiguredTargetHandle) -> bz_error::Result<ConfiguredProvidersLabel> {
         let res = self
             .labels
             .get(&id)

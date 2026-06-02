@@ -19,28 +19,28 @@ use std::pin::Pin;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfo;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::unsafe_send_future::UnsafeSendFuture;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_interpreter::factory::BuckStarlarkModule;
-use buck2_interpreter::factory::ReentrantStarlarkEvaluator;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
-use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
-use buck2_node::cfg_constructor::CFG_CONSTRUCTOR_CALCULATION_IMPL;
-use buck2_node::cfg_constructor::CfgConstructorImpl;
-use buck2_node::metadata::key::MetadataKey;
-use buck2_node::metadata::key::MetadataKeyRef;
-use buck2_node::metadata::value::MetadataValue;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::nodes::unconfigured::RuleKind;
-use buck2_node::rule_type::RuleType;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfo;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::unsafe_send_future::UnsafeSendFuture;
+use bz_events::dispatch::get_dispatcher;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_interpreter::factory::BuckStarlarkModule;
+use bz_interpreter::factory::ReentrantStarlarkEvaluator;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::print_handler::EventDispatcherPrintHandler;
+use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_node::cfg_constructor::CFG_CONSTRUCTOR_CALCULATION_IMPL;
+use bz_node::cfg_constructor::CfgConstructorImpl;
+use bz_node::metadata::key::MetadataKey;
+use bz_node::metadata::key::MetadataKeyRef;
+use bz_node::metadata::value::MetadataValue;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::nodes::unconfigured::RuleKind;
+use bz_node::rule_type::RuleType;
 use calculation::CfgConstructorCalculationInstance;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationContext;
@@ -55,7 +55,7 @@ use starlark::values::none::NoneOr;
 
 use crate::registration::init_registration;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum CfgConstructorError {
     #[error(
@@ -85,7 +85,7 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
     extra_data: Option<Value<'v>>,
     configuring_exec_dep: bool,
     print: &'a EventDispatcherPrintHandler,
-) -> buck2_error::Result<(Vec<String>, Value<'v>)> {
+) -> bz_error::Result<(Vec<String>, Value<'v>)> {
     reentrant_eval.with_evaluator(|eval| {
         eval.set_print_handler(print);
         eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
@@ -145,7 +145,7 @@ async fn eval_pre_constraint_analysis<'v, 'a>(
 async fn analyze_constraints(
     ctx: &mut DiceComputations<'_>,
     refs: Vec<String>,
-) -> buck2_error::Result<SmallMap<String, FrozenProviderCollectionValue>> {
+) -> bz_error::Result<SmallMap<String, FrozenProviderCollectionValue>> {
     let cell_resolver = &ctx.get_cell_resolver().await?;
     let cell_alias_resolver = &ctx
         .get_cell_alias_resolver(cell_resolver.root_cell())
@@ -168,7 +168,7 @@ async fn analyze_constraints(
                         ctx.get_configuration_analysis_result(&label).await?,
                     ))
                 } else {
-                    Err::<_, buck2_error::Error>(
+                    Err::<_, bz_error::Error>(
                         CfgConstructorError::PostConstraintAnalysisRefsMustBeConfigurationRules(
                             label_str,
                         )
@@ -188,8 +188,8 @@ fn eval_post_constraint_analysis<'v>(
     eval: &mut ReentrantStarlarkEvaluator<'v, '_, '_>,
     refs_providers_map: SmallMap<String, FrozenProviderCollectionValue>,
     is_marked_as_exec_platform: bool,
-) -> buck2_error::Result<ConfigurationData> {
-    eval.with_evaluator(|eval| -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
+    eval.with_evaluator(|eval| -> bz_error::Result<ConfigurationData> {
         let post_constraint_analysis_args = vec![
             (
                 "refs",
@@ -232,7 +232,7 @@ async fn eval_underlying(
     rule_type: &RuleType,
     configuring_exec_dep: bool,
     cancellation: &CancellationContext,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     let print = EventDispatcherPrintHandler(get_dispatcher());
 
     let eval_kind = StarlarkEvalKind::Unknown("constraint-analysis invocation".into());
@@ -304,7 +304,7 @@ impl CfgConstructorImpl for CfgConstructor {
         rule_type: &'a RuleType,
         configuring_exec_dep: bool,
         cancellation: &'a CancellationContext,
-    ) -> Pin<Box<dyn Future<Output = buck2_error::Result<ConfigurationData>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = bz_error::Result<ConfigurationData>> + Send + 'a>> {
         // Get around issue of Evaluator not being send by wrapping future in UnsafeSendFuture
         let fut = async move {
             eval_underlying(

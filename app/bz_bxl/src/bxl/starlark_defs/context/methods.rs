@@ -11,28 +11,28 @@
 use std::iter;
 use std::sync::Arc;
 
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_cli_proto::build_request::Materializations;
-use buck2_cli_proto::build_request::Uploads;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_common::events::HasEvents;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::buck2_error;
-use buck2_interpreter::starlark_promise::StarlarkPromise;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_node::configuration::calculation::CellNameForConfigurationResolution;
-use buck2_node::configuration::resolved::ConfigurationSettingKey;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::nodes::unconfigured::TargetNode;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_cli_proto::build_request::Materializations;
+use bz_cli_proto::build_request::Uploads;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::dice::data::HasIoProvider;
+use bz_common::events::HasEvents;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::bz_error;
+use bz_interpreter::starlark_promise::StarlarkPromise;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_node::configuration::calculation::CellNameForConfigurationResolution;
+use bz_node::configuration::resolved::ConfigurationSettingKey;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::nodes::unconfigured::TargetNode;
 use dupe::Dupe;
 use either::Either;
 use futures::FutureExt;
@@ -102,7 +102,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
             .context_type
             .unpack_root()
             .map_err(|_| {
-                buck2_error::Error::from(BxlContextError::Unsupported("output".to_owned()))
+                bz_error::Error::from(BxlContextError::Unsupported("output".to_owned()))
             })?
             .output_stream;
         Ok(output_stream)
@@ -116,10 +116,10 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<String> {
         let _root_type = this.context_type.unpack_root().map_err(|_| {
-            buck2_error::Error::from(BxlContextError::Unsupported("root".to_owned()))
+            bz_error::Error::from(BxlContextError::Unsupported("root".to_owned()))
         })?;
         Ok(this.via_dice(eval, |ctx| {
-            buck2_error::Ok(
+            bz_error::Ok(
                 ctx.global_data()
                     .get_io_provider()
                     .project_root()
@@ -135,7 +135,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     /// This function is not available on the `bxl_ctx` when called from `dynamic_output`.
     fn cell_root<'v>(this: &'v BxlContext<'v>) -> starlark::Result<String> {
         let _root_type = this.context_type.unpack_root().map_err(|_| {
-            buck2_error::Error::from(BxlContextError::Unsupported("root".to_owned()))
+            bz_error::Error::from(BxlContextError::Unsupported("root".to_owned()))
         })?;
         Ok(this.cell_root_abs().to_owned().to_string())
     }
@@ -567,7 +567,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     > {
         let providers = labels.unpack();
 
-        let res: buck2_error::Result<_> = this.via_dice(eval, |dice| {
+        let res: bz_error::Result<_> = this.via_dice(eval, |dice| {
             dice.via(|dice| {
                 async { analysis::analysis(dice, this, providers, skip_incompatible).await }
                     .boxed_local()
@@ -587,7 +587,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
                             eval.heap().alloc_typed(v),
                         ))
                     })
-                    .collect::<buck2_error::Result<_>>()?,
+                    .collect::<bz_error::Result<_>>()?,
             ),
         })
     }
@@ -633,8 +633,8 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
             labels,
             target_platform,
             Materializations::from_str_name(&materializations.to_uppercase()).ok_or_else(|| {
-                buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Unknown materialization setting `{}`",
                     materializations
                 )
@@ -660,7 +660,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
             .context_type
             .unpack_root()
             .map_err(|_| {
-                buck2_error::Error::from(BxlContextError::Unsupported("cli_args".to_owned()))
+                bz_error::Error::from(BxlContextError::Unsupported("cli_args".to_owned()))
             })?
             .cli_args;
 

@@ -12,12 +12,12 @@ use std::borrow::Cow;
 use std::hash::Hash;
 
 use allocative::Allocative;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::name::CellName;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::bxl::BxlFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::name::CellName;
 use derive_more::Display;
 use dupe::Dupe;
 use gazebo::variants::UnpackVariants;

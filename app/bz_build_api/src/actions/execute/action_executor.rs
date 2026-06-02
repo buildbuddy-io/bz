@@ -15,64 +15,64 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_common::events::HasEvents;
-use buck2_common::http::HasHttpClient;
-use buck2_common::io::IoProvider;
-use buck2_common::liveliness_observer::NoopLivelinessObserver;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_data::SchedulingMode;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::execute::blocking::HasBlockingExecutor;
-use buck2_execute::execute::cache_uploader::CacheUploadInfo;
-use buck2_execute::execute::cache_uploader::CacheUploadResults;
-use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
-use buck2_execute::execute::claim::MutexClaimManager;
-use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::execute::command_executor::CommandExecutor;
-use buck2_execute::execute::dep_file_digest::DepFileDigest;
-use buck2_execute::execute::kind::CommandExecutionKind;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::prepared::PreparedAction;
-use buck2_execute::execute::prepared::PreparedCommand;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::CommandExecutionRequest;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::request::LocalActionCacheKey;
-use buck2_execute::execute::request::OutputType;
-use buck2_execute::execute::result::CommandExecutionReport;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::execute::result::CommandExecutionStatus;
-use buck2_execute::materialize::materializer::HasMaterializer;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::output_size::OutputCountAndBytes;
-use buck2_execute::output_size::OutputSize;
-use buck2_execute::path::artifact_path::ArtifactPath;
-use buck2_execute::re::action_identity::ReActionIdentity;
-use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
-use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
-use buck2_file_watcher::mergebase::GetMergebase;
-use buck2_file_watcher::mergebase::Mergebase;
-use buck2_hash::BuckHashMap;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::buck_indexmap;
-use buck2_http::HttpClient;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_signals::env::WaitingData;
+use bz_common::dice::data::HasIoProvider;
+use bz_common::events::HasEvents;
+use bz_common::http::HasHttpClient;
+use bz_common::io::IoProvider;
+use bz_common::liveliness_observer::NoopLivelinessObserver;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_data::SchedulingMode;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::EventDispatcher;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute::execute::blocking::HasBlockingExecutor;
+use bz_execute::execute::cache_uploader::CacheUploadInfo;
+use bz_execute::execute::cache_uploader::CacheUploadResults;
+use bz_execute::execute::cache_uploader::IntoRemoteDepFile;
+use bz_execute::execute::claim::MutexClaimManager;
+use bz_execute::execute::clean_output_paths::CleanOutputPaths;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::execute::command_executor::CommandExecutor;
+use bz_execute::execute::dep_file_digest::DepFileDigest;
+use bz_execute::execute::kind::CommandExecutionKind;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::prepared::PreparedAction;
+use bz_execute::execute::prepared::PreparedCommand;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::CommandExecutionRequest;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::request::LocalActionCacheKey;
+use bz_execute::execute::request::OutputType;
+use bz_execute::execute::result::CommandExecutionReport;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::execute::result::CommandExecutionStatus;
+use bz_execute::materialize::materializer::HasMaterializer;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::output_size::OutputCountAndBytes;
+use bz_execute::output_size::OutputSize;
+use bz_execute::path::artifact_path::ArtifactPath;
+use bz_execute::re::action_identity::ReActionIdentity;
+use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
+use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+use bz_file_watcher::mergebase::GetMergebase;
+use bz_file_watcher::mergebase::Mergebase;
+use bz_hash::BuckHashMap;
+use bz_hash::BuckIndexMap;
+use bz_hash::BuckIndexSet;
+use bz_hash::buck_indexmap;
+use bz_http::HttpClient;
 use derivative::Derivative;
 use derive_more::Display;
 use dice::DiceComputations;
@@ -166,7 +166,7 @@ pub enum ActionExecutionKind {
         eligible_for_full_hybrid: bool,
         dep_file_key: Option<DepFileDigest>,
         scheduling_mode: Option<SchedulingMode>,
-        incremental_kind: buck2_data::IncrementalKind,
+        incremental_kind: bz_data::IncrementalKind,
     },
     /// This action is simple and executed inline within buck2 (e.g. write, symlink_dir)
     #[display("simple")]
@@ -194,18 +194,18 @@ pub struct CommandExecutionRef<'a> {
     pub eligible_for_full_hybrid: bool,
     pub scheduling_mode: Option<SchedulingMode>,
     pub dep_file_key: &'a Option<DepFileDigest>,
-    pub incremental_kind: buck2_data::IncrementalKind,
+    pub incremental_kind: bz_data::IncrementalKind,
 }
 
 impl ActionExecutionKind {
-    pub fn as_enum(&self) -> buck2_data::ActionExecutionKind {
+    pub fn as_enum(&self) -> bz_data::ActionExecutionKind {
         match self {
             ActionExecutionKind::Command { kind, .. } => kind.as_enum(),
-            ActionExecutionKind::Simple => buck2_data::ActionExecutionKind::Simple,
-            ActionExecutionKind::Deferred => buck2_data::ActionExecutionKind::Deferred,
-            ActionExecutionKind::LocalDepFile => buck2_data::ActionExecutionKind::LocalDepFile,
+            ActionExecutionKind::Simple => bz_data::ActionExecutionKind::Simple,
+            ActionExecutionKind::Deferred => bz_data::ActionExecutionKind::Deferred,
+            ActionExecutionKind::LocalDepFile => bz_data::ActionExecutionKind::LocalDepFile,
             ActionExecutionKind::LocalActionCache => {
-                buck2_data::ActionExecutionKind::LocalActionCache
+                bz_data::ActionExecutionKind::LocalActionCache
             }
         }
     }
@@ -291,7 +291,7 @@ pub trait HasActionExecutor {
     async fn get_action_executor(
         &mut self,
         config: &CommandExecutorConfig,
-    ) -> buck2_error::Result<Arc<BuckActionExecutor>>;
+    ) -> bz_error::Result<Arc<BuckActionExecutor>>;
 }
 
 #[async_trait]
@@ -299,7 +299,7 @@ impl HasActionExecutor for DiceComputations<'_> {
     async fn get_action_executor(
         &mut self,
         executor_config: &CommandExecutorConfig,
-    ) -> buck2_error::Result<Arc<BuckActionExecutor>> {
+    ) -> bz_error::Result<Arc<BuckActionExecutor>> {
         let artifact_fs = self.get_artifact_fs().await?;
         let digest_config = self.global_data().get_digest_config();
 
@@ -398,7 +398,7 @@ impl BuckActionExecutor {
 
     pub(crate) fn is_local_execution_possible(
         &self,
-        executor_preference: buck2_execute::execute::request::ExecutorPreference,
+        executor_preference: bz_execute::execute::request::ExecutorPreference,
     ) -> bool {
         self.command_executor
             .is_local_execution_possible(executor_preference)
@@ -511,7 +511,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         &mut self,
         request: &CommandExecutionRequest,
         re_outputs_required: bool,
-    ) -> buck2_error::Result<PreparedAction> {
+    ) -> bz_error::Result<PreparedAction> {
         self.executor.command_executor.prepare_action(
             request,
             self.digest_config(),
@@ -585,7 +585,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         &mut self,
         local_action_cache_key: &LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.executor
             .command_executor
             .insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
@@ -620,7 +620,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         allows_cache_upload: bool,
         allows_dep_file_cache_upload: bool,
         input_files_bytes: Option<u64>,
-        incremental_kind: buck2_data::IncrementalKind,
+        incremental_kind: bz_data::IncrementalKind,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
         let CommandExecutionResult {
             outputs,
@@ -714,7 +714,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         execution_result: &CommandExecutionResult,
         re_result: Option<TActionResult2>,
         dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
-    ) -> buck2_error::Result<CacheUploadResults> {
+    ) -> bz_error::Result<CacheUploadResults> {
         let action = self.target();
         let identity = ReActionIdentity::new(&action as _, None, request.paths());
         Ok(self
@@ -736,7 +736,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
             .await?)
     }
 
-    async fn cleanup_outputs(&mut self) -> buck2_error::Result<()> {
+    async fn cleanup_outputs(&mut self) -> bz_error::Result<()> {
         // Delete all outputs before we start, so things will be clean.
         let output_paths = self
             .outputs
@@ -747,7 +747,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
                 }
                 self.fs().resolve_build(o.get_path(), None)
             })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
+            .collect::<bz_error::Result<Vec<_>>>()?;
 
         // Invalidate all the output paths this action might provide. Note that this is a bit
         // approximative: we might have previous instances of this action that declared
@@ -882,7 +882,7 @@ impl BuckActionExecutor {
                             Some(&ContentBasedPathHash::for_output_artifact()),
                         )
                     })
-                    .collect::<buck2_error::Result<_>>()?;
+                    .collect::<bz_error::Result<_>>()?;
                 let real = result
                     .0
                     .outputs
@@ -896,7 +896,7 @@ impl BuckActionExecutor {
                             .fs()
                             .resolve_build(x, Some(&ContentBasedPathHash::for_output_artifact()))
                     })
-                    .collect::<buck2_error::Result<Vec<_>>>()?;
+                    .collect::<bz_error::Result<Vec<_>>>()?;
                 if real.is_empty() {
                     Err(ExecuteError::MissingOutputs { declared })
                 } else {
@@ -973,54 +973,54 @@ mod tests {
 
     use allocative::Allocative;
     use async_trait::async_trait;
-    use buck2_artifact::actions::key::ActionIndex;
-    use buck2_artifact::actions::key::ActionKey;
-    use buck2_artifact::artifact::artifact_type::Artifact;
-    use buck2_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
-    use buck2_artifact::artifact::build_artifact::BuildArtifact;
-    use buck2_artifact::artifact::source_artifact::SourceArtifact;
-    use buck2_build_signals::env::WaitingData;
-    use buck2_common::cas_digest::CasDigestConfig;
-    use buck2_common::io::fs::FsIoProvider;
-    use buck2_core::category::CategoryRef;
-    use buck2_core::cells::CellResolver;
-    use buck2_core::cells::cell_root_path::CellRootPathBuf;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-    use buck2_core::deferred::key::DeferredHolderKey;
-    use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-    use buck2_core::execution_types::executor_config::CommandGenerationOptions;
-    use buck2_core::execution_types::executor_config::PathSeparatorKind;
-    use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-    use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-    use buck2_core::package::source_path::SourcePath;
-    use buck2_core::target::label::label::TargetLabel;
-    use buck2_events::dispatch::EventDispatcher;
-    use buck2_events::dispatch::with_dispatcher_async;
-    use buck2_execute::artifact_value::ArtifactValue;
-    use buck2_execute::digest_config::DigestConfig;
-    use buck2_execute::execute::blocking::testing::DummyBlockingExecutor;
-    use buck2_execute::execute::cache_uploader::NoOpCacheUploader;
-    use buck2_execute::execute::clean_output_paths::cleanup_path;
-    use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-    use buck2_execute::execute::command_executor::CommandExecutor;
-    use buck2_execute::execute::prepared::NoOpCommandOptionalExecutor;
-    use buck2_execute::execute::request::CommandExecutionInput;
-    use buck2_execute::execute::request::CommandExecutionOutput;
-    use buck2_execute::execute::request::CommandExecutionPaths;
-    use buck2_execute::execute::request::CommandExecutionRequest;
-    use buck2_execute::execute::request::OutputType;
-    use buck2_execute::execute::testing_dry_run::DryRunExecutor;
-    use buck2_execute::materialize::nodisk::NoDiskMaterializer;
-    use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
-    use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
-    use buck2_fs::fs_util::uncategorized as fs_util;
-    use buck2_hash::buck_indexset;
-    use buck2_http::HttpClientBuilder;
+    use bz_artifact::actions::key::ActionIndex;
+    use bz_artifact::actions::key::ActionKey;
+    use bz_artifact::artifact::artifact_type::Artifact;
+    use bz_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
+    use bz_artifact::artifact::build_artifact::BuildArtifact;
+    use bz_artifact::artifact::source_artifact::SourceArtifact;
+    use bz_build_signals::env::WaitingData;
+    use bz_common::cas_digest::CasDigestConfig;
+    use bz_common::io::fs::FsIoProvider;
+    use bz_core::category::CategoryRef;
+    use bz_core::cells::CellResolver;
+    use bz_core::cells::cell_root_path::CellRootPathBuf;
+    use bz_core::cells::name::CellName;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+    use bz_core::deferred::key::DeferredHolderKey;
+    use bz_core::execution_types::executor_config::CommandExecutorConfig;
+    use bz_core::execution_types::executor_config::CommandGenerationOptions;
+    use bz_core::execution_types::executor_config::PathSeparatorKind;
+    use bz_core::fs::artifact_path_resolver::ArtifactFs;
+    use bz_core::fs::buck_out_path::BuckOutPathResolver;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+    use bz_core::package::source_path::SourcePath;
+    use bz_core::target::label::label::TargetLabel;
+    use bz_events::dispatch::EventDispatcher;
+    use bz_events::dispatch::with_dispatcher_async;
+    use bz_execute::artifact_value::ArtifactValue;
+    use bz_execute::digest_config::DigestConfig;
+    use bz_execute::execute::blocking::testing::DummyBlockingExecutor;
+    use bz_execute::execute::cache_uploader::NoOpCacheUploader;
+    use bz_execute::execute::clean_output_paths::cleanup_path;
+    use bz_execute::execute::command_executor::ActionExecutionTimingData;
+    use bz_execute::execute::command_executor::CommandExecutor;
+    use bz_execute::execute::prepared::NoOpCommandOptionalExecutor;
+    use bz_execute::execute::request::CommandExecutionInput;
+    use bz_execute::execute::request::CommandExecutionOutput;
+    use bz_execute::execute::request::CommandExecutionPaths;
+    use bz_execute::execute::request::CommandExecutionRequest;
+    use bz_execute::execute::request::OutputType;
+    use bz_execute::execute::testing_dry_run::DryRunExecutor;
+    use bz_execute::materialize::nodisk::NoDiskMaterializer;
+    use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
+    use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+    use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_hash::buck_indexset;
+    use bz_http::HttpClientBuilder;
     use dice_futures::cancellation::CancellationContext;
     use dupe::Dupe;
     use sorted_vector_map::SortedVectorMap;
@@ -1039,7 +1039,7 @@ mod tests {
 
     #[tokio::test]
     async fn can_execute_some_action() {
-        buck2_certs::certs::maybe_setup_cryptography();
+        bz_certs::certs::maybe_setup_cryptography();
         let cells = CellResolver::testing_with_name_and_path(
             CellName::testing_new("cell"),
             CellRootPathBuf::new(ProjectRelativePathBuf::unchecked_new("cell_path".into())),
@@ -1102,11 +1102,11 @@ mod tests {
 
         #[async_trait]
         impl Action for TestingAction {
-            fn kind(&self) -> buck2_data::ActionKind {
-                buck2_data::ActionKind::NotSet
+            fn kind(&self) -> bz_data::ActionKind {
+                bz_data::ActionKind::NotSet
             }
 
-            fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+            fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
                 Ok(Cow::Borrowed(self.inputs.as_slice()))
             }
 
@@ -1181,7 +1181,7 @@ mod tests {
                     false,
                     false,
                     None,
-                    buck2_data::IncrementalKind::NonIncremental,
+                    bz_data::IncrementalKind::NonIncremental,
                 )?;
                 let outputs = self
                     .outputs
@@ -1255,7 +1255,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cleanup_path_missing() -> buck2_error::Result<()> {
+    fn test_cleanup_path_missing() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let fs = fs.path();
         fs_util::create_dir_all(fs.resolve(ProjectRelativePath::unchecked_new("foo/bar/qux")))?;
@@ -1268,7 +1268,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cleanup_path_present() -> buck2_error::Result<()> {
+    fn test_cleanup_path_present() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let fs = fs.path();
         fs_util::create_dir_all(fs.resolve(ProjectRelativePath::unchecked_new("foo/bar/qux")))?;
@@ -1285,7 +1285,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cleanup_path_overlap() -> buck2_error::Result<()> {
+    fn test_cleanup_path_overlap() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let fs = fs.path();
         fs.write_file(ProjectRelativePath::unchecked_new("foo/bar"), "xx", false)?;
@@ -1302,7 +1302,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cleanup_path_overlap_deep() -> buck2_error::Result<()> {
+    fn test_cleanup_path_overlap_deep() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let fs = fs.path();
         fs.write_file(ProjectRelativePath::unchecked_new("foo/bar"), "xx", false)?;

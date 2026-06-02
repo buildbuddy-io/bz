@@ -9,13 +9,13 @@
  */
 
 use allocative::Allocative;
-use buck2_build_api::query::bxl::BxlCqueryFunctions;
-use buck2_build_api::query::bxl::NEW_BXL_CQUERY_FUNCTIONS;
-use buck2_build_api::query::oneshot::QUERY_FRONTEND;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::syntax::simple::functions::helpers::CapturedExpr;
+use bz_build_api::query::bxl::BxlCqueryFunctions;
+use bz_build_api::query::bxl::NEW_BXL_CQUERY_FUNCTIONS;
+use bz_build_api::query::oneshot::QUERY_FRONTEND;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::syntax::simple::functions::helpers::CapturedExpr;
 use derivative::Derivative;
 use derive_more::Display;
 use dice::DiceComputations;
@@ -85,7 +85,7 @@ impl<'v> AllocValue<'v> for StarlarkCQueryCtx<'v> {
 pub(crate) async fn get_cquery_env(
     ctx: &BxlContext<'_>,
     global_cfg_options_override: &GlobalCfgOptions,
-) -> buck2_error::Result<Box<dyn BxlCqueryFunctions>> {
+) -> bz_error::Result<Box<dyn BxlCqueryFunctions>> {
     (NEW_BXL_CQUERY_FUNCTIONS.get()?)(
         global_cfg_options_override.clone(),
         ctx.project_root().dupe(),
@@ -99,7 +99,7 @@ async fn unpack_targets<'v>(
     this: &StarlarkCQueryCtx<'v>,
     dice: &mut DiceComputations<'_>,
     targets: ConfiguredTargetListExprArg<'v>,
-) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>> {
+) -> bz_error::Result<TargetSet<ConfiguredTargetNode>> {
     filter_incompatible(
         TargetListExpr::<'v, ConfiguredTargetNode>::unpack(
             targets,
@@ -118,7 +118,7 @@ impl<'v> StarlarkCQueryCtx<'v> {
     pub(crate) fn new(
         ctx: ValueTyped<'v, BxlContext<'v>>,
         global_cfg_options: GlobalCfgOptions,
-    ) -> buck2_error::Result<StarlarkCQueryCtx<'v>> {
+    ) -> bz_error::Result<StarlarkCQueryCtx<'v>> {
         Ok(Self {
             ctx,
             global_cfg_options_override: global_cfg_options,
@@ -148,7 +148,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
                 async move {
                     let filter = filter
                         .into_option()
-                        .try_map(buck2_query_parser::parse_expr)?;
+                        .try_map(bz_query_parser::parse_expr)?;
                     let from = unpack_targets(this, dice, from).await?;
                     let to = unpack_targets(this, dice, to).await?;
                     get_cquery_env(&this.ctx, &this.global_cfg_options_override)
@@ -180,7 +180,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
                 async {
                     let filter = filter
                         .into_option()
-                        .try_map(buck2_query_parser::parse_expr)?;
+                        .try_map(bz_query_parser::parse_expr)?;
 
                     let from = unpack_targets(this, dice, from).await?;
                     let to = unpack_targets(this, dice, to).await?;
@@ -363,7 +363,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
                     async {
                         let filter = filter
                             .into_option()
-                            .try_map(buck2_query_parser::parse_expr)?;
+                            .try_map(bz_query_parser::parse_expr)?;
 
                         let targets = unpack_targets(this, dice, universe).await?;
 
@@ -508,7 +508,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
                     async {
                         let filter = filter
                             .into_option()
-                            .try_map(buck2_query_parser::parse_expr)?;
+                            .try_map(bz_query_parser::parse_expr)?;
                         let universe = unpack_targets(this, dice, universe).await?;
                         let targets = unpack_targets(this, dice, from).await?;
                         get_cquery_env(&this.ctx, &this.global_cfg_options_override)

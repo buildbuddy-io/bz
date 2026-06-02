@@ -1,8 +1,8 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_core_tests")
+load("@fbcode//bz/tests:buck_e2e.bzl", "bz_core_tests")
 
 oncall("build_infra")
 
-buck2_core_tests(
+bz_core_tests(
     target_extra_attrs = {
         "test_action_suspension": {
             "env": {
@@ -47,14 +47,14 @@ buck2_core_tests(
                 "darwin",
                 "windows",
             ],
-            "use_compiled_buck2_client_and_tpx": True,
+            "use_compiled_bz_client_and_tpx": True,
         },
         "test_network_isolation": {
             "skip_for_os": [
                 "darwin",
                 "windows",
             ],
-            "use_compiled_buck2_client_and_tpx": True,
+            "use_compiled_bz_client_and_tpx": True,
         },
         "test_orphan_pids_killed": {
             "skip_for_os": [

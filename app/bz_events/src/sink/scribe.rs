@@ -12,14 +12,14 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use buck2_core::buck2_env;
-use buck2_data::ActionExecutionEnd;
-use buck2_data::InstantEvent;
-use buck2_data::Location;
-use buck2_data::StructuredError;
-use buck2_error::ErrorTag;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_util::truncate::truncate;
+use bz_core::bz_env;
+use bz_data::ActionExecutionEnd;
+use bz_data::InstantEvent;
+use bz_data::Location;
+use bz_data::StructuredError;
+use bz_error::ErrorTag;
+use bz_error::conversion::from_any_with_tag;
+use bz_util::truncate::truncate;
 use fbinit::FacebookInit;
 use prost::Message;
 pub use scribe_client::ScribeConfig;
@@ -40,7 +40,7 @@ static SCRIBE_MESSAGE_SIZE_LIMIT: usize = 1024 * 1024;
 // 50k characters
 static TRUNCATED_SCRIBE_MESSAGE_SIZE: usize = 50000;
 
-/// RemoteEventSink is a ScribeSink backed by the Thrift-based client in the `buck2_scribe_client` crate.
+/// RemoteEventSink is a ScribeSink backed by the Thrift-based client in the `bz_scribe_client` crate.
 pub struct RemoteEventSink {
     category: String,
     client: scribe_client::ScribeClient,
@@ -53,7 +53,7 @@ impl RemoteEventSink {
         fb: FacebookInit,
         category: String,
         config: ScribeConfig,
-    ) -> buck2_error::Result<RemoteEventSink> {
+    ) -> bz_error::Result<RemoteEventSink> {
         let client = scribe_client::ScribeClient::new(fb, config)
             .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))?;
 
@@ -66,12 +66,12 @@ impl RemoteEventSink {
     }
 
     // Send this event now, bypassing internal message queue.
-    pub async fn send_now(&self, event: BuckEvent) -> buck2_error::Result<()> {
+    pub async fn send_now(&self, event: BuckEvent) -> bz_error::Result<()> {
         self.send_messages_now(vec![event]).await
     }
 
     // Send multiple events now, bypassing internal message queue.
-    pub async fn send_messages_now(&self, events: Vec<BuckEvent>) -> buck2_error::Result<()> {
+    pub async fn send_messages_now(&self, events: Vec<BuckEvent>) -> bz_error::Result<()> {
         let messages = events
             .into_iter()
             .map(|e| {
@@ -102,7 +102,7 @@ impl RemoteEventSink {
     // Encodes message into something scribe understands.
     fn encode_message(mut event: BuckEvent) -> Vec<u8> {
         smart_truncate_event(event.data_mut());
-        let mut proto: Box<buck2_data::BuckEvent> = event.into();
+        let mut proto: Box<bz_data::BuckEvent> = event.into();
 
         Self::prepare_event(&mut proto);
 
@@ -110,12 +110,12 @@ impl RemoteEventSink {
         if buf.len() > SCRIBE_MESSAGE_SIZE_LIMIT {
             let json = serde_json::to_string(&proto).unwrap();
 
-            let proto: Box<buck2_data::BuckEvent> = BuckEvent::new(
+            let proto: Box<bz_data::BuckEvent> = BuckEvent::new(
                     SystemTime::now(),
                     TraceId::new(),
                     None,
                     None,
-                    buck2_data::buck_event::Data::Instant(InstantEvent {
+                    bz_data::buck_event::Data::Instant(InstantEvent {
                         data: Some(
                             StructuredError {
                                 location: Some(Location {
@@ -129,7 +129,7 @@ impl RemoteEventSink {
                                 backtrace: Vec::new(),
                                 quiet: false,
                                 task: Some(true),
-                                soft_error_category: Some(buck2_data::SoftError {category: "oversized_scribe".to_owned(), is_quiet:false}),
+                                soft_error_category: Some(bz_data::SoftError {category: "oversized_scribe".to_owned(), is_quiet:false}),
                                 daemon_in_memory_state_is_corrupted: false,
                                 daemon_materializer_state_is_corrupted: false,
                                 action_cache_is_corrupted: false,
@@ -146,11 +146,11 @@ impl RemoteEventSink {
         }
     }
 
-    fn prepare_event(event: &mut buck2_data::BuckEvent) {
-        use buck2_data::buck_event::Data;
+    fn prepare_event(event: &mut bz_data::BuckEvent) {
+        use bz_data::buck_event::Data;
 
         if let Some(Data::SpanEnd(s)) = &mut event.data
-            && let Some(buck2_data::span_end_event::Data::ActionExecution(action)) = &mut s.data
+            && let Some(bz_data::span_end_event::Data::ActionExecution(action)) = &mut s.data
         {
             let mut is_cache_hit = false;
 
@@ -172,12 +172,12 @@ impl RemoteEventSink {
         }
     }
 
-    fn should_send_event(&self, data: &buck2_data::buck_event::Data) -> bool {
-        use buck2_data::buck_event::Data;
+    fn should_send_event(&self, data: &bz_data::buck_event::Data) -> bool {
+        use bz_data::buck_event::Data;
 
         match data {
             Data::SpanStart(s) => {
-                use buck2_data::span_start_event::Data;
+                use bz_data::span_start_event::Data;
 
                 match &s.data {
                     Some(Data::Command(..)) => true,
@@ -186,8 +186,8 @@ impl RemoteEventSink {
                 }
             }
             Data::SpanEnd(s) => {
-                use buck2_data::ActionExecutionKind;
-                use buck2_data::span_end_event::Data;
+                use bz_data::ActionExecutionKind;
+                use bz_data::span_end_event::Data;
 
                 match &s.data {
                     Some(Data::Command(..)) => true,
@@ -216,7 +216,7 @@ impl RemoteEventSink {
                 }
             }
             Data::Instant(i) => {
-                use buck2_data::instant_event::Data;
+                use bz_data::instant_event::Data;
 
                 match i.data {
                     Some(Data::BuildGraphInfo(..)) => true,
@@ -234,7 +234,7 @@ impl RemoteEventSink {
                 }
             }
             Data::Record(r) => {
-                use buck2_data::record_event::Data;
+                use bz_data::record_event::Data;
 
                 match r.data {
                     Some(Data::InvocationRecord(..)) => true,
@@ -282,8 +282,8 @@ fn action_has_cache_hit(action: &ActionExecutionEnd) -> bool {
     false
 }
 
-fn get_is_cache_hit(details: &buck2_data::CommandExecutionDetails) -> bool {
-    use buck2_data::command_execution_kind::Command::RemoteCommand;
+fn get_is_cache_hit(details: &bz_data::CommandExecutionDetails) -> bool {
+    use bz_data::command_execution_kind::Command::RemoteCommand;
 
     details
         .command_kind
@@ -321,12 +321,12 @@ impl EventSinkWithStats for RemoteEventSink {
     }
 }
 
-pub(crate) fn scribe_category() -> buck2_error::Result<String> {
-    const DEFAULT_SCRIBE_CATEGORY: &str = "buck2_events";
+pub(crate) fn scribe_category() -> bz_error::Result<String> {
+    const DEFAULT_SCRIBE_CATEGORY: &str = "bz_events";
     // Note that both daemon and client are emitting events, and that changing this variable has
     // no effect on the daemon until buckd is restarted but has effect on the client.
     Ok(
-        buck2_env!("BUCK2_SCRIBE_CATEGORY", applicability = internal)?
+        bz_env!("BUCK2_SCRIBE_CATEGORY", applicability = internal)?
             .unwrap_or(DEFAULT_SCRIBE_CATEGORY)
             .to_owned(),
     )
@@ -334,10 +334,10 @@ pub(crate) fn scribe_category() -> buck2_error::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use buck2_data::CommandExecutionDetails;
-    use buck2_data::CommandExecutionKind;
-    use buck2_data::RemoteCommand;
-    use buck2_data::command_execution_kind::Command;
+    use bz_data::CommandExecutionDetails;
+    use bz_data::CommandExecutionKind;
+    use bz_data::RemoteCommand;
+    use bz_data::command_execution_kind::Command;
 
     use super::*;
 
@@ -349,9 +349,9 @@ mod tests {
             TraceId::new(),
             None,
             None,
-            buck2_data::buck_event::Data::Instant(InstantEvent {
-                data: Some(buck2_data::instant_event::Data::StructuredError(
-                    buck2_data::StructuredError {
+            bz_data::buck_event::Data::Instant(InstantEvent {
+                data: Some(bz_data::instant_event::Data::StructuredError(
+                    bz_data::StructuredError {
                         payload: large_string,
                         ..Default::default()
                     },

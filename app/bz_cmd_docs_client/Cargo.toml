@@ -2,7 +2,7 @@
 description = "`buck2 docs` command client implementation"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_cmd_docs_client"
+name = "bz_cmd_docs_client"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -12,8 +12,8 @@ clap = { workspace = true }
 dupe = { workspace = true }
 termimad = { workspace = true }
 
-buck2_cli_proto = { workspace = true }
-buck2_client_ctx = { workspace = true }
-buck2_error = { workspace = true }
-buck2_query = { workspace = true }
+bz_cli_proto = { workspace = true }
+bz_client_ctx = { workspace = true }
+bz_error = { workspace = true }
+bz_query = { workspace = true }
 regex = { workspace = true }

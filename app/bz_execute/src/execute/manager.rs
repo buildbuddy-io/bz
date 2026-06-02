@@ -12,13 +12,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use buck2_build_signals::env::WaitingCategory;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::liveliness_observer::LivelinessObserver;
-use buck2_core::buck2_env;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_hash::BuckIndexMap;
-use buck2_util::time_span::TimeSpan;
+use bz_build_signals::env::WaitingCategory;
+use bz_build_signals::env::WaitingData;
+use bz_common::liveliness_observer::LivelinessObserver;
+use bz_core::bz_env;
+use bz_events::dispatch::EventDispatcher;
+use bz_hash::BuckIndexMap;
+use bz_util::time_span::TimeSpan;
 use futures::future::Future;
 use futures::future::FutureExt;
 
@@ -340,7 +340,7 @@ pub trait CommandExecutionManagerExt: Sized {
     fn error(
         self,
         stage: &'static str,
-        error: impl Into<buck2_error::Error>,
+        error: impl Into<bz_error::Error>,
     ) -> CommandExecutionResult {
         self.error_classified(stage, error, CommandExecutionErrorType::Other)
     }
@@ -348,7 +348,7 @@ pub trait CommandExecutionManagerExt: Sized {
     fn error_classified(
         self,
         stage: &'static str,
-        error: impl Into<buck2_error::Error>,
+        error: impl Into<bz_error::Error>,
         error_type: CommandExecutionErrorType,
     ) -> CommandExecutionResult;
 }
@@ -420,7 +420,7 @@ where
     fn error_classified(
         self,
         stage: &'static str,
-        error: impl Into<buck2_error::Error>,
+        error: impl Into<bz_error::Error>,
         error_type: CommandExecutionErrorType,
     ) -> CommandExecutionResult {
         let execution_kind = self.execution_kind();
@@ -440,10 +440,10 @@ where
     }
 }
 
-fn inline_environment_metadata() -> buck2_data::InlineCommandExecutionEnvironmentMetadata {
-    buck2_data::InlineCommandExecutionEnvironmentMetadata {
+fn inline_environment_metadata() -> bz_data::InlineCommandExecutionEnvironmentMetadata {
+    bz_data::InlineCommandExecutionEnvironmentMetadata {
         sandcastle_instance_id:
-            buck2_env!("SANDCASTLE_INSTANCE_ID", type = u64, applicability = internal)
+            bz_env!("SANDCASTLE_INSTANCE_ID", type = u64, applicability = internal)
                 .ok()
                 .flatten(),
     }

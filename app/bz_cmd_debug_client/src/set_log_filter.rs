@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::SetLogFilterRequest;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::daemon::client::connect::BuckdConnectConstraints;
-use buck2_client_ctx::daemon::client::connect::connect_buckd;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::subscribers::stdout_stderr_forwarder::StdoutStderrForwarder;
+use bz_cli_proto::SetLogFilterRequest;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::daemon::client::connect::BuckdConnectConstraints;
+use bz_client_ctx::daemon::client::connect::connect_buckd;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::subscribers::stdout_stderr_forwarder::StdoutStderrForwarder;
 
 /// Change the log filter that's currently applied by the Buck2 daemon.
 #[derive(Debug, clap::Parser)]

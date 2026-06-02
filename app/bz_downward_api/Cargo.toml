@@ -1,12 +1,12 @@
 [package]
 edition = "2024"
 license = { workspace = true }
-name = "buck2_downward_api"
+name = "bz_downward_api"
 repository = { workspace = true }
 version = "0.1.0"
 
 [dependencies]
 async-trait = { workspace = true }
-buck2_error = { workspace = true }
-buck2_hash = { workspace = true }
+bz_error = { workspace = true }
+bz_hash = { workspace = true }
 tracing = { workspace = true }

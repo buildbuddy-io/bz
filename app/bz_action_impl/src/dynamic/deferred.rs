@@ -11,56 +11,56 @@
 use std::iter;
 use std::sync::Arc;
 
-use buck2_analysis::analysis::calculation::AnalysisKeyActivationData;
-use buck2_analysis::analysis::calculation::AnalysisWithExtraData;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::analysis::registry::AnalysisRegistry;
-use buck2_build_api::analysis::registry::RecordedAnalysisValues;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::artifact_groups::ArtifactGroupValues;
-use buck2_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
-use buck2_build_api::dynamic::calculation::dynamic_lambda_result;
-use buck2_build_api::dynamic_value::DynamicValue;
-use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
-use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
-use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
-use buck2_build_signals::env::WaitingCategory;
-use buck2_build_signals::env::WaitingData;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_events::dispatch::record_root_spans;
-use buck2_events::dispatch::span;
-use buck2_events::dispatch::span_async_simple;
-use buck2_events::span::SpanId;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::materialize::materializer::HasMaterializer;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_interpreter::factory::BuckStarlarkModule;
-use buck2_interpreter::factory::FinishedStarlarkEvaluation;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
-use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
-use buck2_util::time_span::TimeSpan;
+use bz_analysis::analysis::calculation::AnalysisKeyActivationData;
+use bz_analysis::analysis::calculation::AnalysisWithExtraData;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::analysis::registry::AnalysisRegistry;
+use bz_build_api::analysis::registry::RecordedAnalysisValues;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::artifact_groups::ArtifactGroupValues;
+use bz_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
+use bz_build_api::dynamic::calculation::dynamic_lambda_result;
+use bz_build_api::dynamic_value::DynamicValue;
+use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_build_api::interpreter::rule_defs::context::AnalysisContext;
+use bz_build_api::interpreter::rule_defs::context::BazelCppOptions;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use bz_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
+use bz_build_signals::env::WaitingCategory;
+use bz_build_signals::env::WaitingData;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::dynamic::DynamicLambdaResultsKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_events::dispatch::get_dispatcher;
+use bz_events::dispatch::record_root_spans;
+use bz_events::dispatch::span;
+use bz_events::dispatch::span_async_simple;
+use bz_events::span::SpanId;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::materialize::materializer::HasMaterializer;
+use bz_hash::BuckIndexMap;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_interpreter::factory::BuckStarlarkModule;
+use bz_interpreter::factory::FinishedStarlarkEvaluation;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::print_handler::EventDispatcherPrintHandler;
+use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_util::time_span::TimeSpan;
 use dice::CancellationContext;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationObserver;
@@ -116,7 +116,7 @@ pub fn invoke_dynamic_output_lambda<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     lambda: Value<'v>,
     args: DynamicLambdaArgs<'v>,
-) -> buck2_error::Result<ProviderCollection<'v>> {
+) -> bz_error::Result<ProviderCollection<'v>> {
     let pos;
     let named;
     let (pos, named): (&[_], &[(_, _)]) = match &args {
@@ -152,8 +152,8 @@ pub fn invoke_dynamic_output_lambda<'v>(
     let provider_collection = match args {
         DynamicLambdaArgs::OldPositional { .. } => {
             if !return_value.is_none() {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "dynamic_output lambda must return `None`, got: `{0}`",
                     return_value.to_string_for_type_error()
                 ));
@@ -184,7 +184,7 @@ fn execute_lambda_inner<'v>(
     input_artifacts_materialized: InputArtifactsMaterialized,
     digest_config: DigestConfig,
     artifact_fs: &ArtifactFs,
-) -> buck2_error::Result<(FinishedStarlarkEvaluation, AnalysisRegistry<'v>)> {
+) -> bz_error::Result<(FinishedStarlarkEvaluation, AnalysisRegistry<'v>)> {
     let print = EventDispatcherPrintHandler(get_dispatcher());
     eval_provider.with_evaluator(env, liveness.into(), |eval, _| {
         let heap = env.heap();
@@ -282,7 +282,7 @@ async fn execute_lambda(
 ) -> (
     TimeSpan,
     SmallVec<[SpanId; 1]>,
-    buck2_error::Result<RecordedAnalysisValues>,
+    bz_error::Result<RecordedAnalysisValues>,
 ) {
     if let BaseDeferredKey::BxlLabel(key) = self_key.owner().dupe() {
         let res = eval_bxl_for_dynamic_output(
@@ -303,7 +303,7 @@ async fn execute_lambda(
             let artifact_fs = dice.get_artifact_fs().await?;
             let eval_kind = StarlarkEvalKind::DynamicOutput(Arc::new(self_key.dupe()));
             let eval_provider = StarlarkEvaluatorProvider::new(dice, eval_kind).await?;
-            buck2_error::Ok((artifact_fs, eval_provider))
+            bz_error::Ok((artifact_fs, eval_provider))
         }
         .await;
         let (artifact_fs, eval_provider) = match r {
@@ -315,8 +315,8 @@ async fn execute_lambda(
 
         let proto_rule = "dynamic_lambda".to_owned();
 
-        let start_event = buck2_data::AnalysisStart {
-            target: Some(buck2_data::analysis_start::Target::DynamicLambda(
+        let start_event = bz_data::AnalysisStart {
+            target: Some(bz_data::analysis_start::Target::DynamicLambda(
                 self_key.owner().to_proto().into(),
             )),
             rule: proto_rule.clone(),
@@ -329,7 +329,7 @@ async fn execute_lambda(
                 let mut declared_actions = None;
                 let mut declared_artifacts = None;
 
-                let output: buck2_error::Result<_> = BuckStarlarkModule::with_profiling(|env| {
+                let output: bz_error::Result<_> = BuckStarlarkModule::with_profiling(|env| {
                     let (finished_evaluation, analysis_registry) = execute_lambda_inner(
                         &env,
                         eval_provider,
@@ -353,8 +353,8 @@ async fn execute_lambda(
 
                 (
                     output,
-                    buck2_data::AnalysisEnd {
-                        target: Some(buck2_data::analysis_end::Target::DynamicLambda(
+                    bz_data::AnalysisEnd {
+                        target: Some(bz_data::analysis_end::Target::DynamicLambda(
                             self_key.owner().to_proto().into(),
                         )),
                         rule: proto_rule,
@@ -375,7 +375,7 @@ pub(crate) async fn prepare_and_execute_lambda(
     cancellation: &CancellationContext,
     lambda: OwnedRefFrozenRef<'_, FrozenDynamicLambdaParams>,
     self_holder_key: DynamicLambdaResultsKey,
-) -> buck2_error::Result<RecordedAnalysisValues> {
+) -> bz_error::Result<RecordedAnalysisValues> {
     let mut waiting_data = WaitingData::new();
     // This is a bit suboptimal: we wait for all artifacts to be ready in order to
     // materialize any of them. However that is how we execute *all* local actions so in
@@ -392,15 +392,15 @@ pub(crate) async fn prepare_and_execute_lambda(
     let dynamic_inputs_bytes = ensured_artifacts.values().map(|v| v.size()).sum::<u64>();
 
     span_async_simple(
-        buck2_data::DynamicLambdaStart {
+        bz_data::DynamicLambdaStart {
             owner: Some(self_holder_key.owner().to_proto().into()),
             dynamic_inputs_bytes,
         },
         async move {
             waiting_data.start_waiting_category_now(WaitingCategory::MaterializingInputs);
             let (input_artifacts_materialized, resolved_dynamic_values) = span_async_simple(
-                buck2_data::DeferredPreparationStageStart {
-                    stage: Some(buck2_data::MaterializedArtifacts {}.into()),
+                bz_data::DeferredPreparationStageStart {
+                    stage: Some(bz_data::MaterializedArtifacts {}.into()),
                 },
                 ctx.try_compute2(
                     |ctx| Box::pin(materialize_inputs(&ensured_artifacts, ctx)),
@@ -411,7 +411,7 @@ pub(crate) async fn prepare_and_execute_lambda(
                         ))
                     },
                 ),
-                buck2_data::DeferredPreparationStageEnd {},
+                bz_data::DeferredPreparationStageEnd {},
             )
             .await?;
             waiting_data.start_waiting_category_now(WaitingCategory::Unknown);
@@ -441,7 +441,7 @@ pub(crate) async fn prepare_and_execute_lambda(
             })?;
             res
         },
-        buck2_data::DynamicLambdaEnd {},
+        bz_data::DynamicLambdaEnd {},
     )
     .await
 }
@@ -449,7 +449,7 @@ pub(crate) async fn prepare_and_execute_lambda(
 async fn ensure_artifacts_built(
     materialized_artifacts: &[Artifact],
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<Vec<ArtifactGroupValues>> {
+) -> bz_error::Result<Vec<ArtifactGroupValues>> {
     if materialized_artifacts.is_empty() {
         return Ok(Vec::new());
     }
@@ -472,7 +472,7 @@ pub struct InputArtifactsMaterialized(());
 async fn materialize_inputs(
     ensured_artifacts: &BuckIndexMap<&Artifact, &ArtifactValue>,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<InputArtifactsMaterialized> {
+) -> bz_error::Result<InputArtifactsMaterialized> {
     if ensured_artifacts.is_empty() {
         return Ok(InputArtifactsMaterialized(()));
     }
@@ -505,7 +505,7 @@ async fn materialize_inputs(
 async fn resolve_dynamic_values(
     dynamic_values: &[DynamicValue],
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<StdBuckHashMap<DynamicValue, FrozenProviderCollectionValue>> {
+) -> bz_error::Result<StdBuckHashMap<DynamicValue, FrozenProviderCollectionValue>> {
     if dynamic_values.is_empty() {
         return Ok(StdBuckHashMap::default());
     }
@@ -518,7 +518,7 @@ async fn resolve_dynamic_values(
                     .analysis_values
                     .provider_collection()?
                     .to_owned();
-                buck2_error::Ok((dynamic_value.dupe(), result))
+                bz_error::Ok((dynamic_value.dupe(), result))
             })
         })
         .await?;
@@ -553,7 +553,7 @@ fn artifact_values<'v>(
     _: InputArtifactsMaterialized,
     artifact_fs: &ArtifactFs,
     heap: Heap<'v>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>> {
     let mut artifact_values_dict = Vec::with_capacity(ensured_artifacts.len());
     for (artifact, artifact_value) in ensured_artifacts.iter() {
         let artifact = *artifact;
@@ -582,7 +582,7 @@ fn outputs<'v>(
     outputs: &[FrozenValueTyped<'static, FrozenStarlarkOutputArtifact>],
     registry: &mut AnalysisRegistry<'v>,
     heap: Heap<'v>,
-) -> buck2_error::Result<
+) -> bz_error::Result<
     ValueOfUnchecked<
         'v,
         DictType<FrozenValueTyped<'static, StarlarkArtifact>, StarlarkDeclaredArtifact<'v>>,
@@ -606,7 +606,7 @@ fn new_attr_value<'v>(
     registry: &mut AnalysisRegistry<'v>,
     resolved_dynamic_values: &StdBuckHashMap<DynamicValue, FrozenProviderCollectionValue>,
     env: &Module<'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     match value {
         DynamicAttrValue::Output(artifact) => {
             let artifact =
@@ -670,7 +670,7 @@ fn new_attr_value<'v>(
                         env,
                     )
                 })
-                .collect::<buck2_error::Result<Vec<_>>>()?;
+                .collect::<bz_error::Result<Vec<_>>>()?;
             Ok(env.heap().alloc(AllocList(xs)))
         }
         DynamicAttrValue::Dict(xs) => {
@@ -689,8 +689,8 @@ fn new_attr_value<'v>(
                     )?,
                 );
                 if prev.is_some() {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Duplicate key in dict"
                     ));
                 }
@@ -711,7 +711,7 @@ fn new_attr_value<'v>(
                         env,
                     )
                 })
-                .collect::<buck2_error::Result<Vec<_>>>()?;
+                .collect::<bz_error::Result<Vec<_>>>()?;
             Ok(env.heap().alloc(AllocTuple(xs)))
         }
         DynamicAttrValue::Option(option) => match option {
@@ -738,7 +738,7 @@ fn new_attr_values<'v>(
     registry: &mut AnalysisRegistry<'v>,
     resolved_dynamic_values: &StdBuckHashMap<DynamicValue, FrozenProviderCollectionValue>,
     env: &Module<'v>,
-) -> buck2_error::Result<Box<[(String, Value<'v>)]>> {
+) -> bz_error::Result<Box<[(String, Value<'v>)]>> {
     if values.values.len() != callable.attrs.len() {
         return Err(internal_error!("Parameter count mismatch"));
     }
@@ -773,7 +773,7 @@ pub fn dynamic_lambda_ctx_data<'v>(
     artifact_fs: &ArtifactFs,
     digest_config: DigestConfig,
     env: &Module<'v>,
-) -> buck2_error::Result<DynamicLambdaCtxData<'v>> {
+) -> bz_error::Result<DynamicLambdaCtxData<'v>> {
     let self_key = Arc::new(self_key);
 
     let dynamic_lambda = dynamic_lambda.add_unfrozen_heap_ref(env.heap());

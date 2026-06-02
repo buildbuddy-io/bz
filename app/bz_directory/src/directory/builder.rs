@@ -12,12 +12,12 @@ use std::mem;
 use std::ops::ControlFlow;
 
 use allocative::Allocative;
-use buck2_core::directory_digest::DirectoryDigest;
-use buck2_fs::paths::IntoFileNameBufIterator;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_core::directory_digest::DirectoryDigest;
+use bz_fs::paths::IntoFileNameBufIterator;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use derivative::Derivative;
 use dupe::Clone_;
 use dupe::Copy_;
@@ -42,7 +42,7 @@ use crate::directory::immutable_or_exclusive::ImmutableOrExclusiveDirectoryEntri
 use crate::directory::immutable_or_exclusive::ImmutableOrExclusiveDirectoryRef;
 use crate::directory::path_accumulator::PathAccumulator;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Environment)]
 pub enum DirectoryInsertError {
     #[error("Path is empty")]
@@ -52,14 +52,14 @@ pub enum DirectoryInsertError {
     CannotTraverseLeaf { path: PathAccumulator },
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Environment)]
 pub enum DirectoryMkdirError {
     #[error("Mkdir conflicts with an existing leaf at path: `{}`", .path)]
     CannotTraverseLeaf { path: PathAccumulator },
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Environment)]
 pub enum DirectoryMergeError {
     #[error("Merge conflicts with an existing leaf at path: `{}`", .path)]
@@ -203,7 +203,7 @@ where
         other: Self,
         leaf_covers_dir: impl Fn(&L) -> bool,
     ) -> Result<(), DirectoryMergeError> {
-        if !buck2_core::faster_directories::is_enabled() {
+        if !bz_core::faster_directories::is_enabled() {
             return self
                 .merge_inner_old(other, &leaf_covers_dir)
                 .map_err(|path| DirectoryMergeError::CannotTraverseLeaf { path });
@@ -218,7 +218,7 @@ where
     }
 
     pub fn merge(&mut self, other: Self) -> Result<(), DirectoryMergeError> {
-        if buck2_core::faster_directories::is_enabled() {
+        if bz_core::faster_directories::is_enabled() {
             let v = std::mem::replace(self, DirectoryBuilder::empty());
             let v = v
                 .merge_inner(other, false, &|_| false)
@@ -747,9 +747,9 @@ mod tests {
     use std::cell::Cell;
 
     use assert_matches::assert_matches;
-    use buck2_fs::paths::file_name::FileName;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_fs::paths::file_name::FileName;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 
     use crate::directory::builder::DirectoryBuilder;
     use crate::directory::builder::DirectoryInsertError;
@@ -770,7 +770,7 @@ mod tests {
     use crate::directory::test::path;
 
     #[test]
-    fn test_insert() -> buck2_error::Result<()> {
+    fn test_insert() -> bz_error::Result<()> {
         let mut b = NoHasherDirectoryBuilder::empty();
 
         assert_matches!(
@@ -794,7 +794,7 @@ mod tests {
     }
 
     #[test]
-    fn test_merge() -> buck2_error::Result<()> {
+    fn test_merge() -> bz_error::Result<()> {
         let mut a = TestDirectoryBuilder::empty();
         a.insert(path("a/b"), DirectoryEntry::Leaf(NopEntry))?;
 
@@ -826,7 +826,7 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_overwrite() -> buck2_error::Result<()> {
+    fn test_merge_overwrite() -> bz_error::Result<()> {
         let mut a = TestDirectoryBuilder::empty();
         a.insert(path("a/b"), DirectoryEntry::Leaf(NopEntry))?;
 
@@ -839,7 +839,7 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_conflict() -> buck2_error::Result<()> {
+    fn test_merge_conflict() -> bz_error::Result<()> {
         let mut a = TestDirectoryBuilder::empty();
         a.insert(path("a"), DirectoryEntry::Leaf(NopEntry))?;
 
@@ -857,7 +857,7 @@ mod tests {
     }
 
     #[test]
-    fn test_copy_on_write() -> buck2_error::Result<()> {
+    fn test_copy_on_write() -> bz_error::Result<()> {
         let empty = TestDirectoryBuilder::empty().fingerprint(&TestHasher);
 
         let mut a = TestDirectoryBuilder::empty();
@@ -881,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mkdir() -> buck2_error::Result<()> {
+    fn test_mkdir() -> bz_error::Result<()> {
         let mut b = TestDirectoryBuilder::empty();
         b.mkdir(path("foo/bar"))?;
         b.mkdir(path("foo"))?;
@@ -904,7 +904,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mkdir_overwrite() -> buck2_error::Result<()> {
+    fn test_mkdir_overwrite() -> bz_error::Result<()> {
         let mut b = TestDirectoryBuilder::empty();
         b.insert(path("a/b"), DirectoryEntry::Leaf(NopEntry))?;
 

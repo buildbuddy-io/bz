@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_data::error::ErrorTag;
+use bz_data::error::ErrorTag;
 
 use crate::conversion::from_any_with_tag;
 

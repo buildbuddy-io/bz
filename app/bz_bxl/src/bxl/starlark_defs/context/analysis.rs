@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_core::configuration::compatibility::IncompatiblePlatformReason;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::provider::label::ConfiguredProvidersLabel;
 use dice::DiceComputations;
 use either::Either;
 use futures::FutureExt;
@@ -27,14 +27,14 @@ pub(crate) async fn analysis<'v>(
     ctx: &BxlContext<'v>,
     expr: ProvidersExpr<ConfiguredProvidersLabel>,
     skip_incompatible: bool,
-) -> buck2_error::Result<
+) -> bz_error::Result<
     Either<Option<StarlarkAnalysisResult>, Vec<(ConfiguredProvidersLabel, StarlarkAnalysisResult)>>,
 > {
     let analysis = dice
         .compute_join(expr.labels(), |dice, label| {
             async move {
                 let maybe_result = dice.get_analysis_result(label.target()).await?;
-                buck2_error::Ok((label, maybe_result))
+                bz_error::Ok((label, maybe_result))
             }
             .boxed()
         })
@@ -64,7 +64,7 @@ pub(crate) async fn analysis<'v>(
             Ok(r) => r.map(Ok),
             Err(e) => Some(Err(e)),
         })
-        .collect::<buck2_error::Result<Vec<_>>>()?;
+        .collect::<bz_error::Result<Vec<_>>>()?;
 
     match expr {
         ProvidersExpr::Literal(_) => {

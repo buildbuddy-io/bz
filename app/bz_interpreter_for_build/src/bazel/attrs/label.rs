@@ -1,7 +1,7 @@
-use buck2_node::attrs::attr_type::bazel::label::BazelLabelAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::attr_type::bazel::label::BazelLabelAttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
 use starlark::values::Value;
 
@@ -19,15 +19,15 @@ impl AttrTypeCoerce for BazelLabelAttrType {
         configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         if let Some(value_str) = value.unpack_str() {
             if ctx.is_bazel_compat_cell() {
                 return self
                     .dep
                     .coerce_item(configurable, ctx, value)
                     .map_err(|dep_error| {
-                        buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        bz_error::bz_error!(
+                            bz_error::ErrorTag::Input,
                             "could not coerce Bazel label as dependency ({:#})",
                             dep_error
                         )
@@ -46,8 +46,8 @@ impl AttrTypeCoerce for BazelLabelAttrType {
                 self.source
                     .coerce_item(configurable, ctx, value)
                     .map_err(|source_error| {
-                        buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        bz_error::bz_error!(
+                            bz_error::ErrorTag::Input,
                             "could not coerce Bazel label as dependency ({:#}) or source ({:#})",
                             dep_error,
                             source_error

@@ -12,16 +12,16 @@ use std::fmt;
 use std::hash::Hash;
 
 use allocative::Allocative;
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::package::PackageLabel;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::NonDefaultProvidersName;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::TargetNameRef;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::package::PackageLabel;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::NonDefaultProvidersName;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetNameRef;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use dupe::Dupe;
 use pagable::Pagable;
 use serde::Serialize;
@@ -72,10 +72,10 @@ fn bazel_workspace_root_for_cell(cell: &str) -> String {
 fn bazel_label_relative_target(
     base_package: PackageLabel,
     label: &str,
-) -> buck2_error::Result<TargetLabel> {
+) -> bz_error::Result<TargetLabel> {
     if label.starts_with('@') {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Label.relative does not support repository-qualified labels yet: `{}`",
             label
         ));
@@ -522,17 +522,17 @@ pub fn register_providers_label(globals: &mut GlobalsBuilder) {}
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::cells::external::bzlmod_cell_name;
-    use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::provider::label::ConfiguredProvidersLabel;
-    use buck2_core::provider::label::NonDefaultProvidersName;
-    use buck2_core::provider::label::ProviderName;
-    use buck2_core::provider::label::ProvidersLabel;
-    use buck2_core::provider::label::ProvidersName;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-    use buck2_core::target::label::label::TargetLabel;
-    use buck2_util::arc_str::ArcSlice;
+    use bz_core::cells::external::bzlmod_cell_name;
+    use bz_core::cells::external::register_bzlmod_cell_canonical_repo_name;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::provider::label::ConfiguredProvidersLabel;
+    use bz_core::provider::label::NonDefaultProvidersName;
+    use bz_core::provider::label::ProviderName;
+    use bz_core::provider::label::ProvidersLabel;
+    use bz_core::provider::label::ProvidersName;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_core::target::label::label::TargetLabel;
+    use bz_util::arc_str::ArcSlice;
     use starlark::assert::Assert;
     use starlark::environment::GlobalsBuilder;
     use starlark::starlark_module;

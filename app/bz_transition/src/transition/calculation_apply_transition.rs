@@ -15,39 +15,39 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::actions::query::CONFIGURED_ATTR_TO_VALUE;
-use buck2_build_api::actions::query::PackageLabelOption;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::FrozenPlatformInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfo;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
-use buck2_build_api::transition::TRANSITION_CALCULATION;
-use buck2_build_api::transition::TransitionAttrs;
-use buck2_build_api::transition::TransitionCalculation;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::configuration::cfg_diff::cfg_diff;
-use buck2_core::configuration::data::BazelBuildSettingValue;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::data::ConfigurationDataData;
-use buck2_core::configuration::transition::applied::TransitionApplied;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_hash::BuckHasher;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_interpreter::factory::BuckStarlarkModule;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
-use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::configured_attr::ConfiguredAttr;
-use buck2_node::attrs::display::AttrDisplayWithContextExt;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
+use bz_build_api::actions::query::CONFIGURED_ATTR_TO_VALUE;
+use bz_build_api::actions::query::PackageLabelOption;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::interpreter::rule_defs::provider::builtin::platform_info::FrozenPlatformInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfo;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use bz_build_api::transition::TRANSITION_CALCULATION;
+use bz_build_api::transition::TransitionAttrs;
+use bz_build_api::transition::TransitionCalculation;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::configuration::cfg_diff::cfg_diff;
+use bz_core::configuration::data::BazelBuildSettingValue;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::data::ConfigurationDataData;
+use bz_core::configuration::transition::applied::TransitionApplied;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::get_dispatcher;
+use bz_hash::BuckHasher;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_interpreter::factory::BuckStarlarkModule;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::print_handler::EventDispatcherPrintHandler;
+use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::configured_attr::ConfiguredAttr;
+use bz_node::attrs::display::AttrDisplayWithContextExt;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::nodes::frontend::TargetGraphCalculation;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::Key;
@@ -74,7 +74,7 @@ use starlark_map::sorted_map::SortedMap;
 use crate::transition::calculation_fetch_transition::FetchTransition;
 use crate::transition::calculation_fetch_transition::TransitionData;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum ApplyTransitionError {
     #[error("transition function not marked as `split` must return a `PlatformInfo`")]
@@ -104,7 +104,7 @@ fn bazel_transition_input_value<'v>(
     defaults: &BTreeMap<String, BazelBuildSettingValue>,
     conf: &ConfigurationData,
     eval: &mut Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     if key == BAZEL_PLATFORMS_OPTION {
         if let Some(value) = conf.data()?.build_settings.get(key) {
             Ok(bazel_build_setting_value_to_starlark(value, eval))
@@ -249,7 +249,7 @@ fn bazel_build_setting_value_from_attr(value: &CoercedAttr) -> Option<BazelBuild
 async fn bazel_transition_input_defaults(
     ctx: &mut DiceComputations<'_>,
     transition: &TransitionData,
-) -> buck2_error::Result<BTreeMap<String, BazelBuildSettingValue>> {
+) -> bz_error::Result<BTreeMap<String, BazelBuildSettingValue>> {
     let cell_resolver = ctx.get_cell_resolver().await?;
     let cell_alias_resolver = ctx
         .get_cell_alias_resolver(cell_resolver.root_cell())
@@ -288,7 +288,7 @@ async fn bazel_transition_input_defaults(
 fn bazel_transition_setting_key(
     key: Value,
     transition: &TransitionData,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     if let Some(key) = key.unpack_str() {
         return Ok(transition.bazel_canonical_build_setting_key(key));
     }
@@ -356,7 +356,7 @@ async fn bazel_platform_configuration(
     ctx: &mut DiceComputations<'_>,
     target: &TargetLabel,
     is_marked_as_exec_platform: bool,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     ctx.get_configuration_analysis_result(&ProvidersLabel::default_for(target.dupe()))
         .await?
         .provider_collection()
@@ -368,7 +368,7 @@ async fn bazel_platform_configuration(
 async fn parse_bazel_platform_target(
     ctx: &mut DiceComputations<'_>,
     label: &str,
-) -> buck2_error::Result<TargetLabel> {
+) -> bz_error::Result<TargetLabel> {
     let cell_resolver = ctx.get_cell_resolver().await?;
     let cell_alias_resolver = ctx
         .get_cell_alias_resolver(cell_resolver.root_cell())
@@ -384,7 +384,7 @@ async fn parse_bazel_platform_target(
 async fn bazel_platform_targets_from_setting(
     ctx: &mut DiceComputations<'_>,
     value: &BazelBuildSettingValue,
-) -> buck2_error::Result<Vec<TargetLabel>> {
+) -> bz_error::Result<Vec<TargetLabel>> {
     match value {
         BazelBuildSettingValue::Label(label) => Ok(vec![label.target().dupe()]),
         BazelBuildSettingValue::LabelList(labels) => {
@@ -417,14 +417,14 @@ async fn bazel_platform_targets_from_setting(
 
 async fn bazel_host_platform_target(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<TargetLabel> {
+) -> bz_error::Result<TargetLabel> {
     parse_bazel_platform_target(ctx, "platforms//host:host").await
 }
 
 async fn apply_bazel_platform_build_setting_to_cfg(
     ctx: &mut DiceComputations<'_>,
     cfg: ConfigurationData,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     if !cfg.is_bound() {
         return Ok(cfg);
     }
@@ -469,7 +469,7 @@ async fn apply_bazel_platform_build_setting_to_cfg(
 async fn apply_bazel_platform_build_setting(
     ctx: &mut DiceComputations<'_>,
     applied: TransitionApplied,
-) -> buck2_error::Result<TransitionApplied> {
+) -> bz_error::Result<TransitionApplied> {
     match applied {
         TransitionApplied::Single(cfg) => Ok(TransitionApplied::Single(
             apply_bazel_platform_build_setting_to_cfg(ctx, cfg).await?,
@@ -492,14 +492,14 @@ fn bazel_transition_result_to_configuration(
     result: Value,
     conf: &ConfigurationData,
     transition: &TransitionData,
-) -> buck2_error::Result<TransitionApplied> {
+) -> bz_error::Result<TransitionApplied> {
     const PATCH_TRANSITION_KEY: &str = "";
 
     fn apply_patch(
         dict: DictRef,
         conf: &ConfigurationData,
         transition: &TransitionData,
-    ) -> buck2_error::Result<ConfigurationData> {
+    ) -> bz_error::Result<ConfigurationData> {
         if dict.is_empty() {
             return Ok(conf.dupe());
         }
@@ -606,7 +606,7 @@ fn bazel_transition_result_to_configuration(
 fn bazel_analysis_test_transition_to_configuration(
     settings: &BTreeMap<String, BazelBuildSettingValue>,
     conf: &ConfigurationData,
-) -> buck2_error::Result<TransitionApplied> {
+) -> bz_error::Result<TransitionApplied> {
     if settings.is_empty() {
         return Ok(TransitionApplied::Single(conf.dupe()));
     }
@@ -634,7 +634,7 @@ fn call_transition_function<'v>(
     refs: Value<'v>,
     attrs: Option<Value<'v>>,
     eval: &mut Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<TransitionApplied> {
+) -> bz_error::Result<TransitionApplied> {
     if transition.is_bazel() {
         let mut settings = Vec::new();
         for input in transition.bazel_inputs() {
@@ -659,7 +659,7 @@ fn call_transition_function<'v>(
         };
         let result = eval
             .eval_function(impl_, &[settings, attrs], &[])
-            .map_err(buck2_error::Error::from)?;
+            .map_err(bz_error::Error::from)?;
         return bazel_transition_result_to_configuration(result, conf, transition);
     }
 
@@ -686,7 +686,7 @@ fn call_transition_function<'v>(
     }
     let new_platforms = eval
         .eval_function(impl_, &[], &args)
-        .map_err(buck2_error::Error::from)?;
+        .map_err(bz_error::Error::from)?;
     let is_marked_as_exec_platform = conf.is_marked_as_exec_platform();
     if transition.is_split() {
         match UnpackDictEntries::<&str, &PlatformInfo>::unpack_value(new_platforms)? {
@@ -719,7 +719,7 @@ async fn do_apply_transition(
     conf: &ConfigurationData,
     transition_id: &TransitionId,
     cancellation: &CancellationContext,
-) -> buck2_error::Result<TransitionApplied> {
+) -> bz_error::Result<TransitionApplied> {
     let transition = ctx.fetch_transition(transition_id).await?;
     if let Some(settings) = transition.bazel_analysis_test_settings() {
         return apply_bazel_platform_build_setting(
@@ -827,7 +827,7 @@ async fn do_apply_transition(
                 }
             })?;
         let (token, _) = finished_eval.finish()?;
-        Ok::<_, buck2_error::Error>((token, res))
+        Ok::<_, bz_error::Error>((token, res))
     })?;
 
     if transition.is_bazel() {
@@ -843,7 +843,7 @@ pub(crate) trait ApplyTransition {
     async fn fetch_transition_function_reference(
         &mut self,
         target: &ProvidersLabel,
-    ) -> buck2_error::Result<FrozenProviderCollectionValue>;
+    ) -> bz_error::Result<FrozenProviderCollectionValue>;
 }
 
 #[async_trait]
@@ -851,7 +851,7 @@ impl ApplyTransition for DiceComputations<'_> {
     async fn fetch_transition_function_reference(
         &mut self,
         target: &ProvidersLabel,
-    ) -> buck2_error::Result<FrozenProviderCollectionValue> {
+    ) -> bz_error::Result<FrozenProviderCollectionValue> {
         Ok(self.get_configuration_analysis_result(target).await?.dupe())
     }
 }
@@ -870,7 +870,7 @@ impl TransitionCalculation for TransitionCalculationImpl {
         configured_attrs: &OrderedMap<&str, Arc<ConfiguredAttr>>,
         cfg: &ConfigurationData,
         transition_id: &TransitionId,
-    ) -> buck2_error::Result<Arc<TransitionApplied>> {
+    ) -> bz_error::Result<Arc<TransitionApplied>> {
         #[derive(Debug, Eq, PartialEq, Hash, Clone, Display, Allocative, Pagable)]
         #[display("{} ({}){}", transition_id, cfg, self.fmt_attrs())]
         #[pagable_typetag(dice::DiceKeyDyn)]
@@ -907,14 +907,14 @@ impl TransitionCalculation for TransitionCalculationImpl {
 
         #[async_trait]
         impl Key for TransitionKey {
-            type Value = buck2_error::Result<Arc<TransitionApplied>>;
+            type Value = bz_error::Result<Arc<TransitionApplied>>;
 
             async fn compute(
                 &self,
                 ctx: &mut DiceComputations,
                 cancellation: &CancellationContext,
             ) -> Self::Value {
-                let v: buck2_error::Result<_> = try {
+                let v: bz_error::Result<_> = try {
                     do_apply_transition(
                         ctx,
                         self.attrs.as_deref(),

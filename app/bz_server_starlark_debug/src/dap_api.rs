@@ -34,68 +34,68 @@ pub(crate) trait DebugServer {
     fn initialize(
         &mut self,
         x: dap::InitializeRequestArguments,
-    ) -> buck2_error::Result<Option<serde_json::Value>>;
+    ) -> bz_error::Result<Option<serde_json::Value>>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_SetBreakpoints>
     fn set_breakpoints(
         &mut self,
         x: dap::SetBreakpointsArguments,
-    ) -> buck2_error::Result<dap::SetBreakpointsResponseBody>;
+    ) -> bz_error::Result<dap::SetBreakpointsResponseBody>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_SetExceptionBreakpoints>
     fn set_exception_breakpoints(
         &mut self,
         x: dap::SetExceptionBreakpointsArguments,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Attach>
-    fn attach(&mut self, x: dap::AttachRequestArguments) -> buck2_error::Result<()>;
+    fn attach(&mut self, x: dap::AttachRequestArguments) -> bz_error::Result<()>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Threads>
-    fn threads(&mut self) -> buck2_error::Result<dap::ThreadsResponseBody>;
+    fn threads(&mut self) -> bz_error::Result<dap::ThreadsResponseBody>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_ConfigurationDone>
-    fn configuration_done(&mut self) -> buck2_error::Result<()>;
+    fn configuration_done(&mut self) -> bz_error::Result<()>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_StackTrace>
     fn stack_trace(
         &mut self,
         x: dap::StackTraceArguments,
-    ) -> buck2_error::Result<dap::StackTraceResponseBody>;
+    ) -> bz_error::Result<dap::StackTraceResponseBody>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Scopes>
-    fn scopes(&mut self, x: dap::ScopesArguments) -> buck2_error::Result<dap::ScopesResponseBody>;
+    fn scopes(&mut self, x: dap::ScopesArguments) -> bz_error::Result<dap::ScopesResponseBody>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Variables>
     fn variables(
         &mut self,
         x: dap::VariablesArguments,
-    ) -> buck2_error::Result<dap::VariablesResponseBody>;
+    ) -> bz_error::Result<dap::VariablesResponseBody>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Continue>
     fn continue_(&mut self, x: ContinueArguments)
-    -> buck2_error::Result<dap::ContinueResponseBody>;
+    -> bz_error::Result<dap::ContinueResponseBody>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Next>
-    fn next(&mut self, x: dap::NextArguments) -> buck2_error::Result<()>;
+    fn next(&mut self, x: dap::NextArguments) -> bz_error::Result<()>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_StepIn>
-    fn step_in(&mut self, x: dap::StepInArguments) -> buck2_error::Result<()>;
+    fn step_in(&mut self, x: dap::StepInArguments) -> bz_error::Result<()>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_StepOut>
-    fn step_out(&mut self, x: dap::StepOutArguments) -> buck2_error::Result<()>;
+    fn step_out(&mut self, x: dap::StepOutArguments) -> bz_error::Result<()>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Evaluate>
     fn evaluate(
         &mut self,
         x: dap::EvaluateArguments,
-    ) -> buck2_error::Result<dap::EvaluateResponseBody>;
+    ) -> bz_error::Result<dap::EvaluateResponseBody>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Disconnect>
-    fn disconnect(&mut self, x: dap::DisconnectArguments) -> buck2_error::Result<()>;
+    fn disconnect(&mut self, x: dap::DisconnectArguments) -> bz_error::Result<()>;
 
     /// See <https://microsoft.github.io/debug-adapter-protocol/specification#Requests_Source>
-    fn source(&mut self, x: dap::SourceArguments) -> buck2_error::Result<dap::SourceResponseBody>;
+    fn source(&mut self, x: dap::SourceArguments) -> bz_error::Result<dap::SourceResponseBody>;
 }
 
 /// DAP ContinueArguments (debugserver_types is missing single_thread field)
@@ -118,7 +118,7 @@ pub(crate) fn dap_event<T: Serialize>(event: &str, body: Option<&T>) -> dap::Eve
 }
 
 /// Create a Response for the Request indicating an error. The user is responsible for updating the `seq` field.
-pub(crate) fn err_response(req: &dap::Request, err: &buck2_error::Error) -> dap::Response {
+pub(crate) fn err_response(req: &dap::Request, err: &bz_error::Error) -> dap::Response {
     dap::Response {
         type_: "response".to_owned(),
         command: req.command.clone(),
@@ -133,12 +133,12 @@ pub(crate) fn err_response(req: &dap::Request, err: &buck2_error::Error) -> dap:
 pub(crate) fn dispatch(
     server: &mut impl DebugServer,
     r: &dap::Request,
-) -> buck2_error::Result<dap::Response> {
-    fn arg<T: for<'a> Deserialize<'a>>(r: &dap::Request) -> buck2_error::Result<T> {
+) -> bz_error::Result<dap::Response> {
+    fn arg<T: for<'a> Deserialize<'a>>(r: &dap::Request) -> bz_error::Result<T> {
         Ok(serde_json::from_value(r.arguments.clone().ok_or_else(
             || {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "missing expected argument in DAP request"
                 )
             },
@@ -147,8 +147,8 @@ pub(crate) fn dispatch(
 
     fn ret<T: Serialize>(
         r: &dap::Request,
-        v: buck2_error::Result<Option<T>>,
-    ) -> buck2_error::Result<dap::Response> {
+        v: bz_error::Result<Option<T>>,
+    ) -> bz_error::Result<dap::Response> {
         let v = v?;
         Ok(dap::Response {
             type_: "response".to_owned(),
@@ -163,15 +163,15 @@ pub(crate) fn dispatch(
 
     fn ret_some<T: Serialize>(
         r: &dap::Request,
-        v: buck2_error::Result<T>,
-    ) -> buck2_error::Result<dap::Response> {
+        v: bz_error::Result<T>,
+    ) -> bz_error::Result<dap::Response> {
         ret(r, v.map(|v| Some(v)))
     }
 
     fn ret_none(
         r: &dap::Request,
-        v: buck2_error::Result<()>,
-    ) -> buck2_error::Result<dap::Response> {
+        v: bz_error::Result<()>,
+    ) -> bz_error::Result<dap::Response> {
         ret::<()>(r, v.map(|_| None))
     }
 
@@ -192,8 +192,8 @@ pub(crate) fn dispatch(
         "next" => ret_none(r, server.next(arg(r)?)),
         "stepIn" => ret_none(r, server.step_in(arg(r)?)),
         "stepOut" => ret_none(r, server.step_out(arg(r)?)),
-        _ => Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        _ => Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Buck2 debugserver didn't recognize command: {}",
             r.command
         )),

@@ -16,7 +16,7 @@ from buck2.tests.e2e_util.helper.utils import expect_exec_count
 
 
 @buck_test()
-@env("BUCK_LOG", "buck2_action_impl::actions::impls::run::dep_files=trace")
+@env("BUCK_LOG", "bz_action_impl::actions::impls::run::dep_files=trace")
 @pytest.mark.parametrize(
     "local_only",
     [

@@ -13,8 +13,8 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 use std::time::Duration;
 
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
 use futures::Future;
 use tokio::time::Instant;
 use tonic::transport::Channel;
@@ -26,9 +26,9 @@ pub static UDS_DAEMON_FILENAME: &str = "buckd.uds";
 pub async fn get_channel_uds(
     unix_socket: &Path,
     change_to_parent_dir: bool,
-) -> buck2_error::Result<Channel> {
-    use buck2_fs::error::IoResultExt;
-    use buck2_fs::fs_util;
+) -> bz_error::Result<Channel> {
+    use bz_fs::error::IoResultExt;
+    use bz_fs::fs_util;
 
     use crate::home_buck_tmp::home_buck_tmp_dir;
     use crate::temp_path::TempPath;
@@ -67,7 +67,7 @@ pub async fn get_channel_uds(
 }
 
 #[cfg(unix)]
-async fn get_channel_uds_no_symlink(connect_to: &Path) -> buck2_error::Result<Channel> {
+async fn get_channel_uds_no_symlink(connect_to: &Path) -> bz_error::Result<Channel> {
     use tonic::codegen::http::Uri;
     use tower::service_fn;
 
@@ -90,14 +90,14 @@ async fn get_channel_uds_no_symlink(connect_to: &Path) -> buck2_error::Result<Ch
 pub async fn get_channel_uds(
     _unix_filename: &Path,
     _chg_dir: bool,
-) -> buck2_error::Result<Channel> {
-    Err(buck2_error::buck2_error!(
-        buck2_error::ErrorTag::WindowsUnsupported,
+) -> bz_error::Result<Channel> {
+    Err(bz_error::bz_error!(
+        bz_error::ErrorTag::WindowsUnsupported,
         "Unix domain sockets are not supported on Windows",
     ))
 }
 
-pub async fn get_channel_tcp(socket_addr: Ipv4Addr, port: u16) -> buck2_error::Result<Channel> {
+pub async fn get_channel_tcp(socket_addr: Ipv4Addr, port: u16) -> bz_error::Result<Channel> {
     Endpoint::try_from(format!("http://{socket_addr}:{port}"))?
         .connect()
         .await
@@ -105,7 +105,7 @@ pub async fn get_channel_tcp(socket_addr: Ipv4Addr, port: u16) -> buck2_error::R
         .with_buck_error_context(|| format!("failed to connect to port {port}"))
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Environment)]
 pub enum RetryError<E> {
     #[error("Timed out after {0:.2}s")]
@@ -175,13 +175,13 @@ mod tests {
             Duration::from_millis(1),
             Duration::from_millis(1),
             || async {
-                Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "test"
                 ))
             },
         );
-        let result: Result<(), RetryError<buck2_error::Error>> = future.await;
+        let result: Result<(), RetryError<bz_error::Error>> = future.await;
         assert!(result.is_err());
     }
 }

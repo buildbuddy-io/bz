@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::bzl::ImportPath;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_core::bzl::ImportPath;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
@@ -44,7 +44,7 @@ fn extra_provider_module(builder: &mut GlobalsBuilder) {
 }
 
 #[test]
-fn tester_can_load_extra_modules() -> buck2_error::Result<()> {
+fn tester_can_load_extra_modules() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
     tester.additional_globals(extra_provider_module);
 
@@ -70,8 +70,8 @@ fn tester_can_load_extra_modules() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn tester_can_load_symbols_transitively() -> buck2_error::Result<()> {
-    fn new_tester() -> buck2_error::Result<Tester> {
+fn tester_can_load_symbols_transitively() -> bz_error::Result<()> {
+    fn new_tester() -> bz_error::Result<Tester> {
         let mut tester = Tester::new()?;
         tester.add_import(
             &ImportPath::testing_new("root//test:def1.bzl"),

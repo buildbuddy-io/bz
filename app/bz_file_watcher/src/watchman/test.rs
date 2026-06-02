@@ -16,10 +16,10 @@ use std::time::Duration;
 
 use assert_matches::assert_matches;
 use async_trait::async_trait;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_util::process::async_background_command;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_util::process::async_background_command;
 use gazebo::prelude::*;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Child;
@@ -50,7 +50,7 @@ impl SyncableQueryProcessor for TestQueryProcessor {
         events: Vec<WatchmanEvent>,
         _mergebase: &Option<String>,
         _watchman_version: Option<String>,
-    ) -> buck2_error::Result<(Self::Output, Self::Payload)> {
+    ) -> bz_error::Result<(Self::Output, Self::Payload)> {
         Ok((
             Out::Files(events.into_map(|e| e.path.display().to_string())),
             payload,
@@ -63,7 +63,7 @@ impl SyncableQueryProcessor for TestQueryProcessor {
         events: Vec<WatchmanEvent>,
         _mergebase: &Option<String>,
         _watchman_version: Option<String>,
-    ) -> buck2_error::Result<(Self::Output, Self::Payload)> {
+    ) -> bz_error::Result<(Self::Output, Self::Payload)> {
         Ok((
             Out::FreshInstance(events.into_map(|e| e.path.display().to_string())),
             payload,
@@ -71,7 +71,7 @@ impl SyncableQueryProcessor for TestQueryProcessor {
     }
 }
 
-async fn wait_for_watchman(watchman_sock: &Path) -> buck2_error::Result<()> {
+async fn wait_for_watchman(watchman_sock: &Path) -> bz_error::Result<()> {
     let connector = Connector::default().unix_domain_socket(watchman_sock);
 
     let mut i = 0;
@@ -80,7 +80,7 @@ async fn wait_for_watchman(watchman_sock: &Path) -> buck2_error::Result<()> {
 
         match connector.connect().await {
             Ok(..) => return Ok(()),
-            Err(e) if i >= 100 => return Err(buck2_error!(buck2_error::ErrorTag::Tier0, "{}", e)),
+            Err(e) if i >= 100 => return Err(bz_error!(bz_error::ErrorTag::Tier0, "{}", e)),
             _ => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
@@ -95,7 +95,7 @@ struct WatchmanInstance {
 }
 
 impl WatchmanInstance {
-    pub async fn shutdown(&mut self) -> buck2_error::Result<()> {
+    pub async fn shutdown(&mut self) -> bz_error::Result<()> {
         let child = self
             .child
             .as_mut()
@@ -140,7 +140,7 @@ impl Drop for WatchmanInstance {
     }
 }
 
-async fn spawn_watchman(watchman_dir: &Path) -> buck2_error::Result<WatchmanInstance> {
+async fn spawn_watchman(watchman_dir: &Path) -> bz_error::Result<WatchmanInstance> {
     // This config might make Watchman a bit more efficient on Mac and make tests less flaky there
     let watchman_config = watchman_dir.join("config");
     let watchman_config_text = r#"{"prefer_split_fsevents_watcher": true}"#;
@@ -181,7 +181,7 @@ async fn spawn_watchman(watchman_dir: &Path) -> buck2_error::Result<WatchmanInst
 }
 
 #[tokio::test]
-async fn test_syncable_query() -> buck2_error::Result<()> {
+async fn test_syncable_query() -> bz_error::Result<()> {
     // This test doesn't work unless Watchman is working, so let's
     // over-approximate that as fbcode_build for now.
     if !cfg!(fbcode_build) {

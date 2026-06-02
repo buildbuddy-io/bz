@@ -17,46 +17,46 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_common::cas_digest::CasDigestConfig;
-use buck2_common::cas_digest::DigestAlgorithm;
-use buck2_common::external_symlink::ExternalSymlink;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileDigestConfig;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::SourceFileMetadata;
-use buck2_common::file_ops::metadata::Symlink;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::builder::DirectoryBuilder;
-use buck2_directory::directory::builder::DirectoryInsertError;
-use buck2_directory::directory::builder_lazy::DirectoryBuilderLike;
-use buck2_directory::directory::builder_lazy::LazyDirectoryBuilder;
-use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_hasher::DirectoryDigester;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
-use buck2_directory::directory::directory_ref::DirectoryRef;
-use buck2_directory::directory::directory_ref::FingerprintedDirectoryRef;
-use buck2_directory::directory::directory_selector::DirectorySelector;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_directory::directory::find::DirectoryFindError;
-use buck2_directory::directory::find::find;
-use buck2_directory::directory::find::find_prefix;
-use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
-use buck2_directory::directory::immutable_directory::ImmutableDirectory;
-use buck2_directory::directory::shared_directory::SharedDirectory;
-use buck2_directory::directory::walk::unordered_entry_walk;
-use buck2_error::internal_error;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
+use bz_common::cas_digest::CasDigestConfig;
+use bz_common::cas_digest::DigestAlgorithm;
+use bz_common::external_symlink::ExternalSymlink;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileDigestConfig;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::SourceFileMetadata;
+use bz_common::file_ops::metadata::Symlink;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::builder::DirectoryBuilder;
+use bz_directory::directory::builder::DirectoryInsertError;
+use bz_directory::directory::builder_lazy::DirectoryBuilderLike;
+use bz_directory::directory::builder_lazy::LazyDirectoryBuilder;
+use bz_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_hasher::DirectoryDigester;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::directory_iterator::DirectoryIteratorPathStack;
+use bz_directory::directory::directory_ref::DirectoryRef;
+use bz_directory::directory::directory_ref::FingerprintedDirectoryRef;
+use bz_directory::directory::directory_selector::DirectorySelector;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_directory::directory::find::DirectoryFindError;
+use bz_directory::directory::find::find;
+use bz_directory::directory::find::find_prefix;
+use bz_directory::directory::fingerprinted_directory::FingerprintedDirectory;
+use bz_directory::directory::immutable_directory::ImmutableDirectory;
+use bz_directory::directory::shared_directory::SharedDirectory;
+use bz_directory::directory::walk::unordered_entry_walk;
+use bz_error::internal_error;
+use bz_fs::paths::RelativePathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
 use chrono::DateTime;
 use chrono::Utc;
 use derive_more::Display;
@@ -284,7 +284,7 @@ impl DirectoryDigester<ActionDirectoryMember, TrackedFileDigest> for ReDirectory
     }
 }
 
-pub fn new_symlink<T: AsRef<Path>>(target: T) -> buck2_error::Result<ActionDirectoryMember> {
+pub fn new_symlink<T: AsRef<Path>>(target: T) -> bz_error::Result<ActionDirectoryMember> {
     let target = target.as_ref();
     if target.is_absolute() {
         Ok(ActionDirectoryMember::ExternalSymlink(Arc::new(
@@ -323,7 +323,7 @@ where
 pub async fn re_directory_to_re_tree(
     directory: RE::Directory,
     client: &ManagedRemoteExecutionClient,
-) -> buck2_error::Result<RE::Tree> {
+) -> bz_error::Result<RE::Tree> {
     let mut children: Vec<RE::Directory> = vec![];
     let mut frontier = directory.directories.clone();
     while !frontier.is_empty() {
@@ -360,7 +360,7 @@ pub fn re_tree_to_directory(
     leaf_expires: &DateTime<Utc>,
     digest_config: DigestConfig,
     fingerprint: bool,
-) -> buck2_error::Result<ActionDirectoryBuilder> {
+) -> bz_error::Result<ActionDirectoryBuilder> {
     /// A map of digests to directories, populated lazily when we access it based on the hash we
     /// use. We need this because in a RE tree, the directories in the tree don't carry their hash,
     /// but the pointers are hashes, so we need to first see a hash before we can work out what
@@ -405,7 +405,7 @@ pub fn re_tree_to_directory(
         leaf_expires: &DateTime<Utc>,
         digest_config: DigestConfig,
         fingerprint: bool,
-    ) -> buck2_error::Result<ActionDirectoryBuilder> {
+    ) -> bz_error::Result<ActionDirectoryBuilder> {
         let mut builder = ActionDirectoryBuilder::empty();
         for node in &re_dir.files {
             let name = FileNameBuf::try_from(node.name.clone()).map_err(|_| {
@@ -520,7 +520,7 @@ pub fn re_tree_to_directory(
     )
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 pub enum DirectoryReConversionError {
     // Conversion from RE::Tree errors (these shouldn't happen unless something is broken on RE side)
@@ -535,7 +535,7 @@ pub enum DirectoryReConversionError {
 }
 
 impl<'a> TryFrom<&'a RE::SymlinkNode> for ActionDirectoryMember {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn try_from(node: &'a RE::SymlinkNode) -> Result<Self, Self::Error> {
         let symlink = if node.target.starts_with('/') {
@@ -556,7 +556,7 @@ pub fn relativize_directory(
     builder: &mut ActionDirectoryBuilder,
     orig_root: &ProjectRelativePath,
     new_root: &ProjectRelativePath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut replacements = ActionDirectoryBuilder::empty();
 
     {
@@ -600,7 +600,7 @@ pub fn relativize_directory(
 pub fn override_executable_bit(
     builder: &mut ActionDirectoryBuilder,
     executable_bit_override: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut replacements = ActionDirectoryBuilder::empty();
 
     {
@@ -631,7 +631,7 @@ pub fn insert_entry<D>(
     builder: &mut impl DirectoryBuilderLike<D, ActionDirectoryMember>,
     path: ProjectRelativePathBuf,
     entry: ActionDirectoryEntry<D>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(s)) = entry {
         // ExternalSymlink is a bit of an odd concept. The way it works is that when you try to
         // read `foo/bar` and it turns out `foo` is an ExternalSymlink, we tell you the value of
@@ -690,7 +690,7 @@ pub fn insert_artifact(
     builder: &mut ActionDirectoryBuilder,
     path: ProjectRelativePathBuf,
     value: &ArtifactValue,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     insert_entry(
         builder,
         path,
@@ -709,7 +709,7 @@ pub fn insert_artifact_lazy(
     builder: &mut LazyActionDirectoryBuilder,
     path: ProjectRelativePathBuf,
     value: &ArtifactValue,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     insert_entry(builder, path, value.entry().dupe())?;
     // add input's deps
     if artifact_value_needs_deps(value)
@@ -727,7 +727,7 @@ pub fn insert_artifact_lazy_for_execution(
     digest_config: DigestConfig,
     external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
     resolved_symlink_upload_paths: &mut Vec<ResolvedSymlinkUploadPath>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(TargetFileSymlinkExecutionEntry { entry, upload_path }) =
         target_file_symlink_entry_for_execution(&path, value)?
     {
@@ -760,7 +760,7 @@ pub fn insert_artifact_lazy_for_execution(
 fn target_file_symlink_entry_for_execution(
     path: &ProjectRelativePath,
     value: &ArtifactValue,
-) -> buck2_error::Result<Option<TargetFileSymlinkExecutionEntry>> {
+) -> bz_error::Result<Option<TargetFileSymlinkExecutionEntry>> {
     let DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) = value.entry() else {
         return Ok(None);
     };
@@ -837,7 +837,7 @@ fn target_file_symlink_entry_for_execution(
 fn symlink_target_path(
     link_path: &ProjectRelativePath,
     symlink: &Symlink,
-) -> buck2_error::Result<ProjectRelativePathBuf> {
+) -> bz_error::Result<ProjectRelativePathBuf> {
     link_path
         .parent()
         .unwrap_or(ProjectRelativePath::empty())
@@ -849,7 +849,7 @@ pub fn merge_artifact_directory_for_execution(
     directory: &ActionSharedDirectory,
     digest_config: DigestConfig,
     external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if !directory_contains_external_symlink(directory) {
         builder.merge(directory.dupe())?;
         return Ok(());
@@ -884,7 +884,7 @@ fn expand_external_symlinks_for_execution(
     directory: &ActionSharedDirectory,
     digest_config: DigestConfig,
     external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
-) -> buck2_error::Result<ActionDirectoryBuilder> {
+) -> bz_error::Result<ActionDirectoryBuilder> {
     let mut builder = ActionDirectoryBuilder::empty();
     for (name, entry) in directory.entries() {
         let path = prefix.join(name);
@@ -923,7 +923,7 @@ fn external_symlink_entry_for_execution(
     path: ProjectRelativePathBuf,
     entry: &ActionDirectoryEntry<ActionSharedDirectory>,
     digest_config: DigestConfig,
-) -> buck2_error::Result<
+) -> bz_error::Result<
     Option<(
         ActionDirectoryEntry<ActionSharedDirectory>,
         ExternalSymlinkUploadPath,
@@ -955,7 +955,7 @@ fn external_symlink_entry_for_execution(
 fn external_symlink_path_entry_for_execution(
     symlink: &ExternalSymlink,
     digest_config: DigestConfig,
-) -> buck2_error::Result<
+) -> bz_error::Result<
     Option<(
         ActionDirectoryEntry<ActionDirectoryBuilder>,
         ExternalSymlinkUploadSource,
@@ -1002,7 +1002,7 @@ fn external_symlink_path_entry_for_execution(
 fn external_directory_entry_for_execution(
     path: &AbsPath,
     digest_config: DigestConfig,
-) -> buck2_error::Result<ActionDirectoryBuilder> {
+) -> bz_error::Result<ActionDirectoryBuilder> {
     let mut builder = ActionDirectoryBuilder::empty();
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
@@ -1024,7 +1024,7 @@ fn external_directory_entry_for_execution(
 fn external_path_entry_for_execution(
     path: &AbsPath,
     digest_config: DigestConfig,
-) -> buck2_error::Result<Option<ActionDirectoryEntry<ActionDirectoryBuilder>>> {
+) -> bz_error::Result<Option<ActionDirectoryEntry<ActionDirectoryBuilder>>> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -1050,7 +1050,7 @@ fn external_file_metadata(
     path: &AbsPath,
     metadata: &std::fs::Metadata,
     digest_config: DigestConfig,
-) -> buck2_error::Result<FileMetadata> {
+) -> bz_error::Result<FileMetadata> {
     let file_digest_config = FileDigestConfig::source(digest_config.cas_digest_config());
     let digest = FileDigest::from_file_with_metadata(path, file_digest_config, metadata)?;
     Ok(FileMetadata {
@@ -1063,7 +1063,7 @@ fn external_file_metadata(
 fn external_file_is_executable(
     _path: &AbsPath,
     metadata: &std::fs::Metadata,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     Ok(metadata.permissions().mode() & 0o111 != 0)
 }
 
@@ -1071,7 +1071,7 @@ fn external_file_is_executable(
 fn external_file_is_executable(
     path: &AbsPath,
     _metadata: &std::fs::Metadata,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     use faccess::PathExt;
 
     Ok(path.executable()?)
@@ -1086,7 +1086,7 @@ fn artifact_value_needs_deps(value: &ArtifactValue) -> bool {
 
 pub fn finalize_lazy_action_directory(
     builder: LazyActionDirectoryBuilder,
-) -> buck2_error::Result<ActionDirectoryBuilder> {
+) -> bz_error::Result<ActionDirectoryBuilder> {
     fn symlink_covers_descendants(leaf: &ActionDirectoryMember) -> bool {
         // Bazel expands spawn inputs into a flat path map (`SpawnInputExpander#getInputMapping`)
         // and its Merkle tree builder lets an aggregate source directory subsume separately staged
@@ -1106,7 +1106,7 @@ pub fn insert_file<D>(
     builder: &mut impl DirectoryBuilderLike<D, ActionDirectoryMember>,
     path: ProjectRelativePathBuf,
     meta: FileMetadata,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     insert_entry(
         builder,
         path,
@@ -1119,7 +1119,7 @@ pub fn insert_symlink(
     builder: &mut ActionDirectoryBuilder,
     path: ProjectRelativePathBuf,
     symlink: Arc<Symlink>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     insert_entry(
         builder,
         path,
@@ -1222,7 +1222,7 @@ pub fn extract_artifact_value(
     builder: &ActionDirectoryBuilder,
     path: &ProjectRelativePath,
     digest_config: DigestConfig,
-) -> buck2_error::Result<Option<ArtifactValue>> {
+) -> bz_error::Result<Option<ArtifactValue>> {
     let entry = match find(builder.as_ref(), path.as_forward_relative_path())? {
         Some(entry) => entry,
         _ => return Ok(None),
@@ -1349,7 +1349,7 @@ mod tests {
     }
 
     #[test]
-    fn lazy_action_directory_symlink_covers_descendant_insert() -> buck2_error::Result<()> {
+    fn lazy_action_directory_symlink_covers_descendant_insert() -> bz_error::Result<()> {
         let mut builder = LazyActionDirectoryBuilder::empty();
 
         insert_entry(
@@ -1378,7 +1378,7 @@ mod tests {
     }
 
     #[test]
-    fn lazy_action_directory_symlink_covers_descendant_merge() -> buck2_error::Result<()> {
+    fn lazy_action_directory_symlink_covers_descendant_merge() -> bz_error::Result<()> {
         let symlink_dir = {
             let mut builder = ActionDirectoryBuilder::empty();
             insert_symlink(
@@ -1416,7 +1416,7 @@ mod tests {
     }
 
     #[test]
-    fn external_symlink_input_is_dereferenced_for_execution() -> buck2_error::Result<()> {
+    fn external_symlink_input_is_dereferenced_for_execution() -> bz_error::Result<()> {
         let tempdir = tempfile::tempdir()?;
         let external_root = tempdir.path().join("llvm-project");
         std::fs::create_dir_all(external_root.join("llvm/lib/Support/BLAKE3"))?;
@@ -1465,7 +1465,7 @@ mod tests {
     }
 
     #[test]
-    fn target_file_symlink_input_is_dereferenced_for_execution() -> buck2_error::Result<()> {
+    fn target_file_symlink_input_is_dereferenced_for_execution() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
         let target_path = path("buck-out/bin/hash/external/repo/vendor/header.h");
         let input_path = path("buck-out/bin/hash/external/repo/include/header.h");
@@ -1511,7 +1511,7 @@ mod tests {
     }
 
     #[test]
-    fn directory_relativized() -> buck2_error::Result<()> {
+    fn directory_relativized() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
 
         let mut dir = {
@@ -1562,7 +1562,7 @@ mod tests {
         Ok(())
     }
 
-    fn build_test_dir() -> buck2_error::Result<ActionDirectoryBuilder> {
+    fn build_test_dir() -> bz_error::Result<ActionDirectoryBuilder> {
         let digest_config = DigestConfig::testing_default();
 
         let mut builder = ActionDirectoryBuilder::empty();
@@ -1611,7 +1611,7 @@ mod tests {
 
     /// All deps of d6 are internal to it, so we don't return any deps.
     #[test]
-    fn test_extract_no_deps() -> buck2_error::Result<()> {
+    fn test_extract_no_deps() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
         let root = build_test_dir()?;
         let value = extract_artifact_value(&root, &path("d6"), digest_config)?
@@ -1621,7 +1621,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_has_deps_dir() -> buck2_error::Result<()> {
+    fn test_extract_has_deps_dir() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
 
         let root = build_test_dir()?;
@@ -1652,7 +1652,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_has_deps_leaf() -> buck2_error::Result<()> {
+    fn test_extract_has_deps_leaf() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
 
         let root = build_test_dir()?;
@@ -1678,7 +1678,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_cycle() -> buck2_error::Result<()> {
+    fn test_extract_cycle() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
 
         let mut builder = ActionDirectoryBuilder::empty();
@@ -1713,7 +1713,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_symlink_chain() -> buck2_error::Result<()> {
+    fn test_extract_symlink_chain() -> bz_error::Result<()> {
         // Crank up the difficulty: l1 points through d3/f, but through l2. We need all of those in
         // the deps! In practice, this tends to not happen in Buck 2 because we always dereference
         // symlinks and traverse them, but might a well support it properly.
@@ -1768,7 +1768,7 @@ mod tests {
     }
 
     #[test]
-    fn test_re_tree_roundtrip() -> buck2_error::Result<()> {
+    fn test_re_tree_roundtrip() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
 
         let mut builder = ActionDirectoryBuilder::empty();
@@ -1806,7 +1806,7 @@ mod tests {
     ///     'mkdir -p test/a/aa test/a/aaa test/b/bb test/d && touch test/a/aa/f test/a/aaa/f test/b/bb/f test/d/f'
     /// ```
     #[test]
-    fn test_re_tree_compatibility() -> buck2_error::Result<()> {
+    fn test_re_tree_compatibility() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
 
         let mut builder = ActionDirectoryBuilder::empty();
@@ -1832,7 +1832,7 @@ mod tests {
     #[test]
     //Test that a symlink created with a windows path doesn't get interpreted as an invalid sylink
     //TODO(lmvasquezg) Update symlinks to store a normalized, OS-independent path
-    fn test_unnormalized_symlinks() -> buck2_error::Result<()> {
+    fn test_unnormalized_symlinks() -> bz_error::Result<()> {
         if !cfg!(windows) {
             return Ok(());
         }
@@ -1889,7 +1889,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rename_and_serialize() -> buck2_error::Result<()> {
+    fn test_rename_and_serialize() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
 
         let mut builder1 = ActionDirectoryBuilder::empty();

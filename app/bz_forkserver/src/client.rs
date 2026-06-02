@@ -14,12 +14,12 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use arc_swap::ArcSwapOption;
-use buck2_core::tag_error;
-use buck2_error::BuckErrorContext;
-use buck2_execute_local::CommandResult;
-use buck2_execute_local::decode_command_event_stream;
-use buck2_resource_control::ActionFreezeEvent;
-use buck2_resource_control::ActionFreezeEventReceiver;
+use bz_core::tag_error;
+use bz_error::BuckErrorContext;
+use bz_execute_local::CommandResult;
+use bz_execute_local::decode_command_event_stream;
+use bz_resource_control::ActionFreezeEvent;
+use bz_resource_control::ActionFreezeEventReceiver;
 use dupe::Dupe;
 use futures::future;
 use futures::future::Future;
@@ -37,7 +37,7 @@ pub struct ForkserverClient {
     inner: Arc<ForkserverClientInner>,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum ForkserverError {
     #[error("Error on Forkserver wait()")]
@@ -50,15 +50,15 @@ enum ForkserverError {
 struct ForkserverClientInner {
     /// Error from the forkserver process, if any.
     #[allocative(skip)]
-    error: Arc<ArcSwapOption<buck2_error::Error>>,
+    error: Arc<ArcSwapOption<bz_error::Error>>,
     pid: u32,
     #[allocative(skip)]
-    rpc: buck2_forkserver_proto::forkserver_client::ForkserverClient<Channel>,
+    rpc: bz_forkserver_proto::forkserver_client::ForkserverClient<Channel>,
 }
 
 impl ForkserverClient {
-    pub(crate) async fn new(mut child: Child, channel: Channel) -> buck2_error::Result<Self> {
-        let rpc = buck2_forkserver_proto::forkserver_client::ForkserverClient::new(channel)
+    pub(crate) async fn new(mut child: Child, channel: Channel) -> bz_error::Result<Self> {
+        let rpc = bz_forkserver_proto::forkserver_client::ForkserverClient::new(channel)
             .max_encoding_message_size(usize::MAX)
             .max_decoding_message_size(usize::MAX);
 
@@ -66,13 +66,13 @@ impl ForkserverClient {
 
         let error = Arc::new(ArcSwapOption::empty());
 
-        tokio::task::spawn(buck2_util::async_move_clone!(error, {
+        tokio::task::spawn(bz_util::async_move_clone!(error, {
             let err = match child.wait().await {
                 Ok(status) => ForkserverError::Exited(status),
                 Err(e) => ForkserverError::WaitError(e),
             };
 
-            let err = buck2_error::Error::from(err).context("Forkserver is unavailable");
+            let err = bz_error::Error::from(err).context("Forkserver is unavailable");
             error.swap(Some(Arc::new(err)));
         }));
 
@@ -87,10 +87,10 @@ impl ForkserverClient {
 
     pub async fn execute<C>(
         &self,
-        req: buck2_forkserver_proto::CommandRequest,
+        req: bz_forkserver_proto::CommandRequest,
         cancel: C,
         freeze_rx: impl ActionFreezeEventReceiver,
-    ) -> buck2_error::Result<CommandResult>
+    ) -> bz_error::Result<CommandResult>
     where
         C: Future<Output = ()> + Send + 'static,
     {
@@ -104,18 +104,18 @@ impl ForkserverClient {
             ));
         }
 
-        let cancel_stream = stream::once(cancel.map(|()| buck2_forkserver_proto::RequestEvent {
-            data: Some(buck2_forkserver_proto::CancelRequest {}.into()),
+        let cancel_stream = stream::once(cancel.map(|()| bz_forkserver_proto::RequestEvent {
+            data: Some(bz_forkserver_proto::CancelRequest {}.into()),
         }));
         let freeze_stream = freeze_rx.map(|e| {
             let data = match e {
-                ActionFreezeEvent::Freeze => buck2_forkserver_proto::FreezeRequest {}.into(),
-                ActionFreezeEvent::Unfreeze => buck2_forkserver_proto::UnfreezeRequest {}.into(),
+                ActionFreezeEvent::Freeze => bz_forkserver_proto::FreezeRequest {}.into(),
+                ActionFreezeEvent::Unfreeze => bz_forkserver_proto::UnfreezeRequest {}.into(),
             };
-            buck2_forkserver_proto::RequestEvent { data: Some(data) }
+            bz_forkserver_proto::RequestEvent { data: Some(data) }
         });
 
-        let stream = stream::once(future::ready(buck2_forkserver_proto::RequestEvent {
+        let stream = stream::once(future::ready(bz_forkserver_proto::RequestEvent {
             data: Some(req.into()),
         }))
         .chain(futures::stream::select(cancel_stream, freeze_stream));
@@ -133,11 +133,11 @@ impl ForkserverClient {
         decode_command_event_stream(stream).await
     }
 
-    pub async fn set_log_filter(&self, log_filter: String) -> buck2_error::Result<()> {
+    pub async fn set_log_filter(&self, log_filter: String) -> bz_error::Result<()> {
         self.inner
             .rpc
             .clone()
-            .set_log_filter(Request::new(buck2_forkserver_proto::SetLogFilterRequest {
+            .set_log_filter(Request::new(bz_forkserver_proto::SetLogFilterRequest {
                 log_filter,
             }))
             .await?;

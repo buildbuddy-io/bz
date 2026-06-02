@@ -13,12 +13,12 @@ use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use buck2_common::argv::SanitizedArgv;
-use buck2_event_log::write::WriteEventLog;
-use buck2_events::BuckEvent;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::working_dir::AbsWorkingDir;
+use bz_common::argv::SanitizedArgv;
+use bz_event_log::write::WriteEventLog;
+use bz_events::BuckEvent;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::working_dir::AbsWorkingDir;
 
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::ticker::Tick;
@@ -63,11 +63,11 @@ impl EventSubscriber for EventLog {
         "event log"
     }
 
-    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
+    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> bz_error::Result<()> {
         Ok(self.writer.write_events(events).await?)
     }
 
-    async fn handle_tailer_stderr(&mut self, _stderr: &str) -> buck2_error::Result<()> {
+    async fn handle_tailer_stderr(&mut self, _stderr: &str) -> bz_error::Result<()> {
         // TODO(nga): currently we mostly ignore buckd stderr.
         //   It is very important to investigate crashes of buckd.
         //
@@ -83,18 +83,18 @@ impl EventSubscriber for EventLog {
 
     async fn handle_command_result(
         &mut self,
-        result: &buck2_cli_proto::CommandResult,
-    ) -> buck2_error::Result<()> {
+        result: &bz_cli_proto::CommandResult,
+    ) -> bz_error::Result<()> {
         Ok(self.writer.write_result(result).await?)
     }
 
     /// Flush all log files during on tick to avoid buffering data in memory which we might lose if
     /// we hit an error.
-    async fn tick(&mut self, _tick: &Tick) -> buck2_error::Result<()> {
+    async fn tick(&mut self, _tick: &Tick) -> bz_error::Result<()> {
         Ok(self.writer.flush_files().await?)
     }
 
-    async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
+    async fn finalize(mut self: Box<Self>) -> bz_error::Result<()> {
         self.writer.exit().await;
         Ok(())
     }

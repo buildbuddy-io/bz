@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-//! Conversion impls for different error types to 'buck2_error::Error'
+//! Conversion impls for different error types to 'bz_error::Error'
 
 pub mod clap;
 pub mod dice;
@@ -35,7 +35,7 @@ pub mod tonic;
 pub mod uuid;
 pub mod watchman;
 
-/// Helper function that can be explicitly called to convert `std::error::Error` into `buck2_error`.
+/// Helper function that can be explicitly called to convert `std::error::Error` into `bz_error`.
 ///
 /// Common types should have a proper From implemented in this file, but this function is useful for
 /// one-off error types in the codebase

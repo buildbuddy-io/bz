@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_error::BuckErrorContext;
-use buck2_util::process::async_background_command;
+use bz_error::BuckErrorContext;
+use bz_util::process::async_background_command;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Environment)]
 enum SourceControlError {
     #[error("HG command failed with code '{0}' and error '{1}' ")]
@@ -25,7 +25,7 @@ enum CommandResult {
     RepoNotFound,
 }
 
-pub async fn get_info() -> buck2_error::Result<String> {
+pub async fn get_info() -> bz_error::Result<String> {
     let hg_info = get_hg_info().await;
     if let Ok(CommandResult::Ok(output)) = hg_info {
         return Ok(output);
@@ -39,7 +39,7 @@ pub async fn get_info() -> buck2_error::Result<String> {
     Ok("Current directory is not inside a repository (tried hg and git)".to_owned())
 }
 
-async fn get_hg_info() -> buck2_error::Result<CommandResult> {
+async fn get_hg_info() -> bz_error::Result<CommandResult> {
     let result = async_background_command("hg")
         .args(["snapshot", "create"])
         .env("HGPLAIN", "1")
@@ -77,7 +77,7 @@ async fn get_hg_info() -> buck2_error::Result<CommandResult> {
     Ok(CommandResult::Ok(format!("{revision}{snapshot}")))
 }
 
-async fn get_git_info() -> buck2_error::Result<CommandResult> {
+async fn get_git_info() -> bz_error::Result<CommandResult> {
     let commit_hash = async_background_command("git")
         .args(["log", "-1", "--format=%H"])
         .output()
@@ -107,6 +107,6 @@ async fn get_git_info() -> buck2_error::Result<CommandResult> {
     )))
 }
 
-fn from_utf8(result: Vec<u8>, subject: &str) -> buck2_error::Result<String> {
+fn from_utf8(result: Vec<u8>, subject: &str) -> bz_error::Result<String> {
     String::from_utf8(result).with_buck_error_context(|| format!("{subject} is not utf8"))
 }

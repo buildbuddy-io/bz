@@ -8,20 +8,20 @@
  * above-listed licenses.
  */
 
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_execute_impl::executors::local::ForkserverAccess;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_resource_control::buck_cgroup_tree::BuckCgroupTree;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_execute_impl::executors::local::ForkserverAccess;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_resource_control::buck_cgroup_tree::BuckCgroupTree;
 
 #[cfg(unix)]
 pub async fn maybe_launch_forkserver(
     root_config: &LegacyBuckConfig,
     forkserver_state_dir: &AbsNormPath,
     cgroup_tree: Option<&BuckCgroupTree>,
-) -> buck2_error::Result<ForkserverAccess> {
-    use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-    use buck2_core::rollout_percentage::RolloutPercentage;
-    use buck2_error::BuckErrorContext;
+) -> bz_error::Result<ForkserverAccess> {
+    use bz_common::legacy_configs::key::BuckconfigKeyRef;
+    use bz_core::rollout_percentage::RolloutPercentage;
+    use bz_error::BuckErrorContext;
 
     let config = root_config
         .parse::<RolloutPercentage>(BuckconfigKeyRef {
@@ -36,7 +36,7 @@ pub async fn maybe_launch_forkserver(
 
     let exe = std::env::current_exe().buck_error_context("Cannot access current_exe")?;
     Ok(ForkserverAccess::Client(
-        buck2_forkserver::launch::launch_forkserver(
+        bz_forkserver::launch::launch_forkserver(
             exe,
             &["forkserver"],
             forkserver_state_dir,
@@ -51,6 +51,6 @@ pub async fn maybe_launch_forkserver(
     _root_config: &LegacyBuckConfig,
     _forkserver_state_dir: &AbsNormPath,
     _cgroup_tree: Option<&BuckCgroupTree>,
-) -> buck2_error::Result<ForkserverAccess> {
+) -> bz_error::Result<ForkserverAccess> {
     Ok(ForkserverAccess::None)
 }

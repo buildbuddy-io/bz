@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_common::argv::Argv;
-use buck2_common::argv::SanitizedArgv;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_common::argv::Argv;
+use bz_common::argv::SanitizedArgv;
 
 use crate::allocative::AllocativeCommand;
 use crate::allocator_stats::AllocatorStatsCommand;

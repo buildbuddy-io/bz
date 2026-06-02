@@ -16,16 +16,16 @@ use std::time::Instant;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use buck2_cli_proto::CommandResult;
-use buck2_cli_proto::command_result;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::internal_error;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_events::BuckEvent;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_cli_proto::CommandResult;
+use bz_cli_proto::command_result;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::internal_error;
+use bz_event_log::stream_value::StreamValue;
+use bz_events::BuckEvent;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_wrapper_common::invocation_id::TraceId;
 use futures::Future;
 use futures::FutureExt;
 use futures::Stream;
@@ -64,7 +64,7 @@ const TICKS_PER_SECOND: u32 = 10;
 /// processing continuous streams of messages from the server.
 const STREAM_PROCESSING_YIELD_INTERVAL: Duration = Duration::from_millis(125);
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[allow(clippy::large_enum_variant)]
 enum BuckdCommunicationError {
     #[error("call to daemon returned an unexpected result type. got `{0:?}`")]
@@ -80,7 +80,7 @@ enum BuckdCommunicationError {
         "The Buck2 daemon was shut down while executing your command. This happened because: {0}"
     )]
     #[buck2(tag = InterruptedByDaemonShutdown)]
-    InterruptedByDaemonShutdown(buck2_data::DaemonShutdown),
+    InterruptedByDaemonShutdown(bz_data::DaemonShutdown),
     #[error("buckd communication encountered an unexpected error `{0:?}`")]
     #[buck2(tag = Tier0)]
     TonicError(tonic::Status),
@@ -101,15 +101,15 @@ impl From<tonic::Status> for BuckdCommunicationError {
 #[async_trait]
 pub trait PartialResultHandler {
     type PartialResult: TryFrom<
-            buck2_cli_proto::partial_result::PartialResult,
-            Error = buck2_cli_proto::partial_result::PartialResult,
+            bz_cli_proto::partial_result::PartialResult,
+            Error = bz_cli_proto::partial_result::PartialResult,
         >;
 
     async fn handle_partial_result(
         &mut self,
         ctx: PartialResultCtx<'_>,
         partial_res: Self::PartialResult,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }
 
 /// Exposes restricted access to EventsCtx from PartialResultHandler instances.
@@ -118,7 +118,7 @@ pub struct PartialResultCtx<'a> {
 }
 
 impl PartialResultCtx<'_> {
-    pub async fn stdout(&mut self, bytes: &[u8]) -> buck2_error::Result<()> {
+    pub async fn stdout(&mut self, bytes: &[u8]) -> bz_error::Result<()> {
         self.inner
             .try_for_each_subscriber(|subscriber| subscriber.handle_output(bytes))
             .await
@@ -154,7 +154,7 @@ impl<'a> DaemonEventsCtx<'a> {
     pub(crate) fn new(
         client: &mut BuckdClient,
         events_ctx: &'a mut EventsCtx,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let tailers = FileTailers::new(&client.daemon_dir)?;
         Ok(Self {
             inner: events_ctx,
@@ -174,10 +174,10 @@ impl<'a> DaemonEventsCtx<'a> {
     async fn handle_stream_next<Handler>(
         &mut self,
         partial_result_handler: &mut Handler,
-        next: Option<Vec<buck2_error::Result<StreamValue>>>,
-        shutdown: &mut Option<buck2_data::DaemonShutdown>,
+        next: Option<Vec<bz_error::Result<StreamValue>>>,
+        shutdown: &mut Option<bz_data::DaemonShutdown>,
         last_yield: &mut Instant,
-    ) -> buck2_error::Result<ControlFlow<Box<CommandResult>, ()>>
+    ) -> bz_error::Result<ControlFlow<Box<CommandResult>, ()>>
     where
         Handler: PartialResultHandler,
     {
@@ -215,8 +215,8 @@ impl<'a> DaemonEventsCtx<'a> {
                         .ok_or_else(|| internal_error!("Empty partial result"))?
                         .try_into()
                         .map_err(|e| {
-                            buck2_error::buck2_error!(
-                                buck2_error::ErrorTag::Tier0,
+                            bz_error::bz_error!(
+                                bz_error::ErrorTag::Tier0,
                                 "Invalid PartialResult: {:?}",
                                 e
                             )
@@ -238,7 +238,7 @@ impl<'a> DaemonEventsCtx<'a> {
         Ok(ControlFlow::Continue(()))
     }
 
-    async fn dispatch_tailer_event(&mut self, event: FileTailerEvent) -> buck2_error::Result<()> {
+    async fn dispatch_tailer_event(&mut self, event: FileTailerEvent) -> bz_error::Result<()> {
         match event {
             FileTailerEvent::Stdout(out) | FileTailerEvent::Stderr(out) => {
                 // Sending daemon stdout to stderr.
@@ -254,9 +254,9 @@ impl<'a> DaemonEventsCtx<'a> {
         partial_result_handler: &mut Handler,
         stream: S,
         mut console_interaction: Option<ConsoleInteractionStream<'_>>,
-    ) -> buck2_error::Result<CommandResult>
+    ) -> bz_error::Result<CommandResult>
     where
-        S: Stream<Item = buck2_error::Result<StreamValue>>,
+        S: Stream<Item = bz_error::Result<StreamValue>>,
         Handler: PartialResultHandler,
     {
         let mut noop_console_interaction = NoopSuperConsoleInteraction;
@@ -273,7 +273,7 @@ impl<'a> DaemonEventsCtx<'a> {
         let mut shutdown = None;
         let mut last_yield = Instant::now();
 
-        let command_result: buck2_error::Result<CommandResult> = try {
+        let command_result: bz_error::Result<CommandResult> = try {
             loop {
                 tokio::select! {
                     next = stream.next() => {
@@ -337,9 +337,9 @@ impl<'a> DaemonEventsCtx<'a> {
         partial_result_handler: &mut Handler,
         stream: S,
         console_interaction: Option<ConsoleInteractionStream<'_>>,
-    ) -> buck2_error::Result<CommandOutcome<Res>>
+    ) -> bz_error::Result<CommandOutcome<Res>>
     where
-        S: Stream<Item = buck2_error::Result<StreamValue>>,
+        S: Stream<Item = bz_error::Result<StreamValue>>,
         Res: TryFrom<command_result::Result, Error = command_result::Result>,
         Handler: PartialResultHandler,
     {
@@ -363,7 +363,7 @@ impl<'a> DaemonEventsCtx<'a> {
     >(
         &mut self,
         f: Fut,
-    ) -> buck2_error::Result<CommandOutcome<Res>> {
+    ) -> bz_error::Result<CommandOutcome<Res>> {
         let stream = stream::once(f.map(|result| {
             result
                 .map(|command_result| StreamValue::Result(Box::new(command_result.into_inner())))
@@ -373,8 +373,8 @@ impl<'a> DaemonEventsCtx<'a> {
             .await
     }
 
-    async fn handle_error_owned(&mut self, error: buck2_error::Error) -> buck2_error::Error {
-        let result: Result<(), buck2_error::Error> = self
+    async fn handle_error_owned(&mut self, error: bz_error::Error) -> bz_error::Error {
+        let result: Result<(), bz_error::Error> = self
             .inner
             .try_for_each_subscriber(|subscriber| subscriber.handle_error(&error))
             .await;
@@ -388,7 +388,7 @@ impl<'a> DaemonEventsCtx<'a> {
         }
     }
 
-    pub async fn flush(&mut self) -> buck2_error::Result<()> {
+    pub async fn flush(&mut self) -> bz_error::Result<()> {
         let Some(mut stream) = self.tailers.stop_reading() else {
             return Ok(());
         };
@@ -439,7 +439,7 @@ impl<'a> DaemonEventsCtx<'a> {
 /// Convert a CommandResult into a CommandOutcome after the CommandResult has been printed by `handle_command_result`.
 fn convert_result<R: TryFrom<command_result::Result, Error = command_result::Result>>(
     value: CommandResult,
-) -> buck2_error::Result<CommandOutcome<R>> {
+) -> bz_error::Result<CommandOutcome<R>> {
     match value.result {
         Some(command_result::Result::Error(error)) => Ok(CommandOutcome::Failure(
             ExitResult::from_command_result_errors(vec![error]),
@@ -465,10 +465,10 @@ pub struct EventsCtx {
     // Internal commands triggered by other commands should not log an invocation record.
     pub log_invocation_record: bool,
     // This is the daemon process's cgroup path read from /proc/{pid}/cgroup by the client,
-    // which is always available. This differs from `daemon_cgroup_path` in buck2_resource_control
+    // which is always available. This differs from `daemon_cgroup_path` in bz_resource_control
     // which is a child cgroup created under the root cgroup (i.e. {root}/daemon) and is only
     // available when daemon cgroup mode is enabled.
-    pub cgroup_path_of_buck2_daemon: Option<String>,
+    pub cgroup_path_of_bz_daemon: Option<String>,
     /// Whether a superconsole was actually constructed for this command.
     /// Set by `streaming.rs` from the authoritative answer returned by
     /// `get_console_with_root`. Defaults to `false` for non-streaming entry
@@ -488,19 +488,19 @@ impl EventsCtx {
             buck_log_dir: None,
             command_report_path: None,
             log_invocation_record: true,
-            cgroup_path_of_buck2_daemon: None,
+            cgroup_path_of_bz_daemon: None,
             used_superconsole: false,
         }
     }
 
-    pub(crate) async fn is_daemon_oom_killed(&self) -> buck2_error::Result<bool> {
+    pub(crate) async fn is_daemon_oom_killed(&self) -> bz_error::Result<bool> {
         #[cfg(target_os = "linux")]
         {
             let start_time = match self.recorder.as_ref() {
                 Some(r) => r.start_time(),
                 None => return Ok(false),
             };
-            match self.cgroup_path_of_buck2_daemon.as_deref() {
+            match self.cgroup_path_of_bz_daemon.as_deref() {
                 Some(path) => {
                     crate::subscribers::oom::check_daemon_oom_killed(path, start_time).await
                 }
@@ -513,7 +513,7 @@ impl EventsCtx {
         }
     }
 
-    async fn handle_tailer_stderr(&mut self, stderr: &[u8]) -> buck2_error::Result<()> {
+    async fn handle_tailer_stderr(&mut self, stderr: &[u8]) -> bz_error::Result<()> {
         let stderr = String::from_utf8_lossy(stderr);
         let stderr = stderr.trim_end();
         self.try_for_each_subscriber(|subscriber| subscriber.handle_tailer_stderr(stderr))
@@ -523,7 +523,7 @@ impl EventsCtx {
     async fn handle_console_interaction(
         &mut self,
         toggle: &Option<SuperConsoleToggle>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.try_for_each_subscriber(|subscriber| subscriber.handle_console_interaction(toggle))
             .await
     }
@@ -531,13 +531,13 @@ impl EventsCtx {
     async fn handle_events(
         &mut self,
         events: Vec<BuckEvent>,
-        shutdown: &mut Option<buck2_data::DaemonShutdown>,
-    ) -> buck2_error::Result<()> {
+        shutdown: &mut Option<bz_data::DaemonShutdown>,
+    ) -> bz_error::Result<()> {
         let events = events.into_map(|mut event| {
             let timestamp = event.timestamp();
-            if let buck2_data::buck_event::Data::Instant(instant_event) = event.data_mut() {
+            if let bz_data::buck_event::Data::Instant(instant_event) = event.data_mut() {
                 match &mut instant_event.data {
-                    Some(buck2_data::instant_event::Data::Snapshot(snapshot)) => {
+                    Some(bz_data::instant_event::Data::Snapshot(snapshot)) => {
                         let now = SystemTime::now();
                         // `None` on overflow.
                         let this_event_client_delay_ms = match now.duration_since(timestamp) {
@@ -551,7 +551,7 @@ impl EventsCtx {
                         snapshot.client_cpu_percents =
                             self.client_cpu_tracker.tick_cpu_time_percents();
                     }
-                    Some(buck2_data::instant_event::Data::DaemonShutdown(msg)) => {
+                    Some(bz_data::instant_event::Data::DaemonShutdown(msg)) => {
                         *shutdown = Some(msg.clone());
                     }
                     _ => {}
@@ -565,8 +565,8 @@ impl EventsCtx {
 
     async fn handle_command_result(
         &mut self,
-        result: &buck2_cli_proto::CommandResult,
-    ) -> buck2_error::Result<()> {
+        result: &bz_cli_proto::CommandResult,
+    ) -> bz_error::Result<()> {
         self.try_for_each_subscriber(|subscriber| subscriber.handle_command_result(result))
             .await
     }
@@ -574,7 +574,7 @@ impl EventsCtx {
     /// This function is called once per `TICK_SPEED`.
     /// A subscriber will have the opportunity to do an arbitrary process at a reliable interval.
     /// In particular, this is crucial for superconsole so that it can draw itself consistently.
-    async fn tick(&mut self, tick: &Tick) -> buck2_error::Result<()> {
+    async fn tick(&mut self, tick: &Tick) -> bz_error::Result<()> {
         self.try_for_each_subscriber(|subscriber| subscriber.tick(tick))
             .await
     }
@@ -601,9 +601,9 @@ impl EventsCtx {
     pub(crate) async fn try_for_each_subscriber<'b, Fut>(
         &'b mut self,
         mut f: impl FnMut(&'b mut dyn EventSubscriber) -> Fut,
-    ) -> buck2_error::Result<()>
+    ) -> bz_error::Result<()>
     where
-        Fut: Future<Output = buck2_error::Result<()>> + 'b,
+        Fut: Future<Output = bz_error::Result<()>> + 'b,
     {
         if let Some(recorder) = self.recorder.as_mut() {
             f(recorder.as_mut()).await?;
@@ -639,7 +639,7 @@ impl EventsCtx {
         self.for_each_subscriber(|subscriber| subscriber.handle_daemon_connection_failure());
     }
 
-    pub(crate) fn handle_daemon_started(&mut self, reason: buck2_data::DaemonWasStartedReason) {
+    pub(crate) fn handle_daemon_started(&mut self, reason: bz_data::DaemonWasStartedReason) {
         self.for_each_subscriber(|subscriber| subscriber.handle_daemon_started(reason));
     }
 
@@ -655,7 +655,7 @@ impl EventsCtx {
         self.recorder.iter().filter_map(|r| r.as_error_observer())
     }
 
-    pub(crate) async fn eprintln(&mut self, message: &str) -> buck2_error::Result<()> {
+    pub(crate) async fn eprintln(&mut self, message: &str) -> bz_error::Result<()> {
         self.try_for_each_subscriber(|s| {
             // TODO(nga): this is not a tailer.
             s.handle_tailer_stderr(message)
@@ -738,13 +738,13 @@ impl EventsCtx {
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 pub enum EventsCtxError {
     #[error("While propagating error:\n{source:#?}, another error was detected:\n{other:#?}")]
     WrappedStreamError {
         #[source]
-        source: buck2_error::Error,
-        other: buck2_error::Error,
+        source: bz_error::Error,
+        other: bz_error::Error,
     },
 }

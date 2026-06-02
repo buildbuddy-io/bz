@@ -31,7 +31,7 @@ pub trait StarlarkCallStackImpl: Display + Debug + Send + Sync + 'static {
     fn root_location(&self) -> Option<StarlarkTargetCallStackRoot>;
 }
 
-/// `buck2_node` crate does not depend on `starlark`, but need to store Starlark call stack.
+/// `bz_node` crate does not depend on `starlark`, but need to store Starlark call stack.
 #[derive(Debug, Allocative)]
 pub struct StarlarkCallStack {
     /// Actually `starlark::eval::CallStack`.

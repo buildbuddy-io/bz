@@ -49,7 +49,7 @@ impl EnvValue {
 }
 
 impl FromStr for EnvValue {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         match input.split_once('=') {
@@ -59,7 +59,7 @@ impl FromStr for EnvValue {
     }
 }
 
-#[derive(Debug, buck2_error::Error, PartialEq)]
+#[derive(Debug, bz_error::Error, PartialEq)]
 #[buck2(tag = Input)]
 pub enum EnvValueParseError {
     #[error("Incorrect syntax for env value. Please use name=value. Input: `{0}`")]

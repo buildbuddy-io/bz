@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
 
 use crate::artifact::artifact_dyn::ArtifactDyn;
 use crate::artifact_value::ArtifactValue;
@@ -34,7 +34,7 @@ pub trait ArtifactGroupValuesDyn: Send + Sync + 'static {
         &self,
         builder: &mut LazyActionDirectoryBuilder,
         artifact_fs: &ArtifactFs,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     fn add_to_directory_for_execution(
         &self,
@@ -43,7 +43,7 @@ pub trait ArtifactGroupValuesDyn: Send + Sync + 'static {
         digest_config: DigestConfig,
         external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
         resolved_symlink_upload_paths: &mut Vec<ResolvedSymlinkUploadPath>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let _ = digest_config;
         let _ = external_symlink_upload_paths;
         let _ = resolved_symlink_upload_paths;

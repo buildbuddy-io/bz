@@ -10,32 +10,32 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::configuration_info::FrozenConfigurationInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::FrozenPlatformInfo;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::legacy_configs::configs::parse_config_section_and_key;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::configuration::config_setting::ConfigSettingData;
-use buck2_core::configuration::data::BazelBuildSettingValue;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_node::attrs::attr_type::configuration_dep::ConfigurationDepKind;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::configuration::calculation::CONFIGURATION_CALCULATION;
-use buck2_node::configuration::calculation::CellNameForConfigurationResolution;
-use buck2_node::configuration::calculation::ConfigurationCalculationDyn;
-use buck2_node::configuration::resolved::ConfigurationNode;
-use buck2_node::configuration::resolved::ConfigurationSettingKey;
-use buck2_node::configuration::resolved::MatchedConfigurationSettingKeys;
-use buck2_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::nodes::unconfigured::TargetNodeRef;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::interpreter::rule_defs::provider::builtin::configuration_info::FrozenConfigurationInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::platform_info::FrozenPlatformInfo;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::legacy_configs::configs::parse_config_section_and_key;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_core::configuration::config_setting::ConfigSettingData;
+use bz_core::configuration::data::BazelBuildSettingValue;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::BuckErrorContext;
+use bz_node::attrs::attr_type::configuration_dep::ConfigurationDepKind;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::configuration::calculation::CONFIGURATION_CALCULATION;
+use bz_node::configuration::calculation::CellNameForConfigurationResolution;
+use bz_node::configuration::calculation::ConfigurationCalculationDyn;
+use bz_node::configuration::resolved::ConfigurationNode;
+use bz_node::configuration::resolved::ConfigurationSettingKey;
+use bz_node::configuration::resolved::MatchedConfigurationSettingKeys;
+use bz_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::nodes::unconfigured::TargetNodeRef;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::Key;
@@ -50,7 +50,7 @@ use ref_cast::RefCast;
 use starlark_map::ordered_map::OrderedMap;
 use starlark_map::unordered_map::UnorderedMap;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 pub enum ConfigurationError {
     #[error(
@@ -74,7 +74,7 @@ async fn configuration_matches(
     cfg: &ConfigurationData,
     target_node_cell: CellNameForConfigurationResolution,
     constraints_and_configs: &ConfigSettingData,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     for (key, value) in &constraints_and_configs.constraints {
         match cfg.get_constraint_value(key)? {
             Some(v) if v == value => {
@@ -191,7 +191,7 @@ fn bazel_build_setting_value_from_attr(value: &CoercedAttr) -> Option<BazelBuild
 async fn bazel_build_setting_default(
     ctx: &mut DiceComputations<'_>,
     setting: &str,
-) -> buck2_error::Result<Option<BazelBuildSettingValue>> {
+) -> bz_error::Result<Option<BazelBuildSettingValue>> {
     if setting.starts_with("//command_line_option:") {
         return Ok(None);
     }
@@ -259,7 +259,7 @@ struct MatchedConfigurationSettingKeysKey {
 async fn compute_platform_configuration_no_label_check(
     ctx: &mut DiceComputations<'_>,
     target: &TargetLabel,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     ctx
         // TODO(T198223238): Not supporting platforms being supplied via subtargets for now
         .get_configuration_analysis_result(&ProvidersLabel::default_for(target.dupe()))
@@ -274,7 +274,7 @@ async fn compute_platform_configuration_no_label_check(
 async fn compute_platform_configuration(
     ctx: &mut DiceComputations<'_>,
     target: &TargetLabel,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     let configuration_data = compute_platform_configuration_no_label_check(ctx, target).await?;
 
     let cell_resolver = ctx.get_cell_resolver().await?;
@@ -317,7 +317,7 @@ async fn compute_platform_configuration(
 
 #[async_trait]
 impl Key for MatchedConfigurationSettingKeysKey {
-    type Value = buck2_error::Result<MatchedConfigurationSettingKeysWithCfg>;
+    type Value = bz_error::Result<MatchedConfigurationSettingKeysWithCfg>;
 
     async fn compute(
         &self,
@@ -362,7 +362,7 @@ async fn get_configuration_node(
     target_cfg: &ConfigurationData,
     target_cell: CellNameForConfigurationResolution,
     cfg_target: &ConfigurationSettingKey,
-) -> buck2_error::Result<ConfigurationNode> {
+) -> bz_error::Result<ConfigurationNode> {
     ctx.compute(&ConfigurationNodeKey {
         target_cfg: target_cfg.dupe(),
         target_cell,
@@ -378,7 +378,7 @@ async fn get_configuration_node(
 
 #[async_trait]
 impl Key for ConfigurationNodeKey {
-    type Value = buck2_error::Result<ConfigurationNode>;
+    type Value = bz_error::Result<ConfigurationNode>;
 
     async fn compute(
         &self,
@@ -405,7 +405,7 @@ impl Key for ConfigurationNodeKey {
         {
             Some(configuration_info) => configuration_info,
             None => {
-                return Err::<_, buck2_error::Error>(
+                return Err::<_, bz_error::Error>(
                     ConfigurationError::MissingConfigurationInfoProvider(self.cfg_target.0.dupe())
                         .into(),
                 );
@@ -434,7 +434,7 @@ impl Key for ConfigurationNodeKey {
 pub(crate) async fn get_platform_configuration(
     ctx: &mut DiceComputations<'_>,
     target: &TargetLabel,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     #[derive(
         derive_more::Display,
         Debug,
@@ -451,7 +451,7 @@ pub(crate) async fn get_platform_configuration(
 
     #[async_trait]
     impl Key for BazelPlatformKey {
-        type Value = buck2_error::Result<ConfigurationData>;
+        type Value = bz_error::Result<ConfigurationData>;
 
         async fn compute(
             &self,
@@ -479,7 +479,7 @@ pub(crate) async fn get_platform_configuration(
 pub(crate) async fn compute_platform_cfgs(
     ctx: &mut DiceComputations<'_>,
     node: TargetNodeRef<'_>,
-) -> buck2_error::Result<OrderedMap<TargetLabel, ConfigurationData>> {
+) -> bz_error::Result<OrderedMap<TargetLabel, ConfigurationData>> {
     let mut platform_map = OrderedMap::new();
     for (platform_target, kind) in node.get_configuration_deps_with_kind() {
         if kind == ConfigurationDepKind::ConfiguredDepPlatform {
@@ -500,7 +500,7 @@ pub(crate) async fn get_matched_cfg_keys<
     target_cfg: &ConfigurationData,
     target_cell: CellNameForConfigurationResolution,
     configuration_deps: T,
-) -> buck2_error::Result<MatchedConfigurationSettingKeysWithCfg> {
+) -> bz_error::Result<MatchedConfigurationSettingKeysWithCfg> {
     let configuration_deps: Vec<ConfigurationSettingKey> =
         configuration_deps.into_iter().map(|t| t.dupe()).collect();
     ctx.compute(&MatchedConfigurationSettingKeysKey {
@@ -516,7 +516,7 @@ pub(crate) async fn get_matched_cfg_keys_for_node(
     target_cfg: &ConfigurationData,
     target_cell: CellNameForConfigurationResolution,
     node: TargetNodeRef<'_>,
-) -> buck2_error::Result<MatchedConfigurationSettingKeysWithCfg> {
+) -> bz_error::Result<MatchedConfigurationSettingKeysWithCfg> {
     let d = node
         .get_configuration_deps_with_kind()
         .filter_map(|(d, k)| {
@@ -541,7 +541,7 @@ impl ConfigurationCalculationDyn for ConfigurationCalculationDynImpl {
         &self,
         ctx: &mut DiceComputations<'_>,
         target: &TargetLabel,
-    ) -> buck2_error::Result<ConfigurationData> {
+    ) -> bz_error::Result<ConfigurationData> {
         Ok(get_platform_configuration(ctx, target).await?)
     }
 }

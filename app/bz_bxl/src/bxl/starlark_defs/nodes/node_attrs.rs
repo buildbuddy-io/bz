@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_analysis::attrs::resolve::configured_attr::ConfiguredAttrExt;
-use buck2_build_api::actions::query::PackageLabelOption;
-use buck2_build_api::bxl::unconfigured_attribute::CoercedAttrExt;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
+use bz_analysis::attrs::resolve::configured_attr::ConfiguredAttrExt;
+use bz_build_api::actions::query::PackageLabelOption;
+use bz_build_api::bxl::unconfigured_attribute::CoercedAttrExt;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
 use starlark::collections::SmallMap;
 use starlark::values::Heap;
 use starlark::values::StringValue;
@@ -22,16 +22,16 @@ use crate::bxl::starlark_defs::nodes::configured::StarlarkConfiguredTargetNode;
 use crate::bxl::starlark_defs::nodes::unconfigured::StarlarkTargetNode;
 
 pub(crate) trait NodeAttributeGetter {
-    fn get_attr<'v>(&self, key: &str, heap: Heap<'v>) -> buck2_error::Result<NoneOr<Value<'v>>>;
+    fn get_attr<'v>(&self, key: &str, heap: Heap<'v>) -> bz_error::Result<NoneOr<Value<'v>>>;
     fn get_attrs<'v>(
         &self,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<SmallMap<StringValue<'v>, Value<'v>>>;
+    ) -> bz_error::Result<SmallMap<StringValue<'v>, Value<'v>>>;
     fn has_attr(&self, key: &str) -> bool;
 }
 
 impl NodeAttributeGetter for StarlarkTargetNode {
-    fn get_attr<'v>(&self, key: &str, heap: Heap<'v>) -> buck2_error::Result<NoneOr<Value<'v>>> {
+    fn get_attr<'v>(&self, key: &str, heap: Heap<'v>) -> bz_error::Result<NoneOr<Value<'v>>> {
         let node = &self.0;
         let pkg = node.label().pkg();
         match node.attr_or_none(key, AttrInspectOptions::All) {
@@ -43,7 +43,7 @@ impl NodeAttributeGetter for StarlarkTargetNode {
     fn get_attrs<'v>(
         &self,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<SmallMap<StringValue<'v>, Value<'v>>> {
+    ) -> bz_error::Result<SmallMap<StringValue<'v>, Value<'v>>> {
         let node = &self.0;
         let pkg = node.label().pkg();
         let attrs_iter = node.attrs(AttrInspectOptions::All);
@@ -53,7 +53,7 @@ impl NodeAttributeGetter for StarlarkTargetNode {
                 let value = attr.value.to_value(pkg, heap)?;
                 Ok((name, value))
             })
-            .collect::<buck2_error::Result<SmallMap<_, _>>>()
+            .collect::<bz_error::Result<SmallMap<_, _>>>()
     }
 
     fn has_attr(&self, key: &str) -> bool {
@@ -63,7 +63,7 @@ impl NodeAttributeGetter for StarlarkTargetNode {
 }
 
 impl NodeAttributeGetter for StarlarkConfiguredTargetNode {
-    fn get_attr<'v>(&self, key: &str, heap: Heap<'v>) -> buck2_error::Result<NoneOr<Value<'v>>> {
+    fn get_attr<'v>(&self, key: &str, heap: Heap<'v>) -> bz_error::Result<NoneOr<Value<'v>>> {
         let node = &self.0;
         let pkg = PackageLabelOption::PackageLabel(node.label().pkg());
         match node.get(key, AttrInspectOptions::All) {
@@ -75,7 +75,7 @@ impl NodeAttributeGetter for StarlarkConfiguredTargetNode {
     fn get_attrs<'v>(
         &self,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<SmallMap<StringValue<'v>, Value<'v>>> {
+    ) -> bz_error::Result<SmallMap<StringValue<'v>, Value<'v>>> {
         let node = &self.0;
         let pkg = PackageLabelOption::PackageLabel(node.label().pkg());
         let attrs_iter = node.attrs(AttrInspectOptions::All);
@@ -85,7 +85,7 @@ impl NodeAttributeGetter for StarlarkConfiguredTargetNode {
                 let value = attr.value.to_value(pkg, heap)?;
                 Ok((name, value))
             })
-            .collect::<buck2_error::Result<SmallMap<_, _>>>()
+            .collect::<bz_error::Result<SmallMap<_, _>>>()
     }
 
     fn has_attr(&self, key: &str) -> bool {

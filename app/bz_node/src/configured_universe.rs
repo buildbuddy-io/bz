@@ -14,24 +14,24 @@ use std::future::Future;
 use std::pin::Pin;
 
 use allocative::Allocative;
-use buck2_common::pattern::resolve::ResolvedPattern;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::PackageSpec;
-use buck2_core::pattern::pattern_type::PatternType;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::TargetNameRef;
-use buck2_events::dispatch::span;
-use buck2_query::query::syntax::simple::eval::label_indexed::LabelIndexed;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_util::late_binding::LateBinding;
-use buck2_util::self_ref::RefData;
-use buck2_util::self_ref::SelfRef;
+use bz_common::pattern::resolve::ResolvedPattern;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::PackageSpec;
+use bz_core::pattern::pattern_type::PatternType;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetNameRef;
+use bz_events::dispatch::span;
+use bz_query::query::syntax::simple::eval::label_indexed::LabelIndexed;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_util::late_binding::LateBinding;
+use bz_util::self_ref::RefData;
+use bz_util::self_ref::SelfRef;
 use dice::DiceComputations;
 use dupe::Dupe;
 use either::Either;
@@ -49,7 +49,7 @@ pub static UNIVERSE_FROM_LITERALS: LateBinding<
         &'c [String],
         GlobalCfgOptions,
     )
-        -> Pin<Box<dyn Future<Output = buck2_error::Result<CqueryUniverse>> + Send + 'c>>,
+        -> Pin<Box<dyn Future<Output = bz_error::Result<CqueryUniverse>> + Send + 'c>>,
 > = LateBinding::new("UNIVERSE_FROM_LITERALS");
 
 #[derive(Debug)]
@@ -86,7 +86,7 @@ impl<'a> CqueryUniverseInner<'a> {
 
     fn build_inner(
         universe: &'a TargetSet<ConfiguredTargetNode>,
-    ) -> buck2_error::Result<CqueryUniverseInner<'a>> {
+    ) -> bz_error::Result<CqueryUniverseInner<'a>> {
         let mut targets: BTreeMap<
             PackageLabel,
             BTreeMap<&TargetNameRef, BTreeSet<LabelIndexed<ConfiguredTargetNodeRef>>>,
@@ -129,13 +129,13 @@ impl CqueryUniverse {
 
     pub fn build(
         universe: &TargetSet<ConfiguredTargetNode>,
-    ) -> buck2_error::Result<CqueryUniverse> {
-        span(buck2_data::CqueryUniverseBuildStart {}, || {
+    ) -> bz_error::Result<CqueryUniverse> {
+        span(bz_data::CqueryUniverseBuildStart {}, || {
             let r = SelfRef::try_new(universe.clone(), |universe| {
                 CqueryUniverseInner::build_inner(universe)
             })
             .map(|data| CqueryUniverse { data });
-            (r, buck2_data::CqueryUniverseBuildEnd {})
+            (r, bz_data::CqueryUniverseBuildEnd {})
         })
     }
 
@@ -250,7 +250,7 @@ impl CqueryUniverse {
             })
     }
 
-    pub fn owners(&self, path: &CellPath) -> buck2_error::Result<Vec<ConfiguredTargetNode>> {
+    pub fn owners(&self, path: &CellPath) -> bz_error::Result<Vec<ConfiguredTargetNode>> {
         let mut nodes = Vec::new();
 
         // We lookup in all ancestors because we still have package boundary violations.
@@ -280,25 +280,25 @@ impl CqueryUniverse {
 
 #[cfg(test)]
 mod tests {
-    use buck2_common::pattern::resolve::ResolvedPattern;
-    use buck2_core::configuration::bound_label::BoundConfigurationLabel;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::configuration::hash::ConfigurationHash;
-    use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-    use buck2_core::package::PackageLabel;
-    use buck2_core::package::PackageLabelWithModifiers;
-    use buck2_core::pattern::pattern::Modifiers;
-    use buck2_core::pattern::pattern::PackageSpec;
-    use buck2_core::pattern::pattern_type::ConfigurationPredicate;
-    use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
-    use buck2_core::provider::label::ConfiguredProvidersLabel;
-    use buck2_core::provider::label::NonDefaultProvidersName;
-    use buck2_core::provider::label::ProviderName;
-    use buck2_core::provider::label::ProvidersName;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-    use buck2_core::target::name::TargetName;
-    use buck2_query::__derive_refs::indexmap::IndexMap;
-    use buck2_query::query::syntax::simple::eval::set::TargetSet;
+    use bz_common::pattern::resolve::ResolvedPattern;
+    use bz_core::configuration::bound_label::BoundConfigurationLabel;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::configuration::hash::ConfigurationHash;
+    use bz_core::execution_types::execution::ExecutionPlatformResolution;
+    use bz_core::package::PackageLabel;
+    use bz_core::package::PackageLabelWithModifiers;
+    use bz_core::pattern::pattern::Modifiers;
+    use bz_core::pattern::pattern::PackageSpec;
+    use bz_core::pattern::pattern_type::ConfigurationPredicate;
+    use bz_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
+    use bz_core::provider::label::ConfiguredProvidersLabel;
+    use bz_core::provider::label::NonDefaultProvidersName;
+    use bz_core::provider::label::ProviderName;
+    use bz_core::provider::label::ProvidersName;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_core::target::name::TargetName;
+    use bz_query::__derive_refs::indexmap::IndexMap;
+    use bz_query::query::syntax::simple::eval::set::TargetSet;
     use dupe::Dupe;
 
     use crate::configured_universe::CqueryUniverse;
@@ -308,7 +308,7 @@ mod tests {
     async fn test_get_from_package_by_configured_provider_pattern() {
         fn providers_name() -> ProvidersName {
             ProvidersName::NonDefault(triomphe::Arc::new(NonDefaultProvidersName::Named(
-                buck2_util::arc_str::ArcSlice::new([ProviderName::new("P".to_owned()).unwrap()]),
+                bz_util::arc_str::ArcSlice::new([ProviderName::new("P".to_owned()).unwrap()]),
             )))
         }
 

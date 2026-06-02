@@ -14,32 +14,32 @@ use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
 
-use buck2_core::buck2_env;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::soft_error;
-use buck2_data::error::ErrorTag;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::dispatch::maybe_proxy_current_span;
-use buck2_events::dispatch::with_dispatcher_async;
-use buck2_events::span::SpanId;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_execute::materialize::materializer::ArtifactNotMaterializedReason;
-use buck2_execute::materialize::materializer::DeclareArtifactPayload;
-use buck2_execute::materialize::materializer::MaterializationError;
-use buck2_execute::materialize::utils::dynamic_priority_handle::DynamicPriorityHandle;
-use buck2_execute::materialize::utils::priority_semaphore::Priority;
-use buck2_fs::fs_util;
-use buck2_fs::fs_util::disk_space_stats;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_hash::BuckDashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_util::threads::check_stack_overflow;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_core::bz_env;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::soft_error;
+use bz_data::error::ErrorTag;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::dispatch::maybe_proxy_current_span;
+use bz_events::dispatch::with_dispatcher_async;
+use bz_events::span::SpanId;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_execute::materialize::materializer::ArtifactNotMaterializedReason;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_execute::materialize::materializer::MaterializationError;
+use bz_execute::materialize::utils::dynamic_priority_handle::DynamicPriorityHandle;
+use bz_execute::materialize::utils::priority_semaphore::Priority;
+use bz_fs::fs_util;
+use bz_fs::fs_util::disk_space_stats;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_hash::BuckDashMap;
+use bz_hash::StdBuckHashSet;
+use bz_util::threads::check_stack_overflow;
+use bz_wrapper_common::invocation_id::TraceId;
 use chrono::DateTime;
 use chrono::Utc;
 use dice_futures::cancellation::CancellationContext;
@@ -141,7 +141,7 @@ pub(super) struct DeferredMaterializerCommandProcessor<T: 'static> {
     /// small and we create it infrequently, that's fine.
     pub(super) ttl_refresh_history: Vec<TtlRefreshHistoryEntry>,
     /// The current ttl_refresh instance, if any exists.
-    ttl_refresh_instance: Option<oneshot::Receiver<(DateTime<Utc>, buck2_error::Result<()>)>>,
+    ttl_refresh_instance: Option<oneshot::Receiver<(DateTime<Utc>, bz_error::Result<()>)>>,
     pub(super) cancellations: &'static CancellationContext,
     stats: Arc<DeferredMaterializerStats>,
     access_times_buffer: Option<StdBuckHashSet<ProjectRelativePathBuf>>,
@@ -361,7 +361,7 @@ struct CommandStream<T: 'static> {
     refresh_ttl_ticker: Option<Interval>,
     io_buffer_ticker: Interval,
     clean_stale_ticker: Option<Interval>,
-    clean_stale_fut: Option<BoxFuture<'static, buck2_error::Result<CleanResult>>>,
+    clean_stale_fut: Option<BoxFuture<'static, bz_error::Result<CleanResult>>>,
 }
 
 enum Op<T: 'static> {
@@ -651,7 +651,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                         // This should never happen
                         let _unused = soft_error!(
                             "clean_stale_no_config",
-                            buck2_error!(buck2_error::ErrorTag::Tier0, "clean scheduled without being configured"),
+                            bz_error!(bz_error::ErrorTag::Tier0, "clean scheduled without being configured"),
                             quiet: true
                         );
                     }
@@ -722,8 +722,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 parent_id,
             ) => maybe_proxy_current_span(parent_id, || {
                 self.maybe_log_command(&event_dispatcher, || {
-                    buck2_data::materializer_command::Data::Declare(
-                        buck2_data::materializer_command::Declare {
+                    bz_data::materializer_command::Data::Declare(
+                        bz_data::materializer_command::Declare {
                             path: path.to_string(),
                         },
                     )
@@ -742,8 +742,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                         self.eager_materializations
                             .add_bridged_declare(eager_path, &path);
                         self.maybe_log_command(&event_dispatcher, || {
-                            buck2_data::materializer_command::Data::EagerDispatchOnDeclare(
-                                buck2_data::materializer_command::EagerDispatchOnDeclare {
+                            bz_data::materializer_command::Data::EagerDispatchOnDeclare(
+                                bz_data::materializer_command::EagerDispatchOnDeclare {
                                     path: path.to_string(),
                                 },
                             )
@@ -777,8 +777,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                         "invalidate paths",
                     );
                     self.maybe_log_command(&event_dispatcher, || {
-                        buck2_data::materializer_command::Data::InvalidateFilePaths(
-                            buck2_data::materializer_command::InvalidateFilePaths {
+                        bz_data::materializer_command::Data::InvalidateFilePaths(
+                            bz_data::materializer_command::InvalidateFilePaths {
                                 paths: paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
                             },
                         )
@@ -808,8 +808,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             MaterializerCommand::Ensure(paths, event_dispatcher, parent_id, fut_sender) => {
                 maybe_proxy_current_span(parent_id, || {
                     self.maybe_log_command(&event_dispatcher, || {
-                        buck2_data::materializer_command::Data::Ensure(
-                            buck2_data::materializer_command::Ensure {
+                        bz_data::materializer_command::Data::Ensure(
+                            bz_data::materializer_command::Ensure {
                                 paths: paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
                             },
                         )
@@ -825,8 +825,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             MaterializerCommand::Abort => unreachable!(),
             MaterializerCommand::RegisterEagerPaths(paths, event_dispatcher, sender) => {
                 self.maybe_log_command(&event_dispatcher, || {
-                    buck2_data::materializer_command::Data::RegisterEagerPaths(
-                        buck2_data::materializer_command::RegisterEagerPaths {
+                    bz_data::materializer_command::Data::RegisterEagerPaths(
+                        bz_data::materializer_command::RegisterEagerPaths {
                             paths: paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
                         },
                     )
@@ -891,7 +891,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     // Shouldnt really happen unless Tokio is shutting down, but be safe.
                     self.ttl_refresh_history.push(TtlRefreshHistoryEntry {
                         at: Utc::now(),
-                        outcome: Some(Err(buck2_error!(buck2_error::ErrorTag::Tier0, "Shutdown"))),
+                        outcome: Some(Err(bz_error!(bz_error::ErrorTag::Tier0, "Shutdown"))),
                     });
                     None
                 }
@@ -1035,7 +1035,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 } => {
                     // NOTE: This is for testing performance when hitting mismatches with disk
                     // state. Unwrapping isn't ideal, but we can't report errors here.
-                    let force_mismatch = buck2_env!(
+                    let force_mismatch = bz_env!(
                         "BUCK2_TEST_FORCE_DECLARE_MISMATCH",
                         bool,
                         applicability = testing
@@ -1350,7 +1350,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         path: &ProjectRelativePath,
         event_dispatcher: EventDispatcher,
         priority: Priority,
-    ) -> buck2_error::Result<Option<MaterializingFuture>> {
+    ) -> bz_error::Result<Option<MaterializingFuture>> {
         // TODO(nga): rewrite without recursion or figure out why we overflow stack here.
         check_stack_overflow().tag(ErrorTag::ServerStackOverflow)?;
 
@@ -1393,8 +1393,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 last_access_time, ..
             } => {
                 if !materialized_path_exists(self.io.as_ref(), path) {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::MaterializationError,
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::MaterializationError,
                         "Materializer state said `{}` was materialized, but it is missing on disk and no materialization method is available",
                         path
                     ));
@@ -1708,11 +1708,11 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
 
     fn maybe_log_command<F>(&self, event_dispatcher: &EventDispatcher, f: F)
     where
-        F: FnOnce() -> buck2_data::materializer_command::Data,
+        F: FnOnce() -> bz_data::materializer_command::Data,
     {
         if self.verbose_materializer_log {
             let data = Some(f());
-            event_dispatcher.instant_event(buck2_data::MaterializerCommand { data });
+            event_dispatcher.instant_event(bz_data::MaterializerCommand { data });
         }
     }
 }
@@ -1767,21 +1767,21 @@ fn clean_path<T: IoHandler>(
     })
     .map(|r| match r {
         Ok(r) => r,
-        Err(e) => Err(e.into()), // Turn the JoinError into a buck2_error::Error.
+        Err(e) => Err(e.into()), // Turn the JoinError into a bz_error::Error.
     })
     .boxed()
     .shared()
 }
 
 /// A wrapper type around the Result it contains. Used to expose some extra methods.
-struct ExistingFutures(buck2_error::Result<Vec<(ProjectRelativePathBuf, ProcessingFuture)>>);
+struct ExistingFutures(bz_error::Result<Vec<(ProjectRelativePathBuf, ProcessingFuture)>>);
 
 impl ExistingFutures {
     fn is_empty(&self) -> bool {
         self.0.as_ref().is_ok_and(Vec::is_empty)
     }
 
-    fn into_result(self) -> buck2_error::Result<Vec<(ProjectRelativePathBuf, ProcessingFuture)>> {
+    fn into_result(self) -> bz_error::Result<Vec<(ProjectRelativePathBuf, ProcessingFuture)>> {
         self.0
     }
 

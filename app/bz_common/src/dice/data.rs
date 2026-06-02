@@ -43,7 +43,7 @@ impl SetIoProvider for DiceDataBuilder {
 }
 
 pub mod testing {
-    use buck2_core::fs::project::ProjectRootTemp;
+    use bz_core::fs::project::ProjectRootTemp;
 
     use super::*;
     use crate::io::fs::FsIoProvider;

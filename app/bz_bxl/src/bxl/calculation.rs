@@ -11,10 +11,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_build_api::bxl::calculation::BXL_CALCULATION_IMPL;
-use buck2_build_api::bxl::calculation::BxlCalculationDyn;
-use buck2_build_api::bxl::calculation::BxlComputeResult;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKeyBxl;
+use bz_build_api::bxl::calculation::BXL_CALCULATION_IMPL;
+use bz_build_api::bxl::calculation::BxlCalculationDyn;
+use bz_build_api::bxl::calculation::BxlComputeResult;
+use bz_core::deferred::base_deferred_key::BaseDeferredKeyBxl;
 use dice::DiceComputations;
 use dice::Key;
 use dice::OkPagableValueSerialize;
@@ -36,7 +36,7 @@ impl BxlCalculationDyn for BxlCalculationImpl {
         &self,
         ctx: &mut DiceComputations<'_>,
         bxl: BaseDeferredKeyBxl,
-    ) -> buck2_error::Result<BxlComputeResult> {
+    ) -> bz_error::Result<BxlComputeResult> {
         eval_bxl(ctx, BxlKey::from_base_deferred_key_dyn_impl_err(bxl)?)
             .await
             .map_err(|e| e.error)
@@ -53,7 +53,7 @@ pub(crate) async fn eval_bxl(
 ) -> bxl::eval::Result<BxlComputeResult> {
     match ctx.compute(&internal::BxlComputeKey(bxl)).await {
         Ok(res) => res,
-        Err(e) => Err(buck2_error::Error::from(e).into()),
+        Err(e) => Err(bz_error::Error::from(e).into()),
     }
 }
 

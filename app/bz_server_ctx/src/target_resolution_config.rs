@@ -8,22 +8,22 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::TargetCfg;
-use buck2_core::configuration::bound_id::BoundConfigurationId;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::pattern::pattern::ModifiersError;
-use buck2_core::pattern::pattern::ProvidersLabelWithModifiers;
-use buck2_core::pattern::pattern::TargetLabelWithExtra;
-use buck2_core::pattern::pattern_type::ConfigurationPredicate;
-use buck2_core::pattern::pattern_type::ConfiguredTargetPatternExtra;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_node::configured_universe::CqueryUniverse;
-use buck2_node::configured_universe::UNIVERSE_FROM_LITERALS;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
+use bz_cli_proto::TargetCfg;
+use bz_core::configuration::bound_id::BoundConfigurationId;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::pattern::pattern::ModifiersError;
+use bz_core::pattern::pattern::ProvidersLabelWithModifiers;
+use bz_core::pattern::pattern::TargetLabelWithExtra;
+use bz_core::pattern::pattern_type::ConfigurationPredicate;
+use bz_core::pattern::pattern_type::ConfiguredTargetPatternExtra;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_node::configured_universe::CqueryUniverse;
+use bz_node::configured_universe::UNIVERSE_FROM_LITERALS;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
 use dice::DiceComputations;
 use dupe::Dupe;
 use gazebo::prelude::VecExt;
@@ -31,7 +31,7 @@ use gazebo::prelude::VecExt;
 use crate::ctx::ServerCommandContextTrait;
 use crate::global_cfg_options::global_cfg_options_from_client_context;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum PatternNotSupportedError {
     #[error("Builtin configurations are not supported: `{0}`")]
@@ -55,7 +55,7 @@ impl TargetResolutionConfig {
         target_cfg: &TargetCfg,
         server_ctx: &dyn ServerCommandContextTrait,
         target_universe: &[String],
-    ) -> buck2_error::Result<TargetResolutionConfig> {
+    ) -> bz_error::Result<TargetResolutionConfig> {
         let global_cfg_options =
             global_cfg_options_from_client_context(target_cfg, server_ctx, ctx).await?;
         if target_universe.is_empty() {
@@ -78,7 +78,7 @@ impl TargetResolutionConfig {
         ctx: &mut DiceComputations<'_>,
         label: &TargetLabel,
         modifiers: Option<&[String]>,
-    ) -> buck2_error::Result<Vec<ConfiguredTargetLabel>> {
+    ) -> bz_error::Result<Vec<ConfiguredTargetLabel>> {
         match self {
             TargetResolutionConfig::Default(global_cfg_options) => {
                 let local_cfg_options = match modifiers {
@@ -114,7 +114,7 @@ impl TargetResolutionConfig {
         &self,
         ctx: &mut DiceComputations<'_>,
         label: &ProvidersLabel,
-    ) -> buck2_error::Result<Vec<ConfiguredProvidersLabel>> {
+    ) -> bz_error::Result<Vec<ConfiguredProvidersLabel>> {
         Ok(self
             .get_configured_target(ctx, label.target(), None)
             .await?
@@ -127,7 +127,7 @@ impl TargetResolutionConfig {
         &self,
         ctx: &mut DiceComputations<'_>,
         label_with_modifiers: &ProvidersLabelWithModifiers,
-    ) -> buck2_error::Result<Vec<ConfiguredProvidersLabel>> {
+    ) -> bz_error::Result<Vec<ConfiguredProvidersLabel>> {
         let ProvidersLabelWithModifiers {
             providers_label,
             modifiers,
@@ -148,7 +148,7 @@ impl TargetResolutionConfig {
         &self,
         ctx: &mut DiceComputations<'_>,
         label: &TargetLabelWithExtra<ConfiguredTargetPatternExtra>,
-    ) -> buck2_error::Result<Vec<ConfiguredTargetLabel>> {
+    ) -> bz_error::Result<Vec<ConfiguredTargetLabel>> {
         let TargetLabelWithExtra {
             target_label,
             extra,

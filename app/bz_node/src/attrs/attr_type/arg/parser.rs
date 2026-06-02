@@ -99,7 +99,7 @@ impl ParsedArg {
 }
 
 /// Parsed a string into a structure with macros and their types and args identified.
-pub fn parse_macros(input: &str) -> buck2_error::Result<ParsedArg> {
+pub fn parse_macros(input: &str) -> bz_error::Result<ParsedArg> {
     match read(input) {
         Ok((value, remaining)) => {
             assert!(
@@ -121,8 +121,8 @@ pub fn parse_macros(input: &str) -> buck2_error::Result<ParsedArg> {
             // We'll print a line of `^` to indicate where the processing failed.
             let pointer = error_start - message_start;
 
-            Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "E:{}\n    V:{}\n    M:{}{}\n",
                 err,
                 &input[message_start..message_end],
@@ -133,7 +133,7 @@ pub fn parse_macros(input: &str) -> buck2_error::Result<ParsedArg> {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ArgParseError {
     #[error("Unfinished quoted arg, expected a `{0}`")]
@@ -514,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_macros() -> buck2_error::Result<()> {
+    fn test_parse_macros() -> bz_error::Result<()> {
         assert_eq!(
             ParsedArg(vec![ArgItem::String("contains no macros".into())]),
             parse_macros(r#"contains no macros"#)?

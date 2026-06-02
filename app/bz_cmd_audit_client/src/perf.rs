@@ -13,7 +13,7 @@
 pub mod configured_graph_size;
 
 use async_trait::async_trait;
-use buck2_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonCommandOptions;
 
 use crate::AuditSubcommand;
 use crate::perf::configured_graph_size::ConfiguredGraphSizeCommand;

@@ -10,7 +10,7 @@
 
 use std::fmt;
 
-use buck2_data::SchedulingMode;
+use bz_data::SchedulingMode;
 use dupe::Dupe;
 
 use crate::cache_hit_rate::total_cache_hit_rate;
@@ -76,15 +76,15 @@ impl ActionStats {
             + self.remote_dep_file_cached_actions
     }
 
-    pub fn update(&mut self, action: &buck2_data::ActionExecutionEnd) {
+    pub fn update(&mut self, action: &bz_data::ActionExecutionEnd) {
         // TODO(ezgi): consolidate with InvocationRecord creation at https://fburl.com/code/c8iitvvy
-        if action.kind != buck2_data::ActionKind::Run as i32 {
+        if action.kind != bz_data::ActionKind::Run as i32 {
             return;
         }
         if was_fallback_action(action) {
             self.fallback_actions += 1;
         }
-        if action.execution_kind() == buck2_data::ActionExecutionKind::LocalActionCache {
+        if action.execution_kind() == bz_data::ActionExecutionKind::LocalActionCache {
             self.cached_actions += 1;
             return;
         }
@@ -137,12 +137,12 @@ impl fmt::Display for ActionStats {
     }
 }
 
-pub fn was_local_action(action: &buck2_data::ActionExecutionEnd) -> bool {
-    action.execution_kind() == buck2_data::ActionExecutionKind::Local
-        || action.execution_kind() == buck2_data::ActionExecutionKind::LocalWorker
+pub fn was_local_action(action: &bz_data::ActionExecutionEnd) -> bool {
+    action.execution_kind() == bz_data::ActionExecutionKind::Local
+        || action.execution_kind() == bz_data::ActionExecutionKind::LocalWorker
 }
 
-pub fn scheduling_mode(action: &buck2_data::ActionExecutionEnd) -> Option<SchedulingMode> {
+pub fn scheduling_mode(action: &bz_data::ActionExecutionEnd) -> Option<SchedulingMode> {
     action
         .scheduling_mode
         .and_then(|o| SchedulingMode::try_from(o).ok())
@@ -151,7 +151,7 @@ pub fn scheduling_mode(action: &buck2_data::ActionExecutionEnd) -> Option<Schedu
 /// Identify whether an action was a fallback action.
 /// An action was a fallback if it was a local action and triggered as a
 /// fallback by the hybrid executor.
-pub fn was_fallback_action(action: &buck2_data::ActionExecutionEnd) -> bool {
+pub fn was_fallback_action(action: &bz_data::ActionExecutionEnd) -> bool {
     match scheduling_mode(action) {
         Some(SchedulingMode::Fallback) | Some(SchedulingMode::FallbackReQueueEstimate) => {
             was_local_action(action)
@@ -162,8 +162,8 @@ pub fn was_fallback_action(action: &buck2_data::ActionExecutionEnd) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use buck2_data::ActionExecutionEnd;
-    use buck2_data::ActionKind;
+    use bz_data::ActionExecutionEnd;
+    use bz_data::ActionKind;
 
     use super::*;
 
@@ -173,8 +173,8 @@ mod tests {
 
         let action_execution_end = ActionExecutionEnd {
             kind: ActionKind::Run as i32,
-            invalidation_info: Some(buck2_data::CommandInvalidationInfo {
-                changed_file: Some(buck2_data::command_invalidation_info::InvalidationSource {}),
+            invalidation_info: Some(bz_data::CommandInvalidationInfo {
+                changed_file: Some(bz_data::command_invalidation_info::InvalidationSource {}),
                 ..Default::default()
             }),
             ..Default::default()
@@ -191,7 +191,7 @@ mod tests {
 
         let action_execution_end = ActionExecutionEnd {
             kind: ActionKind::Run as i32,
-            invalidation_info: Some(buck2_data::CommandInvalidationInfo {
+            invalidation_info: Some(bz_data::CommandInvalidationInfo {
                 changed_file: None,
                 changed_any: None,
             }),

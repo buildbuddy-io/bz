@@ -13,12 +13,12 @@ use std::time::SystemTime;
 
 #[derive(Default)]
 pub struct TwoSnapshots {
-    pub penultimate: Option<(SystemTime, buck2_data::Snapshot)>,
-    pub last: Option<(SystemTime, buck2_data::Snapshot)>,
+    pub penultimate: Option<(SystemTime, bz_data::Snapshot)>,
+    pub last: Option<(SystemTime, bz_data::Snapshot)>,
 }
 
 impl TwoSnapshots {
-    pub fn update(&mut self, timestamp: SystemTime, snapshot: &buck2_data::Snapshot) {
+    pub fn update(&mut self, timestamp: SystemTime, snapshot: &bz_data::Snapshot) {
         self.penultimate = self.last.replace((timestamp, snapshot.clone()));
     }
 
@@ -32,7 +32,7 @@ impl TwoSnapshots {
         Some(duration)
     }
 
-    fn per_micro_second(&self, field: impl Fn(&buck2_data::Snapshot) -> u64) -> Option<u64> {
+    fn per_micro_second(&self, field: impl Fn(&bz_data::Snapshot) -> u64) -> Option<u64> {
         let (_, penultimate_snapshot) = self.penultimate.as_ref()?;
         let (_, last_snapshot) = self.last.as_ref()?;
         let duration = self.non_zero_duration()?;
@@ -44,21 +44,21 @@ impl TwoSnapshots {
 
     /// User + system CPU time between two snapshots in percents.
     pub fn cpu_percents(&self) -> Option<u64> {
-        self.per_micro_second(|s| (s.buck2_user_cpu_us + s.buck2_system_cpu_us) * 100)
+        self.per_micro_second(|s| (s.bz_user_cpu_us + s.bz_system_cpu_us) * 100)
     }
 
     /// User CPU time between two snapshots in percents.
     pub fn user_cpu_percents(&self) -> Option<u64> {
-        self.per_micro_second(|s| s.buck2_user_cpu_us * 100)
+        self.per_micro_second(|s| s.bz_user_cpu_us * 100)
     }
 
     /// System CPU time between two snapshots in percents.
     pub fn system_cpu_percents(&self) -> Option<u64> {
-        self.per_micro_second(|s| s.buck2_system_cpu_us * 100)
+        self.per_micro_second(|s| s.bz_system_cpu_us * 100)
     }
 
     /// Measure bytes-per-second rate between two snapshots for some field.
-    fn bytes_per_second(&self, field: impl Fn(&buck2_data::Snapshot) -> u64) -> Option<u64> {
+    fn bytes_per_second(&self, field: impl Fn(&bz_data::Snapshot) -> u64) -> Option<u64> {
         self.per_micro_second(|s| field(s) * 1_000_000)
     }
 
@@ -93,9 +93,9 @@ mod tests {
         assert_eq!(None, two_snapshots.system_cpu_percents());
         two_snapshots.update(
             t0,
-            &buck2_data::Snapshot {
-                buck2_user_cpu_us: 100,
-                buck2_system_cpu_us: 200,
+            &bz_data::Snapshot {
+                bz_user_cpu_us: 100,
+                bz_system_cpu_us: 200,
                 ..Default::default()
             },
         );
@@ -104,9 +104,9 @@ mod tests {
         assert_eq!(None, two_snapshots.system_cpu_percents());
         two_snapshots.update(
             t0.add(Duration::from_secs(2)),
-            &buck2_data::Snapshot {
-                buck2_user_cpu_us: 6_000_100,
-                buck2_system_cpu_us: 8_000_200,
+            &bz_data::Snapshot {
+                bz_user_cpu_us: 6_000_100,
+                bz_system_cpu_us: 8_000_200,
                 ..Default::default()
             },
         );
@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(None, two_snapshots.re_download_bytes_per_second());
         two_snapshots.update(
             t0,
-            &buck2_data::Snapshot {
+            &bz_data::Snapshot {
                 re_download_bytes: 100,
                 ..Default::default()
             },
@@ -132,7 +132,7 @@ mod tests {
         assert_eq!(None, two_snapshots.re_download_bytes_per_second());
         two_snapshots.update(
             t0.add(Duration::from_secs(2)),
-            &buck2_data::Snapshot {
+            &bz_data::Snapshot {
                 re_download_bytes: 6100,
                 ..Default::default()
             },

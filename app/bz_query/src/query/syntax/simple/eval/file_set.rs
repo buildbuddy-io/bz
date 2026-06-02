@@ -11,8 +11,8 @@
 use std::fmt;
 
 use allocative::Allocative;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_hash::BuckIndexSet;
+use bz_core::cells::cell_path::CellPath;
+use bz_hash::BuckIndexSet;
 use derive_more::Display;
 use display_container::fmt_container;
 use fancy_regex::Regex;
@@ -43,15 +43,15 @@ impl FileSet {
         Self { files }
     }
 
-    pub(crate) fn filter_name(&self, regex: &str) -> buck2_error::Result<Self> {
+    pub(crate) fn filter_name(&self, regex: &str) -> bz_error::Result<Self> {
         let re = Regex::new(regex)?;
         self.filter(|node| Ok(re.is_match(&node.0.to_string())?))
     }
 
-    fn filter<F: Fn(&FileNode) -> buck2_error::Result<bool>>(
+    fn filter<F: Fn(&FileNode) -> bz_error::Result<bool>>(
         &self,
         filter: F,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut files = BuckIndexSet::default();
         for file in self.files.iter() {
             if filter(file)? {
@@ -82,7 +82,7 @@ impl FileSet {
     pub fn owner<T: QueryTarget>(
         &self,
         _env: &impl QueryEnvironment<Target = T>,
-    ) -> buck2_error::Result<TargetSet<T>> {
+    ) -> bz_error::Result<TargetSet<T>> {
         Err(QueryError::FunctionUnimplemented("owner()").into())
     }
 
@@ -109,11 +109,11 @@ impl FileSet {
         self.files.contains(item)
     }
 
-    pub fn intersect(&self, right: &FileSet) -> buck2_error::Result<FileSet> {
+    pub fn intersect(&self, right: &FileSet) -> bz_error::Result<FileSet> {
         self.filter(|file| Ok(right.contains(file)))
     }
 
-    pub fn difference(&self, right: &FileSet) -> buck2_error::Result<FileSet> {
+    pub fn difference(&self, right: &FileSet) -> bz_error::Result<FileSet> {
         self.filter(|file| Ok(!right.contains(file)))
     }
 }

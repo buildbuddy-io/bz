@@ -11,7 +11,7 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
+use bz_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -26,7 +26,7 @@ use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::list::ListRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
@@ -111,7 +111,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for RunInfoGen<V> {
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         ValueAsCommandLineLike::unpack_value_err(self.args.get().to_value())
             .expect("a command line from construction")
             .0
@@ -122,7 +122,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for RunInfoGen<V> {
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         ValueAsCommandLineLike::unpack_value_err(self.args.get().to_value())
             .expect("a command line from construction")
             .0
@@ -141,7 +141,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for RunInfoGen<V> {
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }

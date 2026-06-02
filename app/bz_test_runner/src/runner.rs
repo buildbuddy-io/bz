@@ -10,21 +10,21 @@
 
 use std::time::Duration;
 
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_test_api::data::ArgValue;
-use buck2_test_api::data::ArgValueContent;
-use buck2_test_api::data::ConfiguredTargetHandle;
-use buck2_test_api::data::ExecuteResponse;
-use buck2_test_api::data::ExecutionResult2;
-use buck2_test_api::data::ExecutionStatus;
-use buck2_test_api::data::ExternalRunnerSpec;
-use buck2_test_api::data::ExternalRunnerSpecValue;
-use buck2_test_api::data::RequiredLocalResources;
-use buck2_test_api::data::TestResult;
-use buck2_test_api::data::TestStage;
-use buck2_test_api::data::TestStatus;
-use buck2_test_api::grpc::TestOrchestratorClient;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_test_api::data::ArgValue;
+use bz_test_api::data::ArgValueContent;
+use bz_test_api::data::ConfiguredTargetHandle;
+use bz_test_api::data::ExecuteResponse;
+use bz_test_api::data::ExecutionResult2;
+use bz_test_api::data::ExecutionStatus;
+use bz_test_api::data::ExternalRunnerSpec;
+use bz_test_api::data::ExternalRunnerSpecValue;
+use bz_test_api::data::RequiredLocalResources;
+use bz_test_api::data::TestResult;
+use bz_test_api::data::TestStage;
+use bz_test_api::data::TestStatus;
+use bz_test_api::grpc::TestOrchestratorClient;
 use clap::Parser;
 use futures::StreamExt;
 use futures::TryStreamExt;
@@ -55,7 +55,7 @@ impl Buck2TestRunner {
         orchestrator_client: TestOrchestratorClient,
         spec_receiver: SpecReceiver,
         args: Vec<String>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let config = Config::try_parse_from(args)
             .buck_error_context("Error parsing test runner arguments")?;
         Ok(Self {
@@ -65,7 +65,7 @@ impl Buck2TestRunner {
         })
     }
 
-    pub async fn run_all_tests(&self) -> buck2_error::Result<()> {
+    pub async fn run_all_tests(&self) -> bz_error::Result<()> {
         let receiver;
         {
             let mut maybe_receiver = self.spec_receiver.lock();
@@ -111,7 +111,7 @@ impl Buck2TestRunner {
                     if test_status != TestStatus::PASS {
                         run_verdict = RunVerdict::Fail;
                     }
-                    buck2_error::Ok(run_verdict)
+                    bz_error::Ok(run_verdict)
                 },
             )
             .await;
@@ -124,7 +124,7 @@ impl Buck2TestRunner {
     async fn execute_test_from_spec(
         &self,
         spec: ExternalRunnerSpec,
-    ) -> buck2_error::Result<ExecuteResponse> {
+    ) -> bz_error::Result<ExecuteResponse> {
         let stage = TestStage::Testing {
             suite: spec.target.target,
             testcases: Vec::new(),
@@ -154,7 +154,7 @@ impl Buck2TestRunner {
             .env
             .iter()
             .map(|s| s.parse())
-            .collect::<buck2_error::Result<_>>()?;
+            .collect::<bz_error::Result<_>>()?;
         let config_env = config_env.iter().map(|EnvValue { name, value }| {
             (
                 name.to_owned(),
@@ -203,7 +203,7 @@ impl Buck2TestRunner {
             .await
     }
 
-    async fn report_test_result(&self, test_result: TestResult) -> buck2_error::Result<()> {
+    async fn report_test_result(&self, test_result: TestResult) -> bz_error::Result<()> {
         self.orchestrator_client
             .report_test_result(test_result)
             .await

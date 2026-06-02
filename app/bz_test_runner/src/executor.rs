@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_test_api::data::ExternalRunnerSpec;
-use buck2_test_api::protocol::TestExecutor;
+use bz_test_api::data::ExternalRunnerSpec;
+use bz_test_api::protocol::TestExecutor;
 use futures::channel::mpsc::UnboundedSender;
 
 pub type SpecSender = UnboundedSender<ExternalRunnerSpec>;
@@ -26,7 +26,7 @@ impl Buck2TestExecutor {
 
 #[async_trait::async_trait]
 impl TestExecutor for Buck2TestExecutor {
-    async fn external_runner_spec(&self, spec: ExternalRunnerSpec) -> buck2_error::Result<()> {
+    async fn external_runner_spec(&self, spec: ExternalRunnerSpec) -> bz_error::Result<()> {
         self.sender
             .clone()
             .start_send(spec)
@@ -34,7 +34,7 @@ impl TestExecutor for Buck2TestExecutor {
         Ok(())
     }
 
-    async fn end_of_test_requests(&self) -> buck2_error::Result<()> {
+    async fn end_of_test_requests(&self) -> bz_error::Result<()> {
         // This ensures that all senders are dropped so the receiver can terminate
         self.sender.close_channel();
         Ok(())

@@ -10,11 +10,11 @@
 
 use std::future::Future;
 
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_data::ComputeDetailedAggregatedMetricsEnd;
-use buck2_data::ComputeDetailedAggregatedMetricsStart;
-use buck2_error::internal_error;
-use buck2_events::dispatch::span_async_simple;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_data::ComputeDetailedAggregatedMetricsEnd;
+use bz_data::ComputeDetailedAggregatedMetricsStart;
+use bz_error::internal_error;
+use bz_events::dispatch::span_async_simple;
 use dice::DiceComputations;
 use dice::DiceDataBuilder;
 use dice::UserComputationData;
@@ -29,32 +29,32 @@ use crate::build::detailed_aggregated_metrics::types::TopLevelTargetSpec;
 use crate::deferred::calculation::DeferredHolder;
 
 pub trait HasDetailedAggregatedMetrics {
-    fn action_executed(&self, ev: ActionExecutionMetrics) -> buck2_error::Result<()>;
-    fn analysis_started(&self, key: &DeferredHolderKey) -> buck2_error::Result<()>;
+    fn action_executed(&self, ev: ActionExecutionMetrics) -> bz_error::Result<()>;
+    fn analysis_started(&self, key: &DeferredHolderKey) -> bz_error::Result<()>;
     fn analysis_complete(
         &self,
         key: &DeferredHolderKey,
         result: &DeferredHolder,
-    ) -> buck2_error::Result<()>;
-    fn top_level_target(&self, spec: TopLevelTargetSpec) -> buck2_error::Result<()>;
-    fn take_per_build_events(&self) -> buck2_error::Result<PerBuildEvents>;
+    ) -> bz_error::Result<()>;
+    fn top_level_target(&self, spec: TopLevelTargetSpec) -> bz_error::Result<()>;
+    fn take_per_build_events(&self) -> bz_error::Result<PerBuildEvents>;
     fn compute_detailed_metrics(
         &self,
         events: PerBuildEvents,
-    ) -> impl Future<Output = buck2_error::Result<DetailedAggregatedMetrics>> + Send;
+    ) -> impl Future<Output = bz_error::Result<DetailedAggregatedMetrics>> + Send;
     fn compute_action_graph_sketch(
         &self,
         events: &PerBuildEvents,
-    ) -> impl Future<Output = buck2_error::Result<ActionGraphSketchResult>> + Send;
+    ) -> impl Future<Output = bz_error::Result<ActionGraphSketchResult>> + Send;
 }
 
 impl HasDetailedAggregatedMetrics for DiceComputations<'_> {
-    fn top_level_target(&self, spec: TopLevelTargetSpec) -> buck2_error::Result<()> {
+    fn top_level_target(&self, spec: TopLevelTargetSpec) -> bz_error::Result<()> {
         get_per_build_events_holder(self)?.top_level_target(spec);
         Ok(())
     }
 
-    fn action_executed(&self, ev: ActionExecutionMetrics) -> buck2_error::Result<()> {
+    fn action_executed(&self, ev: ActionExecutionMetrics) -> bz_error::Result<()> {
         get_per_build_events_holder(self)?.action_executed(&ev.key);
         if let Some(v) = get_detailed_aggregated_metrics_event_handler(self)? {
             v.action_executed(ev);
@@ -62,7 +62,7 @@ impl HasDetailedAggregatedMetrics for DiceComputations<'_> {
         Ok(())
     }
 
-    fn analysis_started(&self, key: &DeferredHolderKey) -> buck2_error::Result<()> {
+    fn analysis_started(&self, key: &DeferredHolderKey) -> bz_error::Result<()> {
         if let Some(v) = get_detailed_aggregated_metrics_event_handler(self)? {
             v.analysis_started(key);
         }
@@ -73,21 +73,21 @@ impl HasDetailedAggregatedMetrics for DiceComputations<'_> {
         &self,
         key: &DeferredHolderKey,
         result: &DeferredHolder,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(v) = get_detailed_aggregated_metrics_event_handler(self)? {
             v.analysis_complete(key, result);
         }
         Ok(())
     }
 
-    fn take_per_build_events(&self) -> buck2_error::Result<PerBuildEvents> {
+    fn take_per_build_events(&self) -> bz_error::Result<PerBuildEvents> {
         get_per_build_events_holder(self)?.take_events()
     }
 
     async fn compute_detailed_metrics(
         &self,
         events: PerBuildEvents,
-    ) -> buck2_error::Result<DetailedAggregatedMetrics> {
+    ) -> bz_error::Result<DetailedAggregatedMetrics> {
         span_async_simple(
             ComputeDetailedAggregatedMetricsStart {},
             async move {
@@ -107,7 +107,7 @@ impl HasDetailedAggregatedMetrics for DiceComputations<'_> {
     async fn compute_action_graph_sketch(
         &self,
         events: &PerBuildEvents,
-    ) -> buck2_error::Result<ActionGraphSketchResult> {
+    ) -> bz_error::Result<ActionGraphSketchResult> {
         let handler = get_detailed_aggregated_metrics_event_handler(self)?;
         match handler.as_ref() {
             Some(h) => {
@@ -142,7 +142,7 @@ impl SetDetailedAggregatedMetricsEventHandler for DiceDataBuilder {
 
 fn get_detailed_aggregated_metrics_event_handler<'a>(
     ctx: &'a DiceComputations<'_>,
-) -> buck2_error::Result<&'a Option<DetailedAggregatedMetricsEventHandler>> {
+) -> bz_error::Result<&'a Option<DetailedAggregatedMetricsEventHandler>> {
     ctx.global_data()
         .get::<Option<DetailedAggregatedMetricsEventHandler>>()
         .map_err(|e| internal_error!("global data invalid: {}", e))
@@ -150,7 +150,7 @@ fn get_detailed_aggregated_metrics_event_handler<'a>(
 
 fn get_per_build_events_holder<'a>(
     ctx: &'a DiceComputations<'_>,
-) -> buck2_error::Result<&'a DetailedAggregatedMetricsPerBuildEventsHolder> {
+) -> bz_error::Result<&'a DetailedAggregatedMetricsPerBuildEventsHolder> {
     ctx.per_transaction_data()
         .data
         .get::<DetailedAggregatedMetricsPerBuildEventsHolder>()

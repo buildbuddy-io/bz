@@ -11,8 +11,8 @@
 use std::str::FromStr;
 
 use async_trait::async_trait;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
 use dupe::Dupe;
 
 use crate::AuditSubcommand;

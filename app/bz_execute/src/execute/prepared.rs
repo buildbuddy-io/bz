@@ -12,8 +12,8 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_core::execution_types::executor_config::ReGangWorker;
-use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
+use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RemoteExecutorDependency;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use remote_execution as RE;
@@ -29,8 +29,8 @@ use crate::execute::request::ExecutorPreference;
 use crate::execute::request::LocalActionCacheKey;
 use crate::execute::result::CommandExecutionResult;
 use crate::execute::target::CommandExecutionTarget;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::BuckIndexSet;
+use bz_hash::BuckIndexMap;
+use bz_hash::BuckIndexSet;
 
 pub struct PreparedAction {
     pub action_and_blobs: ActionDigestAndBlobs,
@@ -111,7 +111,7 @@ pub trait PreparedCommandOptionalExecutor: Send + Sync {
         &self,
         _local_action_cache_key: &LocalActionCacheKey,
         _outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -144,7 +144,7 @@ impl PreparedCommandOptionalExecutor for Arc<dyn PreparedCommandOptionalExecutor
         &self,
         local_action_cache_key: &LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         (**self).insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
     }
 }

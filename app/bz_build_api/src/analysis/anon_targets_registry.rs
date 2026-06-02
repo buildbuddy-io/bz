@@ -12,8 +12,8 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use allocative::Allocative;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_util::late_binding::LateBinding;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_util::late_binding::LateBinding;
 use starlark::any::AnyLifetime;
 use starlark::values::DynStarlark;
 use starlark::values::HeapSendable;
@@ -36,5 +36,5 @@ pub trait AnonTargetsRegistryDyn<'v>:
     fn as_any_mut(&mut self) -> &mut dyn AnyLifetime<'v>;
     fn take_promises(&mut self) -> Option<Box<dyn AnonPromisesDyn<'v>>>;
     fn consumer_analysis_artifacts(&self) -> Vec<PromiseArtifact>;
-    fn assert_no_promises(&self) -> buck2_error::Result<()>;
+    fn assert_no_promises(&self) -> bz_error::Result<()>;
 }

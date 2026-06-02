@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::console_message;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::console_message;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
 use dice::CancellationContext;
 use dice::DiceComputations;
 use dice::Key;
@@ -88,7 +88,7 @@ pub(crate) struct TargetCompletionValue;
 
 #[async_trait]
 impl Key for TargetCompletionKey {
-    type Value = buck2_error::Result<MaybeCompatible<Arc<TargetCompletionValue>>>;
+    type Value = bz_error::Result<MaybeCompatible<Arc<TargetCompletionValue>>>;
 
     async fn compute(
         &self,
@@ -140,7 +140,7 @@ impl std::fmt::Display for ArtifactCompletionKey {
 
 #[async_trait]
 impl Key for ArtifactCompletionKey {
-    type Value = buck2_error::Result<ArtifactGroupValues>;
+    type Value = bz_error::Result<ArtifactGroupValues>;
 
     async fn compute(
         &self,
@@ -178,7 +178,7 @@ impl Key for ArtifactCompletionKey {
 async fn compute_target_completion(
     ctx: &mut DiceComputations<'_>,
     key: &TargetCompletionKey,
-) -> buck2_error::Result<MaybeCompatible<Arc<TargetCompletionValue>>> {
+) -> bz_error::Result<MaybeCompatible<Arc<TargetCompletionValue>>> {
     let outputs =
         match get_outputs_for_top_level_target(ctx, &key.providers_label, &key.providers_to_build)
             .await?
@@ -364,7 +364,7 @@ async fn compute_target_completion(
 pub(crate) fn emit_configured_build_event(
     ctx: &DiceComputations<'_>,
     ev: ConfiguredBuildEvent,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     ctx.per_transaction_data()
         .get_build_event_sink()?
         .consume_configured(ev);
@@ -375,7 +375,7 @@ async fn publish_build_signal_edges(
     ctx: &mut DiceComputations<'_>,
     providers_label: &ConfiguredProvidersLabel,
     outputs: &[(ArtifactGroup, BuildProviderType)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let Some(signals) = ctx.per_transaction_data().get_build_signals().cloned() else {
         return Ok(());
     };

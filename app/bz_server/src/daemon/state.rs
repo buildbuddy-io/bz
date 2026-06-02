@@ -15,76 +15,76 @@ use std::time::Duration;
 use std::time::Instant;
 
 use allocative::Allocative;
-use buck2_build_api::interpreter::rule_defs::context::init_action_has_content_based_path_default;
-use buck2_build_api::interpreter::rule_defs::context::init_declare_output_has_content_based_path_default;
-use buck2_build_api::spawner::BuckSpawner;
-use buck2_cli_proto::ConfigOverride;
-use buck2_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
-use buck2_common::cas_digest::DigestAlgorithm;
-use buck2_common::cas_digest::DigestAlgorithmFamily;
-use buck2_common::ignores::ignore_set::IgnoreSet;
-use buck2_common::ignores::ignore_set::bazelignore_to_ignore_spec;
-use buck2_common::init::DaemonStartupConfig;
-use buck2_common::init::RemoteDownloadOutputsMode;
-use buck2_common::init::RemoteExecutionStartupConfig;
-use buck2_common::init::SystemWarningConfig;
-use buck2_common::init::Timeout;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::io::IoProvider;
-use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
-use buck2_common::legacy_configs::file_ops::ConfigPath;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::sqlite::sqlite_db::SqliteIdentity;
-use buck2_core::buck2_env;
-use buck2_core::cells::cell_root_path::CellRootPath;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::name::CellName;
-use buck2_core::facebook_only;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::is_open_source;
-use buck2_core::rollout_percentage::RolloutPercentage;
-use buck2_core::tag_result;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::buck2_error;
-use buck2_events::EventSinkWithStats;
-use buck2_events::daemon_id::DaemonId;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::sink::remote;
-use buck2_events::sink::tee::TeeSink;
-use buck2_events::source::ChannelEventSource;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::execute::blocking::BuckBlockingExecutor;
-use buck2_execute::execute::blocking::DirectIoExecutor;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::re::manager::ReConnectionManager;
-use buck2_execute_impl::executors::local::ForkserverAccess;
-use buck2_execute_impl::executors::local_action_cache::LocalActionCache;
-use buck2_execute_impl::materializers::deferred::AccessTimesUpdates;
-use buck2_execute_impl::materializers::deferred::DeferredMaterializer;
-use buck2_execute_impl::materializers::deferred::DeferredMaterializerConfigs;
-use buck2_execute_impl::materializers::deferred::TtlRefreshConfiguration;
-use buck2_execute_impl::materializers::deferred::clean_stale::CleanStaleConfig;
-use buck2_execute_impl::re::paranoid_download::ParanoidDownloader;
-use buck2_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
-use buck2_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDbDeferredLoad;
-use buck2_file_watcher::file_watcher::FileWatcher;
-use buck2_fs::cwd::WorkingDirectory;
-use buck2_fs::fs_util;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::StdBuckHashMap;
-use buck2_http::HttpClient;
-use buck2_http::HttpClientBuilder;
-use buck2_re_configuration::RemoteExecutionStaticMetadata;
-use buck2_re_configuration::RemoteExecutionStaticMetadataImpl;
-use buck2_resource_control::buck_cgroup_tree::BuckCgroupTree;
-use buck2_resource_control::memory_tracker;
-use buck2_resource_control::memory_tracker::MemoryTrackerHandle;
-use buck2_server_ctx::concurrency::ConcurrencyHandler;
-use buck2_server_ctx::ctx::LockedPreviousCommandData;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_build_api::interpreter::rule_defs::context::init_action_has_content_based_path_default;
+use bz_build_api::interpreter::rule_defs::context::init_declare_output_has_content_based_path_default;
+use bz_build_api::spawner::BuckSpawner;
+use bz_cli_proto::ConfigOverride;
+use bz_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
+use bz_common::cas_digest::DigestAlgorithm;
+use bz_common::cas_digest::DigestAlgorithmFamily;
+use bz_common::ignores::ignore_set::IgnoreSet;
+use bz_common::ignores::ignore_set::bazelignore_to_ignore_spec;
+use bz_common::init::DaemonStartupConfig;
+use bz_common::init::RemoteDownloadOutputsMode;
+use bz_common::init::RemoteExecutionStartupConfig;
+use bz_common::init::SystemWarningConfig;
+use bz_common::init::Timeout;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_common::io::IoProvider;
+use bz_common::legacy_configs::cells::BuckConfigBasedCells;
+use bz_common::legacy_configs::file_ops::ConfigPath;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::sqlite::sqlite_db::SqliteIdentity;
+use bz_core::bz_env;
+use bz_core::cells::cell_root_path::CellRootPath;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::name::CellName;
+use bz_core::facebook_only;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::is_open_source;
+use bz_core::rollout_percentage::RolloutPercentage;
+use bz_core::tag_result;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::bz_error;
+use bz_events::EventSinkWithStats;
+use bz_events::daemon_id::DaemonId;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::sink::remote;
+use bz_events::sink::tee::TeeSink;
+use bz_events::source::ChannelEventSource;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute::execute::blocking::BuckBlockingExecutor;
+use bz_execute::execute::blocking::DirectIoExecutor;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::re::manager::ReConnectionManager;
+use bz_execute_impl::executors::local::ForkserverAccess;
+use bz_execute_impl::executors::local_action_cache::LocalActionCache;
+use bz_execute_impl::materializers::deferred::AccessTimesUpdates;
+use bz_execute_impl::materializers::deferred::DeferredMaterializer;
+use bz_execute_impl::materializers::deferred::DeferredMaterializerConfigs;
+use bz_execute_impl::materializers::deferred::TtlRefreshConfiguration;
+use bz_execute_impl::materializers::deferred::clean_stale::CleanStaleConfig;
+use bz_execute_impl::re::paranoid_download::ParanoidDownloader;
+use bz_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
+use bz_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDbDeferredLoad;
+use bz_file_watcher::file_watcher::FileWatcher;
+use bz_fs::cwd::WorkingDirectory;
+use bz_fs::fs_util;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::StdBuckHashMap;
+use bz_http::HttpClient;
+use bz_http::HttpClientBuilder;
+use bz_re_configuration::RemoteExecutionStaticMetadata;
+use bz_re_configuration::RemoteExecutionStaticMetadataImpl;
+use bz_resource_control::buck_cgroup_tree::BuckCgroupTree;
+use bz_resource_control::memory_tracker;
+use bz_resource_control::memory_tracker::MemoryTrackerHandle;
+use bz_server_ctx::concurrency::ConcurrencyHandler;
+use bz_server_ctx::ctx::LockedPreviousCommandData;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use fbinit::FacebookInit;
 use gazebo::prelude::*;
@@ -116,7 +116,7 @@ fn buckconfig_truthy(value: Option<&str>) -> bool {
 fn read_cell_bazelignore_spec_for_file_watcher(
     project_fs: &ProjectRoot,
     cell_root: &CellRootPath,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let path = cell_root
         .as_project_relative_path()
         .join(ForwardRelativePath::unchecked_new(".bazelignore"));
@@ -155,7 +155,7 @@ pub(crate) struct CachedBuckConfigBasedCells {
     pub(crate) snapshots: StdBuckHashMap<ConfigPath, ConfigPathSnapshot>,
 }
 
-fn use_minimal_bazel_daemon_startup_config(fs: &ProjectRoot) -> buck2_error::Result<bool> {
+fn use_minimal_bazel_daemon_startup_config(fs: &ProjectRoot) -> bz_error::Result<bool> {
     let module_file = fs.resolve(ProjectRelativePathBuf::unchecked_new(
         "MODULE.bazel".to_owned(),
     ));
@@ -284,7 +284,7 @@ pub struct DaemonStateData {
 }
 
 impl DaemonStateData {
-    pub fn dice_dump(&self, path: &Path, format: DiceDumpFormat) -> buck2_error::Result<()> {
+    pub fn dice_dump(&self, path: &Path, format: DiceDumpFormat) -> bz_error::Result<()> {
         crate::daemon::dice_dump::dice_dump(self.dice_manager.unsafe_dice(), path, format)
     }
 
@@ -292,14 +292,14 @@ impl DaemonStateData {
         &self,
         path: &Path,
         format: DiceDumpFormat,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         crate::daemon::dice_dump::dice_dump_spawn(self.dice_manager.unsafe_dice(), path, format)
             .await
     }
 }
 
 impl DaemonStatePanicDiceDump for DaemonStateData {
-    fn dice_dump(&self, path: &Path, format: DiceDumpFormat) -> buck2_error::Result<()> {
+    fn dice_dump(&self, path: &Path, format: DiceDumpFormat) -> bz_error::Result<()> {
         self.dice_dump(path, format)
     }
 }
@@ -314,7 +314,7 @@ impl DaemonState {
         working_directory: WorkingDirectory,
         cgroup_tree: Option<BuckCgroupTree>,
         daemon_id: DaemonId,
-    ) -> Result<Self, buck2_error::Error> {
+    ) -> Result<Self, bz_error::Error> {
         let data = Self::init_data(
             fb,
             paths.clone(),
@@ -353,14 +353,14 @@ impl DaemonState {
         remote_download_outputs: RemoteDownloadOutputsMode,
         cgroup_tree: Option<BuckCgroupTree>,
         daemon_id: DaemonId,
-    ) -> buck2_error::Result<Arc<DaemonStateData>> {
-        if buck2_env!(
+    ) -> bz_error::Result<Arc<DaemonStateData>> {
+        if bz_env!(
             "BUCK2_TEST_INIT_DAEMON_ERROR",
             bool,
             applicability = testing
         )? {
             // TODO(minglunli): Errors here don't actually make it to invocation records which should be fixed
-            return Err(buck2_error::buck2_error!(
+            return Err(bz_error::bz_error!(
                 ErrorTag::TestOnly,
                 "Injected init daemon error"
             ));
@@ -428,10 +428,10 @@ impl DaemonState {
             .buck_error_context("failed to init scribe sink")?;
 
             let default_digest_algorithm =
-                buck2_env!("BUCK_DEFAULT_DIGEST_ALGORITHM", type=DigestAlgorithmFamily)?;
+                bz_env!("BUCK_DEFAULT_DIGEST_ALGORITHM", type=DigestAlgorithmFamily)?;
 
             let default_digest_algorithm = default_digest_algorithm.unwrap_or_else(|| {
-                if buck2_core::is_open_source() {
+                if bz_core::is_open_source() {
                     DigestAlgorithmFamily::Sha256
                 } else {
                     DigestAlgorithmFamily::Sha1
@@ -885,7 +885,7 @@ impl DaemonState {
         materializer_db: Option<MaterializerStateSqliteDbDeferredLoad>,
         http_client: HttpClient,
         daemon_dispatcher: EventDispatcher,
-    ) -> buck2_error::Result<Arc<dyn Materializer>> {
+    ) -> bz_error::Result<Arc<dyn Materializer>> {
         Ok(Arc::new(DeferredMaterializer::new(
             fs,
             digest_config,
@@ -902,7 +902,7 @@ impl DaemonState {
     fn init_scribe_sink(
         fb: FacebookInit,
         config: ScribeConfig,
-    ) -> buck2_error::Result<Option<Arc<dyn EventSinkWithStats>>> {
+    ) -> bz_error::Result<Option<Arc<dyn EventSinkWithStats>>> {
         facebook_only();
         remote::new_remote_event_sink_if_enabled(fb, config)
             .map(|maybe_scribe| maybe_scribe.map(|scribe| Arc::new(scribe) as _))
@@ -913,10 +913,10 @@ impl DaemonState {
     pub async fn prepare_events(
         &self,
         trace_id: TraceId,
-    ) -> buck2_error::Result<(ChannelEventSource, EventDispatcher)> {
+    ) -> bz_error::Result<(ChannelEventSource, EventDispatcher)> {
         // facebook only: logging events to Scribe.
         facebook_only();
-        let (events, sink) = buck2_events::create_source_sink_pair();
+        let (events, sink) = bz_events::create_source_sink_pair();
         let data = self.data();
         let dispatcher = if let Some(scribe_sink) = data.scribe_sink.dupe() {
             EventDispatcher::new(
@@ -937,10 +937,10 @@ impl DaemonState {
         &self,
         dispatcher: EventDispatcher,
         drop_guard: ActiveCommandDropGuard,
-    ) -> buck2_error::Result<BaseServerCommandContext> {
+    ) -> bz_error::Result<BaseServerCommandContext> {
         let data = self.data();
 
-        dispatcher.instant_event(buck2_data::RestartConfiguration {
+        dispatcher.instant_event(bz_data::RestartConfiguration {
             enable_restarter: data.enable_restarter,
         });
 
@@ -958,7 +958,7 @@ impl DaemonState {
         self.validate_buck_out_mount()
             .buck_error_context("Error validating buck-out mount")?;
 
-        dispatcher.instant_event(buck2_data::TagEvent {
+        dispatcher.instant_event(bz_data::TagEvent {
             tags: data.tags.clone(),
         });
 
@@ -967,7 +967,7 @@ impl DaemonState {
         let (_, eden_version) =
             futures::future::try_join(data.io.settle(), data.io.eden_version()).await?;
 
-        dispatcher.instant_event(buck2_data::IoProviderInfo { eden_version });
+        dispatcher.instant_event(bz_data::IoProviderInfo { eden_version });
 
         Ok(BaseServerCommandContext {
             _fb: self.fb,
@@ -983,11 +983,11 @@ impl DaemonState {
         self.data.dupe()
     }
 
-    pub fn validate_cwd(&self) -> buck2_error::Result<()> {
+    pub fn validate_cwd(&self) -> bz_error::Result<()> {
         let res = self.working_directory.is_stale().and_then(|stale| {
             if stale {
-                Err(buck2_error!(
-                    buck2_error::ErrorTag::Environment,
+                Err(bz_error!(
+                    bz_error::ErrorTag::Environment,
                     "Buck appears to be running in a stale working directory. \
                      This will likely lead to failed or slow builds. \
                      To remediate, restart Buck2."
@@ -1008,12 +1008,12 @@ impl DaemonState {
         Ok(())
     }
 
-    pub fn validate_buck_out_mount(&self) -> buck2_error::Result<()> {
+    pub fn validate_buck_out_mount(&self) -> bz_error::Result<()> {
         #[cfg(fbcode_build)]
         {
-            use buck2_core::soft_error;
-            use buck2_fs::error::IoResultExt;
-            use buck2_fs::fs_util;
+            use bz_core::soft_error;
+            use bz_fs::error::IoResultExt;
+            use bz_fs::fs_util;
 
             let project_root = self.paths.project_root().root();
             if !detect_eden::is_eden(project_root.to_path_buf())? {
@@ -1048,8 +1048,8 @@ impl DaemonState {
 
             soft_error!(
                 "eden_buck_out",
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Environment,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Environment,
                     "Buck is running in an Eden repository, but `buck-out` is not redirected. \
                      This will likely lead to failed or slow builds. \
                      To remediate, run `eden redirect fixup`."
@@ -1062,8 +1062,8 @@ impl DaemonState {
     }
 }
 
-fn convert_algorithm_kind(kind: DigestAlgorithmFamily) -> buck2_error::Result<DigestAlgorithm> {
-    buck2_error::Ok(match kind {
+fn convert_algorithm_kind(kind: DigestAlgorithmFamily) -> bz_error::Result<DigestAlgorithm> {
+    bz_error::Ok(match kind {
         DigestAlgorithmFamily::Sha1 => DigestAlgorithm::Sha1,
         DigestAlgorithmFamily::Sha256 => DigestAlgorithm::Sha256,
         DigestAlgorithmFamily::Blake3 => DigestAlgorithm::Blake3,
@@ -1077,8 +1077,8 @@ fn convert_algorithm_kind(kind: DigestAlgorithmFamily) -> buck2_error::Result<Di
             {
                 // We probably should just add it as a separate buckconfig, there is
                 // zero reason not to.
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "{} is not supported in the open source build",
                     kind
                 ));
@@ -1095,7 +1095,7 @@ const DEFAULT_READ_TIMEOUT_MS: u64 = 10000;
 /// Customize an http client based on http.* legacy buckconfigs.
 async fn http_client_from_startup_config(
     config: &DaemonStartupConfig,
-) -> buck2_error::Result<HttpClientBuilder> {
+) -> bz_error::Result<HttpClientBuilder> {
     let mut builder = if is_open_source() {
         HttpClientBuilder::oss().await?
     } else {
@@ -1136,20 +1136,20 @@ async fn http_client_from_startup_config(
 #[cfg(test)]
 mod tests {
 
-    use buck2_common::legacy_configs::configs::testing::parse;
+    use bz_common::legacy_configs::configs::testing::parse;
     use indoc::indoc;
 
     use super::*;
 
     #[tokio::test]
-    async fn test_from_startup_config_defaults_internal() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_from_startup_config_defaults_internal() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let builder =
             http_client_from_startup_config(&DaemonStartupConfig::testing_empty()).await?;
         assert_eq!(DEFAULT_MAX_REDIRECTS, builder.max_redirects().unwrap());
         assert_eq!(
             builder.supports_vpnless(),
-            buck2_certs::certs::supports_vpnless()
+            bz_certs::certs::supports_vpnless()
         );
         assert_eq!(
             Some(Duration::from_millis(DEFAULT_CONNECT_TIMEOUT_MS)),
@@ -1165,8 +1165,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_from_startup_config_overrides() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_from_startup_config_overrides() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let config = parse(
             &[(
                 "config",
@@ -1195,8 +1195,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_from_startup_config_zero_for_unset() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_from_startup_config_zero_for_unset() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let config = parse(
             &[(
                 "config",

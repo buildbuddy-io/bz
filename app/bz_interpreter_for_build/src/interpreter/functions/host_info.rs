@@ -9,9 +9,9 @@
  */
 
 use allocative::Allocative;
-use buck2_interpreter::extra::InterpreterHostArchitecture;
-use buck2_interpreter::extra::InterpreterHostPlatform;
-use buck2_interpreter::extra::xcode::XcodeVersionInfo;
+use bz_interpreter::extra::InterpreterHostArchitecture;
+use bz_interpreter::extra::InterpreterHostPlatform;
+use bz_interpreter::extra::xcode::XcodeVersionInfo;
 use derivative::Derivative;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;

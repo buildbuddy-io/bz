@@ -8,20 +8,20 @@
  * above-listed licenses.
  */
 
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::package::PackageLabel;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_node::attrs::attr_type::list::ListLiteral;
-use buck2_node::attrs::attr_type::string::StringLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::hacks;
-use buck2_util::arc_str::ArcSlice;
-use buck2_util::arc_str::ArcStr;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::package::PackageLabel;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_node::attrs::attr_type::list::ListLiteral;
+use bz_node::attrs::attr_type::string::StringLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::hacks;
+use bz_util::arc_str::ArcSlice;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 
 #[test]
-fn stringifies_correctly() -> buck2_error::Result<()> {
+fn stringifies_correctly() -> bz_error::Result<()> {
     let coerced = CoercedAttr::String(StringLiteral(ArcStr::from("Hello, world!")));
 
     let package = PackageLabel::new(

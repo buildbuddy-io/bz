@@ -10,7 +10,7 @@
 
 use std::io;
 
-use buck2_data::error::ErrorTag;
+use bz_data::error::ErrorTag;
 
 // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
 // "The process cannot access the file because it is being used by another process."

@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_node::modifiers::MODIFIER_METADATA_KEY;
+use bz_node::modifiers::MODIFIER_METADATA_KEY;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;

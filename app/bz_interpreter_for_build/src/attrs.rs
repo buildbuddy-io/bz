@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_error::BuckErrorContext;
-use buck2_node::attrs::attr::Attribute;
-use buck2_node::attrs::attr::CoercedValue;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_error::BuckErrorContext;
+use bz_node::attrs::attr::Attribute;
+use bz_node::attrs::attr::CoercedValue;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use starlark::docs::DocString;
 use starlark::docs::DocStringKind;
 use starlark::values::Value;
@@ -26,7 +26,7 @@ pub mod coerce;
 pub(crate) mod starlark_attribute;
 pub use starlark_attribute::StarlarkAttribute;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum AttrCoerceError {
     #[error("Parameter `{0}` had no value provided, but it is mandatory")]
@@ -40,7 +40,7 @@ pub trait AttributeCoerceExt {
         configurable: AttrIsConfigurable,
         coercer_ctx: &dyn AttrCoercionContext,
         value: Value<'v>,
-    ) -> buck2_error::Result<CoercedValue>;
+    ) -> bz_error::Result<CoercedValue>;
 
     fn docstring(&self) -> Option<DocString>;
 
@@ -56,7 +56,7 @@ impl AttributeCoerceExt for Attribute {
         configurable: AttrIsConfigurable,
         coercer_ctx: &dyn AttrCoercionContext,
         value: Value<'v>,
-    ) -> buck2_error::Result<CoercedValue> {
+    ) -> bz_error::Result<CoercedValue> {
         if self.is_default_only() {
             if value.is_none() {
                 return Ok(CoercedValue::Default);

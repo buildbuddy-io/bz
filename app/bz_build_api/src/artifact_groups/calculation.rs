@@ -14,41 +14,41 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_recursion::async_recursion;
 use async_trait::async_trait;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::ArtifactKind;
-use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_common::bazel::skyframe::BazelSkyframeFunction;
-use buck2_common::bazel::skyframe::mark_bazel_skyframe_key;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::file_ops::metadata::FileChangeMetadata;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
-use buck2_common::file_ops::metadata::RawSymlink;
-use buck2_common::file_ops::metadata::SourceFileMetadata;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::package_listing::dice::DicePackageListingResolver;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::package::PackageLabel;
-use buck2_directory::directory::directory_data::DirectoryData;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::directory::ActionDirectoryBuilder;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_execute::directory::INTERNER;
-use buck2_execute::directory::extract_artifact_value;
-use buck2_execute::directory::insert_artifact;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_util::time_span::TimeSpan;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::ArtifactKind;
+use bz_artifact::artifact::artifact_type::BaseArtifactKind;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_common::bazel::skyframe::BazelSkyframeFunction;
+use bz_common::bazel::skyframe::mark_bazel_skyframe_key;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::file_ops::metadata::FileChangeMetadata;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
+use bz_common::file_ops::metadata::RawSymlink;
+use bz_common::file_ops::metadata::SourceFileMetadata;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::package_listing::dice::DicePackageListingResolver;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::package::PackageLabel;
+use bz_directory::directory::directory_data::DirectoryData;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::directory::ActionDirectoryBuilder;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_execute::directory::INTERNER;
+use bz_execute::directory::extract_artifact_value;
+use bz_execute::directory::insert_artifact;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_util::time_span::TimeSpan;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::Key;
@@ -80,7 +80,7 @@ pub trait ArtifactGroupCalculation {
     async fn ensure_artifact_group(
         &mut self,
         input: &ArtifactGroup,
-    ) -> buck2_error::Result<ArtifactGroupValues>;
+    ) -> bz_error::Result<ArtifactGroupValues>;
 }
 
 #[async_trait]
@@ -89,7 +89,7 @@ impl ArtifactGroupCalculation for DiceComputations<'_> {
     async fn ensure_artifact_group(
         &mut self,
         input: &ArtifactGroup,
-    ) -> buck2_error::Result<ArtifactGroupValues> {
+    ) -> bz_error::Result<ArtifactGroupValues> {
         let resolved_artifacts = input.resolved_artifact(self).await?;
         match &resolved_artifacts {
             ResolvedArtifactGroup::Artifact(artifact) => {
@@ -127,7 +127,7 @@ impl ArtifactGroupCalculation for DiceComputations<'_> {
 pub(crate) fn ensure_artifact_group_staged<'a>(
     ctx: &'a mut DiceComputations,
     input: ResolvedArtifactGroup<'a>,
-) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a> {
     match input {
         ResolvedArtifactGroup::Artifact(artifact) => {
             ensure_artifact_staged(ctx, artifact.clone()).left_future()
@@ -143,7 +143,7 @@ pub(crate) fn ensure_artifact_group_staged<'a>(
 pub(super) fn ensure_base_artifact_staged<'a>(
     dice: &'a mut DiceComputations,
     artifact: BaseArtifactKind,
-) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a> {
     match artifact {
         BaseArtifactKind::Build(built) => ensure_build_artifact_staged(dice, built).left_future(),
         BaseArtifactKind::Source(source) => {
@@ -156,7 +156,7 @@ pub(super) fn ensure_base_artifact_staged<'a>(
 pub(super) fn ensure_artifact_staged<'a>(
     dice: &'a mut DiceComputations,
     artifact: Artifact,
-) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a> {
     let ArtifactKind { base, path } = artifact.data();
     match path.is_empty() {
         true => ensure_base_artifact_staged(dice, base.clone()).left_future(),
@@ -170,7 +170,7 @@ pub(super) fn ensure_artifact_staged<'a>(
 fn ensure_build_artifact_staged<'a>(
     dice: &'a mut DiceComputations,
     built: BuildArtifact,
-) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a> {
     ActionCalculation::build_action(dice, built.key()).map(move |action_outputs| {
         let action_outputs = action_outputs?;
         if let Some(value) = action_outputs.get(built.get_path()) {
@@ -187,7 +187,7 @@ fn ensure_build_artifact_staged<'a>(
 fn ensure_source_artifact_staged<'a>(
     dice: &'a mut DiceComputations,
     source: SourceArtifact,
-) -> impl Future<Output = buck2_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a> {
     async move {
         Ok(EnsureArtifactGroupReady::Single(
             path_artifact_value(
@@ -203,7 +203,7 @@ fn ensure_source_artifact_staged<'a>(
 
 // These errors should be unreachable, they indicate misuse of the staged ensure artifact (or other buck
 // invariant violations), but it's still better to propagate them as Error than to panic!().
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum EnsureArtifactStagedError {
     #[error("Tried to unpack single artifact, but got transitive set")]
@@ -240,7 +240,7 @@ impl EnsureArtifactGroupReady {
         self,
         resolved_artifact_group: &ResolvedArtifactGroup<'v>,
         artifact_fs: &ArtifactFs,
-    ) -> buck2_error::Result<ArtifactGroupValues> {
+    ) -> bz_error::Result<ArtifactGroupValues> {
         match self {
             EnsureArtifactGroupReady::TransitiveSet(values) => Ok(values),
             EnsureArtifactGroupReady::Single(value) => match resolved_artifact_group {
@@ -254,7 +254,7 @@ impl EnsureArtifactGroupReady {
         }
     }
 
-    fn unpack_single(self) -> buck2_error::Result<ArtifactValue> {
+    fn unpack_single(self) -> bz_error::Result<ArtifactValue> {
         match self {
             EnsureArtifactGroupReady::Single(value) => Ok(value),
             EnsureArtifactGroupReady::TransitiveSet(..) => {
@@ -274,7 +274,7 @@ struct EnsureArtifactGroupValuesKey(Artifact);
 
 #[async_trait]
 impl Key for EnsureArtifactGroupValuesKey {
-    type Value = buck2_error::Result<ArtifactGroupValues>;
+    type Value = bz_error::Result<ArtifactGroupValues>;
 
     async fn compute(
         &self,
@@ -343,7 +343,7 @@ fn _assert_ensure_artifact_group_future_size() {
 async fn dir_artifact_value(
     ctx: &mut DiceComputations<'_>,
     cell_path: Arc<CellPath>,
-) -> buck2_error::Result<ArtifactValue> {
+) -> bz_error::Result<ArtifactValue> {
     // We kept running into this performance footgun where a large directory is declared as a source
     // on a toolchain, and then every `BuildKey` using that toolchain ends up taking a DICE edge on
     // `PathMetadataKey` of every file inside that directory, blowing up Buck2's memory use.
@@ -357,7 +357,7 @@ async fn dir_artifact_value(
 
     #[async_trait]
     impl Key for DirArtifactValueKey {
-        type Value = buck2_error::Result<ArtifactValue>;
+        type Value = bz_error::Result<ArtifactValue>;
 
         async fn compute(
             &self,
@@ -382,7 +382,7 @@ async fn dir_artifact_value(
                             None,
                         )
                         .await?;
-                        buck2_error::Ok((x.file_name.clone(), value))
+                        bz_error::Ok((x.file_name.clone(), value))
                     }
                     .boxed()
                 })
@@ -453,7 +453,7 @@ async fn path_artifact_value(
     ctx: &mut DiceComputations<'_>,
     cell_path: Arc<CellPath>,
     label: Option<PackageLabel>,
-) -> buck2_error::Result<ArtifactValue> {
+) -> bz_error::Result<ArtifactValue> {
     let raw = match DiceFileComputations::read_path_metadata_for_no_watchfs(
         ctx,
         cell_path.as_ref().as_ref(),
@@ -498,7 +498,7 @@ async fn path_artifact_value_digest(
     ctx: &mut DiceComputations<'_>,
     cell_path: Arc<CellPath>,
     label: Option<PackageLabel>,
-) -> buck2_error::Result<ArtifactValue> {
+) -> bz_error::Result<ArtifactValue> {
     let raw = match DiceFileComputations::read_path_metadata(ctx, cell_path.as_ref().as_ref()).await
     {
         Ok(raw) => Ok(raw),
@@ -581,11 +581,11 @@ async fn path_artifact_value_digest(
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum ProjectedArtifactError {
     #[error("The path `{0}` does not exist in the artifact `{1}`")]
-    #[buck2(tag = buck2_error::ErrorTag::ProjectMissingPath)]
+    #[buck2(tag = bz_error::ErrorTag::ProjectMissingPath)]
     MissingInProjectedArtifact(ForwardRelativePathBuf, BaseArtifactKind),
 }
 
@@ -598,7 +598,7 @@ pub struct EnsureProjectedArtifactKey(pub(crate) ArtifactKind);
 
 #[async_trait]
 impl Key for EnsureProjectedArtifactKey {
-    type Value = buck2_error::Result<ArtifactValue>;
+    type Value = bz_error::Result<ArtifactValue>;
 
     async fn compute(
         &self,
@@ -676,7 +676,7 @@ pub struct EnsureTransitiveSetProjectionKey(pub TransitiveSetProjectionKey);
 
 #[async_trait]
 impl Key for EnsureTransitiveSetProjectionKey {
-    type Value = buck2_error::Result<ArtifactGroupValues>;
+    type Value = bz_error::Result<ArtifactGroupValues>;
 
     async fn compute(
         &self,

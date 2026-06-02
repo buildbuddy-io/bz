@@ -13,12 +13,12 @@
 use std::fmt;
 use std::sync::Arc;
 
-use buck2_error::internal_error;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::StdBuckHashMap;
-use buck2_query::query::traversal::NodeLookup;
-use buck2_query::query::traversal::async_depth_first_postorder_traversal;
-use buck2_query::query::traversal::async_depth_limited_traversal;
+use bz_error::internal_error;
+use bz_hash::BuckIndexSet;
+use bz_hash::StdBuckHashMap;
+use bz_query::query::traversal::NodeLookup;
+use bz_query::query::traversal::async_depth_first_postorder_traversal;
+use bz_query::query::traversal::async_depth_limited_traversal;
 use derive_more::Display;
 use derive_more::From;
 
@@ -94,8 +94,8 @@ impl QueryTarget for TestTarget {
 
     fn attr_any_matches(
         _attr: &Self::Attr<'_>,
-        _filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        _filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         unimplemented!()
     }
 
@@ -134,7 +134,7 @@ struct TestEnv {
 }
 
 impl NodeLookup<TestTarget> for TestEnv {
-    fn get(&self, label: &<TestTarget as LabeledNode>::Key) -> buck2_error::Result<TestTarget> {
+    fn get(&self, label: &<TestTarget as LabeledNode>::Key) -> bz_error::Result<TestTarget> {
         self.graph
             .get(label)
             .duped()
@@ -147,7 +147,7 @@ impl AsyncNodeLookup<TestTarget> for TestEnv {
     async fn get(
         &self,
         label: &<TestTarget as LabeledNode>::Key,
-    ) -> buck2_error::Result<TestTarget> {
+    ) -> bz_error::Result<TestTarget> {
         self.graph
             .get(label)
             .duped()
@@ -162,25 +162,25 @@ impl QueryEnvironment for TestEnv {
     async fn get_node(
         &self,
         node_ref: &<Self::Target as LabeledNode>::Key,
-    ) -> buck2_error::Result<Self::Target> {
+    ) -> bz_error::Result<Self::Target> {
         <Self as NodeLookup<TestTarget>>::get(self, node_ref)
     }
 
     async fn get_node_for_default_configured_target(
         &self,
         _node_ref: &<Self::Target as LabeledNode>::Key,
-    ) -> buck2_error::Result<MaybeCompatible<Self::Target>> {
+    ) -> bz_error::Result<MaybeCompatible<Self::Target>> {
         unimplemented!()
     }
 
     async fn eval_literals(
         &self,
         _literal: &[&str],
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         unimplemented!()
     }
 
-    async fn eval_file_literal(&self, _literal: &str) -> buck2_error::Result<FileSet> {
+    async fn eval_file_literal(&self, _literal: &str) -> bz_error::Result<FileSet> {
         unimplemented!()
     }
 
@@ -188,8 +188,8 @@ impl QueryEnvironment for TestEnv {
         &self,
         root: &TargetSet<Self::Target>,
         delegate: impl AsyncChildVisitor<Self::Target>,
-        visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
-    ) -> buck2_error::Result<()> {
+        visit: impl FnMut(Self::Target) -> bz_error::Result<()> + Send,
+    ) -> bz_error::Result<()> {
         // TODO: Should this be part of QueryEnvironment's default impl?
         async_depth_first_postorder_traversal(self, root.iter_names(), delegate, visit).await
     }
@@ -198,27 +198,27 @@ impl QueryEnvironment for TestEnv {
         &self,
         root: &TargetSet<Self::Target>,
         delegate: impl AsyncChildVisitor<Self::Target>,
-        visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
+        visit: impl FnMut(Self::Target) -> bz_error::Result<()> + Send,
         depth: u32,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         async_depth_limited_traversal(self, root.iter_names(), delegate, visit, depth).await
     }
 
-    async fn owner(&self, _paths: &FileSet) -> buck2_error::Result<TargetSet<Self::Target>> {
+    async fn owner(&self, _paths: &FileSet) -> bz_error::Result<TargetSet<Self::Target>> {
         unimplemented!()
     }
 
     async fn targets_in_buildfile(
         &self,
         _paths: &FileSet,
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         unimplemented!()
     }
 }
 
 impl TestEnv {
     /// A helper to get e.g. stuff like "1,2,3" into a TargetSet.
-    fn set(&self, entries: &str) -> buck2_error::Result<TargetSet<TestTarget>> {
+    fn set(&self, entries: &str) -> bz_error::Result<TargetSet<TestTarget>> {
         let mut set = TargetSet::new();
         for c in entries.split(',') {
             let id = TestTargetId(c.parse().buck_error_context("Invalid ID")?);
@@ -255,7 +255,7 @@ impl TestEnvBuilder {
 }
 
 #[tokio::test]
-async fn test_one_path() -> buck2_error::Result<()> {
+async fn test_one_path() -> bz_error::Result<()> {
     let mut env = TestEnvBuilder::default();
     // The actual path
     env.edge(1, 2);
@@ -278,7 +278,7 @@ async fn test_one_path() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_many_paths() -> buck2_error::Result<()> {
+async fn test_many_paths() -> bz_error::Result<()> {
     let mut env = TestEnvBuilder::default();
     env.edge(1, 2);
     env.edge(2, 3);
@@ -302,7 +302,7 @@ async fn test_many_paths() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_distinct_paths() -> buck2_error::Result<()> {
+async fn test_distinct_paths() -> bz_error::Result<()> {
     let mut env = TestEnvBuilder::default();
     env.edge(1, 10);
     env.edge(10, 100);
@@ -327,7 +327,7 @@ async fn test_distinct_paths() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_no_path() -> buck2_error::Result<()> {
+async fn test_no_path() -> bz_error::Result<()> {
     let mut env = TestEnvBuilder::default();
     env.edge(1, 10);
     env.edge(2, 20);
@@ -345,7 +345,7 @@ async fn test_no_path() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_nested_paths() -> buck2_error::Result<()> {
+async fn test_nested_paths() -> bz_error::Result<()> {
     let mut env = TestEnvBuilder::default();
     env.edge(1, 2);
     env.edge(2, 3);
@@ -362,7 +362,7 @@ async fn test_nested_paths() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_paths_with_cycles_present() -> buck2_error::Result<()> {
+async fn test_paths_with_cycles_present() -> bz_error::Result<()> {
     let mut env = TestEnvBuilder::default();
     env.edge(1, 2);
     env.edge(2, 3);
@@ -391,7 +391,7 @@ async fn test_paths_with_cycles_present() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_rdeps() -> buck2_error::Result<()> {
+async fn test_rdeps() -> bz_error::Result<()> {
     let mut env = TestEnvBuilder::default();
     env.edge(1, 2);
     env.edge(2, 3);

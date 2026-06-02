@@ -11,11 +11,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use buck2_build_api::analysis::calculation::EVAL_ANALYSIS_QUERY;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured_ref::ConfiguredGraphNodeRef;
-use buck2_query::query::syntax::simple::eval::evaluator::QueryEvaluator;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_build_api::analysis::calculation::EVAL_ANALYSIS_QUERY;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured_ref::ConfiguredGraphNodeRef;
+use bz_query::query::syntax::simple::eval::evaluator::QueryEvaluator;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 use dice::DiceComputations;
 
 use crate::analysis::configured_graph::AnalysisConfiguredGraphQueryDelegate;
@@ -32,7 +32,7 @@ async fn eval_analysis_query(
     ctx: &mut DiceComputations<'_>,
     query: &str,
     resolved_literals: HashMap<String, ConfiguredTargetNode>,
-) -> buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
+) -> bz_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
     ctx.with_linear_recompute(|ctx| async move {
         let dice_query_delegate = Arc::new(AnalysisDiceQueryDelegate { ctx: &ctx });
         let delegate = AnalysisConfiguredGraphQueryDelegate {

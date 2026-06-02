@@ -11,8 +11,8 @@
 use std::thread;
 use std::time::Duration;
 
-use buck2_util::process_stats::process_cpu_time_us;
-use buck2_util::threads::thread_spawn;
+use bz_util::process_stats::process_cpu_time_us;
+use bz_util::threads::thread_spawn;
 
 fn elapsed_cpu_time_as_percents(
     cpu_time_before_us: Option<u64>,
@@ -28,11 +28,11 @@ fn elapsed_cpu_time_as_percents(
 
 /// Our tests sometimes don't exit Buck 2 cleanly, and they might not get an oppportunity to do so
 /// if they are terminated. This allows the daemon to self-destruct.
-pub(crate) fn maybe_schedule_termination() -> buck2_error::Result<()> {
+pub(crate) fn maybe_schedule_termination() -> bz_error::Result<()> {
     if let Some(duration) =
-        buck2_core::buck2_env!("BUCK2_TERMINATE_AFTER", type=u64, applicability=testing)?
+        bz_core::bz_env!("BUCK2_TERMINATE_AFTER", type=u64, applicability=testing)?
             .map(Duration::from_secs)
-            .or_else(buck2_common::self_test_timeout::until_post_test_shutdown)
+            .or_else(bz_common::self_test_timeout::until_post_test_shutdown)
     {
         thread_spawn("buck2-terminate-after", move || {
             const MEASURE_CPU_TIME_FOR: Duration = Duration::from_millis(10);

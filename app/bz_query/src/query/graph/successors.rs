@@ -10,7 +10,7 @@
 
 use std::future::Future;
 
-use buck2_query::query::traversal::ChildVisitor;
+use bz_query::query::traversal::ChildVisitor;
 
 use crate::query::graph::node::LabeledNode;
 
@@ -24,7 +24,7 @@ pub trait AsyncChildVisitor<N: LabeledNode>: Send + Sync {
         &self,
         node: &N,
         children: impl ChildVisitor<N>,
-    ) -> impl Future<Output = buck2_error::Result<()>> + Send;
+    ) -> impl Future<Output = bz_error::Result<()>> + Send;
 }
 
 impl<N: LabeledNode, A: AsyncChildVisitor<N> + ?Sized + Send + Sync> AsyncChildVisitor<N> for &A {
@@ -32,7 +32,7 @@ impl<N: LabeledNode, A: AsyncChildVisitor<N> + ?Sized + Send + Sync> AsyncChildV
         &self,
         node: &N,
         children: impl ChildVisitor<N>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         (**self).for_each_child(node, children).await
     }
 }

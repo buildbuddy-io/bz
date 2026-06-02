@@ -11,14 +11,14 @@
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::deferred_materializer::DeferredMaterializerCommand;
-use buck2_cmd_audit_client::deferred_materializer::DeferredMaterializerSubcommand;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute::materialize::materializer::DeferredMaterializerIterItem;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::deferred_materializer::DeferredMaterializerCommand;
+use bz_cmd_audit_client::deferred_materializer::DeferredMaterializerSubcommand;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute::materialize::materializer::DeferredMaterializerIterItem;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use futures::stream::StreamExt;
 
 use crate::ServerAuditSubcommand;
@@ -28,9 +28,9 @@ impl ServerAuditSubcommand for DeferredMaterializerCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut stdout = stdout.as_writer();
 
         let materializer = server_ctx.materializer();
@@ -113,6 +113,6 @@ impl ServerAuditSubcommand for DeferredMaterializerCommand {
             }
         }
 
-        buck2_error::Ok(())
+        bz_error::Ok(())
     }
 }

@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_common::events::HasEvents;
-use buck2_data::BxlDiceInvocationEnd;
-use buck2_data::BxlDiceInvocationStart;
-use buck2_events::dispatch::with_dispatcher_async;
+use bz_common::events::HasEvents;
+use bz_data::BxlDiceInvocationEnd;
+use bz_data::BxlDiceInvocationStart;
+use bz_events::dispatch::with_dispatcher_async;
 use dice::DiceComputations;
 use dice::DiceData;
 use dice::UserComputationData;
@@ -24,7 +24,7 @@ use futures::future::select;
 use crate::bxl::starlark_defs::context::lifetime_erase::LifetimeErased;
 use crate::bxl::starlark_defs::context::lifetime_erase::LifetimeErasedTypeClass;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum ViaError {
     #[error("The owning DICE evaluation has been cancelled")]
@@ -49,9 +49,9 @@ impl<'s> BxlDiceComputations<'s> {
         // The returned future as a 'a lifetime to allow people to capture things in the future with a matching lifetime to self.
         f: impl for<'d> FnOnce(
             &'a mut DiceComputations<'d>,
-        ) -> LocalBoxFuture<'a, buck2_error::Result<T>>
+        ) -> LocalBoxFuture<'a, bz_error::Result<T>>
         + 'a,
-    ) -> buck2_error::Result<T> {
+    ) -> bz_error::Result<T> {
         let dispatcher = self
             .0
             .access_mut(|dice| dice.per_transaction_data().get_dispatcher().dupe());

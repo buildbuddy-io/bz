@@ -10,31 +10,31 @@
 
 use std::sync::Arc;
 
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_common::package_listing::listing::testing::PackageListingExt;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::package_relative_path::PackageRelativePathBuf;
-use buck2_core::plugins::PluginKindSet;
-use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
-use buck2_interpreter_for_build::attrs::coerce::attr_type::AttrTypeExt;
-use buck2_interpreter_for_build::attrs::coerce::ctx::BuildAttrCoercionContext;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
-use buck2_interpreter_for_build::interpreter::testing::cells;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
-use buck2_node::attrs::hacks::value_to_string;
-use buck2_node::provider_id_set::ProviderIdSet;
+use bz_common::package_listing::listing::PackageListing;
+use bz_common::package_listing::listing::testing::PackageListingExt;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::package::PackageLabel;
+use bz_core::package::package_relative_path::PackageRelativePathBuf;
+use bz_core::plugins::PluginKindSet;
+use bz_core::target::label::interner::ConcurrentTargetLabelInterner;
+use bz_interpreter_for_build::attrs::coerce::attr_type::AttrTypeExt;
+use bz_interpreter_for_build::attrs::coerce::ctx::BuildAttrCoercionContext;
+use bz_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::interpreter::testing::cells;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::hacks::value_to_string;
+use bz_node::provider_id_set::ProviderIdSet;
 use dupe::Dupe;
 use indoc::indoc;
 use starlark::values::Heap;
 
 #[test]
-fn string_works() -> buck2_error::Result<()> {
+fn string_works() -> bz_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -47,7 +47,7 @@ fn string_works() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn boolean_works() -> buck2_error::Result<()> {
+fn boolean_works() -> bz_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -60,7 +60,7 @@ fn boolean_works() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_attr_module_registered() -> buck2_error::Result<()> {
+fn test_attr_module_registered() -> bz_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -71,7 +71,7 @@ fn test_attr_module_registered() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn list_works() -> buck2_error::Result<()> {
+fn list_works() -> bz_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -94,7 +94,7 @@ fn list_works() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn enum_works() -> buck2_error::Result<()> {
+fn enum_works() -> bz_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -108,7 +108,7 @@ fn enum_works() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn attr_coercer_coerces() -> buck2_error::Result<()> {
+fn attr_coercer_coerces() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let some_cells = cells(None)?;
         let cell_resolver = some_cells.1;
@@ -231,7 +231,7 @@ fn attr_coercer_coerces() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn dep_works() -> buck2_error::Result<()> {
+fn dep_works() -> bz_error::Result<()> {
     let mut t = Tester::new().unwrap();
     t.run_starlark_bzl_test(indoc!(
         r#"
@@ -270,7 +270,7 @@ fn dep_works() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn source_works() -> buck2_error::Result<()> {
+fn source_works() -> bz_error::Result<()> {
     let mut t = Tester::new().unwrap();
     t.run_starlark_bzl_test(indoc!(
         r#"
@@ -298,7 +298,7 @@ fn source_works() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn coercing_src_to_path_works() -> buck2_error::Result<()> {
+fn coercing_src_to_path_works() -> bz_error::Result<()> {
     let cell_resolver = cells(None).unwrap().1;
     let cell_alias_resolver = cells(None).unwrap().0;
     let package = PackageLabel::new(
@@ -352,7 +352,7 @@ fn coercing_src_to_path_works() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn bazel_label_uses_package_relative_file_labels() -> buck2_error::Result<()> {
+fn bazel_label_uses_package_relative_file_labels() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let cell_resolver = cells(None)?.1;
         let cell_alias_resolver = cells(None)?.0;
@@ -393,7 +393,7 @@ fn bazel_label_uses_package_relative_file_labels() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn bazel_visibility_allows_non_visible_repo_package_specs() -> buck2_error::Result<()> {
+fn bazel_visibility_allows_non_visible_repo_package_specs() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let some_cells = cells(None)?;
         let cell_resolver = some_cells.1;

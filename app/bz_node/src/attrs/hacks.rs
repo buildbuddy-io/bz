@@ -12,7 +12,7 @@
 //! coercion tooling done. For now, it handles things like stringification for the `targets` command,
 //! converting to JSON, etc.
 
-use buck2_core::package::PackageLabel;
+use bz_core::package::PackageLabel;
 
 use crate::attrs::coerced_attr::CoercedAttr;
 use crate::attrs::configured_attr::ConfiguredAttr;
@@ -22,7 +22,7 @@ use crate::attrs::json::ToJsonWithContext;
 pub fn value_to_json(
     value: &CoercedAttr,
     pkg: PackageLabel,
-) -> buck2_error::Result<serde_json::Value> {
+) -> bz_error::Result<serde_json::Value> {
     value.to_json(&AttrFmtContext {
         package: Some(pkg),
         options: Default::default(),
@@ -32,18 +32,18 @@ pub fn value_to_json(
 pub fn configured_value_to_json(
     value: &ConfiguredAttr,
     pkg: PackageLabel,
-) -> buck2_error::Result<serde_json::Value> {
+) -> bz_error::Result<serde_json::Value> {
     value.to_json(&AttrFmtContext {
         package: Some(pkg),
         options: Default::default(),
     })
 }
 
-pub fn value_to_string(value: &CoercedAttr, pkg: PackageLabel) -> buck2_error::Result<String> {
+pub fn value_to_string(value: &CoercedAttr, pkg: PackageLabel) -> bz_error::Result<String> {
     match value_to_json(value, pkg)?.as_str() {
         Some(s) => Ok(s.to_owned()),
-        None => Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        None => Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Expected a string, did not get one",
         )),
     }

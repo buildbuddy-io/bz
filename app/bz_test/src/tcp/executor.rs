@@ -12,9 +12,9 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Stdio;
 
-use buck2_error::BuckErrorContext as _;
-use buck2_events::metadata::username;
-use buck2_util::process::async_background_command;
+use bz_error::BuckErrorContext as _;
+use bz_events::metadata::username;
+use bz_util::process::async_background_command;
 use futures::future::Either;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
@@ -29,7 +29,7 @@ pub(crate) async fn spawn(
     executable: &Path,
     args: Vec<String>,
     tpx_args: Vec<String>,
-) -> buck2_error::Result<(ExecutorFuture, TcpStream, TcpStream)> {
+) -> bz_error::Result<(ExecutorFuture, TcpStream, TcpStream)> {
     // Use TCPStream via TCPListener with accept to establish a duplex connection. We set up the
     // listeners, our client connects to both, and that gets us two duplex streams.
     let (executor_addr, executor_tcp_listener) = create_tcp_listener().await?;
@@ -76,7 +76,7 @@ pub(crate) async fn spawn(
             )
         })?;
 
-        buck2_error::Ok((orchestrator_tcp_stream, executor_tcp_stream))
+        bz_error::Ok((orchestrator_tcp_stream, executor_tcp_stream))
     };
 
     futures::pin_mut!(conns);
@@ -84,7 +84,7 @@ pub(crate) async fn spawn(
     // Wait for our connections to come up, but also check that the child hasn't exited before we
     // get there.
     match futures::future::select(exec, conns).await {
-        Either::Left((output, _)) => Err(buck2_error::internal_error!(
+        Either::Left((output, _)) => Err(bz_error::internal_error!(
             "Executor exited before connecting: {}",
             output?
         )),
@@ -95,7 +95,7 @@ pub(crate) async fn spawn(
     }
 }
 
-async fn create_tcp_listener() -> buck2_error::Result<(String, TcpListener)> {
+async fn create_tcp_listener() -> bz_error::Result<(String, TcpListener)> {
     let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let tcp_listener = TcpListener::bind(addr).await?;
     let local_addr = tcp_listener.local_addr()?;

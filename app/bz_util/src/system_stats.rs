@@ -75,9 +75,9 @@ pub fn system_memory_stats() -> u64 {
 }
 
 pub fn system_memory_stats_detailed() -> SystemMemoryStats {
-    if let Ok(Some(bytes)) = buck2_env::env::buck2_env!("BUCK2_TEST_FAKE_SYSTEM_TOTAL_MEMORY", type=u64, applicability=testing)
+    if let Ok(Some(bytes)) = bz_env::env::bz_env!("BUCK2_TEST_FAKE_SYSTEM_TOTAL_MEMORY", type=u64, applicability=testing)
     {
-        let available = buck2_env::env::buck2_env!("BUCK2_TEST_FAKE_SYSTEM_AVAILABLE_MEMORY", type=u64, applicability=testing)
+        let available = bz_env::env::bz_env!("BUCK2_TEST_FAKE_SYSTEM_AVAILABLE_MEMORY", type=u64, applicability=testing)
             .ok()
             .flatten()
             .unwrap_or(bytes);

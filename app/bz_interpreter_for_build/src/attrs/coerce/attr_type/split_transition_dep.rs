@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
 use starlark::values::Value;
 
@@ -25,7 +25,7 @@ impl AttrTypeCoerce for SplitTransitionDepAttrType {
         _configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         let label = coerce_providers_label_from_value(ctx, value)?;
 
         Ok(CoercedAttr::SplitTransitionDep(label))

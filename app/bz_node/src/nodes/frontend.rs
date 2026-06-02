@@ -11,11 +11,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_core::package::PackageLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_util::late_binding::LateBinding;
-use buck2_util::time_span::TimeSpan;
+use bz_core::package::PackageLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::BuckErrorContext;
+use bz_util::late_binding::LateBinding;
+use bz_util::time_span::TimeSpan;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
@@ -34,7 +34,7 @@ pub trait TargetGraphCalculationImpl: Send + Sync + 'static {
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
         cancellation: &CancellationContext,
-    ) -> (TimeSpan, buck2_error::Result<Arc<EvaluationResult>>);
+    ) -> (TimeSpan, bz_error::Result<Arc<EvaluationResult>>);
 
     /// Returns the full interpreter evaluation result for a Package. This consists of the full set
     /// of `TargetNode`s of interpreting that build file.
@@ -42,7 +42,7 @@ pub trait TargetGraphCalculationImpl: Send + Sync + 'static {
         &self,
         ctx: &'a mut DiceComputations,
         package: PackageLabel,
-    ) -> BoxFuture<'a, buck2_error::Result<Arc<EvaluationResult>>>;
+    ) -> BoxFuture<'a, bz_error::Result<Arc<EvaluationResult>>>;
 }
 
 pub static TARGET_GRAPH_CALCULATION_IMPL: LateBinding<&'static dyn TargetGraphCalculationImpl> =
@@ -55,14 +55,14 @@ pub trait TargetGraphCalculation {
         &mut self,
         package: PackageLabel,
         cancellation: &CancellationContext,
-    ) -> (TimeSpan, buck2_error::Result<Arc<EvaluationResult>>);
+    ) -> (TimeSpan, bz_error::Result<Arc<EvaluationResult>>);
 
     /// Returns the full interpreter evaluation result for a Package. This consists of the full set
     /// of `TargetNode`s of interpreting that build file.
     fn get_interpreter_results(
         &mut self,
         package: PackageLabel,
-    ) -> BoxFuture<'_, buck2_error::Result<Arc<EvaluationResult>>>;
+    ) -> BoxFuture<'_, bz_error::Result<Arc<EvaluationResult>>>;
 
     /// For a TargetLabel, returns the TargetNode. This is really just part of the the interpreter
     /// results for the the label's package, and so this is just a utility for accessing that, it
@@ -70,13 +70,13 @@ pub trait TargetGraphCalculation {
     fn get_target_node<'a>(
         &'a mut self,
         target: &'a TargetLabel,
-    ) -> BoxFuture<'a, buck2_error::Result<TargetNode>>;
+    ) -> BoxFuture<'a, bz_error::Result<TargetNode>>;
 
     /// For a TargetLabel, returns the TargetNode and its SuperPackage from PACKAGE files.
     fn get_target_node_with_super_package<'a>(
         &'a mut self,
         target: &'a TargetLabel,
-    ) -> BoxFuture<'a, buck2_error::Result<(TargetNode, SuperPackage)>>;
+    ) -> BoxFuture<'a, bz_error::Result<(TargetNode, SuperPackage)>>;
 }
 
 #[async_trait]
@@ -85,7 +85,7 @@ impl TargetGraphCalculation for DiceComputations<'_> {
         &mut self,
         package: PackageLabel,
         cancellation: &CancellationContext,
-    ) -> (TimeSpan, buck2_error::Result<Arc<EvaluationResult>>) {
+    ) -> (TimeSpan, bz_error::Result<Arc<EvaluationResult>>) {
         match TARGET_GRAPH_CALCULATION_IMPL.get() {
             Ok(calc) => {
                 calc.get_interpreter_results_uncached(self, package, cancellation)
@@ -98,7 +98,7 @@ impl TargetGraphCalculation for DiceComputations<'_> {
     fn get_interpreter_results(
         &mut self,
         package: PackageLabel,
-    ) -> BoxFuture<'_, buck2_error::Result<Arc<EvaluationResult>>> {
+    ) -> BoxFuture<'_, bz_error::Result<Arc<EvaluationResult>>> {
         TARGET_GRAPH_CALCULATION_IMPL
             .get()
             .unwrap()
@@ -108,7 +108,7 @@ impl TargetGraphCalculation for DiceComputations<'_> {
     fn get_target_node<'a>(
         &'a mut self,
         target: &'a TargetLabel,
-    ) -> BoxFuture<'a, buck2_error::Result<TargetNode>> {
+    ) -> BoxFuture<'a, bz_error::Result<TargetNode>> {
         self.get_target_node_with_super_package(target)
             .map(|r| r.map(|(node, _)| node))
             .boxed()
@@ -117,7 +117,7 @@ impl TargetGraphCalculation for DiceComputations<'_> {
     fn get_target_node_with_super_package<'a>(
         &'a mut self,
         target: &'a TargetLabel,
-    ) -> BoxFuture<'a, buck2_error::Result<(TargetNode, SuperPackage)>> {
+    ) -> BoxFuture<'a, bz_error::Result<(TargetNode, SuperPackage)>> {
         TARGET_GRAPH_CALCULATION_IMPL
             .get()
             .unwrap()
@@ -130,7 +130,7 @@ impl TargetGraphCalculation for DiceComputations<'_> {
                         target
                     )
                 })?;
-                buck2_error::Ok((
+                bz_error::Ok((
                     res.resolve_target_node(target.name())?,
                     res.super_package().dupe(),
                 ))

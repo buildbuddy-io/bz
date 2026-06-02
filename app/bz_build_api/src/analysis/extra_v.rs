@@ -11,8 +11,8 @@
 use std::cell::OnceCell;
 
 use allocative::Allocative;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
 use gazebo::prelude::OptionExt;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::FrozenModule;
@@ -68,7 +68,7 @@ impl<'v> Freeze for AnalysisExtraValue<'v> {
 }
 
 impl<'v> AnalysisExtraValue<'v> {
-    pub fn get(module: &Module<'v>) -> buck2_error::Result<Option<&'v AnalysisExtraValue<'v>>> {
+    pub fn get(module: &Module<'v>) -> bz_error::Result<Option<&'v AnalysisExtraValue<'v>>> {
         let Some(extra) = module.extra_value() else {
             return Ok(None);
         };
@@ -79,7 +79,7 @@ impl<'v> AnalysisExtraValue<'v> {
         ))
     }
 
-    pub fn get_or_init(module: &Module<'v>) -> buck2_error::Result<&'v AnalysisExtraValue<'v>> {
+    pub fn get_or_init(module: &Module<'v>) -> bz_error::Result<&'v AnalysisExtraValue<'v>> {
         if let Some(extra) = Self::get(module)? {
             return Ok(extra);
         }
@@ -89,7 +89,7 @@ impl<'v> AnalysisExtraValue<'v> {
                     .heap()
                     .alloc(StarlarkAnyComplex::new(AnalysisExtraValue::default())),
             )
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?;
         Self::get(module)?.ok_or_else(|| internal_error!("extra_value must be set"))
     }
 }
@@ -97,7 +97,7 @@ impl<'v> AnalysisExtraValue<'v> {
 impl FrozenAnalysisExtraValue {
     pub fn get(
         module: &FrozenModule,
-    ) -> buck2_error::Result<OwnedFrozenValueTyped<StarlarkAnyComplex<FrozenAnalysisExtraValue>>>
+    ) -> bz_error::Result<OwnedFrozenValueTyped<StarlarkAnyComplex<FrozenAnalysisExtraValue>>>
     {
         Ok(module
             .owned_extra_value()

@@ -52,7 +52,7 @@ impl Struct<'_> {
         if self.attrs.tags.is_empty() && self.attrs.tags_expr.is_none() {
             return Err(Error::new(
                 self.ident.span(),
-                "missing #[buck2(tag = ...)] attribute. All 'buck2_error' must have a tag (Common choices are 'Input', 'Tier0', and 'Environment').
+                "missing #[buck2(tag = ...)] attribute. All 'bz_error' must have a tag (Common choices are 'Input', 'Tier0', and 'Environment').
                 Full list: https://www.internalfb.com/code/fbsource/[4e97d95ed7f3145bf6828827e779eecaeb0c5712]/fbcode/buck2/app/bz_data/error.proto?lines=42",
             ));
         }
@@ -83,7 +83,7 @@ impl Enum<'_> {
             {
                 return Err(Error::new_spanned(
                     variant.original,
-                    "missing #[buck2(tag = ...)] attribute. All 'buck2_error' must have a tag (Default choices are 'Input', 'Tier0', and 'Environment').
+                    "missing #[buck2(tag = ...)] attribute. All 'bz_error' must have a tag (Default choices are 'Input', 'Tier0', and 'Environment').
                     Full list: https://www.internalfb.com/code/fbsource/[4e97d95ed7f3145bf6828827e779eecaeb0c5712]/fbcode/buck2/app/bz_data/error.proto?lines=42",
                 ));
             }

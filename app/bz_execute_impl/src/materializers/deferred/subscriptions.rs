@@ -13,14 +13,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_execute::materialize::materializer::DeferredMaterializerSubscription;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::EventDispatcher;
+use bz_execute::materialize::materializer::DeferredMaterializerSubscription;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;

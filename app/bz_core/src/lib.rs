@@ -21,8 +21,8 @@
 #![feature(try_trait_v2)]
 
 // Re-export these because we don't want to make people add a dependency on this crate everywhere
-pub use buck2_env::env;
-pub use buck2_env::soft_error as error;
+pub use bz_env::env;
+pub use bz_env::soft_error as error;
 
 mod ascii_char_set;
 pub mod async_once_cell;
@@ -42,7 +42,7 @@ pub mod execution_types;
 pub mod faster_directories;
 pub mod fs;
 pub mod global_cfg_options;
-pub use buck2_fs::io_counters;
+pub use bz_fs::io_counters;
 pub mod logging;
 pub mod package;
 pub mod pattern;
@@ -54,16 +54,16 @@ pub mod target;
 pub mod target_aliases;
 pub mod unsafe_send_future;
 
-// Re-export macros from buck2_env so they're available at the crate root
-pub use buck2_env::env::buck2_env;
-pub use buck2_env::env::buck2_env_name;
+// Re-export macros from bz_env so they're available at the crate root
+pub use bz_env::env::bz_env;
+pub use bz_env::env::bz_env_name;
 // Re-export these macros at the crate root so they work like before when error was #[macro_use]
 #[doc(inline)]
-pub use buck2_env::soft_error::soft_error;
+pub use bz_env::soft_error::soft_error;
 #[doc(inline)]
-pub use buck2_env::soft_error::tag_error;
+pub use bz_env::soft_error::tag_error;
 #[doc(inline)]
-pub use buck2_env::soft_error::tag_result;
+pub use bz_env::soft_error::tag_result;
 
 /// Marker for things that are only sensible to use inside Facebook,
 /// not intended to be complete, but intended to be useful to audit

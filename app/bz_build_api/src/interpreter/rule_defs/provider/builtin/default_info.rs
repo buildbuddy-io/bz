@@ -16,11 +16,11 @@ use std::marker::PhantomData;
 use std::ptr;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_build_api_derive::internal_provider;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_build_api_derive::internal_provider;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
@@ -65,7 +65,7 @@ use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
 use starlark::values::structs::StructRef;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
@@ -205,7 +205,7 @@ fn bazel_runfiles_with_file<'v>(
     file: Value<'v>,
 ) -> starlark::Result<Value<'v>> {
     let runfiles = BazelRunfiles::from_value(runfiles).ok_or_else(|| {
-        buck2_error::internal_error!("DefaultInfo runfiles should be a runfiles object")
+        bz_error::internal_error!("DefaultInfo runfiles should be a runfiles object")
     })?;
     let files = bazel_depset_from_direct_and_transitive(
         heap,
@@ -319,8 +319,8 @@ fn bazel_runfiles_symlinks_from_value<'v>(
         return Ok(value);
     }
     let dict = DictRef::from_value(value).ok_or_else(|| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "ctx.runfiles argument `{}` expected dict or depset, got `{}`",
             arg_name,
             value.to_string_for_type_error()
@@ -329,16 +329,16 @@ fn bazel_runfiles_symlinks_from_value<'v>(
     let mut symlink_entries = Vec::with_capacity(dict.len());
     for (path, target_file) in dict.iter() {
         let path = path.unpack_str().ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "ctx.runfiles argument `{}` expected string keys, got `{}`",
                 arg_name,
                 path.to_string_for_type_error()
             )
         })?;
         ValueIsInputArtifactAnnotation::unpack_value(target_file)?.ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "ctx.runfiles argument `{}` expected File values, got `{}`",
                 arg_name,
                 target_file.to_string_for_type_error()
@@ -389,8 +389,8 @@ fn path_is_package_init(path: &str) -> bool {
 
 fn bazel_runfiles_raw_file_path<'v>(heap: Heap<'v>, file: Value<'v>) -> starlark::Result<String> {
     let file = ValueAsInputArtifactLike::unpack_value(file)?.ok_or_else(|| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "runfiles.files expected File values, got `{}`",
             file.to_string_for_type_error()
         )
@@ -422,8 +422,8 @@ fn bazel_runfiles_symlink_path<'v>(heap: Heap<'v>, symlink: Value<'v>) -> starla
     }
     let path = symlink.get_attr_error("path", heap)?;
     path.unpack_str().map(str::to_owned).ok_or_else(|| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "runfiles.symlinks expected SymlinkEntry values, got `{}`",
             symlink.to_string_for_type_error()
         )
@@ -440,8 +440,8 @@ fn bazel_runfiles_symlink_target_file<'v>(
     }
     let target_file = symlink.get_attr_error("target_file", heap)?;
     if ValueAsInputArtifactLike::unpack_value(target_file)?.is_none() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "runfiles.symlinks expected SymlinkEntry target_file values to be File, got `{}`",
             target_file.to_string_for_type_error()
         )
@@ -530,8 +530,8 @@ pub fn bazel_runfiles_with_generated_inits_empty_files_supplier<'v>(
     let symlinks = bazel_depset_to_list(runfiles.symlinks.get().to_value())?;
     let root_symlinks = bazel_depset_to_list(runfiles.root_symlinks.get().to_value())?;
     if files.is_empty() && symlinks.is_empty() && root_symlinks.is_empty() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "input runfiles cannot be empty"
         )
         .into());
@@ -600,8 +600,8 @@ fn bazel_runfiles_methods(builder: &mut MethodsBuilder) {
         runfiles.push(this);
         for other in others.items {
             let other = BazelRunfiles::from_value(other).ok_or_else(|| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "`runfiles.merge_all` expected runfiles, got `{}`",
                     other.to_string_for_type_error()
                 )
@@ -712,7 +712,7 @@ pub struct DefaultInfoGen<V: ValueLifetimeless> {
 }
 
 pub const BAZEL_FILES_TO_RUN_EXECUTABLE_FIELD: &str = "executable";
-pub const BAZEL_FILES_TO_RUN_RUNFILES_FIELD: &str = "_buck2_default_runfiles";
+pub const BAZEL_FILES_TO_RUN_RUNFILES_FIELD: &str = "_bz_default_runfiles";
 
 pub fn bazel_files_to_run_executable<'v>(value: Value<'v>) -> Option<Value<'v>> {
     StructRef::from_value(value).and_then(|st| {
@@ -745,7 +745,7 @@ fn bazel_files_to_run<'v>(
     ]))
 }
 
-fn validate_default_info(info: &FrozenDefaultInfo) -> buck2_error::Result<()> {
+fn validate_default_info(info: &FrozenDefaultInfo) -> bz_error::Result<()> {
     // Check length of default outputs
     let default_output_list = ListRef::from_value(info.default_outputs.get().to_value())
         .expect("should be a list from constructor");
@@ -753,7 +753,7 @@ fn validate_default_info(info: &FrozenDefaultInfo) -> buck2_error::Result<()> {
         tracing::info!("DefaultInfo.default_output should only have a maximum of 1 item.");
         // TODO use soft_error when landed
         // TODO error rather than soft warning
-        // return Err(buck2_error::buck2_error!(
+        // return Err(bz_error::bz_error!(
         //     "DefaultInfo.default_output can only have a maximum of 1 item."
         // ));
     }
@@ -857,7 +857,7 @@ impl<'v> DefaultInfo<'v> {
 }
 
 impl<'v, V: ValueLike<'v>> DefaultInfoGen<V> {
-    pub fn default_output_values_for_dependency(&self) -> buck2_error::Result<Vec<Value<'v>>> {
+    pub fn default_output_values_for_dependency(&self) -> bz_error::Result<Vec<Value<'v>>> {
         let default_outputs = ListRef::from_value(self.default_outputs.get().to_value())
             .ok_or_else(|| internal_error!("Should be list of artifacts"))?;
         if !default_outputs.is_empty() {
@@ -963,7 +963,7 @@ impl FrozenDefaultInfo {
     fn get_sub_target_providers_impl(
         &self,
         name: &str,
-    ) -> buck2_error::Result<Option<FrozenValueTyped<'static, FrozenProviderCollection>>> {
+    ) -> bz_error::Result<Option<FrozenValueTyped<'static, FrozenProviderCollection>>> {
         FrozenDictRef::from_frozen_value(self.sub_targets.get())
             .ok_or_else(|| internal_error!("sub_targets should be a dict-like object"))?
             .get_str(name)
@@ -984,7 +984,7 @@ impl FrozenDefaultInfo {
 
     fn default_outputs_impl(
         &self,
-    ) -> buck2_error::Result<impl Iterator<Item = buck2_error::Result<StarlarkArtifact>> + '_> {
+    ) -> bz_error::Result<impl Iterator<Item = bz_error::Result<StarlarkArtifact>> + '_> {
         let list = ListRef::from_frozen_value(self.default_outputs.get())
             .ok_or_else(|| internal_error!("Should be list of artifacts"))?;
 
@@ -1018,7 +1018,7 @@ impl FrozenDefaultInfo {
         self.default_outputs.get()
     }
 
-    pub fn default_output_values<'v>(&self) -> buck2_error::Result<Vec<Value<'v>>> {
+    pub fn default_output_values<'v>(&self) -> bz_error::Result<Vec<Value<'v>>> {
         let default_outputs = ListRef::from_frozen_value(self.default_outputs.get())
             .ok_or_else(|| internal_error!("Should be list of artifacts"))?;
         if !default_outputs.is_empty() {
@@ -1045,16 +1045,16 @@ impl FrozenDefaultInfo {
 
     fn sub_targets_impl(
         &self,
-    ) -> buck2_error::Result<
+    ) -> bz_error::Result<
         impl Iterator<
-            Item = buck2_error::Result<(&str, FrozenValueTyped<'static, FrozenProviderCollection>)>,
+            Item = bz_error::Result<(&str, FrozenValueTyped<'static, FrozenProviderCollection>)>,
         > + '_,
     > {
         let sub_targets = FrozenDictRef::from_frozen_value(self.sub_targets.get())
             .ok_or_else(|| internal_error!("sub_targets should be a dict-like object"))?;
 
         Ok(sub_targets.iter().map(|(k, v)| {
-            buck2_error::Ok((
+            bz_error::Ok((
                 k.to_value()
                     .unpack_str()
                     .ok_or_else(|| internal_error!("sub_targets should have string keys"))?,
@@ -1083,7 +1083,7 @@ impl FrozenDefaultInfo {
     pub fn for_each_default_output_artifact_only(
         &self,
         processor: &mut dyn FnMut(Artifact),
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.for_each_default_output_value(|value| {
             processor(
                 ValueAsInputArtifactLike::unpack_value_err(value)?
@@ -1097,7 +1097,7 @@ impl FrozenDefaultInfo {
     pub fn for_each_default_output_other_artifacts_only(
         &self,
         processor: &mut dyn FnMut(ArtifactGroup),
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.for_each_default_output_value(|value| {
             let others = ValueAsInputArtifactLike::unpack_value_err(value)?
                 .0
@@ -1113,7 +1113,7 @@ impl FrozenDefaultInfo {
     pub fn for_each_other_output(
         &self,
         processor: &mut dyn FnMut(ArtifactGroup),
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         struct Visitor<'x>(&'x mut dyn FnMut(ArtifactGroup));
 
         impl<'v> CommandLineArtifactVisitor<'v> for Visitor<'_> {
@@ -1141,7 +1141,7 @@ impl FrozenDefaultInfo {
     pub fn for_each_default_runfiles_artifact(
         &self,
         processor: &mut dyn FnMut(ArtifactGroup),
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let runfiles = self.default_runfiles.get().to_value();
         let runfiles = runfiles
             .downcast_ref::<FrozenBazelRunfiles>()
@@ -1181,7 +1181,7 @@ impl FrozenDefaultInfo {
     pub fn for_each_output(
         &self,
         processor: &mut dyn FnMut(ArtifactGroup),
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.for_each_default_output_artifact_only(&mut |a| processor(ArtifactGroup::Artifact(a)))?;
         self.for_each_default_output_other_artifacts_only(processor)?;
         self.for_each_other_output(processor)
@@ -1189,8 +1189,8 @@ impl FrozenDefaultInfo {
 
     fn for_each_default_output_value(
         &self,
-        mut processor: impl FnMut(Value) -> buck2_error::Result<()>,
-    ) -> buck2_error::Result<()> {
+        mut processor: impl FnMut(Value) -> bz_error::Result<()>,
+    ) -> bz_error::Result<()> {
         let default_outputs = ListRef::from_frozen_value(self.default_outputs.get())
             .ok_or_else(|| internal_error!("Should be list of artifacts"))?;
         if !default_outputs.is_empty() {
@@ -1209,8 +1209,8 @@ impl FrozenDefaultInfo {
     fn for_each_in_list(
         &self,
         value: FrozenValue,
-        mut processor: impl FnMut(Value) -> buck2_error::Result<()>,
-    ) -> buck2_error::Result<()> {
+        mut processor: impl FnMut(Value) -> bz_error::Result<()>,
+    ) -> bz_error::Result<()> {
         let outputs_list = ListRef::from_frozen_value(value)
             .unwrap_or_else(|| panic!("expected list, got `{value:?}` from info `{self:?}`"));
 
@@ -1229,7 +1229,7 @@ impl PartialEq for FrozenDefaultInfo {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum DefaultOutputError {
     #[error("Cannot specify both `default_output` and `default_outputs`.")]
@@ -1322,7 +1322,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             ),
             _ => {
                 return Err(
-                    buck2_error::Error::from(DefaultOutputError::ConflictingArguments).into(),
+                    bz_error::Error::from(DefaultOutputError::ConflictingArguments).into(),
                 );
             }
         };
@@ -1333,8 +1333,8 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         let no_runfiles_arguments =
             runfiles.is_none() && data_runfiles.is_none() && default_runfiles.is_none();
         if runfiles.is_some() && (data_runfiles.is_some() || default_runfiles.is_some()) {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Cannot specify the provider 'runfiles' together with 'data_runfiles' or 'default_runfiles'"
             )
             .into());
@@ -1373,7 +1373,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
                     ),
                 ))
             })
-            .collect::<buck2_error::Result<Vec<(StringValue<'v>, _)>>>()?;
+            .collect::<bz_error::Result<Vec<(StringValue<'v>, _)>>>()?;
 
         Ok(DefaultInfo {
             default_outputs: valid_default_outputs,

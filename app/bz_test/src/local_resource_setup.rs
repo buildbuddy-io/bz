@@ -8,16 +8,16 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::FrozenExternalRunnerTestInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::local_resource_info::FrozenLocalResourceInfo;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::soft_error;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::ErrorTag;
-use buck2_error::internal_error;
-use buck2_test_api::data::RequiredLocalResources;
-use buck2_test_api::data::TestStage;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::FrozenExternalRunnerTestInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::local_resource_info::FrozenLocalResourceInfo;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::soft_error;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_error::ErrorTag;
+use bz_error::internal_error;
+use bz_test_api::data::RequiredLocalResources;
+use bz_test_api::data::TestStage;
 use dice::DiceComputations;
 use futures::FutureExt;
 use itertools::Itertools;
@@ -42,7 +42,7 @@ pub(crate) async fn required_providers<'v>(
     test_info: &'v FrozenExternalRunnerTestInfo,
     required_local_resources: &'v RequiredLocalResources,
     stage: &TestStageSimple,
-) -> buck2_error::Result<
+) -> bz_error::Result<
     Vec<(
         &'v ConfiguredTargetLabel,
         OwnedFrozenValueTyped<FrozenLocalResourceInfo>,
@@ -66,7 +66,7 @@ pub(crate) async fn required_providers<'v>(
         .unique()
         .map(|type_name| {
             available_resources.get(type_name).copied().ok_or_else(|| {
-                buck2_error::buck2_error!(
+                bz_error::bz_error!(
                     ErrorTag::Input,
                     "Required local resource of type `{type_name}` not found.",
                 )
@@ -80,7 +80,7 @@ pub(crate) async fn required_providers<'v>(
                 None
             }
         })
-        .collect::<Result<Vec<_>, buck2_error::Error>>()?;
+        .collect::<Result<Vec<_>, bz_error::Error>>()?;
 
     dice.compute_join(targets, |dice, target| {
         async move { get_local_resource_info(dice, target).await }.boxed()
@@ -93,7 +93,7 @@ pub(crate) async fn required_providers<'v>(
 async fn get_local_resource_info<'v>(
     dice: &mut DiceComputations<'_>,
     target: &'v ConfiguredProvidersLabel,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     &'v ConfiguredTargetLabel,
     OwnedFrozenValueTyped<FrozenLocalResourceInfo>,
 )> {

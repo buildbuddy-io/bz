@@ -12,17 +12,17 @@ use std::fmt;
 use std::io::Write;
 use std::time::Duration;
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ClientIoError;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_event_observer::display::CriticalPathEntryDisplay;
-use buck2_event_observer::display::TargetDisplayOptions;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ClientIoError;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_error::conversion::from_any_with_tag;
+use bz_event_log::stream_value::StreamValue;
+use bz_event_observer::display::CriticalPathEntryDisplay;
+use bz_event_observer::display::TargetDisplayOptions;
 use serde::Serialize;
 use tokio_stream::StreamExt;
 
@@ -129,7 +129,7 @@ async fn log_critical_path_command_exec(
         PathKind::Critical => "critical path",
         PathKind::Slowest => "slowest path",
     };
-    buck2_client_ctx::eprintln!(
+    bz_client_ctx::eprintln!(
         "Showing {} from: {}",
         path_name,
         invocation.display_command_line()
@@ -137,8 +137,8 @@ async fn log_critical_path_command_exec(
 
     while let Some(event) = events.try_next().await? {
         if let StreamValue::Event(event) = event
-            && let Some(buck2_data::buck_event::Data::Instant(instant)) = event.data
-            && let Some(buck2_data::instant_event::Data::BuildGraphInfo(build_graph)) = instant.data
+            && let Some(bz_data::buck_event::Data::Instant(instant)) = event.data
+            && let Some(bz_data::instant_event::Data::BuildGraphInfo(build_graph)) = instant.data
         {
             match path_kind {
                 PathKind::Critical => {
@@ -227,12 +227,12 @@ struct CriticalPathEntry<'a> {
 }
 
 async fn log_critical_path(
-    path: &Vec<buck2_data::CriticalPathEntry2>,
+    path: &Vec<bz_data::CriticalPathEntry2>,
     format: LogCommandOutputFormat,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let target_display_options = TargetDisplayOptions::for_log();
 
-    buck2_client_ctx::stdio::print_with_writer::<buck2_error::Error, _>(async move |w| {
+    bz_client_ctx::stdio::print_with_writer::<bz_error::Error, _>(async move |w| {
         let mut log_writer = transform_format(format, w);
         if let LogCommandOutputFormatWithWriter::Readable(writer) = &mut log_writer {
             #[allow(clippy::write_literal)] // easier to match the format below
@@ -316,7 +316,7 @@ async fn log_critical_path(
                     LogCommandOutputFormatWithWriter::Csv(writer) => {
                         writer
                             .serialize(critical_path)
-                            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogCmd))?;
+                            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::LogCmd))?;
                     }
                 }
                 Ok(())

@@ -10,9 +10,9 @@
 
 use std::sync::Arc;
 
-use buck2_error::internal_error;
-use buck2_events::BuckEvent;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_error::internal_error;
+use bz_events::BuckEvent;
+use bz_wrapper_common::invocation_id::TraceId;
 
 use crate::action_stats::ActionStats;
 use crate::debug_events::DebugEventsState;
@@ -30,7 +30,7 @@ pub struct EventObserver<E> {
     pub action_stats: ActionStats,
     re_state: ReState,
     two_snapshots: TwoSnapshots, // NOTE: We got many more copies of this than we should.
-    system_info: buck2_data::SystemInfo,
+    system_info: bz_data::SystemInfo,
     session_info: SessionInfo,
     test_state: TestState,
     starlark_debugger_state: StarlarkDebuggerState,
@@ -50,7 +50,7 @@ where
             action_stats: ActionStats::default(),
             re_state: ReState::new(),
             two_snapshots: TwoSnapshots::default(),
-            system_info: buck2_data::SystemInfo::default(),
+            system_info: bz_data::SystemInfo::default(),
             session_info: SessionInfo {
                 trace_id: trace_id.clone(),
                 test_session: None,
@@ -63,15 +63,15 @@ where
         }
     }
 
-    pub async fn observe(&mut self, event: &Arc<BuckEvent>) -> buck2_error::Result<()> {
+    pub async fn observe(&mut self, event: &Arc<BuckEvent>) -> bz_error::Result<()> {
         self.span_tracker.handle_event(event)?;
 
         {
-            use buck2_data::buck_event::Data::*;
+            use bz_data::buck_event::Data::*;
 
             match event.data() {
                 SpanEnd(end) => {
-                    use buck2_data::span_end_event::Data::*;
+                    use bz_data::span_end_event::Data::*;
 
                     if let ActionExecution(action_execution_end) = end
                         .data
@@ -82,7 +82,7 @@ where
                     }
                 }
                 Instant(instant) => {
-                    use buck2_data::instant_event::Data::*;
+                    use bz_data::instant_event::Data::*;
 
                     match instant
                         .data
@@ -97,7 +97,7 @@ where
                             self.two_snapshots.update(event.timestamp(), snapshot);
                         }
                         TestDiscovery(discovery) => {
-                            use buck2_data::test_discovery::Data::*;
+                            use bz_data::test_discovery::Data::*;
 
                             match discovery.data.as_ref().ok_or_else(|| {
                                 internal_error!("Missing `data` in `TestDiscovery`")
@@ -156,7 +156,7 @@ where
         &self.two_snapshots
     }
 
-    pub fn system_info(&self) -> &buck2_data::SystemInfo {
+    pub fn system_info(&self) -> &bz_data::SystemInfo {
         &self.system_info
     }
 
@@ -184,7 +184,7 @@ where
 pub trait EventObserverExtra: Send {
     fn new() -> Self;
 
-    fn observe(&mut self, event: &Arc<BuckEvent>) -> buck2_error::Result<()>;
+    fn observe(&mut self, event: &Arc<BuckEvent>) -> bz_error::Result<()>;
 }
 
 /// This has more fields for debug info. We don't always capture those.
@@ -201,7 +201,7 @@ impl EventObserverExtra for DebugEventObserverExtra {
         }
     }
 
-    fn observe(&mut self, event: &Arc<BuckEvent>) -> buck2_error::Result<()> {
+    fn observe(&mut self, event: &Arc<BuckEvent>) -> bz_error::Result<()> {
         self.debug_events.handle_event(event)?;
         self.progress_state.handle_event(event)?;
 
@@ -226,7 +226,7 @@ impl EventObserverExtra for NoopEventObserverExtra {
         Self
     }
 
-    fn observe(&mut self, _event: &Arc<BuckEvent>) -> buck2_error::Result<()> {
+    fn observe(&mut self, _event: &Arc<BuckEvent>) -> bz_error::Result<()> {
         // Noop
         Ok(())
     }

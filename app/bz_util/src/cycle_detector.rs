@@ -16,9 +16,9 @@ use std::hash::Hash;
 use std::mem::ManuallyDrop;
 use std::time::Duration;
 
-use buck2_error::buck2_error;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
+use bz_error::bz_error;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
 use futures::lock::Mutex;
 use starlark_map::small_set::SmallSet;
 use tokio::select;
@@ -146,7 +146,7 @@ impl<C: CycleDescriptor> LazyCycleDetectorGuard<C> {
     pub async fn guard_this<R, Fut: Future<Output = R>>(
         &self,
         fut: Fut,
-    ) -> buck2_error::Result<Result<R, C::Error>> {
+    ) -> bz_error::Result<Result<R, C::Error>> {
         let mut guard = {
             match self.error_receiver.try_lock() {
                 Some(v) => v,
@@ -161,8 +161,8 @@ impl<C: CycleDescriptor> LazyCycleDetectorGuard<C> {
             cycle = &mut *guard => {
                 match cycle {
                     Ok(e) => Ok(Err(e)),
-                    Err(e) => Err(buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
+                    Err(e) => Err(bz_error!(
+                        bz_error::ErrorTag::Tier0,
                         "error on cycle detector guard receiver for key `{}`: {}", self.key, e))
                 }
             }

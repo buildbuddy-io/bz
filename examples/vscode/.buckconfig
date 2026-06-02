@@ -15,10 +15,10 @@ buck = none
 
 
 [parser]
-target_platform_detector_spec = target:root//...->root//buck2_utils/platforms:windows_debug
+target_platform_detector_spec = target:root//...->root//bz_utils/platforms:windows_debug
 
 [build]
-execution_platforms = root//buck2_utils/platforms:default
+execution_platforms = root//bz_utils/platforms:default
 
 [buck2_re_client]
 action_cache_address = grpc://localhost:8980

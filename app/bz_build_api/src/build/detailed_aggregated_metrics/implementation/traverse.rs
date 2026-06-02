@@ -10,13 +10,13 @@
 
 use std::sync::Arc;
 
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::internal_error;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_error::internal_error;
+use bz_node::nodes::configured::ConfiguredTargetNode;
 use dupe::Dupe;
 use starlark::values::FrozenValueTyped;
 use starlark::values::OwnedFrozenValueTyped;
@@ -76,7 +76,7 @@ impl Node {
     }
 }
 
-struct Graph<'a>(&'a buck2_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>);
+struct Graph<'a>(&'a bz_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>);
 
 impl<'a> Graph<'a> {
     pub(crate) fn lookup_deferred(
@@ -86,7 +86,7 @@ impl<'a> Graph<'a> {
         self.0.get(holder_key)
     }
 
-    fn lookup_node(&self, key: Key) -> buck2_error::Result<Node> {
+    fn lookup_node(&self, key: Key) -> bz_error::Result<Node> {
         match key {
             Key::Action(action_key) => match self.lookup_deferred(action_key.holder_key()) {
                 Some(v) => match v.lookup_action(&action_key)? {
@@ -102,7 +102,7 @@ impl<'a> Graph<'a> {
         }
     }
 
-    fn lookup_artifact(&self, artifact: &ArtifactGroup) -> buck2_error::Result<Option<Key>> {
+    fn lookup_artifact(&self, artifact: &ArtifactGroup) -> bz_error::Result<Option<Key>> {
         match artifact {
             ArtifactGroup::Artifact(artifact) => {
                 Ok(artifact.action_key().map(|key| Key::Action(key.dupe())))
@@ -130,7 +130,7 @@ impl<'a> Graph<'a> {
         }
     }
 
-    fn visit_deps(&self, node: &Node, mut visit_dep: impl FnMut(Key)) -> buck2_error::Result<()> {
+    fn visit_deps(&self, node: &Node, mut visit_dep: impl FnMut(Key)) -> bz_error::Result<()> {
         match node {
             Node::Action(action) => {
                 for artifact in action.inputs()?.iter() {
@@ -154,7 +154,7 @@ impl<'a> Graph<'a> {
                         },
                     ))
                 }
-                struct Visitor<'a, 'b, F: FnMut(Key)>(F, &'a Graph<'b>, buck2_error::Result<()>);
+                struct Visitor<'a, 'b, F: FnMut(Key)>(F, &'a Graph<'b>, bz_error::Result<()>);
                 impl<'v, F: FnMut(Key)> CommandLineArtifactVisitor<'v> for Visitor<'_, '_, F> {
                     fn visit_input(&mut self, input: ArtifactGroup, _tags: Vec<&ArtifactTag>) {
                         if self.2.is_err() {
@@ -202,8 +202,8 @@ impl<'a> Graph<'a> {
     fn traverse(
         &self,
         roots: impl IntoIterator<Item = Key>,
-        mut visit: impl FnMut(&Self, &Node, &mut TraversalState) -> buck2_error::Result<()>,
-    ) -> buck2_error::Result<bool> {
+        mut visit: impl FnMut(&Self, &Node, &mut TraversalState) -> bz_error::Result<()>,
+    ) -> bz_error::Result<bool> {
         let mut state = TraversalState::new();
         let mut complete = true;
 
@@ -223,7 +223,7 @@ impl<'a> Graph<'a> {
     fn root_keys<'b>(
         &self,
         root_artifacts: impl IntoIterator<Item = &'b ArtifactGroup>,
-    ) -> buck2_error::Result<Vec<Key>> {
+    ) -> bz_error::Result<Vec<Key>> {
         root_artifacts
             .into_iter()
             .filter_map(|a| self.lookup_artifact(a).transpose())
@@ -232,14 +232,14 @@ impl<'a> Graph<'a> {
 }
 
 struct TraversalState {
-    visited: buck2_hash::BuckHashSet<Key>,
+    visited: bz_hash::BuckHashSet<Key>,
     queue: Vec<Key>,
 }
 
 impl TraversalState {
     fn new() -> Self {
         Self {
-            visited: buck2_hash::BuckHashSet::default(),
+            visited: bz_hash::BuckHashSet::default(),
             queue: Vec::new(),
         }
     }
@@ -258,9 +258,9 @@ impl TraversalState {
 
 pub fn traverse_partial_action_graph<'a>(
     root_artifacts: impl IntoIterator<Item = &'a ArtifactGroup>,
-    state: &buck2_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>,
-) -> buck2_error::Result<(bool, buck2_hash::BuckHashSet<ActionKey>)> {
-    let mut actions = buck2_hash::BuckHashSet::default();
+    state: &bz_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>,
+) -> bz_error::Result<(bool, bz_hash::BuckHashSet<ActionKey>)> {
+    let mut actions = bz_hash::BuckHashSet::default();
 
     let graph = Graph(state);
     let roots = graph.root_keys(root_artifacts)?;
@@ -282,7 +282,7 @@ pub fn traverse_target_graph(
     root: &ConfiguredTargetNode,
     mut visitor: impl FnMut(&ConfiguredTargetLabel),
 ) {
-    let mut visited = buck2_hash::BuckHashSet::default();
+    let mut visited = bz_hash::BuckHashSet::default();
     let mut queue = Vec::new();
     visited.insert(root.label());
     queue.push(root);

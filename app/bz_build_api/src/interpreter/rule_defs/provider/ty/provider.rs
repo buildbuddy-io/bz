@@ -29,7 +29,7 @@ pub(crate) fn ty_provider(
     matcher: Option<TypeMatcherFactory>,
     fields: SortedMap<String, Ty>,
     unknown_fields: bool,
-) -> buck2_error::Result<Ty> {
+) -> bz_error::Result<Ty> {
     Ok(Ty::custom(TyUser::new(
         name.to_owned(),
         base,

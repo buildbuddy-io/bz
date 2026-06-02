@@ -10,13 +10,13 @@
 
 use std::fmt::Debug;
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_common::argv::Argv;
-use buck2_common::argv::SanitizedArgv;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_common::argv::Argv;
+use bz_common::argv::SanitizedArgv;
 use dupe::Dupe;
 
 mod critical_path;

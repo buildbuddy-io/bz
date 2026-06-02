@@ -11,10 +11,10 @@
 use std::fmt::Display;
 
 use allocative::Allocative;
-use buck2_core::plugins::PluginKindSet;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersLabelMaybeConfigured;
+use bz_core::plugins::PluginKindSet;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersLabelMaybeConfigured;
 use dupe::Dupe;
 use pagable::Pagable;
 use static_assertions::assert_eq_size;
@@ -74,7 +74,7 @@ impl DepAttr<ConfiguredProvidersLabel> {
     pub(crate) fn traverse(
         &self,
         traversal: &mut dyn ConfiguredAttrTraversal,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match &self.attr_type.transition {
             DepAttrTransition::Identity(plugins) if plugins.is_empty() => {
                 traversal.dep(&self.label)
@@ -93,7 +93,7 @@ impl DepAttr<ProvidersLabel> {
         label: &'a ProvidersLabel,
         attr_type: &DepAttrType,
         traversal: &mut dyn CoercedAttrTraversal<'a>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match &attr_type.transition {
             DepAttrTransition::Identity(..) => traversal.dep(label),
             DepAttrTransition::Exec => traversal.exec_dep(label),
@@ -114,7 +114,7 @@ impl DepAttrType {
         &self,
         label: &ProvidersLabel,
         ctx: &dyn AttrConfigurationContext,
-    ) -> buck2_error::Result<ConfiguredAttr> {
+    ) -> bz_error::Result<ConfiguredAttr> {
         let configured_label = match &self.transition {
             DepAttrTransition::Identity(..) => ctx.configure_target(label),
             DepAttrTransition::Exec => ctx.configure_exec_target(label)?,

@@ -11,7 +11,7 @@
 use crate::configuration::bound_label::BoundConfigurationLabel;
 use crate::configuration::hash::ConfigurationHash;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum BoundConfigurationIdError {
     #[error("Bound configuration id must contain a hash, got: `{0}`")]
@@ -26,7 +26,7 @@ pub struct BoundConfigurationId {
 }
 
 impl BoundConfigurationId {
-    pub fn parse(id: &str) -> buck2_error::Result<BoundConfigurationId> {
+    pub fn parse(id: &str) -> bz_error::Result<BoundConfigurationId> {
         let (label, hash) = id
             .split_once('#')
             .ok_or_else(|| BoundConfigurationIdError::MissingHash(id.to_owned()))?;

@@ -13,15 +13,15 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_execute::execute::cache_uploader::UploadCache;
-use buck2_execute::execute::prepared::PreparedCommandExecutor;
-use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
-use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
-use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_execute::execute::cache_uploader::UploadCache;
+use bz_execute::execute::prepared::PreparedCommandExecutor;
+use bz_execute::execute::prepared::PreparedCommandOptionalExecutor;
+use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
+use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
 use dice::DiceComputations;
 use dice::DiceData;
 use dice::DiceDataBuilder;
@@ -50,7 +50,7 @@ pub trait HasCommandExecutor {
         &self,
         artifact_fs: &ArtifactFs,
         config: &CommandExecutorConfig,
-    ) -> buck2_error::Result<CommandExecutorResponse>;
+    ) -> bz_error::Result<CommandExecutorResponse>;
 }
 
 impl SetCommandExecutor for UserComputationData {
@@ -67,7 +67,7 @@ pub trait DiceHasCommandExecutor {
     async fn get_command_executor_from_dice(
         &mut self,
         config: &CommandExecutorConfig,
-    ) -> buck2_error::Result<CommandExecutorResponse>;
+    ) -> bz_error::Result<CommandExecutorResponse>;
 }
 
 #[async_trait]
@@ -75,13 +75,13 @@ impl DiceHasCommandExecutor for DiceComputations<'_> {
     async fn get_command_executor_from_dice(
         &mut self,
         config: &CommandExecutorConfig,
-    ) -> buck2_error::Result<CommandExecutorResponse> {
+    ) -> bz_error::Result<CommandExecutorResponse> {
         let artifact_fs = self.get_artifact_fs().await?;
         let holder = self
             .per_transaction_data()
             .data
             .get::<HasCommandExecutorHolder>()
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
             .buck_error_context("CommandExecutorDelegate should be set")?;
         holder
             .delegate

@@ -51,7 +51,7 @@ impl BazelAttributeSpec {
     fn from_entries<'v>(
         attrs: Option<UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>>,
         allow_name: bool,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let attrs = attrs.unwrap_or_default();
         let attributes = attrs
             .entries
@@ -67,7 +67,7 @@ impl BazelAttributeSpec {
                     Ok((name.to_owned(), value.clone_attribute()))
                 }
             })
-            .collect::<buck2_error::Result<SmallMap<_, _>>>()?;
+            .collect::<bz_error::Result<SmallMap<_, _>>>()?;
         Ok(Self { attributes })
     }
 
@@ -129,7 +129,7 @@ impl<'v> StarlarkRepositoryRule<'v> {
         environ: UnpackListOrTuple<String>,
         doc: NoneOr<&str>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let attributes = BazelAttributeSpec::from_entries(attrs, false)?;
         let ty = Ty::function(ParamSpec::kwargs(Ty::any()), Ty::none());
         Ok(Self {
@@ -192,7 +192,7 @@ impl<'v> StarlarkValue<'v> for StarlarkRepositoryRule<'v> {
         let id = self.id.borrow();
         let Some(id) = id.as_ref() else {
             return Err(
-                buck2_error::Error::from(BazelRepositoryError::RepositoryRuleNotExported).into(),
+                bz_error::Error::from(BazelRepositoryError::RepositoryRuleNotExported).into(),
             );
         };
         record_repository_rule_invocation(id, args, eval)
@@ -286,7 +286,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryRule {
     ) -> starlark::Result<Value<'v>> {
         let Some(id) = &self.id else {
             return Err(
-                buck2_error::Error::from(BazelRepositoryError::RepositoryRuleNotExported).into(),
+                bz_error::Error::from(BazelRepositoryError::RepositoryRuleNotExported).into(),
             );
         };
         record_repository_rule_invocation(id, args, eval)
@@ -317,7 +317,7 @@ impl<'v> StarlarkTagClass {
     pub(super) fn new(
         attrs: Option<UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>>,
         doc: NoneOr<&str>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(Self {
             attributes: BazelAttributeSpec::from_entries(attrs, true)?,
             docs: doc_string(doc),
@@ -405,7 +405,7 @@ impl<'v> StarlarkModuleExtension<'v> {
         os_dependent: bool,
         arch_dependent: bool,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         for (name, value) in &tag_classes {
             if ValueTypedComplex::<StarlarkTagClass>::new(*value).is_none() {
                 return Err(BazelRepositoryError::InvalidTagClass(
@@ -436,7 +436,7 @@ impl<'v> StarlarkModuleExtension<'v> {
         let id = self.id.borrow();
         let Some(id) = id.as_ref() else {
             return Err(
-                buck2_error::Error::from(BazelRepositoryError::ModuleExtensionNotExported).into(),
+                bz_error::Error::from(BazelRepositoryError::ModuleExtensionNotExported).into(),
             );
         };
         let result = eval.eval_function(self.implementation.0, &[module_ctx], &[])?;
@@ -524,7 +524,7 @@ impl Display for FrozenStarlarkModuleExtension {
 
 impl FrozenStarlarkModuleExtension {
     #[allow(dead_code)]
-    pub(crate) fn id(&self) -> buck2_error::Result<&StarlarkRuleType> {
+    pub(crate) fn id(&self) -> bz_error::Result<&StarlarkRuleType> {
         self.id
             .as_deref()
             .ok_or_else(|| BazelRepositoryError::ModuleExtensionNotExported.into())
@@ -1185,8 +1185,8 @@ pub(super) fn bazel_module_tag_dev_dependency<'v>(tag: Value<'v>) -> starlark::R
     if let Some(tag) = tag.downcast_ref::<FrozenStarlarkBazelModuleTag>() {
         return Ok(tag.dev_dependency);
     }
-    Err(buck2_error::buck2_error!(
-        buck2_error::ErrorTag::Input,
+    Err(bz_error::bz_error!(
+        bz_error::ErrorTag::Input,
         "expected module extension tag, got `{}`",
         tag.get_type()
     )
@@ -1200,8 +1200,8 @@ pub(super) fn bazel_module_tag_sort_key<'v>(tag: Value<'v>) -> starlark::Result<
     if let Some(tag) = tag.downcast_ref::<FrozenStarlarkBazelModuleTag>() {
         return Ok(tag.sort_key);
     }
-    Err(buck2_error::buck2_error!(
-        buck2_error::ErrorTag::Input,
+    Err(bz_error::bz_error!(
+        bz_error::ErrorTag::Input,
         "expected module extension tag, got `{}`",
         tag.get_type()
     )

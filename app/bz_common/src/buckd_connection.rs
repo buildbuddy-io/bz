@@ -12,12 +12,12 @@ use std::fmt::Display;
 use std::path::Path;
 use std::path::PathBuf;
 
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
 
 pub const BUCK_AUTH_TOKEN_HEADER: &str = "x-buck-auth-token";
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum ConnectionTypeError {
     #[error("Failed to parse correct endpoint information {0}")]
@@ -42,7 +42,7 @@ impl Display for ConnectionType {
 }
 
 impl ConnectionType {
-    pub fn parse(endpoint: &str) -> buck2_error::Result<ConnectionType> {
+    pub fn parse(endpoint: &str) -> bz_error::Result<ConnectionType> {
         let (protocol, endpoint) = endpoint.split_once(":").ok_or_else(|| {
             internal_error!("endpoint `{endpoint}` is not in the format `protocol:endpoint`")
         })?;

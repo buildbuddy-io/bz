@@ -11,28 +11,28 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::sqlite::sqlite_db::SqliteIdentity;
-use buck2_core::rollout_percentage::RolloutPercentage;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::daemon_id::DaemonId;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute_impl::materializers::deferred::DeferredMaterializerConfigs;
-use buck2_execute_impl::sqlite::incremental_state_db::INCREMENTAL_DB_SCHEMA_VERSION;
-use buck2_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
-use buck2_execute_impl::sqlite::incremental_state_db::IncrementalStateSqliteDb;
-use buck2_execute_impl::sqlite::materializer_db::MATERIALIZER_DB_SCHEMA_VERSION;
-use buck2_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDb;
-use buck2_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDbDeferredLoad;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::file_name::FileName;
-use buck2_hash::StdBuckHashMap;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::sqlite::sqlite_db::SqliteIdentity;
+use bz_core::rollout_percentage::RolloutPercentage;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::daemon_id::DaemonId;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute_impl::materializers::deferred::DeferredMaterializerConfigs;
+use bz_execute_impl::sqlite::incremental_state_db::INCREMENTAL_DB_SCHEMA_VERSION;
+use bz_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
+use bz_execute_impl::sqlite::incremental_state_db::IncrementalStateSqliteDb;
+use bz_execute_impl::sqlite::materializer_db::MATERIALIZER_DB_SCHEMA_VERSION;
+use bz_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDb;
+use bz_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDbDeferredLoad;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::file_name::FileName;
+use bz_hash::StdBuckHashMap;
 
 use crate::daemon::server::BuckdServerInitPreferences;
 
@@ -43,7 +43,7 @@ pub struct DiskStateOptions {
 }
 
 impl DiskStateOptions {
-    pub fn new(root_config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+    pub fn new(root_config: &LegacyBuckConfig) -> bz_error::Result<Self> {
         let sqlite_materializer_state = root_config
             .parse::<RolloutPercentage>(BuckconfigKeyRef {
                 section: "buck2",
@@ -63,11 +63,11 @@ fn sqlite_db_setup_metadata_and_versions(
     version_config: &str,
     deferred_materializer_config: Option<&DeferredMaterializerConfigs>,
     daemon_id: &DaemonId,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     StdBuckHashMap<String, String>,
     StdBuckHashMap<String, String>,
 )> {
-    let metadata = buck2_events::metadata::collect(daemon_id);
+    let metadata = bz_events::metadata::collect(daemon_id);
 
     let mut versions = StdBuckHashMap::from([("schema_version".to_owned(), schema_version)]);
 
@@ -100,7 +100,7 @@ pub(crate) async fn maybe_initialize_materializer_sqlite_db(
     digest_config: DigestConfig,
     init_ctx: &BuckdServerInitPreferences,
     daemon_id: &DaemonId,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     Option<MaterializerStateSqliteDbDeferredLoad>,
     Option<SqliteIdentity>,
 )> {
@@ -111,7 +111,7 @@ pub(crate) async fn maybe_initialize_materializer_sqlite_db(
             .execute_io_inline(|| {
                 fs_util::remove_all(paths.materializer_state_path())
                     .categorize_internal()
-                    .map_err(buck2_error::Error::from)
+                    .map_err(bz_error::Error::from)
             })
             .await?;
         return Ok((None, None));
@@ -145,7 +145,7 @@ pub(crate) async fn maybe_initialize_incremental_sqlite_db(
     io_executor: Arc<dyn BlockingExecutor>,
     root_config: &LegacyBuckConfig,
     daemon_id: &DaemonId,
-) -> buck2_error::Result<IncrementalDbState> {
+) -> bz_error::Result<IncrementalDbState> {
     // Rolling it out by default, but giving an option to disable in case something goes horribly wrong
     if !root_config
         .parse(BuckconfigKeyRef {
@@ -160,7 +160,7 @@ pub(crate) async fn maybe_initialize_incremental_sqlite_db(
             .execute_io_inline(|| {
                 fs_util::remove_all(paths.incremental_state_path())
                     .categorize_internal()
-                    .map_err(buck2_error::Error::from)
+                    .map_err(bz_error::Error::from)
             })
             .await?;
         return Ok(IncrementalDbState::db_disabled());
@@ -207,11 +207,11 @@ pub(crate) async fn maybe_initialize_incremental_sqlite_db(
 pub(crate) fn delete_unknown_disk_state(
     cache_dir_path: &AbsNormPath,
     known_dir_names: &[&FileName],
-) -> buck2_error::Result<()> {
-    let res: buck2_error::Result<()> = try {
+) -> bz_error::Result<()> {
+    let res: bz_error::Result<()> = try {
         if cache_dir_path.exists() {
             for entry in fs_util::read_dir(cache_dir_path).categorize_internal()? {
-                let entry = entry.map_err(buck2_error::Error::from)?;
+                let entry = entry.map_err(bz_error::Error::from)?;
                 let filename = entry.file_name();
                 let filename = filename
                     .to_str()
@@ -236,10 +236,10 @@ pub(crate) fn delete_unknown_disk_state(
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_fs::fs_util::uncategorized as fs_util;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 
     use super::*;
 

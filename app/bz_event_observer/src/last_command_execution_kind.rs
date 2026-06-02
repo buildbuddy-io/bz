@@ -21,9 +21,9 @@ pub enum LastCommandExecutionKind {
 /// It tells the execution kind of the commands that actually produced a result
 /// or an error, but not the commands that fell back and were retried.
 pub fn get_last_command_execution_kind(
-    action: &buck2_data::ActionExecutionEnd,
+    action: &bz_data::ActionExecutionEnd,
 ) -> LastCommandExecutionKind {
-    if action.execution_kind() == buck2_data::ActionExecutionKind::LocalActionCache {
+    if action.execution_kind() == bz_data::ActionExecutionKind::LocalActionCache {
         return LastCommandExecutionKind::Cached;
     }
 
@@ -34,7 +34,7 @@ pub fn get_last_command_execution_kind(
         .and_then(|c| c.command_kind.as_ref());
 
     if let Some(command_kind) = last_command_kind {
-        use buck2_data::command_execution_kind::Command;
+        use bz_data::command_execution_kind::Command;
         match command_kind.command.as_ref() {
             Some(Command::LocalCommand(..)) | Some(Command::OmittedLocalCommand(..)) => {
                 LastCommandExecutionKind::Local
@@ -42,21 +42,21 @@ pub fn get_last_command_execution_kind(
             Some(Command::WorkerCommand(_)) | Some(Command::WorkerInitCommand(_)) => {
                 LastCommandExecutionKind::LocalWorker
             }
-            Some(Command::RemoteCommand(buck2_data::RemoteCommand {
+            Some(Command::RemoteCommand(bz_data::RemoteCommand {
                 cache_hit: true,
                 cache_hit_type,
                 ..
             })) => {
-                match buck2_data::CacheHitType::try_from(*cache_hit_type).unwrap() {
+                match bz_data::CacheHitType::try_from(*cache_hit_type).unwrap() {
                     // ActionCache is 0, so this should be backwards compatible
-                    buck2_data::CacheHitType::ActionCache => LastCommandExecutionKind::Cached,
-                    buck2_data::CacheHitType::RemoteDepFileCache => {
+                    bz_data::CacheHitType::ActionCache => LastCommandExecutionKind::Cached,
+                    bz_data::CacheHitType::RemoteDepFileCache => {
                         LastCommandExecutionKind::RemoteDepFileCached
                     }
-                    buck2_data::CacheHitType::Executed => LastCommandExecutionKind::Remote,
+                    bz_data::CacheHitType::Executed => LastCommandExecutionKind::Remote,
                 }
             }
-            Some(Command::RemoteCommand(buck2_data::RemoteCommand {
+            Some(Command::RemoteCommand(bz_data::RemoteCommand {
                 cache_hit: false, ..
             })) => LastCommandExecutionKind::Remote,
             None => LastCommandExecutionKind::NoCommand,
@@ -71,7 +71,7 @@ pub struct ExecTime {
     pub(crate) cached_exec_time_ms: u64,
 }
 
-pub fn get_last_command_execution_time(action: &buck2_data::ActionExecutionEnd) -> ExecTime {
+pub fn get_last_command_execution_time(action: &bz_data::ActionExecutionEnd) -> ExecTime {
     let exec_time_ms = action
         .commands
         .last()

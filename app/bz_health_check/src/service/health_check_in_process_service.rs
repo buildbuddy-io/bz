@@ -10,7 +10,7 @@
 
 #![allow(dead_code)] // Presently used only in oss
 
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 
 use crate::interface::HealthCheckContextEvent;
 use crate::interface::HealthCheckService;
@@ -27,14 +27,14 @@ impl HealthCheckInProcessService {
 
 #[async_trait::async_trait]
 impl HealthCheckService for HealthCheckInProcessService {
-    async fn update_context(&mut self, _event: HealthCheckContextEvent) -> buck2_error::Result<()> {
+    async fn update_context(&mut self, _event: HealthCheckContextEvent) -> bz_error::Result<()> {
         Ok(())
     }
 
     async fn run_checks(
         &mut self,
         _snapshot: HealthCheckSnapshotData,
-    ) -> buck2_error::Result<Vec<Report>> {
+    ) -> bz_error::Result<Vec<Report>> {
         Ok(Vec::new())
     }
 }

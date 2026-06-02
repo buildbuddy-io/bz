@@ -8,25 +8,25 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
-use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_node::attrs::attr_type::configured_dep::ConfiguredExplicitConfiguredDep;
-use buck2_node::attrs::attr_type::configured_dep::ExplicitConfiguredDepAttrType;
-use buck2_node::attrs::attr_type::dep::DepAttr;
-use buck2_node::attrs::attr_type::dep::DepAttrTransition;
-use buck2_node::attrs::attr_type::dep::DepAttrType;
-use buck2_node::attrs::attr_type::transition_dep::ConfiguredTransitionDep;
-use buck2_node::attrs::attr_type::transition_dep::TransitionDepAttrType;
-use buck2_node::provider_id_set::ProviderIdSet;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+use bz_build_api::interpreter::rule_defs::provider::dependency::Dependency;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_node::attrs::attr_type::configured_dep::ConfiguredExplicitConfiguredDep;
+use bz_node::attrs::attr_type::configured_dep::ExplicitConfiguredDepAttrType;
+use bz_node::attrs::attr_type::dep::DepAttr;
+use bz_node::attrs::attr_type::dep::DepAttrTransition;
+use bz_node::attrs::attr_type::dep::DepAttrType;
+use bz_node::attrs::attr_type::transition_dep::ConfiguredTransitionDep;
+use bz_node::attrs::attr_type::transition_dep::TransitionDepAttrType;
+use bz_node::provider_id_set::ProviderIdSet;
 use starlark::environment::Module;
 use starlark::values::FrozenValueTyped;
 use starlark::values::Value;
 
 use crate::attrs::resolve::ctx::AttrResolutionContext;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum ResolutionError {
     #[error(
@@ -56,7 +56,7 @@ pub trait DepAttrTypeExt {
         required_providers: &ProviderIdSet,
         providers: &FrozenProviderCollection,
         target: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     fn alloc_dependency<'v>(
         env: &Module<'v>,
@@ -70,12 +70,12 @@ pub trait DepAttrTypeExt {
         target: &ConfiguredProvidersLabel,
         required_providers: &ProviderIdSet,
         is_exec: bool,
-    ) -> buck2_error::Result<Value<'v>>;
+    ) -> bz_error::Result<Value<'v>>;
 
     fn resolve_single<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         dep_attr: &DepAttr<ConfiguredProvidersLabel>,
-    ) -> buck2_error::Result<Value<'v>>;
+    ) -> bz_error::Result<Value<'v>>;
 }
 
 impl DepAttrTypeExt for DepAttrType {
@@ -83,7 +83,7 @@ impl DepAttrTypeExt for DepAttrType {
         required_providers: &ProviderIdSet,
         providers: &FrozenProviderCollection,
         target: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if required_providers.is_empty()
             || required_providers
                 .provider_groups()
@@ -119,7 +119,7 @@ impl DepAttrTypeExt for DepAttrType {
         target: &ConfiguredProvidersLabel,
         required_providers: &ProviderIdSet,
         is_exec_dep: bool,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         let provider_collection = ctx.get_dep(target)?;
         Self::check_providers(required_providers, provider_collection.as_ref(), target)?;
         let execution_platform_resolution = if is_exec_dep {
@@ -139,7 +139,7 @@ impl DepAttrTypeExt for DepAttrType {
     fn resolve_single<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         dep_attr: &DepAttr<ConfiguredProvidersLabel>,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         let is_exec = dep_attr.attr_type.transition == DepAttrTransition::Exec;
         Self::resolve_single_impl(
             ctx,
@@ -154,7 +154,7 @@ pub(crate) trait ExplicitConfiguredDepAttrTypeExt {
     fn resolve_single<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         dep_attr: &ConfiguredExplicitConfiguredDep,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         DepAttrType::resolve_single_impl(
             ctx,
             &dep_attr.label,
@@ -170,7 +170,7 @@ pub(crate) trait TransitionDepAttrTypeExt {
     fn resolve_single<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         dep_attr: &ConfiguredTransitionDep,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         DepAttrType::resolve_single_impl(ctx, &dep_attr.dep, &dep_attr.required_providers, false)
     }
 }

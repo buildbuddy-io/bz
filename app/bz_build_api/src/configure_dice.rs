@@ -10,15 +10,15 @@
 
 use std::sync::Arc;
 
-use buck2_common::dice::cells::SetCellResolver;
-use buck2_common::dice::data::SetIoProvider;
-use buck2_common::io::IoProvider;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::dice::SetLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::rollout_percentage::RolloutPercentage;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::digest_config::SetDigestConfig;
+use bz_common::dice::cells::SetCellResolver;
+use bz_common::dice::data::SetIoProvider;
+use bz_common::io::IoProvider;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::dice::SetLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_core::rollout_percentage::RolloutPercentage;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::SetDigestConfig;
 use dice::DetectCycles;
 use dice::Dice;
 use dice::DiceStorage;
@@ -34,7 +34,7 @@ pub async fn configure_dice_for_buck(
     digest_config: DigestConfig,
     root_config: Option<&LegacyBuckConfig>,
     detect_cycles: Option<DetectCycles>,
-) -> buck2_error::Result<Arc<Dice>> {
+) -> bz_error::Result<Arc<Dice>> {
     let detect_cycles = detect_cycles.map_or_else(
         || {
             root_config
@@ -73,7 +73,7 @@ pub async fn configure_dice_for_buck(
     // `buck2 debug hydration page-out`) can serialize node values to disk.
     if let Ok(path) = std::env::var("BUCK2_DICE_DB_PATH") {
         let storage = DiceStorage::open(std::path::Path::new(&path)).map_err(|e| {
-            buck2_error::conversion::from_any_with_tag(e, buck2_error::ErrorTag::Environment)
+            bz_error::conversion::from_any_with_tag(e, bz_error::ErrorTag::Environment)
         })?;
         dice.set_pagable_storage(storage);
     }

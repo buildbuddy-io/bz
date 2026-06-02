@@ -9,9 +9,9 @@
  */
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::file_name::FileName;
-use buck2_util::arc_str::ArcS;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::file_name::FileName;
+use bz_util::arc_str::ArcS;
 use dupe::Dupe;
 
 /// The unique identifier for this action within dynamic actions.
@@ -31,7 +31,7 @@ pub struct DynamicActionsActionKey {
 }
 
 impl DynamicActionsActionKey {
-    pub(crate) fn new(key: &str) -> buck2_error::Result<DynamicActionsActionKey> {
+    pub(crate) fn new(key: &str) -> bz_error::Result<DynamicActionsActionKey> {
         Ok(DynamicActionsActionKey {
             key: ArcS::try_from(key).internal_error("Action key must be a valid file name")?,
         })

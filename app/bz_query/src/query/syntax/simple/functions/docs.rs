@@ -11,7 +11,7 @@
 use std::borrow::Cow;
 use std::fmt::Write;
 
-use buck2_hash::BuckIndexMap;
+use bz_hash::BuckIndexMap;
 use itertools::Itertools;
 
 use crate::query::syntax::simple::functions::helpers::QueryArgType;

@@ -12,18 +12,18 @@ use std::fmt::Display;
 use std::fmt::Formatter;
 use std::io::Write;
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ClientIoError;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_data::ReUploadMetrics;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_event_observer::display;
-use buck2_event_observer::display::TargetDisplayOptions;
-use buck2_hash::StdBuckHashMap;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ClientIoError;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_data::ReUploadMetrics;
+use bz_event_log::stream_value::StreamValue;
+use bz_event_observer::display;
+use bz_event_observer::display::TargetDisplayOptions;
+use bz_hash::StdBuckHashMap;
 use tokio_stream::StreamExt;
 
 use crate::LogCommandOutputFormat;
@@ -79,7 +79,7 @@ impl Display for ExtensionRecord {
 }
 
 fn get_action_record(
-    state: &StdBuckHashMap<u64, buck2_data::ActionExecutionStart>,
+    state: &StdBuckHashMap<u64, bz_data::ActionExecutionStart>,
     upload: &ReUploadEvent,
 ) -> ActionRecord {
     let digests_uploaded = upload.inner.digests_uploaded.unwrap_or_default();
@@ -149,7 +149,7 @@ fn print_extension_stats(
 
 struct ReUploadEvent<'a> {
     pub parent_span_id: u64,
-    pub inner: &'a buck2_data::ReUploadEnd,
+    pub inner: &'a bz_data::ReUploadEnd,
 }
 
 impl BuckSubcommand for WhatUploadedCommand {
@@ -167,12 +167,12 @@ impl BuckSubcommand for WhatUploadedCommand {
             aggregate_by_extension,
         } = self;
 
-        buck2_client_ctx::stdio::print_with_writer::<buck2_error::Error, _>(async move |w| {
+        bz_client_ctx::stdio::print_with_writer::<bz_error::Error, _>(async move |w| {
             let mut output = transform_format(output, w);
             let log_path = event_log.get(&ctx).await?;
 
             let (invocation, mut events) = log_path.unpack_stream().await?;
-            buck2_client_ctx::eprintln!(
+            bz_client_ctx::eprintln!(
                 "Showing uploads from: {}",
                 invocation.display_command_line()
             )?;
@@ -185,16 +185,16 @@ impl BuckSubcommand for WhatUploadedCommand {
                 match event {
                     // Insert parent span information so we can refer back to it later.
                     StreamValue::Event(event) => {
-                        if let Some(buck2_data::buck_event::Data::SpanStart(start)) = &event.data
-                            && let Some(buck2_data::span_start_event::Data::ActionExecution(
+                        if let Some(bz_data::buck_event::Data::SpanStart(start)) = &event.data
+                            && let Some(bz_data::span_start_event::Data::ActionExecution(
                                 action,
                             )) = &start.data
                         {
                             state.insert(event.span_id, action.clone());
                         }
 
-                        if let Some(buck2_data::buck_event::Data::SpanEnd(end)) = &event.data
-                            && let Some(buck2_data::span_end_event::Data::ReUpload(u)) =
+                        if let Some(bz_data::buck_event::Data::SpanEnd(end)) = &event.data
+                            && let Some(bz_data::span_end_event::Data::ReUpload(u)) =
                                 end.data.as_ref()
                         {
                             let upload = ReUploadEvent {
@@ -223,7 +223,7 @@ impl BuckSubcommand for WhatUploadedCommand {
             if aggregate_by_extension {
                 print_extension_stats(&mut output, &stats_by_extension)?;
             } else {
-                buck2_client_ctx::eprintln!(
+                bz_client_ctx::eprintln!(
                     "total: digests: {}, bytes: {}",
                     total_digests_uploaded,
                     total_bytes_uploaded

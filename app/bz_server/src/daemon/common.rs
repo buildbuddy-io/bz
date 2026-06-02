@@ -12,61 +12,61 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use async_trait::async_trait;
-use buck2_build_api::actions::execute::dice_data::CommandExecutorResponse;
-use buck2_build_api::actions::execute::dice_data::HasCommandExecutor;
-use buck2_cli_proto::client_context::HostPlatformOverride;
-use buck2_cli_proto::common_build_options::ExecutionStrategy;
-use buck2_common::init::RemoteExecutionStartupConfig;
-use buck2_core::buck2_env;
-use buck2_core::execution_types::executor_config::CacheUploadBehavior;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::execution_types::executor_config::CommandGenerationOptions;
-use buck2_core::execution_types::executor_config::Executor;
-use buck2_core::execution_types::executor_config::HybridExecutionLevel;
-use buck2_core::execution_types::executor_config::LocalExecutorOptions;
-use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::execution_types::executor_config::ReGangWorker;
-use buck2_core::execution_types::executor_config::RePlatformFields;
-use buck2_core::execution_types::executor_config::RemoteEnabledExecutor;
-use buck2_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
-use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
-use buck2_core::execution_types::executor_config::RemoteExecutorOptions;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_events::daemon_id::DaemonId;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::execute::cache_uploader::NoOpCacheUploader;
-use buck2_execute::execute::cache_uploader::force_cache_upload;
-use buck2_execute::execute::prepared::NoOpCommandOptionalExecutor;
-use buck2_execute::execute::prepared::PreparedCommandExecutor;
-use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::knobs::ExecutorGlobalKnobs;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::re::manager::ManagedRemoteExecutionClient;
-use buck2_execute::re::manager::ReConnectionHandle;
-use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
-use buck2_execute_impl::executors::action_cache::ActionCacheChecker;
-use buck2_execute_impl::executors::action_cache::RemoteDepFileCacheChecker;
-use buck2_execute_impl::executors::action_cache_upload_permission_checker::ActionCacheUploadPermissionChecker;
-use buck2_execute_impl::executors::caching::CacheUploader;
-use buck2_execute_impl::executors::hybrid::FallbackTracker;
-use buck2_execute_impl::executors::hybrid::HybridExecutor;
-use buck2_execute_impl::executors::local::ForkserverAccess;
-use buck2_execute_impl::executors::local::LocalExecutor;
-use buck2_execute_impl::executors::local::LocalExecutorSharedState;
-use buck2_execute_impl::executors::local_action_cache::ChainedCommandOptionalExecutor;
-use buck2_execute_impl::executors::local_action_cache::LocalActionCache;
-use buck2_execute_impl::executors::re::ReExecutor;
-use buck2_execute_impl::executors::stacked::StackedExecutor;
-use buck2_execute_impl::executors::to_re_platform::RePlatformFieldsToRePlatform;
-use buck2_execute_impl::executors::worker::WorkerPool;
-use buck2_execute_impl::low_pass_filter::LowPassFilter;
-use buck2_execute_impl::re::paranoid_download::ParanoidDownloader;
-use buck2_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
-use buck2_resource_control::memory_tracker::MemoryTrackerHandle;
+use bz_build_api::actions::execute::dice_data::CommandExecutorResponse;
+use bz_build_api::actions::execute::dice_data::HasCommandExecutor;
+use bz_cli_proto::client_context::HostPlatformOverride;
+use bz_cli_proto::common_build_options::ExecutionStrategy;
+use bz_common::init::RemoteExecutionStartupConfig;
+use bz_core::bz_env;
+use bz_core::execution_types::executor_config::CacheUploadBehavior;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::execution_types::executor_config::CommandGenerationOptions;
+use bz_core::execution_types::executor_config::Executor;
+use bz_core::execution_types::executor_config::HybridExecutionLevel;
+use bz_core::execution_types::executor_config::LocalExecutorOptions;
+use bz_core::execution_types::executor_config::MetaInternalExtraParams;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RePlatformFields;
+use bz_core::execution_types::executor_config::RemoteEnabledExecutor;
+use bz_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
+use bz_core::execution_types::executor_config::RemoteExecutorDependency;
+use bz_core::execution_types::executor_config::RemoteExecutorOptions;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project::ProjectRoot;
+use bz_events::daemon_id::DaemonId;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute::execute::cache_uploader::NoOpCacheUploader;
+use bz_execute::execute::cache_uploader::force_cache_upload;
+use bz_execute::execute::prepared::NoOpCommandOptionalExecutor;
+use bz_execute::execute::prepared::PreparedCommandExecutor;
+use bz_execute::execute::prepared::PreparedCommandOptionalExecutor;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::knobs::ExecutorGlobalKnobs;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::re::manager::ManagedRemoteExecutionClient;
+use bz_execute::re::manager::ReConnectionHandle;
+use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+use bz_execute_impl::executors::action_cache::ActionCacheChecker;
+use bz_execute_impl::executors::action_cache::RemoteDepFileCacheChecker;
+use bz_execute_impl::executors::action_cache_upload_permission_checker::ActionCacheUploadPermissionChecker;
+use bz_execute_impl::executors::caching::CacheUploader;
+use bz_execute_impl::executors::hybrid::FallbackTracker;
+use bz_execute_impl::executors::hybrid::HybridExecutor;
+use bz_execute_impl::executors::local::ForkserverAccess;
+use bz_execute_impl::executors::local::LocalExecutor;
+use bz_execute_impl::executors::local::LocalExecutorSharedState;
+use bz_execute_impl::executors::local_action_cache::ChainedCommandOptionalExecutor;
+use bz_execute_impl::executors::local_action_cache::LocalActionCache;
+use bz_execute_impl::executors::re::ReExecutor;
+use bz_execute_impl::executors::stacked::StackedExecutor;
+use bz_execute_impl::executors::to_re_platform::RePlatformFieldsToRePlatform;
+use bz_execute_impl::executors::worker::WorkerPool;
+use bz_execute_impl::low_pass_filter::LowPassFilter;
+use bz_execute_impl::re::paranoid_download::ParanoidDownloader;
+use bz_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
+use bz_resource_control::memory_tracker::MemoryTrackerHandle;
 use dupe::Dupe;
 use host_sharing::HostSharingBroker;
 use tokio::sync::Semaphore;
@@ -323,7 +323,7 @@ fn local_remote_enabled_executor_options_for_bazel_overrides(
             .remote_default_exec_properties
             .clone()
             .unwrap_or_default(),
-        re_use_case: RemoteExecutorUseCase::buck2_default(),
+        re_use_case: RemoteExecutorUseCase::bz_default(),
         re_action_key: None,
         cache_upload_behavior: cache_upload_behavior_for_bazel_remote_cache(
             overrides,
@@ -397,7 +397,7 @@ fn executor_config_with_bazel_remote_endpoint_overrides(
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum ExecutorCompatibilityError {
     #[error("The desired execution strategy (`{0:?}`) is incompatible with the local executor")]
@@ -414,7 +414,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
         &self,
         artifact_fs: &ArtifactFs,
         executor_config: &CommandExecutorConfig,
-    ) -> buck2_error::Result<CommandExecutorResponse> {
+    ) -> bz_error::Result<CommandExecutorResponse> {
         // 30GB is the max RE can currently support.
         const DEFAULT_RE_MAX_INPUT_FILE_BYTES: u64 = 30 * 1024 * 1024 * 1024;
 
@@ -448,7 +448,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
             Arc::new(local_executor_new(&LocalExecutorOptions::default()))
         };
 
-        if !buck2_core::is_open_source() && !cfg!(fbcode_build) {
+        if !bz_core::is_open_source() && !cfg!(fbcode_build) {
             static WARN: OnceLock<()> = OnceLock::new();
             WARN.get_or_init(|| {
                 tracing::warn!("Cargo build detected: disabling remote execution and caching!")
@@ -521,7 +521,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 // in remediating prod incidents in the past, and this is the kind of thing that can easily
                 // become tribal knowledge. Keeping this does not hurt us.
                 let disable_caching =
-                    buck2_env!("BUCK2_TEST_DISABLE_CACHING", type=bool, applicability=testing)?
+                    bz_env!("BUCK2_TEST_DISABLE_CACHING", type=bool, applicability=testing)?
                         .unwrap_or(self.skip_cache_read);
 
                 let disable_caching = disable_caching
@@ -530,7 +530,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
 
                 // This is for test only as in real life, it would be silly to only use the remote dep file cache and not the regular cache
                 // This will only do anything if cache is not disabled and remote dep file cache is enabled
-                let only_remote_dep_file_cache = buck2_env!(
+                let only_remote_dep_file_cache = bz_env!(
                     "BUCK2_TEST_ONLY_REMOTE_DEP_FILE_CACHE",
                     bool,
                     applicability = testing
@@ -760,7 +760,7 @@ impl ExecutionStrategyExt for ExecutionStrategy {
 
 /// This is used when execution platforms are not configured.
 pub fn get_default_executor_config(host_platform: HostPlatformOverride) -> CommandExecutorConfig {
-    let executor = if buck2_core::is_open_source() {
+    let executor = if bz_core::is_open_source() {
         Executor::Local(LocalExecutorOptions::default())
     } else {
         Executor::RemoteEnabled(RemoteEnabledExecutorOptions {
@@ -770,7 +770,7 @@ pub fn get_default_executor_config(host_platform: HostPlatformOverride) -> Comma
                 level: HybridExecutionLevel::Limited,
             },
             re_properties: get_default_re_properties(host_platform),
-            re_use_case: RemoteExecutorUseCase::buck2_default(),
+            re_use_case: RemoteExecutorUseCase::bz_default(),
             re_action_key: None,
             cache_upload_behavior: CacheUploadBehavior::Disabled,
             remote_cache_enabled: true,
@@ -832,7 +832,7 @@ fn get_default_path_separator(host_platform: HostPlatformOverride) -> PathSepara
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buck2_common::init::RemoteDefaultExecProperty;
+    use bz_common::init::RemoteDefaultExecProperty;
 
     fn remote_cache_overrides() -> BazelRemoteEndpointOverrides {
         BazelRemoteEndpointOverrides::from_startup_config(&RemoteExecutionStartupConfig {
@@ -939,7 +939,7 @@ mod tests {
                             .collect(),
                     ),
                 },
-                re_use_case: RemoteExecutorUseCase::buck2_default(),
+                re_use_case: RemoteExecutorUseCase::bz_default(),
                 re_action_key: None,
                 cache_upload_behavior: CacheUploadBehavior::Disabled,
                 remote_cache_enabled: true,
@@ -983,7 +983,7 @@ mod tests {
                     level: HybridExecutionLevel::Limited,
                 },
                 re_properties: RePlatformFields::default(),
-                re_use_case: RemoteExecutorUseCase::buck2_default(),
+                re_use_case: RemoteExecutorUseCase::bz_default(),
                 re_action_key: None,
                 cache_upload_behavior: CacheUploadBehavior::Disabled,
                 remote_cache_enabled: false,

@@ -8,17 +8,17 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::callable::register_provider;
-use buck2_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
-use buck2_build_api::interpreter::rule_defs::register_rule_defs;
-use buck2_core::bzl::ImportPath;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_build_api::interpreter::rule_defs::provider::callable::register_provider;
+use bz_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
+use bz_build_api::interpreter::rule_defs::register_rule_defs;
+use bz_core::bzl::ImportPath;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
 
 #[test]
-fn default_info_is_available() -> buck2_error::Result<()> {
+fn default_info_is_available() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
     tester.additional_globals(artifactory);
     tester.additional_globals(register_rule_defs);
@@ -65,7 +65,7 @@ fn default_info_is_available() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn default_info_validates_types_1() -> buck2_error::Result<()> {
+fn default_info_validates_types_1() -> bz_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.additional_globals(register_rule_defs);
     tester.run_starlark_bzl_test_expecting_error(
@@ -84,7 +84,7 @@ fn default_info_validates_types_1() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn default_info_validates_types_2() -> buck2_error::Result<()> {
+fn default_info_validates_types_2() -> bz_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.additional_globals(register_rule_defs);
     tester.run_starlark_bzl_test_expecting_error(

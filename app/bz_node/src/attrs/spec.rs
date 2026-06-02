@@ -62,7 +62,7 @@ pub struct AttributeSpec {
     attributes: OrderedMap<Box<str>, Attribute>,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum AttributeSpecError {
     #[error("User provided attribute `{0}` overrides internal attribute")]
@@ -76,7 +76,7 @@ pub(crate) enum AttributeSpecError {
 }
 
 impl AttributeSpec {
-    fn new(attributes: OrderedMap<Box<str>, Attribute>) -> buck2_error::Result<AttributeSpec> {
+    fn new(attributes: OrderedMap<Box<str>, Attribute>) -> bz_error::Result<AttributeSpec> {
         if attributes.len() > AttributeId::MAX_INDEX as usize {
             return Err(AttributeSpecError::TooManyAttributes(attributes.len()).into());
         }
@@ -88,7 +88,7 @@ impl AttributeSpec {
         is_anon: bool,
         cfg: &RuleIncomingTransition,
         allow_bazel_metadata_attr: bool,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let internal_attrs = common_internal_attrs();
 
         let mut instances: OrderedMap<Box<str>, Attribute> =
@@ -248,7 +248,7 @@ impl AttributeSpec {
         attr_values: &'v AttrValues,
         key: &str,
         opts: AttrInspectOptions,
-    ) -> buck2_error::Result<Option<CoercedAttrFull<'v>>> {
+    ) -> bz_error::Result<Option<CoercedAttrFull<'v>>> {
         if let Some(idx) = self.attribute_id_by_name(key) {
             Ok(self.known_attr_or_none(idx, attr_values, opts))
         } else {

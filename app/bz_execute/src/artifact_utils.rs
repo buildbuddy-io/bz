@@ -10,12 +10,12 @@
 
 use std::sync::Arc;
 
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::internal_error;
-use buck2_fs::fs_util;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::internal_error;
+use bz_fs::fs_util;
 use dupe::Dupe;
 
 use crate::artifact_value::ArtifactValue;
@@ -52,7 +52,7 @@ impl<'a> ArtifactValueBuilder<'a> {
         &mut self,
         path: ProjectRelativePathBuf,
         entry: ActionDirectoryEntry<ActionDirectoryBuilder>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         insert_entry(&mut self.builder, path, entry)
     }
 
@@ -62,7 +62,7 @@ impl<'a> ArtifactValueBuilder<'a> {
         &mut self,
         path: ProjectRelativePathBuf,
         value: &ArtifactValue,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let abs_path = self.project_fs.resolve(&path);
         let value = value.resolve_source_file_proxy(abs_path.as_abs_path(), self.digest_config)?;
         insert_artifact(&mut self.builder, path, &value)
@@ -76,7 +76,7 @@ impl<'a> ArtifactValueBuilder<'a> {
         src_value: &ArtifactValue,
         src: ProjectRelativePathBuf,
         dest: &ProjectRelativePath,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let symlink = new_symlink(self.project_fs.relative_path(&src, dest))?;
         let abs_path = self.project_fs.resolve(&src);
         let src_value =
@@ -97,7 +97,7 @@ impl<'a> ArtifactValueBuilder<'a> {
         src: &ProjectRelativePath,
         dest: &ProjectRelativePath,
         executable_bit_override: Option<bool>,
-    ) -> buck2_error::Result<ActionDirectoryEntry<ActionSharedDirectory>> {
+    ) -> bz_error::Result<ActionDirectoryEntry<ActionSharedDirectory>> {
         let abs_path = self.project_fs.resolve(src);
         let src_value =
             src_value.resolve_source_file_proxy(abs_path.as_abs_path(), self.digest_config)?;
@@ -157,7 +157,7 @@ impl<'a> ArtifactValueBuilder<'a> {
     /// Builds the `ArtifactValue`. Since `self.builder` is rooted at the
     /// project root, `output` must be passed to specify the path of the value
     /// being built.
-    pub fn build(&self, output: &ProjectRelativePath) -> buck2_error::Result<ArtifactValue> {
+    pub fn build(&self, output: &ProjectRelativePath) -> bz_error::Result<ArtifactValue> {
         match extract_artifact_value(&self.builder, output, self.digest_config)? {
             Some(v) => Ok(v),
             None => {
@@ -170,8 +170,8 @@ impl<'a> ArtifactValueBuilder<'a> {
 
 #[cfg(test)]
 mod tests {
-    use buck2_common::file_ops::metadata::Symlink;
-    use buck2_core::fs::project::ProjectRootTemp;
+    use bz_common::file_ops::metadata::Symlink;
+    use bz_core::fs::project::ProjectRootTemp;
 
     use super::*;
 
@@ -189,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_relativized_symlink() -> buck2_error::Result<()> {
+    fn copy_relativized_symlink() -> bz_error::Result<()> {
         // /
         // |-d1/
         // | |-d2/

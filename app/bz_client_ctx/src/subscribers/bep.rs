@@ -7,17 +7,17 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
-use buck2_cli_proto::BuildTarget;
-use buck2_cli_proto::CommandResult;
-use buck2_cli_proto::command_result;
-use buck2_common::init::BUILDBUDDY_API_KEY_HEADER;
-use buck2_error::ExitCode;
-use buck2_event_log::file_names::find_log_by_trace_id;
-use buck2_event_observer::event_observer::EventObserver;
-use buck2_event_observer::event_observer::NoopEventObserverExtra;
-use buck2_events::BuckEvent;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_cli_proto::BuildTarget;
+use bz_cli_proto::CommandResult;
+use bz_cli_proto::command_result;
+use bz_common::init::BUILDBUDDY_API_KEY_HEADER;
+use bz_error::ExitCode;
+use bz_event_log::file_names::find_log_by_trace_id;
+use bz_event_observer::event_observer::EventObserver;
+use bz_event_observer::event_observer::NoopEventObserverExtra;
+use bz_events::BuckEvent;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use prost::Message;
 use prost_types::Any;
@@ -66,14 +66,14 @@ fn bes_results_url_message(results_url: &str, invocation_id: &str, color: bool) 
 pub(crate) fn print_bes_results_url(
     results_url: &str,
     invocation_id: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     crate::eprintln!(
         "{}",
         bes_results_url_message(results_url, invocation_id, std::io::stderr().is_terminal())
     )
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum BepError {
     #[error("Invalid BES backend `{0}`")]
@@ -112,8 +112,8 @@ impl BuildEventProtocolConfig {
     pub(crate) fn from_command<T: crate::streaming::StreamingCommand>(
         cmd: &T,
         ctx: &ClientCommandContext,
-        paths: Option<&buck2_common::invocation_paths::InvocationPaths>,
-    ) -> buck2_error::Result<Option<Self>> {
+        paths: Option<&bz_common::invocation_paths::InvocationPaths>,
+    ) -> bz_error::Result<Option<Self>> {
         let event_log_opts = cmd.event_log_opts();
         let Some(backend) = event_log_opts
             .bes_backend_with_buildbuddy_default(ctx.buildbuddy_bes())
@@ -288,7 +288,7 @@ fn take_progress_chunk(bytes: &mut Vec<u8>) -> Vec<u8> {
 
 pub(crate) struct BuildEventProtocolSubscriber {
     sender: Option<mpsc::UnboundedSender<publish_build_event::PublishBuildToolEventStreamRequest>>,
-    upload: Option<JoinHandle<buck2_error::Result<UploadSummary>>>,
+    upload: Option<JoinHandle<bz_error::Result<UploadSummary>>>,
     terminal_output: mpsc::UnboundedReceiver<crate::stdio::OutputEvent>,
     _terminal_output_tap: crate::stdio::OutputTapGuard,
     terminal_progress: TerminalProgressCoalescer,
@@ -716,7 +716,7 @@ impl BuildEventProtocolSubscriber {
 
     async fn maybe_upload_timing_profile(
         &self,
-    ) -> buck2_error::Result<Option<build_event_stream::File>> {
+    ) -> bz_error::Result<Option<build_event_stream::File>> {
         let Some(event_log_dir) = &self.config.event_log_dir else {
             return Ok(None);
         };
@@ -758,14 +758,14 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
         "build event protocol"
     }
 
-    async fn handle_output(&mut self, raw_output: &[u8]) -> buck2_error::Result<()> {
+    async fn handle_output(&mut self, raw_output: &[u8]) -> bz_error::Result<()> {
         let _ = raw_output;
         self.drain_terminal_output();
         self.maybe_flush_terminal_progress();
         Ok(())
     }
 
-    async fn handle_tailer_stderr(&mut self, stderr: &str) -> buck2_error::Result<()> {
+    async fn handle_tailer_stderr(&mut self, stderr: &str) -> bz_error::Result<()> {
         let _ = stderr;
         self.drain_terminal_output();
         self.maybe_flush_terminal_progress();
@@ -775,7 +775,7 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
     async fn handle_events(
         &mut self,
         events: &[std::sync::Arc<BuckEvent>],
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for event in events {
             self.observer.observe(event).await?;
         }
@@ -784,7 +784,7 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
         Ok(())
     }
 
-    async fn handle_command_result(&mut self, result: &CommandResult) -> buck2_error::Result<()> {
+    async fn handle_command_result(&mut self, result: &CommandResult) -> bz_error::Result<()> {
         match result.result.as_ref() {
             Some(command_result::Result::BuildResponse(response)) => {
                 self.emit_build_targets(&response.build_targets, &response.project_root);
@@ -812,14 +812,14 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
         Ok(())
     }
 
-    async fn handle_error(&mut self, _error: &buck2_error::Error) -> buck2_error::Result<()> {
+    async fn handle_error(&mut self, _error: &bz_error::Error) -> bz_error::Result<()> {
         self.error_seen = true;
         self.drain_terminal_output();
         self.maybe_flush_terminal_progress();
         Ok(())
     }
 
-    async fn tick(&mut self, _tick: &crate::ticker::Tick) -> buck2_error::Result<()> {
+    async fn tick(&mut self, _tick: &crate::ticker::Tick) -> bz_error::Result<()> {
         self.drain_terminal_output();
         self.maybe_flush_terminal_progress();
         Ok(())
@@ -836,7 +836,7 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
         self.maybe_flush_terminal_progress();
     }
 
-    async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
+    async fn finalize(mut self: Box<Self>) -> bz_error::Result<()> {
         self.drain_terminal_output();
         self.queue_results_url_progress();
         self.flush_terminal_progress_now();
@@ -891,7 +891,7 @@ struct UploadSummary {
 async fn upload_build_events(
     config: BuildEventProtocolConfig,
     receiver: mpsc::UnboundedReceiver<publish_build_event::PublishBuildToolEventStreamRequest>,
-) -> buck2_error::Result<UploadSummary> {
+) -> bz_error::Result<UploadSummary> {
     let backend = BesBackend::parse(&config.backend)?;
     let mut endpoint = Endpoint::from_shared(backend.uri.clone())
         .map_err(|e| BepError::InvalidBackend(format!("{} ({e})", config.backend)))?;
@@ -943,9 +943,9 @@ async fn upload_build_events(
 }
 
 async fn generate_chrome_trace_profile(
-    event_log: &buck2_fs::paths::abs_path::AbsPath,
+    event_log: &bz_fs::paths::abs_path::AbsPath,
     profile_path: &Path,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let current_exe =
         std::env::current_exe().map_err(|e| BepError::ProfileUpload(e.to_string()))?;
     let output = tokio::process::Command::new(current_exe)
@@ -976,7 +976,7 @@ async fn upload_timing_profile(
     instance_name: &str,
     invocation_id: &str,
     profile_path: &Path,
-) -> buck2_error::Result<build_event_stream::File> {
+) -> bz_error::Result<build_event_stream::File> {
     let bytes = tokio::fs::read(profile_path)
         .await
         .map_err(|e| BepError::ProfileUpload(e.to_string()))?;
@@ -1064,7 +1064,7 @@ fn bes_upload_request_metadata(invocation_id: &str) -> RequestMetadata {
     RequestMetadata {
         tool_details: Some(ToolDetails {
             tool_name: "buck2".to_owned(),
-            tool_version: buck2_build_info::revision()
+            tool_version: bz_build_info::revision()
                 .map(|revision| revision.to_owned())
                 .unwrap_or_default(),
         }),
@@ -1119,7 +1119,7 @@ fn bytestream_write_requests(resource_name: String, bytes: Vec<u8>) -> Vec<Write
 fn add_headers(
     metadata: &mut tonic::metadata::MetadataMap,
     headers: &[String],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for header in headers {
         let (name, value) = header
             .split_once('=')
@@ -1139,7 +1139,7 @@ struct BesBackend {
 }
 
 impl BesBackend {
-    fn parse(value: &str) -> buck2_error::Result<Self> {
+    fn parse(value: &str) -> bz_error::Result<Self> {
         if value.trim().is_empty() {
             return Err(BepError::InvalidBackend(value.to_owned()).into());
         }
@@ -1173,7 +1173,7 @@ impl BesBackend {
         })
     }
 
-    fn authority(&self) -> buck2_error::Result<String> {
+    fn authority(&self) -> bz_error::Result<String> {
         let uri: tonic::codegen::http::Uri = self
             .uri
             .parse()
@@ -1216,7 +1216,7 @@ fn millis_since_epoch(time: SystemTime) -> i64 {
 }
 
 fn build_tool_version() -> String {
-    buck2_build_info::revision()
+    bz_build_info::revision()
         .map(str::to_owned)
         .unwrap_or_else(|| "0.0.0".to_owned())
 }
@@ -1806,8 +1806,8 @@ pub(crate) mod build_event_stream {
 pub(crate) fn get_bep_subscriber<T: crate::streaming::StreamingCommand>(
     cmd: &T,
     ctx: &ClientCommandContext,
-    paths: Option<&buck2_common::invocation_paths::InvocationPaths>,
-) -> buck2_error::Result<Option<Box<dyn EventSubscriber>>> {
+    paths: Option<&bz_common::invocation_paths::InvocationPaths>,
+) -> bz_error::Result<Option<Box<dyn EventSubscriber>>> {
     Ok(BuildEventProtocolConfig::from_command(cmd, ctx, paths)?
         .map(BuildEventProtocolSubscriber::new)
         .map(|subscriber| Box::new(subscriber) as Box<dyn EventSubscriber>))
@@ -1931,7 +1931,7 @@ mod tests {
 
     #[test]
     fn redacts_api_key_values_from_bep_argv() {
-        let argv = buck2_common::argv::Argv {
+        let argv = bz_common::argv::Argv {
             argv: vec![
                 "buck2".to_owned(),
                 "--api-key=secret1".to_owned(),
@@ -1940,7 +1940,7 @@ mod tests {
                 "secret2".to_owned(),
                 "//:target".to_owned(),
             ],
-            expanded_argv: buck2_common::argv::ExpandedArgv::from_literals(Vec::new()),
+            expanded_argv: bz_common::argv::ExpandedArgv::from_literals(Vec::new()),
         };
 
         let sanitized = argv.redacted_arg_values(&["--api-key"]);

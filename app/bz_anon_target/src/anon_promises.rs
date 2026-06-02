@@ -10,9 +10,9 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::analysis::anon_promises_dyn::AnonPromisesDyn;
-use buck2_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
-use buck2_interpreter::starlark_promise::StarlarkPromise;
+use bz_build_api::analysis::anon_promises_dyn::AnonPromisesDyn;
+use bz_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
+use bz_interpreter::starlark_promise::StarlarkPromise;
 use either::Either;
 use futures::FutureExt;
 use starlark::eval::Evaluator;
@@ -51,7 +51,7 @@ impl<'v> AnonPromisesDyn<'v> for AnonPromises<'v> {
     async fn run_promises<'a, 'e: 'a>(
         self: Box<Self>,
         accessor: &mut dyn RunAnonPromisesAccessor<'v, 'a, 'e>,
-    ) -> buck2_error::Result<()>
+    ) -> bz_error::Result<()>
     where
         'v: 'a,
     {
@@ -93,7 +93,7 @@ impl<'v> AnonPromisesDyn<'v> for AnonPromises<'v> {
                         let xs: Vec<_> = is
                             .clone()
                             .map(|i| Ok(values[i].providers()?.add_heap_ref(eval.heap())))
-                            .collect::<buck2_error::Result<_>>()?;
+                            .collect::<bz_error::Result<_>>()?;
                         let list = eval.heap().alloc(AllocList(xs));
                         promise.resolve(list, eval)?
                     }

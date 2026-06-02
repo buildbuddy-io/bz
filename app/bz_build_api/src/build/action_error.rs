@@ -10,12 +10,12 @@
 
 //! Schema for the structured action error within the build report.
 
-use buck2_data::ActionError;
-use buck2_data::CommandExecutionDetails;
-use buck2_data::command_execution_kind::Command;
-use buck2_event_observer::display::TargetDisplayOptions;
-use buck2_event_observer::display::display_action_owner;
-use buck2_event_observer::display::get_action_error_reason;
+use bz_data::ActionError;
+use bz_data::CommandExecutionDetails;
+use bz_data::command_execution_kind::Command;
+use bz_event_observer::display::TargetDisplayOptions;
+use bz_event_observer::display::display_action_owner;
+use bz_event_observer::display::get_action_error_reason;
 use serde::Serialize;
 
 use crate::build::build_report::BuildReportCollector;
@@ -123,7 +123,7 @@ impl BuildReportActionError {
         } else {
             error.error_diagnostics.clone().map(|error_diagnostics| {
                 match error_diagnostics.data.unwrap() {
-                    buck2_data::action_error_diagnostics::Data::SubErrors(sub_errors) => {
+                    bz_data::action_error_diagnostics::Data::SubErrors(sub_errors) => {
                         let sub_errors = sub_errors
                             .sub_errors
                             .iter()
@@ -146,7 +146,7 @@ impl BuildReportActionError {
                             .collect();
                         BuildReportActionErrorDiagnostics::SubErrors(sub_errors)
                     }
-                    buck2_data::action_error_diagnostics::Data::HandlerInvocationError(
+                    bz_data::action_error_diagnostics::Data::HandlerInvocationError(
                         invocation_failure,
                     ) => BuildReportActionErrorDiagnostics::HandlerInvocationError(
                         collector.update_string_cache(invocation_failure.clone()),
@@ -163,9 +163,9 @@ impl BuildReportActionError {
         // Apply truncation if enabled
         let (reason, stderr, stdout) = if opts.truncate_error_content {
             (
-                buck2_util::truncate::truncate(&reason, MAX_ERROR_CONTENT_BYTES),
-                buck2_util::truncate::truncate(&stderr, MAX_ERROR_CONTENT_BYTES),
-                buck2_util::truncate::truncate(&stdout, MAX_ERROR_CONTENT_BYTES),
+                bz_util::truncate::truncate(&reason, MAX_ERROR_CONTENT_BYTES),
+                bz_util::truncate::truncate(&stderr, MAX_ERROR_CONTENT_BYTES),
+                bz_util::truncate::truncate(&stdout, MAX_ERROR_CONTENT_BYTES),
             )
         } else {
             (reason, stderr, stdout)

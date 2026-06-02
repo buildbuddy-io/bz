@@ -47,9 +47,9 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use allocative::Allocative;
-pub(crate) use buck2_fs::paths::fmt::quoted_display;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::BuckHasher;
+pub(crate) use bz_fs::paths::fmt::quoted_display;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::BuckHasher;
 use derive_more::Display;
 use dupe::Dupe;
 use equivalent::Equivalent;
@@ -144,12 +144,12 @@ interner!(INTERNER, BuckHasher, PackageLabelData);
 
 impl PackageLabel {
     #[inline]
-    pub fn new(cell: CellName, path: &CellRelativePath) -> buck2_error::Result<Self> {
+    pub fn new(cell: CellName, path: &CellRelativePath) -> bz_error::Result<Self> {
         PackageLabel::from_cell_path(CellPathRef::new(cell, path))
     }
 
     #[inline]
-    pub fn from_cell_path(path: CellPathRef) -> buck2_error::Result<Self> {
+    pub fn from_cell_path(path: CellPathRef) -> bz_error::Result<Self> {
         Ok(PackageLabel(INTERNER.intern(PackageLabelDataRef { path })))
     }
 
@@ -173,7 +173,7 @@ impl PackageLabel {
         self.0.0.as_ref()
     }
 
-    pub fn join(&self, path: &ForwardRelativePath) -> buck2_error::Result<Self> {
+    pub fn join(&self, path: &ForwardRelativePath) -> bz_error::Result<Self> {
         if path.is_empty() {
             Ok(self.dupe())
         } else {
@@ -181,7 +181,7 @@ impl PackageLabel {
         }
     }
 
-    pub fn parent(&self) -> buck2_error::Result<Option<PackageLabel>> {
+    pub fn parent(&self) -> bz_error::Result<Option<PackageLabel>> {
         match self.as_cell_path().parent() {
             Some(parent) => PackageLabel::from_cell_path(parent).map(Some),
             None => Ok(None),

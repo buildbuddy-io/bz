@@ -11,8 +11,8 @@
 use std::hash::Hash;
 
 use allocative::Allocative;
-use buck2_core::bxl::BxlFilePath;
-use buck2_data::ToProtoMessage;
+use bz_core::bxl::BxlFilePath;
+use bz_data::ToProtoMessage;
 use derive_more::Display;
 use pagable::Pagable;
 use serde::Serialize;
@@ -50,10 +50,10 @@ impl Serialize for BxlFunctionLabel {
 }
 
 impl ToProtoMessage for BxlFunctionLabel {
-    type Message = buck2_data::BxlFunctionLabel;
+    type Message = bz_data::BxlFunctionLabel;
 
     fn as_proto(&self) -> Self::Message {
-        buck2_data::BxlFunctionLabel {
+        bz_data::BxlFunctionLabel {
             bxl_path: self.bxl_path.to_string(),
             name: self.name.clone(),
         }

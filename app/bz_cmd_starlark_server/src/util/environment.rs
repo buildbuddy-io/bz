@@ -8,15 +8,15 @@
  * above-listed licenses.
  */
 
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::name::CellName;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::file_type::StarlarkFileType;
-use buck2_interpreter::import_paths::HasImportPaths;
-use buck2_interpreter::load_module::INTERPRETER_CALCULATION_IMPL;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::prelude_path::PreludePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::name::CellName;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::file_type::StarlarkFileType;
+use bz_interpreter::import_paths::HasImportPaths;
+use bz_interpreter::load_module::INTERPRETER_CALCULATION_IMPL;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::prelude_path::PreludePath;
 use dice::DiceTransaction;
 use starlark::environment::Globals;
 
@@ -36,7 +36,7 @@ impl Environment {
         cell: CellName,
         path_type: StarlarkFileType,
         dice: &mut DiceTransaction,
-    ) -> buck2_error::Result<Environment> {
+    ) -> bz_error::Result<Environment> {
         // Find the information from the globals
         let globals = INTERPRETER_CALCULATION_IMPL.get()?.global_env(dice).await?;
 
@@ -72,7 +72,7 @@ impl Environment {
         &self,
         path_type: StarlarkFileType,
         dice: &DiceTransaction,
-    ) -> buck2_error::Result<StdBuckHashSet<String>> {
+    ) -> bz_error::Result<StdBuckHashSet<String>> {
         let mut dice = dice.clone();
         let mut names = StdBuckHashSet::default();
 

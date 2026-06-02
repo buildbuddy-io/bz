@@ -21,6 +21,6 @@ fn main() -> io::Result<()> {
         vec![".", "../bz_data"]
     };
 
-    let builder = buck2_protoc_dev::configure();
+    let builder = bz_protoc_dev::configure();
     unsafe { builder.setup_protoc() }.compile(proto_files, &includes)
 }

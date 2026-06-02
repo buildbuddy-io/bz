@@ -12,17 +12,17 @@
 //! Implements the ability for bxl to build targets
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::build::AsyncBuildTargetResultBuilder;
-use buck2_build_api::build::BuildConfiguredLabelOptions;
-use buck2_build_api::build::ProvidersToBuild;
-use buck2_build_api::build::build_configured_label;
-use buck2_build_api::bxl::build_result::BxlBuildResult;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_cli_proto::build_request::Materializations;
-use buck2_cli_proto::build_request::Uploads;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::build::AsyncBuildTargetResultBuilder;
+use bz_build_api::build::BuildConfiguredLabelOptions;
+use bz_build_api::build::ProvidersToBuild;
+use bz_build_api::build::build_configured_label;
+use bz_build_api::bxl::build_result::BxlBuildResult;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_cli_proto::build_request::Materializations;
+use bz_cli_proto::build_request::Uploads;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use derive_more::Display;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -133,7 +133,7 @@ impl<'v, V: ValueLike<'v>> StarlarkFailedArtifactIterableGen<V>
 where
     Self: ProvidesStaticType<'v>,
 {
-    fn iter(&self) -> impl Iterator<Item = &'v buck2_error::Error> + use<'v, V> {
+    fn iter(&self) -> impl Iterator<Item = &'v bz_error::Error> + use<'v, V> {
         self.0
             .downcast_ref::<StarlarkBxlBuildResult>()
             .unwrap()
@@ -178,7 +178,7 @@ pub(crate) fn build<'v>(
     materializations: Materializations,
     uploads: Uploads,
     eval: &mut Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<
+) -> bz_error::Result<
     SmallMap<
         ValueTyped<'v, StarlarkConfiguredProvidersLabel>,
         ValueTyped<'v, StarlarkBxlBuildResult>,

@@ -179,8 +179,8 @@ pub(super) fn record_repository_file_input(
         return Ok(());
     }
     let value = repository_recorded_file_value(&resolved).map_err(|error| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Tier0,
             "failed to record repository file input `{}`: {}",
             resolved.to_string_lossy(),
             error
@@ -206,8 +206,8 @@ pub(super) fn record_repository_dirents_input(
         return Ok(());
     }
     let value = repository_recorded_dirents_value(&resolved).map_err(|error| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Tier0,
             "failed to record repository directory entries input `{}`: {}",
             resolved.to_string_lossy(),
             error
@@ -233,8 +233,8 @@ pub(super) fn record_repository_dir_tree_input(
         return Ok(());
     }
     let value = repository_recorded_dir_tree_value(&resolved).map_err(|error| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Tier0,
             "failed to record repository directory tree input `{}`: {}",
             resolved.to_string_lossy(),
             error
@@ -254,8 +254,8 @@ pub(super) fn repository_should_record_watch(watch: &str) -> starlark::Result<bo
     match watch {
         "auto" | "yes" => Ok(true),
         "no" => Ok(false),
-        other => Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        other => Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "repository watch mode must be `auto`, `yes`, or `no`, got `{}`",
             other
         )

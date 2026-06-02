@@ -12,23 +12,23 @@ use std::borrow::Cow;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::Action;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::UnregisteredAction;
-use buck2_build_api::actions::box_slice_set::BoxSliceSet;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_signals::env::WaitingData;
-use buck2_core::category::Category;
-use buck2_core::category::CategoryRef;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::CommandExecutionPaths;
-use buck2_execute::execute::request::CommandExecutionRequest;
-use buck2_execute::execute::request::OutputType;
-use buck2_hash::BuckIndexSet;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::Action;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::UnregisteredAction;
+use bz_build_api::actions::box_slice_set::BoxSliceSet;
+use bz_build_api::actions::execute::action_executor::ActionExecutionMetadata;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::actions::execute::error::ExecuteError;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_signals::env::WaitingData;
+use bz_core::category::Category;
+use bz_core::category::CategoryRef;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::CommandExecutionPaths;
+use bz_execute::execute::request::CommandExecutionRequest;
+use bz_execute::execute::request::OutputType;
+use bz_hash::BuckIndexSet;
 use derivative::Derivative;
 use dupe::Dupe;
 use pagable::Pagable;
@@ -99,7 +99,7 @@ impl UnregisteredAction for SimpleUnregisteredAction {
         outputs: BuckIndexSet<BuildArtifact>,
         _starlark_data: Option<OwnedFrozenValue>,
         _error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         Ok(Box::new(SimpleAction {
             inputs: BoxSliceSet::from(self.inputs),
             outputs: BoxSliceSet::from(outputs),
@@ -112,11 +112,11 @@ impl UnregisteredAction for SimpleUnregisteredAction {
 
 #[async_trait]
 impl Action for SimpleAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::NotSet
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::NotSet
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         Ok(Cow::Borrowed(self.inputs.as_slice()))
     }
 
@@ -170,7 +170,7 @@ impl Action for SimpleAction {
             false,
             false,
             None,
-            buck2_data::IncrementalKind::NonIncremental,
+            bz_data::IncrementalKind::NonIncremental,
         )?;
 
         Ok((outputs, meta))

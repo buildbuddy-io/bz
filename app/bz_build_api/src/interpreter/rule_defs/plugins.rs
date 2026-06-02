@@ -11,8 +11,8 @@
 use std::borrow::Borrow;
 
 use allocative::Allocative;
-use buck2_core::plugins::PluginKind;
-use buck2_interpreter::plugins::PLUGIN_KIND_FROM_VALUE;
+use bz_core::plugins::PluginKind;
+use bz_interpreter::plugins::PLUGIN_KIND_FROM_VALUE;
 use derive_more::Display;
 use dupe::Dupe;
 use starlark::coerce::CoerceKey;
@@ -70,7 +70,7 @@ pub struct AnalysisPluginsGen<V: ValueLifetimeless> {
 
 starlark_complex_value!(pub AnalysisPlugins);
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum AnalysisPluginsError {
     #[error("The rule did not declare that it uses plugins of kind {0}")]
@@ -87,7 +87,7 @@ where
         match self.plugins.get(&kind) {
             Some(v) => Ok(v.to_value()),
             None => {
-                Err(buck2_error::Error::from(AnalysisPluginsError::PluginKindNotUsed(kind)).into())
+                Err(bz_error::Error::from(AnalysisPluginsError::PluginKindNotUsed(kind)).into())
             }
         }
     }

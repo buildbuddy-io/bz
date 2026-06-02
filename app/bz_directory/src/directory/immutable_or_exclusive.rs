@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_core::directory_digest::DirectoryDigest;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_core::directory_digest::DirectoryDigest;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
 use derivative::Derivative;
 use dupe::Clone_;
 use dupe::Copy_;

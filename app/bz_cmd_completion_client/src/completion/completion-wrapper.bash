@@ -16,7 +16,7 @@ complete -r buck2
 
 _BUCK_COMPLETE_BIN="${_BUCK_COMPLETE_BIN:-buck2}"
 
-__buck2_takes_target()
+__bz_takes_target()
 {
     case "$1" in
     build|ctargets|install|run|targets|test|utargets)
@@ -28,7 +28,7 @@ __buck2_takes_target()
     esac
 }
 
-__buck2_subcommand()
+__bz_subcommand()
 {
     local subcommand=
     for w in "${COMP_WORDS[@]:1:$COMP_CWORD - 1}"; do
@@ -51,7 +51,7 @@ __buck2_subcommand()
     fi
 }
 
-__buck2_add_target_completions()
+__bz_add_target_completions()
 {
     local completions=()
     while read -r; do
@@ -64,7 +64,7 @@ __buck2_add_target_completions()
     COMPREPLY=("${completions[@]}")
 }
 
-__buck2_completions_queued()
+__bz_completions_queued()
 {
     if [[ ${#COMPREPLY[@]} -eq 0 ]]; then
         return 255
@@ -75,7 +75,7 @@ __buck2_completions_queued()
     fi
 }
 
-__buck2_fix()
+__bz_fix()
 {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
@@ -95,7 +95,7 @@ __buck2_fix()
         fi
     fi
 
-    if __buck2_takes_target "$(__buck2_subcommand)"; then
+    if __bz_takes_target "$(__bz_subcommand)"; then
         if [[ $cur =~ ^- ]]; then
             _buck2 "$@"
         else
@@ -106,8 +106,8 @@ __buck2_fix()
             if [[ ! $cur == *:* ]]; then
                 _buck2 "$@"
             fi
-            if ! __buck2_completions_queued; then
-                __buck2_add_target_completions "$cur"
+            if ! __bz_completions_queued; then
+                __bz_add_target_completions "$cur"
             fi
         fi
     else
@@ -116,9 +116,9 @@ __buck2_fix()
 }
 
 if [[ "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -ge 4 || "${BASH_VERSINFO[0]}" -gt 4 ]]; then
-    complete -F __buck2_fix -o nosort -o bashdefault -o default -o nospace buck
-    complete -F __buck2_fix -o nosort -o bashdefault -o default -o nospace buck2
+    complete -F __bz_fix -o nosort -o bashdefault -o default -o nospace buck
+    complete -F __bz_fix -o nosort -o bashdefault -o default -o nospace buck2
 else
-    complete -F __buck2_fix -o bashdefault -o default -o nospace buck
-    complete -F __buck2_fix -o bashdefault -o default -o nospace buck2
+    complete -F __bz_fix -o bashdefault -o default -o nospace buck
+    complete -F __bz_fix -o bashdefault -o default -o nospace buck2
 fi

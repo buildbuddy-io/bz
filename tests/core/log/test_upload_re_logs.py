@@ -18,7 +18,7 @@ from buck2.tests.e2e_util.helper.utils import json_get
 from manifold.clients.python.manifold_client_deprecated import Client as ManifoldClient
 
 
-BUCKET_CONFIG = {"bucket": "buck2_re_logs", "apikey": "buck2_re_logs-key"}
+BUCKET_CONFIG = {"bucket": "bz_re_logs", "apikey": "bz_re_logs-key"}
 
 # This test was failing in macos sandcastle, so attempt fix suggested
 # here: https://fb.workplace.com/groups/fbpython/permalink/5214295275278464/

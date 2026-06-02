@@ -10,33 +10,33 @@
 
 use std::sync::Arc;
 
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::plugins::PluginKindSet;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::TargetNameRef;
-use buck2_node::attrs::attr::Attribute;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coerced_deps_collector::CoercedDeps;
-use buck2_node::attrs::coerced_deps_collector::CoercedDepsCollector;
-use buck2_node::attrs::display::AttrDisplayWithContextExt;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::attrs::spec::AttributeId;
-use buck2_node::attrs::spec::AttributeSpec;
-use buck2_node::attrs::spec::internal::VISIBILITY_ATTRIBUTE;
-use buck2_node::call_stack::StarlarkCallStack;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_node::package::Package;
-use buck2_node::provider_id_set::ProviderIdSet;
-use buck2_node::rule::BAZEL_OUTPUT_FILE_GENERATING_RULE_ATTR;
-use buck2_node::rule::BAZEL_OUTPUT_FILE_OUTPUT_ATTR;
-use buck2_node::rule::BazelOutputAttrKind;
-use buck2_node::rule::Rule;
-use buck2_node::rule::RuleIncomingTransition;
-use buck2_node::rule_type::RuleType;
-use buck2_node::super_package::SuperPackage;
-use buck2_util::arc_str::ArcStr;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::plugins::PluginKindSet;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetNameRef;
+use bz_node::attrs::attr::Attribute;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coerced_deps_collector::CoercedDeps;
+use bz_node::attrs::coerced_deps_collector::CoercedDepsCollector;
+use bz_node::attrs::display::AttrDisplayWithContextExt;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::attrs::spec::AttributeId;
+use bz_node::attrs::spec::AttributeSpec;
+use bz_node::attrs::spec::internal::VISIBILITY_ATTRIBUTE;
+use bz_node::call_stack::StarlarkCallStack;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_node::package::Package;
+use bz_node::provider_id_set::ProviderIdSet;
+use bz_node::rule::BAZEL_OUTPUT_FILE_GENERATING_RULE_ATTR;
+use bz_node::rule::BAZEL_OUTPUT_FILE_OUTPUT_ATTR;
+use bz_node::rule::BazelOutputAttrKind;
+use bz_node::rule::Rule;
+use bz_node::rule::RuleIncomingTransition;
+use bz_node::rule_type::RuleType;
+use bz_node::super_package::SuperPackage;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use starlark::eval::CallStack;
@@ -57,7 +57,7 @@ pub trait TargetNodeExt: Sized {
         package: Arc<Package>,
         internals: &ModuleInternals,
         param_parser: &mut ParametersParser<'v, '_>,
-    ) -> buck2_error::Result<Self>;
+    ) -> bz_error::Result<Self>;
 
     fn from_params<'v>(
         rule: Arc<Rule>,
@@ -67,7 +67,7 @@ pub trait TargetNodeExt: Sized {
         arg_count: usize,
         ignore_attrs_for_profiling: bool,
         call_stack: Option<CallStack>,
-    ) -> buck2_error::Result<Self>;
+    ) -> bz_error::Result<Self>;
 
     fn from_named_values<'v>(
         rule: Arc<Rule>,
@@ -76,7 +76,7 @@ pub trait TargetNodeExt: Sized {
         named: &SmallMap<StringValue<'v>, Value<'v>>,
         ignore_attrs_for_profiling: bool,
         call_stack: Option<CallStack>,
-    ) -> buck2_error::Result<Self>;
+    ) -> bz_error::Result<Self>;
 
     fn from_named_values_with_bazel_computed_defaults<'v>(
         rule: Arc<Rule>,
@@ -87,10 +87,10 @@ pub trait TargetNodeExt: Sized {
         eval: &mut Evaluator<'v, '_, '_>,
         ignore_attrs_for_profiling: bool,
         call_stack: Option<CallStack>,
-    ) -> buck2_error::Result<Self>;
+    ) -> bz_error::Result<Self>;
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BazelOutputFileTargetError {
     #[error("Bazel output attr `{0}` produced unsupported value `{1}`")]
@@ -99,7 +99,7 @@ enum BazelOutputFileTargetError {
     UnsupportedImplicitOutputPlaceholder(String, String),
 }
 
-fn bazel_output_file_rule() -> buck2_error::Result<Arc<Rule>> {
+fn bazel_output_file_rule() -> bz_error::Result<Arc<Rule>> {
     let generating_rule = Attribute::new(
         None,
         "",
@@ -120,7 +120,7 @@ fn bazel_output_file_rule() -> buck2_error::Result<Arc<Rule>> {
             false,
         )?,
         rule_type: RuleType::BazelOutputFile,
-        rule_kind: buck2_node::nodes::unconfigured::RuleKind::Normal,
+        rule_kind: bz_node::nodes::unconfigured::RuleKind::Normal,
         cfg: RuleIncomingTransition::None,
         uses_plugins: Vec::new(),
         bazel_toolchains: Vec::new(),
@@ -133,11 +133,11 @@ fn bazel_output_file_rule() -> buck2_error::Result<Arc<Rule>> {
     }))
 }
 
-fn bazel_input_file_rule() -> buck2_error::Result<Arc<Rule>> {
+fn bazel_input_file_rule() -> bz_error::Result<Arc<Rule>> {
     Ok(Arc::new(Rule {
         attributes: AttributeSpec::from(Vec::new(), false, &RuleIncomingTransition::None, false)?,
         rule_type: RuleType::BazelInputFile,
-        rule_kind: buck2_node::nodes::unconfigured::RuleKind::Normal,
+        rule_kind: bz_node::nodes::unconfigured::RuleKind::Normal,
         cfg: RuleIncomingTransition::None,
         uses_plugins: Vec::new(),
         bazel_toolchains: Vec::new(),
@@ -150,7 +150,7 @@ fn bazel_input_file_rule() -> buck2_error::Result<Arc<Rule>> {
     }))
 }
 
-fn attr_as_output_names(attr_name: &str, attr: &CoercedAttr) -> buck2_error::Result<Vec<String>> {
+fn attr_as_output_names(attr_name: &str, attr: &CoercedAttr) -> bz_error::Result<Vec<String>> {
     match attr {
         CoercedAttr::String(value) => Ok(vec![normalize_bazel_output_name(&value.0).to_owned()]),
         CoercedAttr::List(values) => values
@@ -184,7 +184,7 @@ fn normalize_bazel_output_name(value: &str) -> &str {
 fn implicit_output_attr_value(
     target_node: &TargetNode,
     attr_name: &str,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     if attr_name == "name" {
         return Ok(target_node.label().name().as_str().to_owned());
     }
@@ -215,7 +215,7 @@ fn implicit_output_attr_value(
 fn implicit_output_attr_value_from_coerced(
     attr_name: &str,
     value: &CoercedAttr,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     match value {
         CoercedAttr::String(value) => Ok(value.0.to_string()),
         CoercedAttr::OneOf(value, _) => implicit_output_attr_value_from_coerced(attr_name, value),
@@ -232,7 +232,7 @@ fn implicit_output_attr_value_from_coerced(
 fn expand_bazel_implicit_output_template(
     target_node: &TargetNode,
     template: &str,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let mut output = String::new();
     let mut rest = template;
     while let Some(start) = rest.find("%{") {
@@ -255,10 +255,10 @@ fn expand_bazel_implicit_output_template(
     Ok(output)
 }
 
-fn attr_id(spec: &AttributeSpec, name: &str) -> buck2_error::Result<AttributeId> {
+fn attr_id(spec: &AttributeSpec, name: &str) -> bz_error::Result<AttributeId> {
     spec.attr_specs()
         .find_map(|(attr_name, id, _)| (attr_name == name).then_some(id))
-        .ok_or_else(|| buck2_error::internal_error!("missing attr `{name}` in output file rule"))
+        .ok_or_else(|| bz_error::internal_error!("missing attr `{name}` in output file rule"))
 }
 
 fn new_bazel_output_file_target(
@@ -267,17 +267,17 @@ fn new_bazel_output_file_target(
     generating_target: &TargetNode,
     output_name: &str,
     internals: &ModuleInternals,
-) -> buck2_error::Result<TargetNode> {
+) -> bz_error::Result<TargetNode> {
     let name_id = attr_id(&rule.attributes, "name")?;
     let visibility_id = attr_id(&rule.attributes, VISIBILITY_ATTRIBUTE.name)?;
     let generating_rule_id = attr_id(&rule.attributes, BAZEL_OUTPUT_FILE_GENERATING_RULE_ATTR)?;
     let output_id = attr_id(&rule.attributes, BAZEL_OUTPUT_FILE_OUTPUT_ATTR)?;
     let generating_label = generating_target.label();
 
-    let mut attr_values = buck2_node::attrs::values::AttrValues::with_capacity(4);
+    let mut attr_values = bz_node::attrs::values::AttrValues::with_capacity(4);
     attr_values.push_sorted(
         name_id,
-        CoercedAttr::String(buck2_node::attrs::attr_type::string::StringLiteral(
+        CoercedAttr::String(bz_node::attrs::attr_type::string::StringLiteral(
             ArcStr::from(output_name),
         )),
     );
@@ -291,7 +291,7 @@ fn new_bazel_output_file_target(
     );
     attr_values.push_sorted(
         output_id,
-        CoercedAttr::String(buck2_node::attrs::attr_type::string::StringLiteral(
+        CoercedAttr::String(bz_node::attrs::attr_type::string::StringLiteral(
             ArcStr::from(output_name),
         )),
     );
@@ -326,7 +326,7 @@ fn new_bazel_output_file_target(
 pub(crate) fn bazel_output_file_targets(
     target_node: &TargetNode,
     internals: &ModuleInternals,
-) -> buck2_error::Result<Vec<TargetNode>> {
+) -> bz_error::Result<Vec<TargetNode>> {
     if target_node.rule.bazel_output_attrs.is_empty()
         && target_node.rule.bazel_implicit_outputs.is_empty()
     {
@@ -375,15 +375,15 @@ pub(crate) fn bazel_input_file_target(
     name: &TargetNameRef,
     buildfile_path: &BuildFilePath,
     super_package: &SuperPackage,
-) -> buck2_error::Result<TargetNode> {
+) -> bz_error::Result<TargetNode> {
     let rule = bazel_input_file_rule()?;
     let name_id = attr_id(&rule.attributes, "name")?;
     let visibility_id = attr_id(&rule.attributes, VISIBILITY_ATTRIBUTE.name)?;
 
-    let mut attr_values = buck2_node::attrs::values::AttrValues::with_capacity(2);
+    let mut attr_values = bz_node::attrs::values::AttrValues::with_capacity(2);
     attr_values.push_sorted(
         name_id,
-        CoercedAttr::String(buck2_node::attrs::attr_type::string::StringLiteral(
+        CoercedAttr::String(bz_node::attrs::attr_type::string::StringLiteral(
             ArcStr::from(name.as_str()),
         )),
     );
@@ -417,7 +417,7 @@ impl TargetNodeExt for TargetNode {
         package: Arc<Package>,
         internals: &ModuleInternals,
         param_parser: &mut ParametersParser<'v, '_>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let (name, indices, attr_values) =
             rule.attributes
                 .start_parse(param_parser, 1, internals.is_bazel_compat_build_file())?;
@@ -455,7 +455,7 @@ impl TargetNodeExt for TargetNode {
         arg_count: usize,
         ignore_attrs_for_profiling: bool,
         call_stack: Option<CallStack>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         if ignore_attrs_for_profiling {
             return Self::from_params_ignore_attrs_for_profiling(
                 rule,
@@ -503,7 +503,7 @@ impl TargetNodeExt for TargetNode {
         named: &SmallMap<StringValue<'v>, Value<'v>>,
         ignore_attrs_for_profiling: bool,
         call_stack: Option<CallStack>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let _ = ignore_attrs_for_profiling;
         let (target_name, attr_values) =
             rule.attributes
@@ -544,7 +544,7 @@ impl TargetNodeExt for TargetNode {
         eval: &mut Evaluator<'v, '_, '_>,
         ignore_attrs_for_profiling: bool,
         call_stack: Option<CallStack>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let _ = ignore_attrs_for_profiling;
         let (target_name, attr_values) = rule
             .attributes

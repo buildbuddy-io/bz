@@ -14,18 +14,18 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::hash::Hasher;
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
-use buck2_core::cells::external::external_cell_origin_for_cell;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::fs::buck_out_path::BazelOutputPathKind;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_execute::path::artifact_path::ArtifactPath;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::cells::external::external_cell_origin_for_cell;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::fs::buck_out_path::BazelOutputPathKind;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_execute::path::artifact_path::ArtifactPath;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use either::Either;
 use starlark::collections::StarlarkHasher;
 use starlark::typing::Ty;
@@ -457,40 +457,40 @@ pub trait StarlarkArtifactLike<'v>: Display {
     fn with_filename(
         &self,
         f: &dyn for<'b> Fn(&'b FileName) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>>;
+    ) -> bz_error::Result<StringValue<'v>>;
 
-    fn is_source(&'v self) -> buck2_error::Result<bool>;
+    fn is_source(&'v self) -> bz_error::Result<bool>;
 
-    fn is_directory(&'v self) -> buck2_error::Result<bool> {
+    fn is_directory(&'v self) -> bz_error::Result<bool> {
         Ok(false)
     }
 
-    fn is_symlink(&'v self) -> buck2_error::Result<bool> {
+    fn is_symlink(&'v self) -> bz_error::Result<bool> {
         Ok(false)
     }
 
-    fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>>;
+    fn owner(&'v self) -> bz_error::Result<Option<BaseDeferredKey>>;
 
-    fn source_owner(&'v self) -> buck2_error::Result<Option<ProvidersLabel>> {
+    fn source_owner(&'v self) -> bz_error::Result<Option<ProvidersLabel>> {
         Ok(None)
     }
 
     fn with_short_path(
         &self,
         f: &dyn for<'b> Fn(&'b ForwardRelativePath) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>>;
+    ) -> bz_error::Result<StringValue<'v>>;
 
     fn with_bazel_short_path(
         &self,
         f: &dyn Fn(&str) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         self.with_short_path(&|path| f(path.as_str()))
     }
 
     fn with_bazel_path(
         &self,
         f: &dyn Fn(&str) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>>;
+    ) -> bz_error::Result<StringValue<'v>>;
 
     /// It's very important that the Hash/Eq of the StarlarkArtifactLike things doesn't change
     /// during freezing, otherwise Starlark invariants are broken. Use the fingerprint
@@ -593,10 +593,10 @@ pub fn bazel_artifact_short_path(path: ArtifactPath<'_>) -> String {
 /// Not implemented for `OutputArtifact`
 pub trait StarlarkInputArtifactLike<'v>: StarlarkArtifactLike<'v> {
     /// Returns an apppropriate error for when this is used in a location that expects an output declaration.
-    fn as_output_error(&self) -> buck2_error::Error;
+    fn as_output_error(&self) -> bz_error::Error;
 
     /// Gets the bound main artifact, or errors if the artifact is not bound
-    fn get_bound_artifact(&self) -> buck2_error::Result<Artifact>;
+    fn get_bound_artifact(&self) -> bz_error::Result<Artifact>;
 
     /// Gets any associated artifacts that should be materialized along with the bound artifact
     fn get_associated_artifacts(&self) -> Option<&AssociatedArtifacts>;
@@ -611,7 +611,7 @@ pub trait StarlarkInputArtifactLike<'v>: StarlarkArtifactLike<'v> {
     fn as_command_line_like(&self) -> &dyn CommandLineArgLike<'v>;
 
     /// Gets a copy of the StarlarkArtifact, ensuring that the artifact is bound.
-    fn get_bound_starlark_artifact(&self) -> buck2_error::Result<StarlarkArtifact> {
+    fn get_bound_starlark_artifact(&self) -> bz_error::Result<StarlarkArtifact> {
         let artifact = self.get_bound_artifact()?;
         let source_is_directory = artifact.is_source() && self.bound_source_is_directory();
         let associated_artifacts = self.get_associated_artifacts();
@@ -624,24 +624,24 @@ pub trait StarlarkInputArtifactLike<'v>: StarlarkArtifactLike<'v> {
     }
 
     /// Gets the artifact group.
-    fn get_artifact_group(&self) -> buck2_error::Result<ArtifactGroup>;
+    fn get_artifact_group(&self) -> bz_error::Result<ArtifactGroup>;
 
-    fn as_output(&'v self, this: Value<'v>) -> buck2_error::Result<StarlarkOutputArtifact<'v>>;
+    fn as_output(&'v self, this: Value<'v>) -> bz_error::Result<StarlarkOutputArtifact<'v>>;
 
     fn project(
         &'v self,
         path: &ForwardRelativePath,
         hide_prefix: bool,
-    ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>>;
+    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>>;
 
     fn without_associated_artifacts(
         &'v self,
-    ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>>;
+    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>>;
 
     fn with_associated_artifacts(
         &'v self,
         artifacts: UnpackList<ValueAsInputArtifactLike<'v>>,
-    ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>>;
+    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>>;
 }
 
 /// Helper type to unpack artifacts.

@@ -13,16 +13,16 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_directory::directory::walk::ordered_entry_walk;
-use buck2_events::dispatch::EventDispatcher;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_directory::directory::walk::ordered_entry_walk;
+use bz_events::dispatch::EventDispatcher;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
@@ -91,7 +91,7 @@ fn format_directory_entry_leaves(
     result
 }
 
-#[derive(buck2_error::Error, Debug, Clone, Dupe)]
+#[derive(bz_error::Error, Debug, Clone, Dupe)]
 #[error(
     "Your build requires materializing an artifact that has expired in the \
     RE CAS and Buck does not have it. \
@@ -109,10 +109,10 @@ pub struct CasNotFoundError {
     pub info: Arc<CasDownloadInfo>,
     pub directory: ActionDirectoryEntry<ActionSharedDirectory>,
     #[source]
-    pub error: Arc<buck2_error::Error>,
+    pub error: Arc<bz_error::Error>,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = MaterializationError)]
 pub enum MaterializationError {
     #[error("Error materializing artifact at path `{}`", .path)]
@@ -120,7 +120,7 @@ pub enum MaterializationError {
         path: ProjectRelativePathBuf,
 
         #[source]
-        source: buck2_error::Error,
+        source: bz_error::Error,
     },
 
     /// The artifact wasn't found. This typically means it expired in the CAS.
@@ -132,7 +132,7 @@ pub enum MaterializationError {
         path: ProjectRelativePathBuf,
 
         #[source]
-        source: buck2_error::Error,
+        source: bz_error::Error,
     },
 }
 
@@ -178,7 +178,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     async fn declare_existing(
         &self,
         artifacts: Vec<DeclareArtifactPayload>,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     async fn declare_copy_impl(
         &self,
@@ -186,27 +186,27 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
         value: ArtifactValue,
         srcs: Vec<CopiedArtifact>,
         configuration_path: Option<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     async fn declare_cas_many_impl<'a, 'b>(
         &self,
         info: Arc<CasDownloadInfo>,
         artifacts: Vec<DeclareArtifactPayload>,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     async fn declare_http(
         &self,
         path: ProjectRelativePathBuf,
         info: HttpDownloadInfo,
         configuration_path: Option<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     /// Write contents to paths. The output is ordered in the same order as the input. Implicitly
     /// cleans up paths that the WriteRequest declares.
     async fn declare_write<'a>(
         &self,
-        generate: Box<dyn FnOnce() -> buck2_error::Result<Vec<WriteRequest>> + Send + 'a>,
-    ) -> buck2_error::Result<Vec<ArtifactValue>>;
+        generate: Box<dyn FnOnce() -> bz_error::Result<Vec<WriteRequest>> + Send + 'a>,
+    ) -> bz_error::Result<Vec<ArtifactValue>>;
 
     /// Ask the materializer if the artifacts at the set of paths match what is on disk or
     /// declared. Returns Ok(Ok) if they do and Ok(Err) if they don't. It's a result not a boolean
@@ -214,13 +214,13 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     async fn declare_match(
         &self,
         artifacts: Vec<(ProjectRelativePathBuf, ArtifactValue)>,
-    ) -> buck2_error::Result<DeclareMatchOutcome>;
+    ) -> bz_error::Result<DeclareMatchOutcome>;
 
     /// Return the artifact values currently tracked by the materializer for the given paths.
     async fn get_declared_artifact_values(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<Vec<Option<ArtifactValue>>> {
+    ) -> bz_error::Result<Vec<Option<ArtifactValue>>> {
         Ok(vec![None; paths.len()])
     }
 
@@ -231,7 +231,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     async fn get_declared_artifact_values_and_match(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<(Vec<Option<ArtifactValue>>, DeclareMatchOutcome)> {
+    ) -> bz_error::Result<(Vec<Option<ArtifactValue>>, DeclareMatchOutcome)> {
         let values = self.get_declared_artifact_values(paths.clone()).await?;
         let mut artifacts = Vec::with_capacity(values.len());
         for (path, value) in std::iter::zip(paths, values.iter()) {
@@ -254,17 +254,17 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     /// declared in the current daemon.
     ///
     /// This method does not guarantee that the artifact was materialized.
-    async fn has_artifact_at(&self, path: ProjectRelativePathBuf) -> buck2_error::Result<bool>;
+    async fn has_artifact_at(&self, path: ProjectRelativePathBuf) -> bz_error::Result<bool>;
 
     /// Declare an artifact at `path` exists. This will overwrite any pre-existing materialization
     /// methods for this file and indicate that no materialization is necessary.
-    async fn invalidate(&self, path: ProjectRelativePathBuf) -> buck2_error::Result<()> {
+    async fn invalidate(&self, path: ProjectRelativePathBuf) -> bz_error::Result<()> {
         self.invalidate_many(vec![path]).await
     }
 
     /// Declare an artifact at `path` exists. This will overwrite any pre-existing materialization
     /// methods for this file and indicate that no materialization is necessary.
-    async fn invalidate_many(&self, paths: Vec<ProjectRelativePathBuf>) -> buck2_error::Result<()>;
+    async fn invalidate_many(&self, paths: Vec<ProjectRelativePathBuf>) -> bz_error::Result<()>;
 
     /// Materialize artifacts paths. Returns a Stream with each element corresponding to one of the
     /// input paths, in the order that they were passed. This method provides access to
@@ -273,7 +273,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     async fn materialize_many(
         &self,
         artifact_paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<BoxStream<'static, Result<(), MaterializationError>>>;
+    ) -> bz_error::Result<BoxStream<'static, Result<(), MaterializationError>>>;
 
     /// Given a list of artifact paths, blocks until all previously declared
     /// artifacts on that list are materialized. An [`Err`] is returned if the
@@ -284,7 +284,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     async fn ensure_materialized(
         &self,
         artifact_paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(self
             .materialize_many(artifact_paths)
             .await?
@@ -306,7 +306,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     async fn try_materialize_final_artifact(
         &self,
         artifact_path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<bool>;
+    ) -> bz_error::Result<bool>;
 
     /// Given a `file_path` whose contents we are interested in, *tries* to
     /// find a materialized path with the same contents. It returns [`None`] if
@@ -324,7 +324,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
     async fn get_materialized_file_paths(
         &self,
         file_paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<Vec<Result<ProjectRelativePathBuf, ArtifactNotMaterializedReason>>>;
+    ) -> bz_error::Result<Vec<Result<ProjectRelativePathBuf, ArtifactNotMaterializedReason>>>;
 
     fn as_deferred_materializer_extension(&self) -> Option<&dyn DeferredMaterializerExtensions> {
         None
@@ -335,7 +335,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
 
     /// Inject stats into a snapshot. This is also used only for the deferred materializer at this
     /// time.
-    fn add_snapshot_stats(&self, _snapshot: &mut buck2_data::Snapshot) {}
+    fn add_snapshot_stats(&self, _snapshot: &mut bz_data::Snapshot) {}
 
     /// Returns artifact entries for the given `paths`.
     ///
@@ -351,7 +351,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
         &self,
         paths: Vec<ProjectRelativePathBuf>,
         fetch_root_artifact_entries_for_subpaths: bool,
-    ) -> buck2_error::Result<
+    ) -> bz_error::Result<
         Vec<
             Option<(
                 ProjectRelativePathBuf,
@@ -371,7 +371,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
         &self,
         fs: &ArtifactFs,
         path: &BuildArtifactPath,
-    ) -> buck2_error::Result<Option<ProjectRelativePathBuf>> {
+    ) -> bz_error::Result<Option<ProjectRelativePathBuf>> {
         if self.is_eager_materialization_enabled() && path.is_content_based_path() {
             Ok(Some(fs.resolve_build_configuration_hash_path(path)?))
         } else {
@@ -386,7 +386,7 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
         &self,
         _paths: Vec<ProjectRelativePathBuf>,
         _event_dispatcher: EventDispatcher,
-    ) -> buck2_error::Result<Box<dyn EagerMaterializationGuard>> {
+    ) -> bz_error::Result<Box<dyn EagerMaterializationGuard>> {
         Ok(Box::new(()))
     }
 }
@@ -429,7 +429,7 @@ impl dyn Materializer {
         value: ArtifactValue,
         srcs: Vec<CopiedArtifact>,
         configuration_path: Option<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.check_declared_external_symlink(&value)?;
         self.declare_copy_impl(path, value, srcs, configuration_path)
             .await
@@ -441,7 +441,7 @@ impl dyn Materializer {
         &self,
         info: Arc<CasDownloadInfo>,
         artifacts: Vec<DeclareArtifactPayload>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for DeclareArtifactPayload {
             artifact: value, ..
         } in artifacts.iter()
@@ -455,13 +455,13 @@ impl dyn Materializer {
     /// No external symlink should be declared on the materializer with a non-empty remaining
     /// path. This function runs a check on all declared artifacts and returns `Err` if they
     /// are external symlinks with an existing value on `remaining_path` and `Ok` otherwise.
-    fn check_declared_external_symlink(&self, value: &ArtifactValue) -> buck2_error::Result<()> {
+    fn check_declared_external_symlink(&self, value: &ArtifactValue) -> bz_error::Result<()> {
         if let DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(external_symlink)) =
             value.entry()
         {
             if !external_symlink.remaining_path().is_empty() {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "Internal error: external symlink should not be declared on materializer with non-empty remaining path: '{}'",
                     external_symlink.dupe().to_path_buf().display()
                 ));
@@ -660,7 +660,7 @@ pub struct HttpDownloadInfo {
     pub owner: BaseDeferredKey,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum ArtifactNotMaterializedReason {
     #[error(
@@ -748,35 +748,35 @@ pub trait DeferredMaterializerSubscription: Send + Sync {
 /// Extensions to the Materializer trait that are only available in the Deferred materializer.
 #[async_trait]
 pub trait DeferredMaterializerExtensions: Send + Sync {
-    fn iterate(&self) -> buck2_error::Result<BoxStream<'static, DeferredMaterializerIterItem>>;
+    fn iterate(&self) -> bz_error::Result<BoxStream<'static, DeferredMaterializerIterItem>>;
 
     fn list_subscriptions(&self)
-    -> buck2_error::Result<BoxStream<'static, ProjectRelativePathBuf>>;
+    -> bz_error::Result<BoxStream<'static, ProjectRelativePathBuf>>;
 
     /// Obtain a list of files that don't match their in-memory representation. This may not catch
     /// all discrepancies.
     fn fsck(
         &self,
-    ) -> buck2_error::Result<BoxStream<'static, (ProjectRelativePathBuf, buck2_error::Error)>>;
+    ) -> bz_error::Result<BoxStream<'static, (ProjectRelativePathBuf, bz_error::Error)>>;
 
-    async fn refresh_ttls(&self, min_ttl: i64) -> buck2_error::Result<()>;
+    async fn refresh_ttls(&self, min_ttl: i64) -> bz_error::Result<()>;
 
-    async fn get_ttl_refresh_log(&self) -> buck2_error::Result<String>;
+    async fn get_ttl_refresh_log(&self) -> bz_error::Result<String>;
 
     async fn clean_stale_artifacts(
         &self,
         keep_since_time: DateTime<Utc>,
         dry_run: bool,
         tracked_only: bool,
-    ) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse>;
+    ) -> bz_error::Result<bz_cli_proto::CleanStaleResponse>;
 
-    async fn clear_all_artifacts(&self) -> buck2_error::Result<()>;
+    async fn clear_all_artifacts(&self) -> bz_error::Result<()>;
 
-    async fn test_iter(&self, count: usize) -> buck2_error::Result<String>;
-    async fn flush_all_access_times(&self) -> buck2_error::Result<String>;
+    async fn test_iter(&self, count: usize) -> bz_error::Result<String>;
+    async fn flush_all_access_times(&self) -> bz_error::Result<String>;
 
     /// Create a new DeferredMaterializerSubscription.
     async fn create_subscription(
         &self,
-    ) -> buck2_error::Result<Box<dyn DeferredMaterializerSubscription>>;
+    ) -> bz_error::Result<Box<dyn DeferredMaterializerSubscription>>;
 }

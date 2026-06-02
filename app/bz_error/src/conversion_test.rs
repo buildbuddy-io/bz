@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-//! Test conversion impls for different error types to 'buck2_error::Error'
+//! Test conversion impls for different error types to 'bz_error::Error'
 
 use crate::conversion::from_any_with_tag;
 

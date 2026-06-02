@@ -13,8 +13,8 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::SystemTime;
 
-use buck2_data::SpanEndEvent;
-use buck2_events::BuckEvent;
+use bz_data::SpanEndEvent;
+use bz_events::BuckEvent;
 use gazebo::variants::VariantName;
 
 use crate::unpack_event::UnpackedBuckEvent;
@@ -60,7 +60,7 @@ impl DebugEventsState {
         }
     }
 
-    pub fn handle_event(&mut self, event: &BuckEvent) -> buck2_error::Result<()> {
+    pub fn handle_event(&mut self, event: &BuckEvent) -> bz_error::Result<()> {
         self.event_count += 1;
 
         let delay = event
@@ -86,7 +86,7 @@ impl DebugEventsState {
         Ok(())
     }
 
-    fn span_started(&mut self, data: Option<&buck2_data::span_start_event::Data>) {
+    fn span_started(&mut self, data: Option<&bz_data::span_start_event::Data>) {
         let name = data.map_or("Unrecognized", |d| d.variant_name());
         let entry = {
             match self.spans.get_mut(name) {
@@ -103,7 +103,7 @@ impl DebugEventsState {
     fn span_end(
         &mut self,
         span_end: &SpanEndEvent,
-        data: Option<&buck2_data::span_end_event::Data>,
+        data: Option<&bz_data::span_end_event::Data>,
     ) {
         // Right now, matching these end events to the start events depends on the field names in the protobufs
         // matching. That works but is fragile, if it breaks at some point we can do the match and explicitly
@@ -126,7 +126,7 @@ impl DebugEventsState {
         }
     }
 
-    fn instant(&mut self, data: Option<&buck2_data::instant_event::Data>) {
+    fn instant(&mut self, data: Option<&bz_data::instant_event::Data>) {
         let name = data.map_or("Unrecognized", |d| d.variant_name());
 
         let entry = {

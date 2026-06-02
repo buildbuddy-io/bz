@@ -12,19 +12,19 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::ignores::ignore_set::IgnoreSet;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::buck2_env;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
-use buck2_core::fs::project::ProjectRoot;
+use bz_common::ignores::ignore_set::IgnoreSet;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_core::bz_env;
+use bz_core::cells::CellResolver;
+use bz_core::cells::name::CellName;
+use bz_core::fs::project::ProjectRoot;
 #[cfg(fbcode_build)]
-use buck2_core::soft_error;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::buck2_error;
-use buck2_hash::StdBuckHashMap;
+use bz_core::soft_error;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::bz_error;
+use bz_hash::StdBuckHashMap;
 use dice::DiceTransactionUpdater;
 
 #[cfg(fbcode_build)]
@@ -40,14 +40,14 @@ pub trait FileWatcher: Allocative + Send + Sync + 'static {
     async fn sync(
         &self,
         dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(DiceTransactionUpdater, Mergebase)>;
+    ) -> bz_error::Result<(DiceTransactionUpdater, Mergebase)>;
 }
 
 /// Parse the `dice_clear_on_mergebase_change` config, honoring both the buckconfig
 /// and the `BUCK2_TEST_SKIP_DICE_CLEAR_ON_MERGEBASE_CHANGE` env var override.
 pub(crate) fn dice_clear_on_mergebase_change(
     root_config: &LegacyBuckConfig,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let config_value = root_config
         .parse::<bool>(BuckconfigKeyRef {
             section: "buck2",
@@ -55,7 +55,7 @@ pub(crate) fn dice_clear_on_mergebase_change(
         })
         .buck_error_context("Failed to parse dice_clear_on_mergebase_change config")?
         .unwrap_or(true);
-    let env_skip = buck2_env!(
+    let env_skip = bz_env!(
         "BUCK2_TEST_SKIP_DICE_CLEAR_ON_MERGEBASE_CHANGE",
         bool,
         applicability = testing
@@ -74,9 +74,9 @@ impl dyn FileWatcher {
         cells: CellResolver,
         ignore_specs: StdBuckHashMap<CellName, IgnoreSet>,
         watchfs: bool,
-    ) -> buck2_error::Result<Arc<dyn FileWatcher>> {
+    ) -> bz_error::Result<Arc<dyn FileWatcher>> {
         if !project_root.root().as_path().exists() {
-            return Err(buck2_error!(
+            return Err(bz_error!(
                 ErrorTag::MissingProjectRoot,
                 "Project root `{}` does not exist. \
                  The directory may have been removed.",
@@ -143,8 +143,8 @@ impl dyn FileWatcher {
                 FsHashCrawler::new(project_root, cells, ignore_specs)
                     .buck_error_context("Creating fs_crawler file watcher")?,
             )),
-            other => Err(buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            other => Err(bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "Invalid buck2.file_watcher: {}",
                 other
             )),

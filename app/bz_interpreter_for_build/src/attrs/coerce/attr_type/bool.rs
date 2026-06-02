@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::attr_type::bool::BoolAttrType;
-use buck2_node::attrs::attr_type::bool::BoolLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::attr_type::bool::BoolAttrType;
+use bz_node::attrs::attr_type::bool::BoolLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
 use starlark::values::Value;
 
@@ -25,7 +25,7 @@ impl AttrTypeCoerce for BoolAttrType {
         _configurable: AttrIsConfigurable,
         _ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         let value = if let Some(value) = value.unpack_bool() {
             value
         } else if let Some(value) = value.unpack_i32() {
@@ -33,16 +33,16 @@ impl AttrTypeCoerce for BoolAttrType {
                 0 => false,
                 1 => true,
                 _ => {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Expected one of [False, True, 0, 1], but got `{}`",
                         value,
                     ));
                 }
             }
         } else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Expected one of [False, True, 0, 1], but got `{}`",
                 value.to_repr(),
             ));

@@ -13,28 +13,28 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::buck2_env;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::alias::NonEmptyCellAlias;
-use buck2_core::cells::cell_root_path::CellRootPath;
-use buck2_core::cells::cell_root_path::CellRootPathBuf;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::external::GitCellSetup;
-use buck2_core::cells::external::GitObjectFormat;
-use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::cells::external::register_external_cell_origin;
-use buck2_core::cells::name::CellName;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_fs::paths::RelativePath;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
+use bz_core::bz_env;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::alias::NonEmptyCellAlias;
+use bz_core::cells::cell_root_path::CellRootPath;
+use bz_core::cells::cell_root_path::CellRootPathBuf;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::GitCellSetup;
+use bz_core::cells::external::GitObjectFormat;
+use bz_core::cells::external::bzlmod_cell_aliases_for_cell;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::cells::external::register_external_cell_origin;
+use bz_core::cells::name::CellName;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_fs::paths::RelativePath;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
 use dice::DiceComputations;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -146,8 +146,8 @@ impl ExternalBuckconfigData {
 
     async fn get_local_config_components(
         project_root: &ProjectRoot,
-    ) -> Vec<buck2_data::BuckconfigComponent> {
-        use buck2_data::buckconfig_component::Data::GlobalExternalConfigFile;
+    ) -> Vec<bz_data::BuckconfigComponent> {
+        use bz_data::buckconfig_component::Data::GlobalExternalConfigFile;
         let file_ops = &mut DefaultConfigParserFileOps {
             project_fs: project_root.dupe(),
         };
@@ -174,8 +174,8 @@ impl ExternalBuckconfigData {
                         // Don't create an empty component for cells with non-existing .buckconfig.local
                         continue;
                     }
-                    local_config_components.push(buck2_data::BuckconfigComponent {
-                        data: Some(GlobalExternalConfigFile(buck2_data::GlobalExternalConfig {
+                    local_config_components.push(bz_data::BuckconfigComponent {
+                        data: Some(GlobalExternalConfigFile(bz_data::GlobalExternalConfig {
                             values,
                             origin_path,
                         })),
@@ -189,18 +189,18 @@ impl ExternalBuckconfigData {
     pub async fn get_buckconfig_components(
         &self,
         project_root: &ProjectRoot,
-    ) -> Vec<buck2_data::BuckconfigComponent> {
-        use buck2_data::buckconfig_component::Data::GlobalExternalConfigFile;
-        let mut res: Vec<buck2_data::BuckconfigComponent> = self
+    ) -> Vec<bz_data::BuckconfigComponent> {
+        use bz_data::buckconfig_component::Data::GlobalExternalConfigFile;
+        let mut res: Vec<bz_data::BuckconfigComponent> = self
             .external_path_configs
             .clone()
             .into_iter()
             .map(|o| {
-                let external_file = buck2_data::GlobalExternalConfig {
+                let external_file = bz_data::GlobalExternalConfig {
                     values: o.parse_state.to_proto_external_config_values(false),
                     origin_path: o.origin_path.to_string(),
                 };
-                buck2_data::BuckconfigComponent {
+                bz_data::BuckconfigComponent {
                     data: Some(GlobalExternalConfigFile(external_file)),
                 }
             })
@@ -239,7 +239,7 @@ impl BuckConfigBasedCells {
         &self,
         project_fs: &ProjectRoot,
         cwd: &ProjectRelativePath,
-    ) -> buck2_error::Result<CellAliasResolver> {
+    ) -> bz_error::Result<CellAliasResolver> {
         self.get_cell_alias_resolver_for_cwd_fast_with_file_ops(
             &mut DefaultConfigParserFileOps {
                 project_fs: project_fs.dupe(),
@@ -254,7 +254,7 @@ impl BuckConfigBasedCells {
         &self,
         project_fs: &ProjectRoot,
         cwd: &ProjectRelativePath,
-    ) -> buck2_error::Result<CellAliasResolver> {
+    ) -> bz_error::Result<CellAliasResolver> {
         // Immediate config runs in the client before connecting to the daemon. It must not resolve
         // Bazel modules; the daemon command update owns that after file-watcher sync.
         self.get_cell_alias_resolver_for_cwd_fast_with_file_ops(
@@ -272,7 +272,7 @@ impl BuckConfigBasedCells {
         file_ops: &mut dyn ConfigParserFileOps,
         cwd: &ProjectRelativePath,
         apply_bazel_compat_defaults: bool,
-    ) -> buck2_error::Result<CellAliasResolver> {
+    ) -> bz_error::Result<CellAliasResolver> {
         let cell_name = self.cell_resolver.find(cwd);
         let cell_path = self.cell_resolver.get(cell_name)?.path();
 
@@ -329,8 +329,8 @@ impl BuckConfigBasedCells {
 
     pub async fn parse_with_config_args(
         project_fs: &ProjectRoot,
-        config_args: &[buck2_cli_proto::ConfigOverride],
-    ) -> buck2_error::Result<Self> {
+        config_args: &[bz_cli_proto::ConfigOverride],
+    ) -> bz_error::Result<Self> {
         Self::parse_with_file_ops_and_options(
             &mut DefaultConfigParserFileOps {
                 project_fs: project_fs.dupe(),
@@ -343,7 +343,7 @@ impl BuckConfigBasedCells {
         .await
     }
 
-    pub async fn parse_for_immediate_config(project_fs: &ProjectRoot) -> buck2_error::Result<Self> {
+    pub async fn parse_for_immediate_config(project_fs: &ProjectRoot) -> bz_error::Result<Self> {
         // Keep the client-side startup parse to real Buck config plus a minimal Bazel root cell.
         // Full MODULE.bazel resolution happens in the daemon command update.
         Self::parse_with_file_ops_and_options(
@@ -364,8 +364,8 @@ impl BuckConfigBasedCells {
 
     pub async fn testing_parse_with_file_ops(
         file_ops: &mut dyn ConfigParserFileOps,
-        config_args: &[buck2_cli_proto::ConfigOverride],
-    ) -> buck2_error::Result<Self> {
+        config_args: &[bz_cli_proto::ConfigOverride],
+    ) -> bz_error::Result<Self> {
         Self::parse_with_file_ops_and_options(
             file_ops,
             config_args,
@@ -378,11 +378,11 @@ impl BuckConfigBasedCells {
 
     async fn parse_with_file_ops_and_options(
         file_ops: &mut dyn ConfigParserFileOps,
-        config_args: &[buck2_cli_proto::ConfigOverride],
+        config_args: &[bz_cli_proto::ConfigOverride],
         follow_includes: bool,
         apply_bazel_compat_defaults: bool,
         persistent_cache_project_fs: Option<&ProjectRoot>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Self::parse_with_file_ops_and_options_inner(
             file_ops,
             config_args,
@@ -396,11 +396,11 @@ impl BuckConfigBasedCells {
 
     async fn parse_with_file_ops_and_options_inner(
         file_ops: &mut dyn ConfigParserFileOps,
-        config_args: &[buck2_cli_proto::ConfigOverride],
+        config_args: &[bz_cli_proto::ConfigOverride],
         follow_includes: bool,
         apply_bazel_compat_defaults: bool,
         _persistent_cache_project_fs: Option<&ProjectRoot>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         // Tracing file ops to record config file accesses on command invocation.
         struct TracingFileOps<'a> {
             inner: &'a mut dyn ConfigParserFileOps,
@@ -412,7 +412,7 @@ impl BuckConfigBasedCells {
             async fn read_file_lines_if_exists(
                 &mut self,
                 path: &ConfigPath,
-            ) -> buck2_error::Result<Option<Vec<String>>> {
+            ) -> bz_error::Result<Option<Vec<String>>> {
                 self.trace.insert(path.clone());
                 self.inner.read_file_lines_if_exists(path).await
             }
@@ -420,7 +420,7 @@ impl BuckConfigBasedCells {
             async fn read_dir(
                 &mut self,
                 path: &ConfigPath,
-            ) -> buck2_error::Result<Vec<ConfigDirEntry>> {
+            ) -> bz_error::Result<Vec<ConfigDirEntry>> {
                 self.trace.insert(path.clone());
                 self.inner.read_dir(path).await
             }
@@ -429,7 +429,7 @@ impl BuckConfigBasedCells {
                 &self,
                 base: &ProjectRelativePath,
                 path: &RelativePath,
-            ) -> buck2_error::Result<Option<buck2_fs::paths::abs_path::AbsPathBuf>> {
+            ) -> bz_error::Result<Option<bz_fs::paths::abs_path::AbsPathBuf>> {
                 self.inner.resolve_project_relative_to_absolute(base, path)
             }
         }
@@ -565,7 +565,7 @@ impl BuckConfigBasedCells {
 
     pub(crate) fn get_cell_aliases_from_config(
         config: &LegacyBuckConfig,
-    ) -> buck2_error::Result<impl Iterator<Item = (NonEmptyCellAlias, NonEmptyCellAlias)> + use<>>
+    ) -> bz_error::Result<impl Iterator<Item = (NonEmptyCellAlias, NonEmptyCellAlias)> + use<>>
     {
         let mut aliases = Vec::new();
         if let Some(section) = config
@@ -585,7 +585,7 @@ impl BuckConfigBasedCells {
         cell_name: CellName,
         cell_resolver: &CellResolver,
         config: &LegacyBuckConfig,
-    ) -> buck2_error::Result<CellAliasResolver> {
+    ) -> bz_error::Result<CellAliasResolver> {
         let mut aliases = StdBuckHashMap::default();
         for alias in ["root", "prelude", "bazel_tools"] {
             let alias = NonEmptyCellAlias::new(alias.to_owned())?;
@@ -627,7 +627,7 @@ impl BuckConfigBasedCells {
         ctx: &mut DiceComputations<'_>,
         cell_name: CellName,
         cell_path: &CellRootPath,
-    ) -> buck2_error::Result<LegacyBuckConfig> {
+    ) -> bz_error::Result<LegacyBuckConfig> {
         let resolver = ctx.get_cell_resolver().await?;
         let io_provider = ctx.global_data().get_io_provider();
         let project_fs = io_provider.project_root();
@@ -647,7 +647,7 @@ impl BuckConfigBasedCells {
         &self,
         cell: CellName,
         project_fs: &ProjectRoot,
-    ) -> buck2_error::Result<LegacyBuckConfig> {
+    ) -> bz_error::Result<LegacyBuckConfig> {
         self.parse_single_cell_with_file_ops(
             cell,
             &mut DefaultConfigParserFileOps {
@@ -661,7 +661,7 @@ impl BuckConfigBasedCells {
         &self,
         cell: CellName,
         file_ops: &mut dyn ConfigParserFileOps,
-    ) -> buck2_error::Result<LegacyBuckConfig> {
+    ) -> bz_error::Result<LegacyBuckConfig> {
         Self::parse_single_cell_with_file_ops_inner(
             &self.external_data,
             file_ops,
@@ -676,7 +676,7 @@ impl BuckConfigBasedCells {
         file_ops: &mut dyn ConfigParserFileOps,
         cell_name: &str,
         cell_path: &CellRootPath,
-    ) -> buck2_error::Result<LegacyBuckConfig> {
+    ) -> bz_error::Result<LegacyBuckConfig> {
         let is_bzlmod_cell = is_bzlmod_cell_name(cell_name);
         if is_bzlmod_cell || cell_name == "bazel_tools" {
             return Ok(LegacyBuckConfig::empty().with_bazel_compat_cell_defaults(
@@ -719,8 +719,8 @@ impl BuckConfigBasedCells {
         cell: CellName,
         value: &str,
         config: &LegacyBuckConfig,
-    ) -> buck2_error::Result<ExternalCellOrigin> {
-        #[derive(buck2_error::Error, Debug)]
+    ) -> bz_error::Result<ExternalCellOrigin> {
+        #[derive(bz_error::Error, Debug)]
         #[buck2(tag = Input)]
         enum ExternalCellOriginParseError {
             #[error("Unknown external cell origin `{0}`")]
@@ -775,7 +775,7 @@ async fn config_file_exists(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
     file: &str,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let file = ForwardRelativePath::new(file)?;
     let path = ConfigPath::Project(cell_path.as_project_relative_path().join(file));
     Ok(file_ops.read_file_lines_if_exists(&path).await?.is_some())
@@ -784,7 +784,7 @@ async fn config_file_exists(
 async fn should_apply_bazel_compat_defaults(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     if config_file_exists(cell_path, file_ops, BAZEL_MODULE_FILE).await? {
         return Ok(true);
     }
@@ -853,7 +853,7 @@ fn bazelrc_import_path(
     file_ops: &dyn ConfigParserFileOps,
     current_path: &ConfigPath,
     import_path: &str,
-) -> buck2_error::Result<Option<ConfigPath>> {
+) -> bz_error::Result<Option<ConfigPath>> {
     if let Some(path) = import_path.strip_prefix("%workspace%/") {
         let path = RelativePath::new(path);
         let root_path = root_path.as_project_relative_path();
@@ -884,7 +884,7 @@ fn collect_bazelrc_records<'a>(
     required: bool,
     visited: &'a mut BTreeSet<String>,
     records: &'a mut Vec<BazelrcRecord>,
-) -> BoxFuture<'a, buck2_error::Result<()>> {
+) -> BoxFuture<'a, bz_error::Result<()>> {
     async move {
         let key = path.to_string();
         if !visited.insert(key) {
@@ -892,8 +892,8 @@ fn collect_bazelrc_records<'a>(
         }
         let Some(lines) = file_ops.read_file_lines_if_exists(&path).await? else {
             if required {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Bazel rc file `{}` does not exist",
                     path
                 ));
@@ -915,8 +915,8 @@ fn collect_bazelrc_records<'a>(
                         bazelrc_import_path(root_path, file_ops, &path, import_path)?
                     else {
                         if import_required {
-                            return Err(buck2_error!(
-                                buck2_error::ErrorTag::Input,
+                            return Err(bz_error!(
+                                bz_error::ErrorTag::Input,
                                 "Bazel rc import `{}` in `{}` could not be resolved",
                                 import_path,
                                 path
@@ -1244,7 +1244,7 @@ async fn get_bazelrc_options(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
     config_args: &[ResolvedLegacyConfigArg],
-) -> buck2_error::Result<BazelCompatBazelrcOptions> {
+) -> bz_error::Result<BazelCompatBazelrcOptions> {
     let root_bazelrc = ConfigPath::Project(
         cell_path
             .as_project_relative_path()
@@ -1269,8 +1269,8 @@ async fn get_bazelrc_options(
 
 async fn get_external_buckconfig_paths(
     file_ops: &mut dyn ConfigParserFileOps,
-) -> buck2_error::Result<Vec<ConfigPath>> {
-    let skip_default_external_config = buck2_env!(
+) -> bz_error::Result<Vec<ConfigPath>> {
+    let skip_default_external_config = bz_env!(
         "BUCK2_TEST_SKIP_DEFAULT_EXTERNAL_CONFIG",
         bool,
         applicability = testing
@@ -1321,7 +1321,7 @@ async fn get_external_buckconfig_paths(
     }
 
     let extra_external_config =
-        buck2_env!("BUCK2_TEST_EXTRA_EXTERNAL_CONFIG", applicability = testing)?;
+        bz_env!("BUCK2_TEST_EXTRA_EXTERNAL_CONFIG", applicability = testing)?;
 
     if let Some(f) = extra_external_config {
         buckconfig_paths.push(ConfigPath::Global(AbsPath::new(f)?.to_owned()));
@@ -1333,7 +1333,7 @@ async fn get_external_buckconfig_paths(
 async fn get_project_buckconfig_paths(
     path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
-) -> buck2_error::Result<Vec<ConfigPath>> {
+) -> bz_error::Result<Vec<ConfigPath>> {
     let mut buckconfig_paths: Vec<ConfigPath> = Vec::new();
 
     for buckconfig in DEFAULT_PROJECT_CONFIG_SOURCES {
@@ -1365,13 +1365,13 @@ async fn get_project_buckconfig_paths(
 mod tests {
     use std::sync::Arc;
 
-    use buck2_cli_proto::ConfigOverride;
-    use buck2_core::cells::cell_root_path::CellRootPath;
-    use buck2_core::cells::cell_root_path::CellRootPathBuf;
-    use buck2_core::cells::external::ExternalCellOrigin;
-    use buck2_core::cells::external::GitCellSetup;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_cli_proto::ConfigOverride;
+    use bz_core::cells::cell_root_path::CellRootPath;
+    use bz_core::cells::cell_root_path::CellRootPathBuf;
+    use bz_core::cells::external::ExternalCellOrigin;
+    use bz_core::cells::external::GitCellSetup;
+    use bz_core::cells::name::CellName;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
     use dice::DiceComputations;
     use indoc::indoc;
 
@@ -1383,10 +1383,10 @@ mod tests {
     use crate::legacy_configs::configs::testing::TestConfigParserFileOps;
     use crate::legacy_configs::configs::tests::assert_config_value;
     use crate::legacy_configs::key::BuckconfigKeyRef;
-    use buck2_core::cells::external::bzlmod_cell_name;
+    use bz_core::cells::external::bzlmod_cell_name;
 
     #[tokio::test]
-    async fn test_bazelrc_workspace_import_normalizes_path() -> buck2_error::Result<()> {
+    async fn test_bazelrc_workspace_import_normalizes_path() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 ".bazelrc",
@@ -1403,7 +1403,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bazelrc_bazel_native_configuration_flags() -> buck2_error::Result<()> {
+    async fn test_bazelrc_bazel_native_configuration_flags() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".bazelrc",
             "build --cpu=k8 --host_cpu=k8 --platforms=//platforms:linux,@platforms//cpu:x86_64 --extra_execution_platforms=@toolchains//platforms:linux_x86_64 --extra_toolchains=@toolchains//cc:linux_x86_64 --javacopt=-Akey=a,b\n",
@@ -1428,7 +1428,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bazelrc_repo_env() -> buck2_error::Result<()> {
+    async fn test_bazelrc_repo_env() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".bazelrc",
             "common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1 --repo_env=INHERITED --repo_env==UNSET\n",
@@ -1446,7 +1446,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bazelrc_platform_specific_config_uses_configured_host_platform()
-    -> buck2_error::Result<()> {
+    -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".bazelrc",
             indoc!(
@@ -1475,7 +1475,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bazelrc_try_import_workspace_path_outside_project_is_optional()
-    -> buck2_error::Result<()> {
+    -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".bazelrc",
             "try-import %workspace%/../../internal_tools/preset.bazelrc\nbuild --copt=-DLOCAL\n",
@@ -1503,7 +1503,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cells() -> buck2_error::Result<()> {
+    async fn test_cells() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 ".buckconfig",
@@ -1573,7 +1573,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bazel_compat_defaults_without_buckconfig() -> buck2_error::Result<()> {
+    async fn test_bazel_compat_defaults_without_buckconfig() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 "MODULE.bazel",
@@ -1703,7 +1703,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_module_bazel_enables_bazel_compat_defaults_with_buckconfig()
-    -> buck2_error::Result<()> {
+    -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 ".buckconfig",
@@ -1776,7 +1776,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bazel_cell_alias_resolver_preserves_magic_bazel_tools() -> buck2_error::Result<()>
+    async fn test_bazel_cell_alias_resolver_preserves_magic_bazel_tools() -> bz_error::Result<()>
     {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".buckconfig",
@@ -1809,7 +1809,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bazel_cell_alias_resolver_uses_actual_root_cell() -> buck2_error::Result<()> {
+    async fn test_bazel_cell_alias_resolver_uses_actual_root_cell() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".buckconfig",
             indoc!(
@@ -1841,7 +1841,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_buckconfig_wins_over_bazel_compat_defaults() -> buck2_error::Result<()> {
+    async fn test_buckconfig_wins_over_bazel_compat_defaults() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 ".buckconfig",
@@ -1885,7 +1885,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_multi_cell_with_config_file() -> buck2_error::Result<()> {
+    async fn test_multi_cell_with_config_file() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 ".buckconfig",
@@ -1980,7 +1980,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_multi_cell_no_repositories_in_non_root_cell() -> buck2_error::Result<()> {
+    async fn test_multi_cell_no_repositories_in_non_root_cell() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 ".buckconfig",
@@ -2021,7 +2021,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_multi_cell_with_cell_relative() -> buck2_error::Result<()> {
+    async fn test_multi_cell_with_cell_relative() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 ".buckconfig",
@@ -2097,7 +2097,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_local_config_file_overwrite_config_file() -> buck2_error::Result<()> {
+    async fn test_local_config_file_overwrite_config_file() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 ".buckconfig",
@@ -2143,7 +2143,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_multi_cell_local_config_file_overwrite_config_file() -> buck2_error::Result<()> {
+    async fn test_multi_cell_local_config_file_overwrite_config_file() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 ".buckconfig",
@@ -2228,7 +2228,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_config_arg_with_no_buckconfig() -> buck2_error::Result<()> {
+    async fn test_config_arg_with_no_buckconfig() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".buckconfig",
             indoc!(
@@ -2255,7 +2255,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cell_config_section_name() -> buck2_error::Result<()> {
+    async fn test_cell_config_section_name() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".buckconfig",
             indoc!(
@@ -2294,20 +2294,20 @@ mod tests {
                 _ctx: &mut DiceComputations<'_>,
                 _cell_name: CellName,
                 _origin: ExternalCellOrigin,
-            ) -> buck2_error::Result<Arc<dyn FileOpsDelegate>> {
+            ) -> bz_error::Result<Arc<dyn FileOpsDelegate>> {
                 // Not used in these tests
                 unreachable!()
             }
 
-            fn check_bundled_cell_exists(&self, cell_name: CellName) -> buck2_error::Result<()> {
+            fn check_bundled_cell_exists(&self, cell_name: CellName) -> bz_error::Result<()> {
                 if cell_name.as_str() == "test_bundled_cell"
                     || cell_name.as_str() == "prelude"
                     || cell_name.as_str() == "bazel_tools"
                 {
                     Ok(())
                 } else {
-                    Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "No bundled cell with name `{}`",
                         cell_name
                     ))
@@ -2320,7 +2320,7 @@ mod tests {
                 _cell_name: CellName,
                 _origin: ExternalCellOrigin,
                 _path: &CellRootPath,
-            ) -> buck2_error::Result<()> {
+            ) -> bz_error::Result<()> {
                 // Not used in these tests
                 unreachable!()
             }
@@ -2335,7 +2335,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_external_cell_configs() -> buck2_error::Result<()> {
+    async fn test_external_cell_configs() -> bz_error::Result<()> {
         initialize_external_cells_impl();
 
         let mut file_ops = TestConfigParserFileOps::new(&[(
@@ -2387,7 +2387,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_nested_external_cell_configs() -> buck2_error::Result<()> {
+    async fn test_nested_external_cell_configs() -> bz_error::Result<()> {
         initialize_external_cells_impl();
 
         let mut file_ops = TestConfigParserFileOps::new(&[(
@@ -2413,7 +2413,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_missing_bundled_cell() -> buck2_error::Result<()> {
+    async fn test_missing_bundled_cell() -> bz_error::Result<()> {
         initialize_external_cells_impl();
 
         let mut file_ops = TestConfigParserFileOps::new(&[(
@@ -2442,7 +2442,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_git_external_cell() -> buck2_error::Result<()> {
+    async fn test_git_external_cell() -> bz_error::Result<()> {
         initialize_external_cells_impl();
 
         let mut file_ops = TestConfigParserFileOps::new(&[(
@@ -2480,7 +2480,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_git_external_cell_invalid_sha1() -> buck2_error::Result<()> {
+    async fn test_git_external_cell_invalid_sha1() -> bz_error::Result<()> {
         initialize_external_cells_impl();
 
         let mut file_ops = TestConfigParserFileOps::new(&[(

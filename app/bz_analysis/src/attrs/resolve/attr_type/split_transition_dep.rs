@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::attr_type::dep::DepAttrType;
-use buck2_node::attrs::attr_type::split_transition_dep::ConfiguredSplitTransitionDep;
-use buck2_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
+use bz_node::attrs::attr_type::dep::DepAttrType;
+use bz_node::attrs::attr_type::split_transition_dep::ConfiguredSplitTransitionDep;
+use bz_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
 use starlark::values::Value;
 use starlark::values::dict::Dict;
 use starlark_map::Hashed;
@@ -23,19 +23,19 @@ pub(crate) trait SplitTransitionDepAttrTypeExt {
     fn resolve_values<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         deps: &ConfiguredSplitTransitionDep,
-    ) -> buck2_error::Result<Vec<Value<'v>>>;
+    ) -> bz_error::Result<Vec<Value<'v>>>;
 
     fn resolve_single<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         deps: &ConfiguredSplitTransitionDep,
-    ) -> buck2_error::Result<Value<'v>>;
+    ) -> bz_error::Result<Value<'v>>;
 }
 
 impl SplitTransitionDepAttrTypeExt for SplitTransitionDepAttrType {
     fn resolve_values<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         deps: &ConfiguredSplitTransitionDep,
-    ) -> buck2_error::Result<Vec<Value<'v>>> {
+    ) -> bz_error::Result<Vec<Value<'v>>> {
         let mut values = Vec::with_capacity(deps.deps.len());
         for target in deps.deps.values() {
             values.push(DepAttrType::resolve_single_impl(
@@ -51,7 +51,7 @@ impl SplitTransitionDepAttrTypeExt for SplitTransitionDepAttrType {
     fn resolve_single<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         deps: &ConfiguredSplitTransitionDep,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         let mut res = SmallMap::with_capacity(deps.deps.len());
         for (label, target) in &deps.deps {
             let label_hashed = ctx.heap().alloc_str(label).get_hashed();

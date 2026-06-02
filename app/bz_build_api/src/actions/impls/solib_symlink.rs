@@ -2,15 +2,15 @@ use std::borrow::Cow;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_signals::env::WaitingData;
-use buck2_core::category::CategoryRef;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact_utils::ArtifactValueBuilder;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::materialize::materializer::CopiedArtifact;
-use buck2_hash::BuckIndexSet;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_signals::env::WaitingData;
+use bz_core::category::CategoryRef;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact_utils::ArtifactValueBuilder;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::materialize::materializer::CopiedArtifact;
+use bz_hash::BuckIndexSet;
 use dupe::Dupe;
 use gazebo::prelude::*;
 use pagable::Pagable;
@@ -25,7 +25,7 @@ use crate::actions::execute::action_executor::ActionOutputs;
 use crate::actions::execute::error::ExecuteError;
 use crate::artifact_groups::ArtifactGroup;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum SolibSymlinkActionError {
     #[error("SolibSymlink action received no outputs")]
@@ -53,7 +53,7 @@ impl UnregisteredAction for UnregisteredSolibSymlinkAction {
         outputs: BuckIndexSet<BuildArtifact>,
         starlark_data: Option<OwnedFrozenValue>,
         error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         let _unused = (starlark_data, error_handler);
         let mut outputs = outputs.into_iter();
         let output = outputs.next().ok_or(SolibSymlinkActionError::NoOutputs)?;
@@ -75,11 +75,11 @@ struct SolibSymlinkAction {
 
 #[async_trait]
 impl Action for SolibSymlinkAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::Copy
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::Copy
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         Ok(Cow::Borrowed(std::slice::from_ref(&self.src)))
     }
 
@@ -106,7 +106,7 @@ impl Action for SolibSymlinkAction {
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
         let input_values = ctx.artifact_values(&self.src);
         let (input, src_value) = input_values.iter().into_singleton().ok_or_else(|| {
-            buck2_error::Error::from(SolibSymlinkActionError::WrongNumberOfInputs)
+            bz_error::Error::from(SolibSymlinkActionError::WrongNumberOfInputs)
         })?;
         let input = input.dupe();
         let src_value = src_value.dupe();

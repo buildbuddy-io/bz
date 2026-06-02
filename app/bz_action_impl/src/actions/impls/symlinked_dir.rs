@@ -12,30 +12,30 @@ use std::borrow::Cow;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::Action;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::UnregisteredAction;
-use buck2_build_api::actions::box_slice_set::BoxSliceSet;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_build_signals::env::WaitingData;
-use buck2_core::category::CategoryRef;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact_utils::ArtifactValueBuilder;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::materialize::materializer::CopiedArtifact;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckIndexSet;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::Action;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::UnregisteredAction;
+use bz_build_api::actions::box_slice_set::BoxSliceSet;
+use bz_build_api::actions::execute::action_executor::ActionExecutionKind;
+use bz_build_api::actions::execute::action_executor::ActionExecutionMetadata;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::actions::execute::error::ExecuteError;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_signals::env::WaitingData;
+use bz_core::category::CategoryRef;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact_utils::ArtifactValueBuilder;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::materialize::materializer::CopiedArtifact;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckIndexSet;
 use dupe::Dupe;
 use gazebo::prelude::*;
 use itertools::Itertools;
@@ -47,7 +47,7 @@ use starlark_map::small_set::SmallSet;
 
 use crate::actions::impls::copy::CopyMode;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum SymlinkedDirError {
     #[error("Paths to symlink_dir must be non-overlapping, but got `{0}` and `{1}`")]
@@ -72,7 +72,7 @@ impl UnregisteredSymlinkedDirAction {
     /// and would look like `a` and `a/b` both being given.
     fn validate_args(
         args: &mut [(ArtifactGroup, Box<ForwardRelativePath>)],
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // We sort the inputs. They are morally a set, so it shouldn't matter too much,
         // and this lets us implement the overlap check more easily.
         args.sort_by(|x, y| x.1.cmp(&y.1));
@@ -102,7 +102,7 @@ impl UnregisteredSymlinkedDirAction {
     // them into an optional tuple of vector and an index set respectively
     fn unpack_args<'v>(
         srcs: UnpackDictEntries<&'v str, ValueAsInputArtifactLike<'v>>,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         Vec<(ArtifactGroup, Box<ForwardRelativePath>)>,
         SmallSet<ArtifactGroup>,
     )> {
@@ -113,7 +113,7 @@ impl UnregisteredSymlinkedDirAction {
             .into_iter()
             .map(|(k, as_artifact)| {
                 let associates = as_artifact.0.get_associated_artifacts();
-                buck2_error::Ok((
+                bz_error::Ok((
                     (
                         as_artifact.0.get_artifact_group()?,
                         ForwardRelativePathBuf::try_from(k.to_owned())
@@ -138,7 +138,7 @@ impl UnregisteredSymlinkedDirAction {
     pub(crate) fn new<'v>(
         copy: CopyMode,
         srcs: UnpackDictEntries<&'v str, ValueAsInputArtifactLike<'v>>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let (mut args, unioned_associated_artifacts) = Self::unpack_args(srcs)
             // FIXME: This warning is talking about the Starlark-level argument name `srcs`.
             //        Once we use a proper Value parser this should all get cleaned up.
@@ -169,7 +169,7 @@ impl UnregisteredAction for UnregisteredSymlinkedDirAction {
         outputs: BuckIndexSet<BuildArtifact>,
         _starlark_data: Option<OwnedFrozenValue>,
         _error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         Ok(Box::new(SymlinkedDirAction {
             copy: self.copy,
             args: self.args,
@@ -196,11 +196,11 @@ impl SymlinkedDirAction {
 
 #[async_trait]
 impl Action for SymlinkedDirAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::SymlinkedDir
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::SymlinkedDir
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         Ok(Cow::Owned(self.args.iter().map(|x| x.0.dupe()).collect()))
     }
 
@@ -319,9 +319,9 @@ impl Action for SymlinkedDirAction {
 
 #[cfg(test)]
 mod tests {
-    use buck2_artifact::artifact::artifact_type::Artifact;
-    use buck2_artifact::artifact::source_artifact::SourceArtifact;
-    use buck2_core::package::source_path::SourcePath;
+    use bz_artifact::artifact::artifact_type::Artifact;
+    use bz_artifact::artifact::source_artifact::SourceArtifact;
+    use bz_core::package::source_path::SourcePath;
 
     use super::*;
 
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_symlinked_dir_validation() {
-        fn validate(paths: &[&str]) -> buck2_error::Result<()> {
+        fn validate(paths: &[&str]) -> bz_error::Result<()> {
             let a = ArtifactGroup::Artifact(mk_artifact());
             let mut xs = paths.map(|x| {
                 (

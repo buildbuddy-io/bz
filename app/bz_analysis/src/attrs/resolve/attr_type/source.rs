@@ -8,17 +8,17 @@
  * above-listed licenses.
  */
 
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_core::package::source_path::SourcePath;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_node::attrs::attr_type::source::SourceAttrType;
-use buck2_node::attrs::coerced_path::CoercedPath;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_core::package::source_path::SourcePath;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_node::attrs::attr_type::source::SourceAttrType;
+use bz_node::attrs::coerced_path::CoercedPath;
 use starlark::values::Value;
 
 use crate::attrs::resolve::ctx::AttrResolutionContext;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum SourceLabelResolutionError {
     #[error("Expected a single artifact from {0}, but it returned {1} artifacts")]
@@ -44,7 +44,7 @@ pub(crate) trait SourceAttrTypeExt {
     fn resolve_label<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         label: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<Vec<Value<'v>>> {
+    ) -> bz_error::Result<Vec<Value<'v>>> {
         let dep = ctx.get_dep(label)?;
         dep.default_info()?.default_output_values()
     }
@@ -52,7 +52,7 @@ pub(crate) trait SourceAttrTypeExt {
     fn resolve_single_label<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         value: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         let mut resolved = Self::resolve_label(ctx, value)?;
         if resolved.len() == 1 {
             Ok(resolved.pop().unwrap())

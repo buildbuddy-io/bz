@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_event_log::read::ReaderStats;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_event_log::read::ReaderStats;
 use tokio_stream::StreamExt;
 
 /// This command outputs the most recent log in JSON format
@@ -47,7 +47,7 @@ impl LogPerfCommand {
                 total_alloc += allocative::size_of_unique(&event);
 
                 if i % interval == 0 {
-                    buck2_client_ctx::println!(
+                    bz_client_ctx::println!(
                         "{}\t{}\t{}\t{}",
                         i,
                         stats.compressed_bytes(),
@@ -58,7 +58,7 @@ impl LogPerfCommand {
 
                 i += 1;
             }
-            buck2_client_ctx::println!(
+            bz_client_ctx::println!(
                 "{}\t{}\t{}\t{}",
                 i,
                 stats.compressed_bytes(),
@@ -66,7 +66,7 @@ impl LogPerfCommand {
                 total_alloc
             )?;
 
-            buck2_error::Ok(())
+            bz_error::Ok(())
         })?;
         ExitResult::success()
     }

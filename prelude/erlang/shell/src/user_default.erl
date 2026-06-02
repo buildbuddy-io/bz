@@ -35,7 +35,7 @@ c(Module, _Options, _Filter) ->
         non_existing ->
             {error, non_existing};
         _ ->
-            case shell_buck2_utils:rebuild_modules([Module]) of
+            case shell_bz_utils:rebuild_modules([Module]) of
                 ok ->
                     ok = ct_daemon:push_module(Module),
                     code:purge(Module),
@@ -50,12 +50,12 @@ c(Module, _Options, _Filter) ->
     code:load_ret()
     | {error, not_found | {ambiguous, [file:filename_all()]}}.
 l(Module) ->
-    case shell_buck2_module_search:find_module(Module) of
+    case shell_bz_module_search:find_module(Module) of
         available ->
             c:l(Module);
         {source, RelSource} ->
             AbsSource = filename:absname(RelSource),
-            Paths = [filename_all_to_filename(Path) || Path <- shell_buck2_utils:get_additional_paths(AbsSource)],
+            Paths = [filename_all_to_filename(Path) || Path <- shell_bz_utils:get_additional_paths(AbsSource)],
             ok = code:add_paths(Paths),
             ok = ct_daemon:push_paths(Paths),
             c:l(Module);

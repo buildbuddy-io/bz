@@ -37,13 +37,13 @@ pub struct BxlFilePath {
     path: CellPath,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[error("Expected a cell path to a `.bxl` file, but got `{0}`")]
 #[buck2(tag = Input)]
 struct BxlPathError(CellPath);
 
 impl BxlFilePath {
-    pub fn new(path: CellPath) -> buck2_error::Result<Self> {
+    pub fn new(path: CellPath) -> bz_error::Result<Self> {
         let err = || BxlPathError(path.clone());
 
         if path.path().file_name().ok_or_else(err)?.extension() != Some("bxl") {

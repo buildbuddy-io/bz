@@ -8,22 +8,22 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::new_generic::NewGenericRequest;
-use buck2_cli_proto::new_generic::NewGenericResponse;
-use buck2_error::BuckErrorContext;
-use buck2_server_ctx::late_bindings::DOCS_SERVER_COMMAND;
-use buck2_server_ctx::late_bindings::OTHER_SERVER_COMMANDS;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::new_generic::NewGenericRequest;
+use bz_cli_proto::new_generic::NewGenericResponse;
+use bz_error::BuckErrorContext;
+use bz_server_ctx::late_bindings::DOCS_SERVER_COMMAND;
+use bz_server_ctx::late_bindings::OTHER_SERVER_COMMANDS;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 use crate::ctx::ServerCommandContext;
 use crate::materialize::materialize_command;
 
 pub(crate) async fn new_generic_command(
     context: &ServerCommandContext<'_>,
-    req: buck2_cli_proto::NewGenericRequestMessage,
+    req: bz_cli_proto::NewGenericRequestMessage,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-) -> buck2_error::Result<buck2_cli_proto::NewGenericResponseMessage> {
+) -> bz_error::Result<bz_cli_proto::NewGenericResponseMessage> {
     let req = req.new_generic_request;
     let req: NewGenericRequest = serde_json::from_str(&req)
         .buck_error_context("Could not deserialize `NewGenericRequest`")?;
@@ -61,7 +61,7 @@ pub(crate) async fn new_generic_command(
     };
     let resp = serde_json::to_string(&resp)
         .buck_error_context("Could not serialize `NewGenericResponse`")?;
-    Ok(buck2_cli_proto::NewGenericResponseMessage {
+    Ok(bz_cli_proto::NewGenericResponseMessage {
         new_generic_response: resp,
     })
 }

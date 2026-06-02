@@ -8,17 +8,17 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::version::BuckVersion;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::version::BuckVersion;
 
 #[derive(Debug, clap::Parser)]
 pub struct InternalVersionCommand {}
 
 impl InternalVersionCommand {
     pub fn exec(self, _matches: BuckArgMatches<'_>, _ctx: ClientCommandContext<'_>) -> ExitResult {
-        buck2_client_ctx::println!("buck2 internal-version {}", BuckVersion::get_unique_id()?)?;
+        bz_client_ctx::println!("buck2 internal-version {}", BuckVersion::get_unique_id()?)?;
         ExitResult::success()
     }
 }

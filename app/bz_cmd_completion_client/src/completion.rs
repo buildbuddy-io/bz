@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::exit_result::ExitResult;
 use clap::Command;
 use clap::ValueEnum;
 use clap_complete::generate;
@@ -116,7 +116,7 @@ fn print_completion_script(
     shell_arg: Shell,
     options_only: bool,
     cmd: &mut Command,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let wrapper = if options_only {
         options_wrapper(shell_arg)
     } else {
@@ -134,7 +134,7 @@ fn print_completion_script(
     for line in wrapper_iter.by_ref() {
         match line {
             GENERATED_INSERTION_POINT => {
-                buck2_client_ctx::println!(
+                bz_client_ctx::println!(
                     "# {} by `{}`",
                     GENERATED_TAG,
                     std::env::args().collect::<Vec<String>>().join(" ")
@@ -143,17 +143,17 @@ fn print_completion_script(
             COMPLETION_INSERTION_POINT => {
                 found_insertion_point = true;
 
-                buck2_client_ctx::println!("{}", option_completions(shell, cmd)?)?;
+                bz_client_ctx::println!("{}", option_completions(shell, cmd)?)?;
             }
             s => {
-                buck2_client_ctx::println!("{}", s)?;
+                bz_client_ctx::println!("{}", s)?;
             }
         }
     }
 
     if !found_insertion_point {
-        Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Tier0,
             "Failed to find {} in {:?} completion template",
             COMPLETION_INSERTION_POINT,
             shell_arg
@@ -166,7 +166,7 @@ fn print_completion_script(
 fn option_completions(
     shell: clap_complete::Shell,
     cmd: &mut Command,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let mut v = Vec::new();
     // FIXME: it appears that this might silently swallow errors; would require a PR to fix
     generate(shell, cmd, cmd.get_name().to_owned(), &mut v);

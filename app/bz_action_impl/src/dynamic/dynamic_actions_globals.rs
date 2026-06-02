@@ -11,8 +11,8 @@
 use std::cell::OnceCell;
 use std::iter;
 
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 use starlark::typing::ParamIsRequired;
@@ -41,10 +41,10 @@ pub fn new_dynamic_actions_callable<'v>(
     >,
     attrs: SmallMap<String, &'v StarlarkDynamicAttrType>,
     callback_param: &DynamicActionsCallbackParam,
-) -> buck2_error::Result<DynamicActionsCallable<'v>> {
+) -> bz_error::Result<DynamicActionsCallable<'v>> {
     if attrs.contains_key(callback_param.name) {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Cannot define `actions` attribute"
         ));
     }

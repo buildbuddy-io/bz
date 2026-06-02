@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_core::is_open_source;
+use bz_core::is_open_source;
 
 use crate::interface::HealthCheckType;
 

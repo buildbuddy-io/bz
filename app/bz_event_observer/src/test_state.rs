@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_test_api::data::TestStatus;
+use bz_test_api::data::TestStatus;
 
 #[derive(Default)]
 pub struct TestState {
@@ -27,7 +27,7 @@ pub struct TestState {
 }
 
 impl TestState {
-    pub(crate) fn update(&mut self, result: &buck2_data::TestResult) -> buck2_error::Result<()> {
+    pub(crate) fn update(&mut self, result: &bz_data::TestResult) -> bz_error::Result<()> {
         let status = TestStatus::try_from(result.status)?;
         let counter = match status {
             TestStatus::PASS => &mut self.pass,

@@ -17,11 +17,11 @@ use std::hash::Hasher;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_data::ToProtoMessage;
-use buck2_data::action_key_owner::BaseDeferredKeyProto;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckDefaultHasher;
+use bz_data::ToProtoMessage;
+use bz_data::action_key_owner::BaseDeferredKeyProto;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckDefaultHasher;
 use cmp_any::PartialEqAny;
 use dupe::Dupe;
 use pagable::Pagable;
@@ -53,7 +53,7 @@ pub trait BaseDeferredKeyDyn:
         path: &ForwardRelativePath,
         path_resolution_method: BuckOutPathKind,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf>;
+    ) -> bz_error::Result<ProjectRelativePathBuf>;
     /// Fake label for anon targets, `None` for BXL.
     fn configured_label(&self) -> Option<ConfiguredTargetLabel>;
     fn to_proto(&self) -> BaseDeferredKeyProto;
@@ -71,7 +71,7 @@ impl PartialEq for BaseDeferredKeyBxl {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 pub enum PathResolutionError {
     #[error("Tried to resolve a content-based path {0} without providing the content hash!")]
@@ -152,7 +152,7 @@ impl BaseDeferredKey {
         fully_hash_path: bool,
         path_resolution_method: BuckOutPathKind,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         match self {
             BaseDeferredKey::TargetLabel(target) => {
                 let cell_relative_path = target.pkg().cell_relative_path().as_str();

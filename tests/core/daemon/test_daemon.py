@@ -120,7 +120,7 @@ async def test_status_all(buck: Buck) -> None:
 
 
 @buck_test()
-@env("BUCK_LOG", "buck2_client_ctx::daemon::client::kill=debug")
+@env("BUCK_LOG", "bz_client_ctx::daemon::client::kill=debug")
 async def test_no_buckd_kills_existing_daemon(buck: Buck) -> None:
     await buck.audit("cell")  # Start the daemon
     result = await buck.audit("cell", "--no-buckd")  # Kill the existing daemon

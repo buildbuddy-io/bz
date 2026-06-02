@@ -2,17 +2,17 @@
 description = "Supporting code and utilities for manipulating offline build archives"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_offline_archive"
+name = "bz_offline_archive"
 repository = { workspace = true }
 version = "0.1.0"
 
 [dependencies]
 serde = { workspace = true }
 
-buck2_core = { workspace = true }
-buck2_error = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_util = { workspace = true }
+bz_core = { workspace = true }
+bz_error = { workspace = true }
+bz_fs = { workspace = true }
+bz_util = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 tempfile = { workspace = true }

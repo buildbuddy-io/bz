@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::time::SystemTime;
 
-use buck2_data::DebugAdapterSnapshot;
+use bz_data::DebugAdapterSnapshot;
 
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct StoppedEval {
@@ -39,7 +39,7 @@ impl StarlarkDebuggerState {
         &mut self,
         _event_time: SystemTime,
         event: &DebugAdapterSnapshot,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.debugger_attached = true;
         self.this_stopped_evals.clear();
         self.other_stopped_evals.clear();

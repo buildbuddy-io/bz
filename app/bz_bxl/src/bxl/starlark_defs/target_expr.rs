@@ -10,9 +10,9 @@
 
 use std::borrow::Cow;
 
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::environment::QueryTarget;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::environment::QueryTarget;
 use dice::DiceComputations;
 use dupe::Dupe;
 
@@ -35,7 +35,7 @@ impl<'v> TargetExpr<'v, TargetNode> {
     pub(crate) async fn get_from_dice(
         &self,
         dice: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<TargetNode> {
+    ) -> bz_error::Result<TargetNode> {
         match self {
             TargetExpr::Node(node) => Ok(node.dupe()),
             TargetExpr::Label(label) => Ok(dice.get_target_node(label).await?),

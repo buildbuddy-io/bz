@@ -9,15 +9,15 @@
  */
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
-use buck2_core::error::validate_logview_category;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_util::arc_str::ArcStr;
+use bz_build_api_derive::internal_provider;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::name::CellName;
+use bz_core::error::validate_logview_category;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::label::label::TargetLabel;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 use pagable::PagablePanic;
 use starlark::any::ProvidesStaticType;
@@ -37,7 +37,7 @@ use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::dict::UnpackDictEntries;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::provider::builtin::dep_only_incompatible_rollout::DepOnlyIncompatibleRollout;
 use crate::interpreter::rule_defs::provider::builtin::dep_only_incompatible_rollout::FrozenDepOnlyIncompatibleRollout;
 
@@ -88,7 +88,7 @@ fn dep_only_incompatible_info_creator(globals: &mut GlobalsBuilder) {
         let mut result = SmallMap::with_capacity(custom_soft_errors.entries.len());
         for (category, value) in custom_soft_errors.entries {
             let category_str = category.to_value().unpack_str().ok_or_else(|| {
-                starlark::Error::from(buck2_error::internal_error!(
+                starlark::Error::from(bz_error::internal_error!(
                     "Expected string via type checking"
                 ))
                 .into_internal_error()
@@ -132,9 +132,9 @@ impl FrozenDepOnlyIncompatibleInfo {
         root_cell: CellName,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<DepOnlyIncompatibleCustomSoftErrors> {
+    ) -> bz_error::Result<DepOnlyIncompatibleCustomSoftErrors> {
         let value_to_target_pattern =
-            |target_pattern: Value<'_>| -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
+            |target_pattern: Value<'_>| -> bz_error::Result<ParsedPattern<TargetPatternExtra>> {
                 ParsedPattern::parse_precise(
                     &target_pattern.to_value().to_str(),
                     root_cell.dupe(),
@@ -156,13 +156,13 @@ impl FrozenDepOnlyIncompatibleInfo {
                         .target_patterns()
                         .iter()
                         .map(value_to_target_pattern)
-                        .collect::<buck2_error::Result<Vec<_>>>()?
+                        .collect::<bz_error::Result<Vec<_>>>()?
                         .into_boxed_slice();
                     let exclusions = v
                         .exclusions()
                         .iter()
                         .map(value_to_target_pattern)
-                        .collect::<buck2_error::Result<Vec<_>>>()?
+                        .collect::<bz_error::Result<Vec<_>>>()?
                         .into_boxed_slice();
                     let v = DepOnlyIncompatibleRolloutPatterns {
                         target_patterns,
@@ -170,7 +170,7 @@ impl FrozenDepOnlyIncompatibleInfo {
                     };
                     Ok((k, v))
                 })
-                .collect::<buck2_error::Result<_>>()?;
+                .collect::<bz_error::Result<_>>()?;
 
         Ok(custom_soft_errors)
     }

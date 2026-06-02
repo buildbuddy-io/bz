@@ -10,11 +10,11 @@
 
 #![cfg(test)]
 
-use buck2_data::error::ErrorTag;
+use bz_data::error::ErrorTag;
 
-use crate as buck2_error;
+use crate as bz_error;
 
-#[derive(buck2_error_derive::Error, Debug)]
+#[derive(bz_error_derive::Error, Debug)]
 #[error("foo")]
 #[buck2(input)]
 pub struct Error1;
@@ -25,7 +25,7 @@ fn test_derive_error1() {
     assert_eq!(e.get_tier(), Some(crate::Tier::Input));
 }
 
-#[derive(buck2_error_derive::Error, Debug)]
+#[derive(bz_error_derive::Error, Debug)]
 #[error("foo")]
 #[buck2(tier0)]
 #[allow(unused)]
@@ -37,7 +37,7 @@ fn test_derive_error2() {
     assert_eq!(e.get_tier(), Some(crate::Tier::Tier0));
 }
 
-#[derive(buck2_error_derive::Error, Debug)]
+#[derive(bz_error_derive::Error, Debug)]
 pub enum Error3 {
     #[error("foo")]
     #[buck2(input)]
@@ -62,7 +62,7 @@ fn test_derive_error3() {
     assert_eq!(e.get_tier(), Some(crate::Tier::Environment));
 }
 
-#[derive(buck2_error_derive::Error, Debug)]
+#[derive(bz_error_derive::Error, Debug)]
 #[error("Generic error")]
 #[buck2(tag = Environment)]
 pub struct GenericError<G>(G);
@@ -73,7 +73,7 @@ fn test_generic_error() {
 }
 
 /// Test that no unused fields warning is emitted.
-#[derive(buck2_error_derive::Error, Debug)]
+#[derive(bz_error_derive::Error, Debug)]
 #[error("Unused")]
 #[buck2(tag = Environment)]
 pub struct WithField {
@@ -85,12 +85,12 @@ fn test_with_field() {
     let _e: crate::Error = WithField { x: 42 }.into();
 }
 
-#[derive(buck2_error_derive::Error, Debug)]
+#[derive(bz_error_derive::Error, Debug)]
 #[error("Unused")]
 #[buck2(tag = Environment)]
 struct NoAttrsStruct;
 
-#[derive(buck2_error_derive::Error, Debug)]
+#[derive(bz_error_derive::Error, Debug)]
 #[error("Unused")]
 #[buck2(tag = TestOnly)]
 enum NoAttrsEnum {
@@ -113,7 +113,7 @@ fn test_source_location_no_attrs() {
     );
 }
 
-#[derive(buck2_error_derive::Error, Debug)]
+#[derive(bz_error_derive::Error, Debug)]
 #[error("Unused")]
 #[buck2(input)]
 enum EnumWithTypeOption {
@@ -131,7 +131,7 @@ fn test_enum_with_type_option() {
     );
 }
 
-#[derive(buck2_error_derive::Error, Debug)]
+#[derive(bz_error_derive::Error, Debug)]
 #[error("Unused")]
 #[buck2(input)]
 struct ErrorWithSpelledOutCategory;
@@ -144,12 +144,12 @@ fn test_error_with_spelled_out_category() {
 
 #[test]
 fn test_source_metadata_are_included() {
-    #[derive(buck2_error_derive::Error, Debug)]
+    #[derive(bz_error_derive::Error, Debug)]
     #[error("WatchmanError")]
     #[buck2(tag = WatchmanTimeout)]
     struct WatchmanError;
 
-    #[derive(buck2_error_derive::Error, Debug)]
+    #[derive(bz_error_derive::Error, Debug)]
     #[error("Unused")]
     #[buck2(tag = WatchmanRequestError)]
     enum MaybeWatchmanError {
@@ -174,7 +174,7 @@ fn test_error_tags() {
         crate::ErrorTag::StarlarkFail
     }
 
-    #[derive(buck2_error_derive::Error, Debug)]
+    #[derive(bz_error_derive::Error, Debug)]
     #[error("Unused")]
     #[buck2(tag = WatchmanTimeout)]
     enum TaggedError {
@@ -206,7 +206,7 @@ fn test_error_tags_vec_fn() {
         }
     }
 
-    #[derive(buck2_error_derive::Error, Debug)]
+    #[derive(bz_error_derive::Error, Debug)]
     #[error("Unused")]
     #[buck2(tag = WatchmanTimeout, tags = calc_tags(*extra_tag))]
     struct TaggedError {
@@ -224,12 +224,12 @@ fn test_error_tags_vec_fn() {
 
 #[test]
 fn test_correct_transparent() {
-    #[derive(buck2_error_derive::Error, Debug)]
+    #[derive(bz_error_derive::Error, Debug)]
     #[error("Unused")]
     #[buck2(tier0)]
     struct E;
 
-    #[derive(buck2_error_derive::Error, Debug)]
+    #[derive(bz_error_derive::Error, Debug)]
     #[error(transparent)]
     #[buck2(tag = Input)]
     struct T(E);
@@ -240,7 +240,7 @@ fn test_correct_transparent() {
 
 #[test]
 fn test_error_message_with_provided_field() {
-    #[derive(buck2_error_derive::Error, Debug)]
+    #[derive(bz_error_derive::Error, Debug)]
     #[error("Some message {0} + {1}")]
     #[buck2(tag = Environment)]
     struct SomeError(String, String);
@@ -250,18 +250,18 @@ fn test_error_message_with_provided_field() {
 }
 
 #[test]
-fn test_recovery_through_transparent_buck2_error() {
-    #[derive(buck2_error_derive::Error, Debug)]
+fn test_recovery_through_transparent_bz_error() {
+    #[derive(bz_error_derive::Error, Debug)]
     #[error("base_display")]
     #[buck2(tag = Environment)]
     struct BaseError;
 
-    #[derive(buck2_error_derive::Error, Debug)]
+    #[derive(bz_error_derive::Error, Debug)]
     #[error(transparent)]
     #[buck2(tag = TestOnly)]
     enum PartiallyStructured {
         #[error(transparent)]
-        Other(buck2_error::Error),
+        Other(bz_error::Error),
     }
 
     let base: crate::Error = crate::Error::from(BaseError).tag([crate::ErrorTag::StarlarkFail]);

@@ -11,10 +11,10 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_node::attrs::attr::Attribute;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::rule::BazelOutputAttrKind;
+use bz_node::attrs::attr::Attribute;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::rule::BazelOutputAttrKind;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
@@ -36,7 +36,7 @@ use starlark::values::ValueLike;
 use starlark::values::starlark_value;
 use starlark::values::typing::StarlarkCallable;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum StarlarkAttributeError {
     #[error("`attrs.default_only()` cannot be used in nested attributes")]
@@ -79,7 +79,7 @@ impl<'v> Freeze for BazelComputedDefault<'v> {
 }
 
 impl<'v> BazelComputedDefault<'v> {
-    pub(crate) fn from_value(value: Value<'v>) -> buck2_error::Result<Option<Self>> {
+    pub(crate) fn from_value(value: Value<'v>) -> bz_error::Result<Option<Self>> {
         if <StarlarkCallable<'v> as starlark::values::UnpackValue<'v>>::unpack_value_opt(value)
             .is_none()
         {
@@ -244,7 +244,7 @@ impl<'v, V: ValueLike<'v>> StarlarkAttributeGen<'v, V> {
     }
 
     /// Coercer to put into higher lever coercer (e. g. for `attrs.list(xxx)`).
-    pub fn coercer_for_inner(&self) -> buck2_error::Result<AttrType> {
+    pub fn coercer_for_inner(&self) -> bz_error::Result<AttrType> {
         if self.attr.is_default_only() {
             return Err(StarlarkAttributeError::DefaultOnlyInNested.into());
         }

@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 license = { workspace = true }
-name = "buck2_certs"
+name = "bz_certs"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -16,8 +16,8 @@ x509-parser = { workspace = true }
 
 dupe = { workspace = true }
 
-buck2_error = { workspace = true }
-buck2_util = { workspace = true }
+bz_error = { workspace = true }
+bz_util = { workspace = true }
 
 [lints]
 workspace = true

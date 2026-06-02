@@ -12,13 +12,13 @@ use std::ffi::OsStr;
 use std::io::ErrorKind;
 use std::num::ParseIntError;
 
-use buck2_common::init::ResourceControlConfig;
-use buck2_common::init::ResourceControlInit;
-use buck2_common::init::ResourceControlStatus;
-use buck2_core::soft_error;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_util::process;
-use buck2_util::process::async_background_command;
+use bz_common::init::ResourceControlConfig;
+use bz_common::init::ResourceControlInit;
+use bz_common::init::ResourceControlStatus;
+use bz_core::soft_error;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_util::process;
+use bz_util::process::async_background_command;
 
 #[cfg(unix)]
 use crate::cgroup::Cgroup;
@@ -27,7 +27,7 @@ use crate::cgroup::CgroupKindInternal;
 #[cfg(unix)]
 use crate::cgroup::NoMemoryMonitoring;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Environment)]
 enum SystemdNotAvailableReason {
     #[error("Unexpected `systemctl --version` output format: {0}")]
@@ -55,7 +55,7 @@ enum DaemonSpawner {
     Cgroup(Cgroup<NoMemoryMonitoring, CgroupKindInternal>),
 }
 
-async fn get_daemon_spawner(init: &ResourceControlInit) -> buck2_error::Result<DaemonSpawner> {
+async fn get_daemon_spawner(init: &ResourceControlInit) -> bz_error::Result<DaemonSpawner> {
     match &init {
         ResourceControlInit::Systemd => systemd_check_available()
             .await
@@ -70,8 +70,8 @@ async fn get_daemon_spawner(init: &ResourceControlInit) -> buck2_error::Result<D
             let controllers = parent.read_enabled_controllers().await?;
             for controller in ["memory", "cpu"] {
                 if !controllers.contains(controller) {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Buck parent cgroup does not have {} controller enabled",
                         controller
                     ));
@@ -92,10 +92,10 @@ pub async fn create_daemon_spawn_command(
     program: impl AsRef<OsStr>,
     unit_name: String,
     working_directory: &AbsNormPath,
-) -> buck2_error::Result<(std::process::Command, Vec<String>)> {
+) -> bz_error::Result<(std::process::Command, Vec<String>)> {
     let daemon_spawner = {
         if config.status == ResourceControlStatus::Off
-            || buck2_core::buck2_env!(
+            || bz_core::bz_env!(
                 "BUCK2_TEST_DISABLE_DAEMON_CGROUP",
                 type = bool,
                 applicability = testing,
@@ -132,8 +132,8 @@ pub async fn create_daemon_spawn_command(
         )),
         #[cfg(unix)]
         DaemonSpawner::Cgroup(parent) => {
-            use buck2_error::BuckErrorContext;
-            use buck2_fs::paths::file_name::FileName;
+            use bz_error::BuckErrorContext;
+            use bz_fs::paths::file_name::FileName;
 
             let child = parent
                 .make_leaf_child(
@@ -191,7 +191,7 @@ fn validate_systemd_version(raw_stdout: &[u8]) -> Result<(), SystemdNotAvailable
     }
 }
 
-async fn systemd_check_available() -> buck2_error::Result<()> {
+async fn systemd_check_available() -> bz_error::Result<()> {
     if !cfg!(target_os = "linux") {
         return Err(SystemdNotAvailableReason::UnsupportedPlatform.into());
     }
@@ -293,7 +293,7 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     #[tokio::test]
     async fn test_always_unavailable_on_nonlinux() {
-        let _error = buck2_error::Error::from(SystemdNotAvailableReason::UnsupportedPlatform);
+        let _error = bz_error::Error::from(SystemdNotAvailableReason::UnsupportedPlatform);
         assert!(matches!(
             systemd_check_available().await.unwrap_err(),
             _error
@@ -305,7 +305,7 @@ mod tests {
     async fn test_spawn_into_specific_cgroup() {
         // Ideally this would be an integration test, but as it stands that's a little bit hard rn.
         // So unit test instead
-        use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+        use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 
         let Some(parent) = Cgroup::create_internal_for_test().await else {
             return;

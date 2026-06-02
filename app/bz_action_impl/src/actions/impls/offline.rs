@@ -8,16 +8,16 @@
  * above-listed licenses.
  */
 
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_common::file_ops::metadata::FileDigestConfig;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::directory::INTERNER;
-use buck2_execute::entry::build_entry_from_disk;
-use buck2_execute::materialize::materializer::CopiedArtifact;
-use buck2_hash::BuckIndexMap;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_common::file_ops::metadata::FileDigestConfig;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::directory::INTERNER;
+use bz_execute::entry::build_entry_from_disk;
+use bz_execute::materialize::materializer::CopiedArtifact;
+use bz_hash::BuckIndexMap;
 use dupe::Dupe;
 
 /// Declares a copy materialization to copy the output BuildArtifact to the
@@ -27,7 +27,7 @@ pub(crate) async fn declare_copy_to_offline_output_cache(
     ctx: &mut dyn ActionExecutionCtx,
     output: &BuildArtifact,
     value: ArtifactValue,
-) -> buck2_error::Result<ProjectRelativePathBuf> {
+) -> bz_error::Result<ProjectRelativePathBuf> {
     let build_path = ctx
         .fs()
         .resolve_build(output.get_path(), Some(&value.content_based_path_hash()))?;
@@ -48,7 +48,7 @@ pub(crate) async fn declare_copy_to_offline_output_cache(
 pub(crate) async fn declare_copy_from_offline_cache(
     ctx: &mut dyn ActionExecutionCtx,
     outputs: &[&BuildArtifact],
-) -> buck2_error::Result<ActionOutputs> {
+) -> bz_error::Result<ActionOutputs> {
     let mut restored_outputs = BuckIndexMap::default();
 
     // Restore all outputs - any cache miss = total failure
@@ -67,8 +67,8 @@ pub(crate) async fn declare_copy_from_offline_cache(
 
         let entry = value
             .ok_or_else(|| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "Missing offline cache entry: `{}`",
                     offline_cache_path
                 )
@@ -107,7 +107,7 @@ async fn declare_copy_materialization(
     dest: ProjectRelativePathBuf,
     value: ArtifactValue,
     configuration_path: Option<ProjectRelativePathBuf>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let immutable_entry = value.entry().dupe().map_dir(|d| d.as_immutable());
     ctx.materializer()
         .declare_copy(

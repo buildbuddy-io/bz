@@ -10,28 +10,28 @@
 
 use core::iter::Iterator;
 
-use buck2_build_api::query::oneshot::QUERY_FRONTEND;
-use buck2_cli_proto::new_generic::ExplainRequest;
-use buck2_data::CommandInvalidationInfo;
-use buck2_data::FileWatcherEvent;
-use buck2_data::action_key;
-use buck2_event_log::read::EventLogPathBuf;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_event_observer::display::TargetDisplayOptions;
-use buck2_event_observer::display::display_anon_target;
-use buck2_event_observer::display::display_bxl_key;
-use buck2_event_observer::display::display_configured_target_label;
-use buck2_event_observer::what_ran::CommandReproducer;
-use buck2_event_observer::what_ran::WhatRanOptions;
-use buck2_event_observer::what_ran::WhatRanRelevantAction;
-use buck2_events::span::SpanId;
-use buck2_explain::ActionEntryData;
-use buck2_explain::ChangedFilesEntryData;
-use buck2_hash::StdBuckHashMap;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_query::query::syntax::simple::eval::label_indexed::LabelIndexedSet;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
+use bz_build_api::query::oneshot::QUERY_FRONTEND;
+use bz_cli_proto::new_generic::ExplainRequest;
+use bz_data::CommandInvalidationInfo;
+use bz_data::FileWatcherEvent;
+use bz_data::action_key;
+use bz_event_log::read::EventLogPathBuf;
+use bz_event_log::stream_value::StreamValue;
+use bz_event_observer::display::TargetDisplayOptions;
+use bz_event_observer::display::display_anon_target;
+use bz_event_observer::display::display_bxl_key;
+use bz_event_observer::display::display_configured_target_label;
+use bz_event_observer::what_ran::CommandReproducer;
+use bz_event_observer::what_ran::WhatRanOptions;
+use bz_event_observer::what_ran::WhatRanRelevantAction;
+use bz_events::span::SpanId;
+use bz_explain::ActionEntryData;
+use bz_explain::ChangedFilesEntryData;
+use bz_hash::StdBuckHashMap;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_query::query::syntax::simple::eval::label_indexed::LabelIndexedSet;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
 use dice::DiceTransaction;
 use dupe::Dupe;
 use dupe::IterDupedExt;
@@ -48,17 +48,17 @@ struct ActionEntry {
 impl ActionEntry {
     fn format_action(
         &self,
-        event: &buck2_data::SpanEndEvent,
-    ) -> buck2_error::Result<Option<(String, ActionEntryData)>> {
+        event: &bz_data::SpanEndEvent,
+    ) -> bz_error::Result<Option<(String, ActionEntryData)>> {
         let action = &self.action;
 
         let action_execution = match &event.data {
-                Some(buck2_data::span_end_event::Data::ActionExecution(action_exec)) => Some(action_exec),
+                Some(bz_data::span_end_event::Data::ActionExecution(action_exec)) => Some(action_exec),
                 _ => None,
         }.expect("Should always be an ActionExecution end event because span ID must match ActionExecution start event.");
         let failed = action_execution.failed;
         let execution_kind =
-            buck2_data::ActionExecutionKind::try_from(action_execution.execution_kind)
+            bz_data::ActionExecutionKind::try_from(action_execution.execution_kind)
                 .ok()
                 .map(|v| v.as_str_name().to_owned());
         let input_files_bytes = action_execution.input_files_bytes;
@@ -123,7 +123,7 @@ pub(crate) async fn explain(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
     req: &ExplainRequest,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let build_log = EventLogPathBuf::infer(req.log_path.clone())?;
     let (_, mut events) = build_log.unpack_stream().await?;
 
@@ -157,13 +157,13 @@ pub(crate) async fn explain(
                     entry.reproducers.push(repro);
                 }
 
-                if let buck2_data::buck_event::Data::SpanEnd(span) = data {
+                if let bz_data::buck_event::Data::SpanEnd(span) = data {
                     if let Some(entry) = known_actions.remove(&SpanId::from_u64(event.span_id)?)
                         && let Some(entry) = entry.format_action(&span)?
                     {
                         executed_actions.push(entry);
                     }
-                    if let Some(buck2_data::span_end_event::Data::FileWatcher(end)) = &span.data {
+                    if let Some(bz_data::span_end_event::Data::FileWatcher(end)) = &span.data {
                         let events: &[FileWatcherEvent] =
                             end.stats.as_ref().expect("of source eh").events.as_ref();
                         for event in events {
@@ -246,7 +246,7 @@ pub(crate) async fn explain(
         visited.into_iter().collect::<Vec<ConfiguredTargetNode>>()
     };
 
-    buck2_explain::main(
+    bz_explain::main(
         all_deps,
         executed_actions,
         file_update_entries,

@@ -9,12 +9,12 @@
  */
 
 use async_compression::tokio::bufread::ZstdEncoder;
-use buck2_common::manifold::Bucket;
-use buck2_common::manifold::ManifoldClient;
-use buck2_fs::async_fs_util;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_common::manifold::Bucket;
+use bz_common::manifold::ManifoldClient;
+use bz_fs::async_fs_util;
+use bz_fs::error::IoResultExt;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use tokio::io::BufReader;
 
 pub async fn upload_re_logs(
@@ -23,7 +23,7 @@ pub async fn upload_re_logs(
     re_logs_dir: &AbsNormPath,
     session_id: &str,
     bucket_path: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let logs_path = re_logs_dir
         .join(ForwardRelativePath::new(session_id)?)
         .join(ForwardRelativePath::new("REClientFolly.log")?);

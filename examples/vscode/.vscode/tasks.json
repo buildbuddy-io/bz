@@ -18,7 +18,7 @@
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                "buck2_utils/install.ps1",
+                "bz_utils/install.ps1",
                 "install"
             ]
         },
@@ -28,7 +28,7 @@
             "command": "buck2",
             "args": [
                 "bxl",
-                "buck2_utils/create_compile_commands.bxl:gen_compilation_database",
+                "bz_utils/create_compile_commands.bxl:gen_compilation_database",
                 "--",
                 "--directory",
                 "${workspaceFolder}",
@@ -37,7 +37,7 @@
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                "buck2_utils/copy.ps1"
+                "bz_utils/copy.ps1"
             ]
         },
         {

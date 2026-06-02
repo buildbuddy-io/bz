@@ -348,7 +348,7 @@ generate_efm_percent_percent_utils!(
 );
 
 // Nom parser combinators for errorformat parsing
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum ParseEfmError {
     #[error("Invalid format string: {0}")]

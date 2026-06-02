@@ -8,16 +8,16 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::common::target_cfg::TargetCfgWithUniverseOptions;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::target_resolution_config::TargetResolutionConfig;
+use bz_client_ctx::common::target_cfg::TargetCfgWithUniverseOptions;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::target_resolution_config::TargetResolutionConfig;
 use dice::DiceComputations;
 
 pub(crate) async fn audit_command_target_resolution_config(
     ctx: &mut DiceComputations<'_>,
     target_cfg: &TargetCfgWithUniverseOptions,
     server_ctx: &dyn ServerCommandContextTrait,
-) -> buck2_error::Result<TargetResolutionConfig> {
+) -> bz_error::Result<TargetResolutionConfig> {
     TargetResolutionConfig::from_args(
         ctx,
         &target_cfg.target_cfg.target_cfg(),

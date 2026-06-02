@@ -11,13 +11,13 @@
 use std::cmp::max;
 use std::sync::Arc;
 
-use buck2_artifact::actions::key::ActionKey;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_data::ActionExecutionKind;
-use buck2_data::ToProtoMessage;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_sketches::ActionGraphSketch;
+use bz_artifact::actions::key::ActionKey;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_data::ActionExecutionKind;
+use bz_data::ToProtoMessage;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_sketches::ActionGraphSketch;
 use dupe::Dupe;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -28,7 +28,7 @@ use crate::build::sketch_impl::MergeableGraphSketch;
 pub struct ActionExecutionMetrics {
     pub key: ActionKey,
     pub execution_time_ms: u64,
-    pub execution_kind: buck2_data::ActionExecutionKind,
+    pub execution_kind: bz_data::ActionExecutionKind,
     pub output_size_bytes: u64,
     pub memory_peak: Option<u64>,
     /// RE platform name if this action ran remotely (e.g. "linux-remote-execution").
@@ -49,7 +49,7 @@ pub struct TopLevelTargetSpec {
 
 #[derive(Default)]
 pub struct PerBuildEvents {
-    pub executed_actions: buck2_hash::BuckHashSet<ActionKey>,
+    pub executed_actions: bz_hash::BuckHashSet<ActionKey>,
     pub top_level_targets: Vec<TopLevelTargetSpec>,
 }
 
@@ -66,10 +66,10 @@ pub struct DetailedAggregatedMetrics {
 }
 
 impl ToProtoMessage for DetailedAggregatedMetrics {
-    type Message = buck2_data::DetailedAggregatedMetrics;
+    type Message = bz_data::DetailedAggregatedMetrics;
 
     fn as_proto(&self) -> Self::Message {
-        buck2_data::DetailedAggregatedMetrics {
+        bz_data::DetailedAggregatedMetrics {
             top_level_target_metrics: self
                 .top_level_target_metrics
                 .iter()
@@ -97,10 +97,10 @@ pub struct AggregatedBuildMetrics {
 }
 
 impl ToProtoMessage for AggregatedBuildMetrics {
-    type Message = buck2_data::AggregatedBuildMetrics;
+    type Message = bz_data::AggregatedBuildMetrics;
 
     fn as_proto(&self) -> Self::Message {
-        buck2_data::AggregatedBuildMetrics {
+        bz_data::AggregatedBuildMetrics {
             full_graph_execution_time_ms: self.full_graph_execution_time_ms,
             full_graph_output_size_bytes: self.full_graph_output_size_bytes,
             local_execution_time_ms: self.local_execution_time_ms,
@@ -207,10 +207,10 @@ impl TopLevelTargetAggregatedData {
 }
 
 impl ToProtoMessage for TopLevelTargetAggregatedData {
-    type Message = buck2_data::TopLevelTargetMetrics;
+    type Message = bz_data::TopLevelTargetMetrics;
 
     fn as_proto(&self) -> Self::Message {
-        buck2_data::TopLevelTargetMetrics {
+        bz_data::TopLevelTargetMetrics {
             target: Some(self.target.target().as_proto()),
             provider: match self.target.name() {
                 ProvidersName::Default => None,
@@ -237,25 +237,25 @@ impl AggregatedBuildMetrics {
         if let BuiltWhen::ThisBuild = when {
             // Accumulate metrics associated with costs during this build.
             match ev.execution_kind {
-                buck2_data::ActionExecutionKind::Local
-                | buck2_data::ActionExecutionKind::LocalWorker => {
+                bz_data::ActionExecutionKind::Local
+                | bz_data::ActionExecutionKind::LocalWorker => {
                     self.local_execution_time_ms += factor * (ev.execution_time_ms as f64);
                     self.local_executions += factor;
                 }
-                buck2_data::ActionExecutionKind::Remote
-                | buck2_data::ActionExecutionKind::RemoteWorker => {
+                bz_data::ActionExecutionKind::Remote
+                | bz_data::ActionExecutionKind::RemoteWorker => {
                     self.remote_execution_time_ms += factor * (ev.execution_time_ms as f64);
                     self.remote_executions += factor;
                 }
-                buck2_data::ActionExecutionKind::ActionCache
-                | buck2_data::ActionExecutionKind::RemoteDepFileCache => {
+                bz_data::ActionExecutionKind::ActionCache
+                | bz_data::ActionExecutionKind::RemoteDepFileCache => {
                     self.remote_cache_hits += factor;
                 }
-                buck2_data::ActionExecutionKind::NotSet
-                | buck2_data::ActionExecutionKind::Simple
-                | buck2_data::ActionExecutionKind::Deferred
-                | buck2_data::ActionExecutionKind::LocalDepFile
-                | buck2_data::ActionExecutionKind::LocalActionCache => {
+                bz_data::ActionExecutionKind::NotSet
+                | bz_data::ActionExecutionKind::Simple
+                | bz_data::ActionExecutionKind::Deferred
+                | bz_data::ActionExecutionKind::LocalDepFile
+                | bz_data::ActionExecutionKind::LocalActionCache => {
                     // ignored.
                 }
             }
@@ -302,10 +302,10 @@ impl AllTargetsAggregatedData {
 }
 
 impl ToProtoMessage for AllTargetsAggregatedData {
-    type Message = buck2_data::AllTargetsBuildMetrics;
+    type Message = bz_data::AllTargetsBuildMetrics;
 
     fn as_proto(&self) -> Self::Message {
-        buck2_data::AllTargetsBuildMetrics {
+        bz_data::AllTargetsBuildMetrics {
             action_graph_size: self.action_graph_size,
             metrics: Some(self.metrics.as_proto()),
             compute_time_ms: self.compute_time_ms,

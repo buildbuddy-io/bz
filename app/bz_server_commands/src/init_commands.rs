@@ -9,19 +9,19 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::new_generic::CompleteRequest;
-use buck2_cli_proto::new_generic::CompleteResponse;
-use buck2_cli_proto::new_generic::DebugEvalRequest;
-use buck2_cli_proto::new_generic::DebugEvalResponse;
-use buck2_cli_proto::new_generic::ExpandExternalCellsRequest;
-use buck2_cli_proto::new_generic::ExpandExternalCellsResponse;
-use buck2_cli_proto::new_generic::ExplainRequest;
-use buck2_cli_proto::new_generic::ExplainResponse;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::late_bindings::OTHER_SERVER_COMMANDS;
-use buck2_server_ctx::late_bindings::OtherServerCommands;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::new_generic::CompleteRequest;
+use bz_cli_proto::new_generic::CompleteResponse;
+use bz_cli_proto::new_generic::DebugEvalRequest;
+use bz_cli_proto::new_generic::DebugEvalResponse;
+use bz_cli_proto::new_generic::ExpandExternalCellsRequest;
+use bz_cli_proto::new_generic::ExpandExternalCellsResponse;
+use bz_cli_proto::new_generic::ExplainRequest;
+use bz_cli_proto::new_generic::ExplainResponse;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::late_bindings::OTHER_SERVER_COMMANDS;
+use bz_server_ctx::late_bindings::OtherServerCommands;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 use crate::build::build_command;
 use crate::complete::complete_command;
@@ -38,16 +38,16 @@ impl OtherServerCommands for OtherServerCommandsInstance {
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::BuildRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::BuildResponse> {
+        req: bz_cli_proto::BuildRequest,
+    ) -> bz_error::Result<bz_cli_proto::BuildResponse> {
         build_command(ctx, partial_result_dispatcher, req).await
     }
     async fn install(
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::InstallRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::InstallResponse> {
+        req: bz_cli_proto::InstallRequest,
+    ) -> bz_error::Result<bz_cli_proto::InstallResponse> {
         install_command(ctx, partial_result_dispatcher, req).await
     }
     async fn complete(
@@ -55,7 +55,7 @@ impl OtherServerCommands for OtherServerCommandsInstance {
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
         req: CompleteRequest,
-    ) -> buck2_error::Result<CompleteResponse> {
+    ) -> bz_error::Result<CompleteResponse> {
         complete_command(ctx, partial_result_dispatcher, req).await
     }
 
@@ -63,7 +63,7 @@ impl OtherServerCommands for OtherServerCommandsInstance {
         &self,
         ctx: &dyn ServerCommandContextTrait,
         req: DebugEvalRequest,
-    ) -> buck2_error::Result<DebugEvalResponse> {
+    ) -> bz_error::Result<DebugEvalResponse> {
         debug_eval_command(ctx, req).await
     }
 
@@ -72,7 +72,7 @@ impl OtherServerCommands for OtherServerCommandsInstance {
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
         req: ExplainRequest,
-    ) -> buck2_error::Result<ExplainResponse> {
+    ) -> bz_error::Result<ExplainResponse> {
         explain_command(ctx, partial_result_dispatcher, req).await
     }
 
@@ -81,7 +81,7 @@ impl OtherServerCommands for OtherServerCommandsInstance {
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
         req: ExpandExternalCellsRequest,
-    ) -> buck2_error::Result<ExpandExternalCellsResponse> {
+    ) -> bz_error::Result<ExpandExternalCellsResponse> {
         expand_external_cells_command(ctx, partial_result_dispatcher, req).await
     }
 }

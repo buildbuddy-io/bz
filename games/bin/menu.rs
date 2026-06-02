@@ -59,7 +59,7 @@ const FIXED_HEIGHT: usize = 43;
 
 fn save_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_owned());
-    PathBuf::from(home).join(".buck2_games")
+    PathBuf::from(home).join(".bz_games")
 }
 
 fn save_path_for(game_name: &str) -> PathBuf {

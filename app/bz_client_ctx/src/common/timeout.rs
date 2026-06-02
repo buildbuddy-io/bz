@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_error::BuckErrorContext as _;
+use bz_error::BuckErrorContext as _;
 
 /// Defines common options for options with timeouts
 #[derive(Debug, clap::Parser)]
@@ -37,7 +37,7 @@ pub struct CommonTimeoutOptions {
 }
 
 impl CommonTimeoutOptions {
-    pub fn overall_timeout(&self) -> buck2_error::Result<Option<::prost_types::Duration>> {
+    pub fn overall_timeout(&self) -> bz_error::Result<Option<::prost_types::Duration>> {
         self.timeout
             .map(|t| {
                 let t: std::time::Duration = t.into();

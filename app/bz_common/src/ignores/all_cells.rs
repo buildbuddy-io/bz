@@ -11,11 +11,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::nested::NestedCells;
-use buck2_core::cells::paths::CellRelativePathBuf;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::name::CellName;
+use bz_core::cells::nested::NestedCells;
+use bz_core::cells::paths::CellRelativePathBuf;
 use dice::DiceComputations;
 
 use crate::dice::cells::HasCellResolver;
@@ -32,7 +32,7 @@ pub(crate) trait HasCellFileIgnores {
     async fn new_cell_ignores(
         &mut self,
         cell_name: CellName,
-    ) -> buck2_error::Result<Arc<CellFileIgnores>>;
+    ) -> bz_error::Result<Arc<CellFileIgnores>>;
 }
 
 #[async_trait]
@@ -40,7 +40,7 @@ impl HasCellFileIgnores for DiceComputations<'_> {
     async fn new_cell_ignores(
         &mut self,
         cell_name: CellName,
-    ) -> buck2_error::Result<Arc<CellFileIgnores>> {
+    ) -> bz_error::Result<Arc<CellFileIgnores>> {
         let cells = self.get_cell_resolver().await?;
         let instance = match cells.get(cell_name) {
             Ok(instance) => instance,
@@ -109,7 +109,7 @@ impl HasCellFileIgnores for DiceComputations<'_> {
 async fn read_bazelignore_spec(
     ctx: &mut DiceComputations<'_>,
     cell_name: CellName,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let bazelignore_path = CellPath::new(
         cell_name,
         CellRelativePathBuf::unchecked_new(".bazelignore".to_owned()),
@@ -125,7 +125,7 @@ async fn read_bazelignore_spec(
 fn bazel_compat_enabled(
     ctx: &mut DiceComputations<'_>,
     config: &OpaqueLegacyBuckConfigOnDice,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let enabled = config.lookup(
         ctx,
         BuckconfigKeyRef {

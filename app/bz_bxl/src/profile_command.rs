@@ -12,22 +12,22 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_cli_proto::ProfileRequest;
-use buck2_cli_proto::ProfileResponse;
-use buck2_cli_proto::profile_request::ProfileOpts;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_interpreter::starlark_profiler::config::GetStarlarkProfilerInstrumentation;
-use buck2_interpreter::starlark_profiler::mode::StarlarkProfileMode;
-use buck2_profile::get_profile_response;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_cli_proto::ProfileRequest;
+use bz_cli_proto::ProfileResponse;
+use bz_cli_proto::profile_request::ProfileOpts;
+use bz_common::dice::cells::HasCellResolver;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_interpreter::starlark_profiler::config::GetStarlarkProfilerInstrumentation;
+use bz_interpreter::starlark_profiler::mode::StarlarkProfileMode;
+use bz_profile::get_profile_response;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::DiceTransaction;
 use futures::FutureExt;
 
@@ -41,7 +41,7 @@ pub(crate) async fn bxl_profile_command(
     ctx: &dyn ServerCommandContextTrait,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
     req: ProfileRequest,
-) -> buck2_error::Result<ProfileResponse> {
+) -> bz_error::Result<ProfileResponse> {
     run_server_command(
         BxlProfileServerCommand { req },
         ctx,
@@ -56,9 +56,9 @@ struct BxlProfileServerCommand {
 
 #[async_trait]
 impl ServerCommandTemplate for BxlProfileServerCommand {
-    type StartEvent = buck2_data::ProfileCommandStart;
-    type EndEvent = buck2_data::ProfileCommandEnd;
-    type Response = buck2_cli_proto::ProfileResponse;
+    type StartEvent = bz_data::ProfileCommandStart;
+    type EndEvent = bz_data::ProfileCommandEnd;
+    type Response = bz_cli_proto::ProfileResponse;
     type PartialResult = NoPartialResult;
 
     async fn command(
@@ -66,15 +66,15 @@ impl ServerCommandTemplate for BxlProfileServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         mut ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         let ProfileOpts::BxlProfile(opts) = self
             .req
             .profile_opts
             .as_ref()
             .expect("BXL profile opts not populated")
         else {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Expected BXL profile opts, not target profile opts"
             ));
         };
@@ -107,8 +107,8 @@ impl ServerCommandTemplate for BxlProfileServerCommand {
         )
         .await?
         else {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Help docs were displayed. No profiler data available"
             ));
         };
@@ -132,7 +132,7 @@ impl ServerCommandTemplate for BxlProfileServerCommand {
             .cancellation_context()
             .with_structured_cancellation(|observer| {
                 async move {
-                    buck2_error::Ok(
+                    bz_error::Ok(
                         eval(&mut ctx, bxl_key, observer)
                             .await
                             .map_err(|e| e.error)?

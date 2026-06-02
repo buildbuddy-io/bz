@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_error::BuckErrorContext;
-use buck2_hash::StdBuckHashMap;
+use bz_error::BuckErrorContext;
+use bz_hash::StdBuckHashMap;
 use tracing::Level;
 
 use crate::proto;
 
 impl TryInto<StdBuckHashMap<String, String>> for proto::Event {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn try_into(self) -> Result<StdBuckHashMap<String, String>, Self::Error> {
         use std::collections::hash_map::Entry;
@@ -31,8 +31,8 @@ impl TryInto<StdBuckHashMap<String, String>> for proto::Event {
                     e.insert(value);
                 }
                 Entry::Occupied(e) => {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Tier0,
                         "Duplicate key: {}",
                         e.key()
                     ));
@@ -61,7 +61,7 @@ where
 }
 
 impl TryInto<Level> for proto::LogLevel {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn try_into(self) -> Result<Level, Self::Error> {
         use proto::log_level::Value;
@@ -71,8 +71,8 @@ impl TryInto<Level> for proto::LogLevel {
 
         Ok(match value {
             Value::NotSet => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Missing `value`"
                 ));
             }
@@ -86,7 +86,7 @@ impl TryInto<Level> for proto::LogLevel {
 }
 
 impl TryFrom<Level> for proto::LogLevel {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn try_from(level: Level) -> Result<proto::LogLevel, Self::Error> {
         use proto::log_level::Value;
@@ -98,8 +98,8 @@ impl TryFrom<Level> for proto::LogLevel {
             v if v == Level::WARN => Value::Warn,
             v if v == Level::ERROR => Value::Error,
             v => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Unsupported Level: {:?}",
                     v
                 ));

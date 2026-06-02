@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::provider::label::ConfiguredProvidersLabel;
 use derive_more::Display;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -40,7 +40,7 @@ pub async fn get_outputs_for_top_level_target(
     ctx: &mut DiceComputations<'_>,
     providers_label: &ConfiguredProvidersLabel,
     providers_to_build: &ProvidersToBuild,
-) -> buck2_error::Result<MaybeCompatible<Arc<Vec<(ArtifactGroup, BuildProviderType)>>>> {
+) -> bz_error::Result<MaybeCompatible<Arc<Vec<(ArtifactGroup, BuildProviderType)>>>> {
     #[derive(Allocative, Debug, Display, Clone, Eq, PartialEq, Hash, Pagable)]
     #[display("TARGET_COMPLETION({}, {:?})", &self.0, &self.1)]
     #[pagable_typetag(dice::DiceKeyDyn)]
@@ -49,7 +49,7 @@ pub async fn get_outputs_for_top_level_target(
     #[async_trait]
     impl Key for TopLevelTargetOutputsKey {
         type Value =
-            buck2_error::Result<MaybeCompatible<Arc<Vec<(ArtifactGroup, BuildProviderType)>>>>;
+            bz_error::Result<MaybeCompatible<Arc<Vec<(ArtifactGroup, BuildProviderType)>>>>;
 
         async fn compute(
             &self,

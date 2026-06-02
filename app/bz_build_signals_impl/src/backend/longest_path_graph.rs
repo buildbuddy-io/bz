@@ -12,26 +12,26 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Duration;
 
-use buck2_analysis::analysis::calculation::AnalysisKey;
-use buck2_build_signals::env::CriticalPathBackendName;
-use buck2_build_signals::env::NodeDuration;
-use buck2_build_signals::env::WaitingData;
-use buck2_build_signals::error::CriticalPathError;
-use buck2_build_signals::node_key::BuildSignalsNodeKey;
-use buck2_core::soft_error;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_critical_path::AddEdgesError;
-use buck2_critical_path::Graph;
-use buck2_critical_path::GraphBuilder;
-use buck2_critical_path::OptionalVertexId;
-use buck2_critical_path::PushError;
-use buck2_critical_path::TopoSortError;
-use buck2_critical_path::VertexData;
-use buck2_critical_path::VertexId;
-use buck2_critical_path::VertexKeys;
-use buck2_critical_path::compute_critical_path_potentials;
-use buck2_error::internal_error;
-use buck2_events::span::SpanId;
+use bz_analysis::analysis::calculation::AnalysisKey;
+use bz_build_signals::env::CriticalPathBackendName;
+use bz_build_signals::env::NodeDuration;
+use bz_build_signals::env::WaitingData;
+use bz_build_signals::error::CriticalPathError;
+use bz_build_signals::node_key::BuildSignalsNodeKey;
+use bz_core::soft_error;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_critical_path::AddEdgesError;
+use bz_critical_path::Graph;
+use bz_critical_path::GraphBuilder;
+use bz_critical_path::OptionalVertexId;
+use bz_critical_path::PushError;
+use bz_critical_path::TopoSortError;
+use bz_critical_path::VertexData;
+use bz_critical_path::VertexId;
+use bz_critical_path::VertexKeys;
+use bz_critical_path::compute_critical_path_potentials;
+use bz_error::internal_error;
+use bz_events::span::SpanId;
 use dupe::Dupe;
 use itertools::Itertools;
 use smallvec::SmallVec;
@@ -291,7 +291,7 @@ fn compute_critical_paths(
                     .max_by_key(|p| p.0)
                     .ok_or_else(|| internal_error!("No critical path"))?;
 
-                buck2_error::Result::Ok(Duration::from_micros(path_cost.runtime))
+                bz_error::Result::Ok(Duration::from_micros(path_cost.runtime))
             })();
 
             let max_cost = match max_cost {

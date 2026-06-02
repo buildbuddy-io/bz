@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-use buck2_error::internal_error;
-use buck2_node::attrs::attr_type::visibility::VisibilityAttrType;
-use buck2_node::attrs::attr_type::within_view::WithinViewAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_error::internal_error;
+use bz_node::attrs::attr_type::visibility::VisibilityAttrType;
+use bz_node::attrs::attr_type::within_view::WithinViewAttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use starlark::values::Value;
 
 use crate::attrs::coerce::AttrTypeCoerce;
@@ -26,7 +26,7 @@ impl AttrTypeCoerce for WithinViewAttrType {
         configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         if configurable == AttrIsConfigurable::Yes {
             return Err(internal_error!("Within view attribute is not configurable"));
         }

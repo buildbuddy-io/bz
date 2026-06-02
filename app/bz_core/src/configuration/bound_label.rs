@@ -14,7 +14,7 @@ use strong_hash::StrongHash;
 
 use crate::configuration::builtin::BuiltinPlatform;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum BoundConfigurationLabelError {
     #[error("Configuration label is empty")]
@@ -44,7 +44,7 @@ enum BoundConfigurationLabelError {
 pub struct BoundConfigurationLabel(String);
 
 impl BoundConfigurationLabel {
-    pub fn new(label: String) -> buck2_error::Result<BoundConfigurationLabel> {
+    pub fn new(label: String) -> bz_error::Result<BoundConfigurationLabel> {
         if label.is_empty() {
             return Err(BoundConfigurationLabelError::LabelIsEmpty.into());
         }

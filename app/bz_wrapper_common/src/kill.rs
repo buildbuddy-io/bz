@@ -25,14 +25,14 @@ pub fn process_creation_time(process: &Process) -> Option<Duration> {
     imp::process_creation_time(process)
 }
 
-pub fn process_exists(pid: Pid) -> buck2_error::Result<bool> {
+pub fn process_exists(pid: Pid) -> bz_error::Result<bool> {
     imp::process_exists(pid)
 }
 
 /// Send `KILL` or call `TerminateProcess` on the given process.
 ///
 /// Returns a KilledProcessHandle that can be used to observe the termination of the killed process.
-pub fn kill(pid: Pid) -> buck2_error::Result<Option<KilledProcessHandle>> {
+pub fn kill(pid: Pid) -> bz_error::Result<Option<KilledProcessHandle>> {
     match imp::kill(pid)? {
         Some(handle) => Ok(Some(KilledProcessHandle { handle })),
         None => Ok(None),
@@ -44,7 +44,7 @@ pub struct KilledProcessHandle {
 }
 
 impl KilledProcessHandle {
-    pub fn has_exited(&self) -> buck2_error::Result<bool> {
+    pub fn has_exited(&self) -> bz_error::Result<bool> {
         self.handle.has_exited()
     }
 }
@@ -70,7 +70,7 @@ mod tests {
     use std::time::Duration;
     use std::time::Instant;
 
-    use buck2_util::process::background_command;
+    use bz_util::process::background_command;
 
     use crate::kill::kill;
     use crate::kill::process_exists;

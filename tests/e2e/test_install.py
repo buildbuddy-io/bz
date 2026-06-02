@@ -40,7 +40,7 @@ if linux_only():
         assert not islink(f"{tmp_dir}/etc_hosts")
 
     @buck_test(inplace=True, write_invocation_record=True)
-    @env("BUCK_LOG", "buck2_server_commands::commands::install=debug")
+    @env("BUCK_LOG", "bz_server_commands::commands::install=debug")
     async def test_install_logging(buck: Buck, tmp_path: Path) -> None:
         tmp_dir = tmp_path / "install_test"
         tmp_dir.mkdir()

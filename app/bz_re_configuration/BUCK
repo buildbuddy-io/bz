@@ -3,12 +3,12 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_re_configuration",
+    name = "bz_re_configuration",
     srcs = glob(["src/**/*.rs"]),
     deps = [
         "//bz/allocative/allocative:allocative",
-        "//bz/app/bz_common:buck2_common",
-        "//bz/app/bz_core:buck2_core",
-        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_common:bz_common",
+        "//bz/app/bz_core:bz_core",
+        "//bz/app/bz_error:bz_error",
     ],
 )

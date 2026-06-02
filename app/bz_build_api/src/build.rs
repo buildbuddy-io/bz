@@ -21,15 +21,15 @@ use std::time::Duration;
 use std::time::Instant;
 
 use allocative::Allocative;
-use buck2_common::liveliness_observer::LivelinessObserver;
-use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::pattern::pattern::Modifiers;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::internal_error;
-use buck2_events::dispatch::console_message;
+use bz_common::liveliness_observer::LivelinessObserver;
+use bz_core::configuration::compatibility::IncompatiblePlatformReason;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::pattern::pattern::Modifiers;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_error::internal_error;
+use bz_events::dispatch::console_message;
 use dice::LinearRecomputeDiceComputations;
 use dice::UserComputationData;
 use dupe::Dupe;
@@ -88,8 +88,8 @@ pub struct ConfiguredBuildTargetResultGen<T> {
     pub outputs: Vec<Timed<T>>,
     pub provider_collection: Option<FrozenProviderCollectionValue>,
     pub target_rule_type_name: Option<String>,
-    pub graph_properties: Option<buck2_error::Result<MaybeCompatible<GraphPropertiesValues>>>,
-    pub errors: Vec<Timed<buck2_error::Error>>,
+    pub graph_properties: Option<bz_error::Result<MaybeCompatible<GraphPropertiesValues>>>,
+    pub errors: Vec<Timed<bz_error::Error>>,
 }
 
 impl<T> ConfiguredBuildTargetResultGen<T> {
@@ -106,7 +106,7 @@ impl<T> ConfiguredBuildTargetResultGen<T> {
 }
 
 pub type ConfiguredBuildTargetResult =
-    ConfiguredBuildTargetResultGen<buck2_error::Result<ProviderArtifacts>>;
+    ConfiguredBuildTargetResultGen<bz_error::Result<ProviderArtifacts>>;
 
 pub enum FailFastState {
     Continue,
@@ -141,7 +141,7 @@ impl AsyncBuildTargetResultBuilder {
         mut self,
         fail_fast: bool,
         fut: impl Future<Output = ()>,
-    ) -> buck2_error::Result<BuildTargetResult> {
+    ) -> bz_error::Result<BuildTargetResult> {
         let mut fut = pin!(fut);
         loop {
             tokio::select! {
@@ -179,10 +179,10 @@ impl AsyncBuildTargetResultBuilder {
 pub struct BuildTargetResultBuilder {
     res: HashMap<
         ConfiguredProvidersLabel,
-        Option<ConfiguredBuildTargetResultGen<(usize, buck2_error::Result<ProviderArtifacts>)>>,
+        Option<ConfiguredBuildTargetResultGen<(usize, bz_error::Result<ProviderArtifacts>)>>,
     >,
     configured_to_pattern_modifiers: HashMap<ConfiguredProvidersLabel, Vec<Modifiers>>,
-    other_errors: BTreeMap<Option<ProvidersLabel>, Vec<buck2_error::Error>>,
+    other_errors: BTreeMap<Option<ProvidersLabel>, Vec<bz_error::Error>>,
     build_failed: bool,
     incompatible_targets: SmallSet<ConfiguredTargetLabel>,
     streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
@@ -205,7 +205,7 @@ impl BuildTargetResultBuilder {
         }
     }
 
-    pub fn event(&mut self, event: BuildEvent) -> buck2_error::Result<FailFastState> {
+    pub fn event(&mut self, event: BuildEvent) -> bz_error::Result<FailFastState> {
         let ConfiguredBuildEvent { variant, label } = match event {
             BuildEvent::Configured(variant) => variant,
             BuildEvent::OtherError { label: target, err } => {
@@ -290,7 +290,7 @@ impl BuildTargetResultBuilder {
                      .as_mut()
                      .ok_or_else(|| internal_error!("ConfiguredBuildEventVariant::Timeout for a skipped target: `{label}`"))?;
                 results.errors.push(Timed {
-                    inner: buck2_error::Error::from(BuildDeadlineExpired),
+                    inner: bz_error::Error::from(BuildDeadlineExpired),
                     elapsed,
                 });
                 // TODO(cjhopman): Why don't we break here?
@@ -410,7 +410,7 @@ pub struct BuildTargetResult {
     pub configured_to_pattern_modifiers: HashMap<ConfiguredProvidersLabel, BTreeSet<Modifiers>>,
     /// Errors that could not be associated with a specific configured target. These errors may be
     /// associated with a providers label, or might not be associated with any target at all.
-    pub other_errors: BTreeMap<Option<ProvidersLabel>, Vec<buck2_error::Error>>,
+    pub other_errors: BTreeMap<Option<ProvidersLabel>, Vec<bz_error::Error>>,
     pub build_failed: bool,
 }
 
@@ -443,12 +443,12 @@ impl BuildTargetResult {
 
 pub enum ConfiguredBuildEventExecutionVariant {
     BuildOutput {
-        output: buck2_error::Result<ProviderArtifacts>,
+        output: bz_error::Result<ProviderArtifacts>,
         /// Ensure a stable ordering of outputs.
         index: usize,
     },
     Validation {
-        result: buck2_error::Result<()>,
+        result: bz_error::Result<()>,
     },
 }
 
@@ -463,11 +463,11 @@ pub enum ConfiguredBuildEventVariant {
     },
     Execution(ConfiguredBuildEventExecutionVariant),
     GraphProperties {
-        graph_properties: buck2_error::Result<MaybeCompatible<GraphPropertiesValues>>,
+        graph_properties: bz_error::Result<MaybeCompatible<GraphPropertiesValues>>,
     },
     Error {
         /// An error that can't be associated with a single artifact.
-        err: buck2_error::Error,
+        err: bz_error::Error,
     },
     // This target did not build within the allocated time.
     Timeout,
@@ -484,7 +484,7 @@ pub enum BuildEvent {
     // An error that cannot be associated with a specific configured target
     OtherError {
         label: Option<ProvidersLabel>,
-        err: buck2_error::Error,
+        err: bz_error::Error,
     },
 }
 
@@ -529,8 +529,8 @@ impl BuildEventSinkHolder {
 
 pub trait HasBuildEventSink {
     fn init_build_event_sink(&mut self);
-    fn set_build_event_sink(&self, sink: BuildEventSink) -> buck2_error::Result<()>;
-    fn get_build_event_sink(&self) -> buck2_error::Result<BuildEventSink>;
+    fn set_build_event_sink(&self, sink: BuildEventSink) -> bz_error::Result<()>;
+    fn get_build_event_sink(&self) -> bz_error::Result<BuildEventSink>;
 }
 
 impl HasBuildEventSink for UserComputationData {
@@ -538,7 +538,7 @@ impl HasBuildEventSink for UserComputationData {
         self.data.set(BuildEventSinkHolder::new());
     }
 
-    fn set_build_event_sink(&self, sink: BuildEventSink) -> buck2_error::Result<()> {
+    fn set_build_event_sink(&self, sink: BuildEventSink) -> bz_error::Result<()> {
         let holder = self
             .data
             .get::<BuildEventSinkHolder>()
@@ -550,7 +550,7 @@ impl HasBuildEventSink for UserComputationData {
         Ok(())
     }
 
-    fn get_build_event_sink(&self) -> buck2_error::Result<BuildEventSink> {
+    fn get_build_event_sink(&self) -> bz_error::Result<BuildEventSink> {
         let holder = self
             .data
             .get::<BuildEventSinkHolder>()
@@ -564,7 +564,7 @@ impl HasBuildEventSink for UserComputationData {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = BuildDeadlineExpired)]
 #[error("Build timed out")]
 struct BuildDeadlineExpired;

@@ -40,9 +40,9 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use buck2_cli_proto::CommandResult;
-use buck2_cli_proto::PartialResult;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_cli_proto::CommandResult;
+use bz_cli_proto::PartialResult;
+use bz_wrapper_common::invocation_id::TraceId;
 use derive_more::From;
 use gazebo::variants::UnpackVariants;
 use serde::Serialize;
@@ -60,7 +60,7 @@ use crate::span::SpanId;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct BuckEvent {
     /// Full event, the rest of the fields are caches.
-    event: Box<buck2_data::BuckEvent>,
+    event: Box<bz_data::BuckEvent>,
 
     /// A timestamp for when this event was emitted.
     timestamp: SystemTime,
@@ -80,9 +80,9 @@ impl BuckEvent {
         trace_id: TraceId,
         span_id: Option<SpanId>,
         parent_id: Option<SpanId>,
-        data: buck2_data::buck_event::Data,
+        data: bz_data::buck_event::Data,
     ) -> BuckEvent {
-        let event = buck2_data::BuckEvent {
+        let event = bz_data::BuckEvent {
             timestamp: Some(timestamp.into()),
             trace_id: trace_id.to_string(),
             span_id: span_id.map_or(0, |s| s.0.into()),
@@ -101,7 +101,7 @@ impl BuckEvent {
         self.timestamp
     }
 
-    pub fn trace_id(&self) -> buck2_error::Result<TraceId> {
+    pub fn trace_id(&self) -> bz_error::Result<TraceId> {
         Ok(TraceId::from_str(&self.event.trace_id)?)
     }
 
@@ -113,39 +113,39 @@ impl BuckEvent {
         self.parent_id
     }
 
-    pub fn event(&self) -> &buck2_data::BuckEvent {
+    pub fn event(&self) -> &bz_data::BuckEvent {
         &self.event
     }
 
-    pub fn data(&self) -> &buck2_data::buck_event::Data {
+    pub fn data(&self) -> &bz_data::buck_event::Data {
         self.event
             .data
             .as_ref()
             .expect("data is set, it is validated")
     }
 
-    pub fn data_mut(&mut self) -> &mut buck2_data::buck_event::Data {
+    pub fn data_mut(&mut self) -> &mut bz_data::buck_event::Data {
         self.event
             .data
             .as_mut()
             .expect("data is set, it is validated")
     }
 
-    pub fn span_start_event(&self) -> Option<&buck2_data::SpanStartEvent> {
+    pub fn span_start_event(&self) -> Option<&bz_data::SpanStartEvent> {
         match self.data() {
-            buck2_data::buck_event::Data::SpanStart(start) => Some(start),
+            bz_data::buck_event::Data::SpanStart(start) => Some(start),
             _ => None,
         }
     }
 
-    pub fn span_end_event(&self) -> Option<&buck2_data::SpanEndEvent> {
+    pub fn span_end_event(&self) -> Option<&bz_data::SpanEndEvent> {
         match self.data() {
-            buck2_data::buck_event::Data::SpanEnd(end) => Some(end),
+            bz_data::buck_event::Data::SpanEnd(end) => Some(end),
             _ => None,
         }
     }
 
-    pub fn command_start(&self) -> buck2_error::Result<Option<&buck2_data::CommandStart>> {
+    pub fn command_start(&self) -> bz_error::Result<Option<&bz_data::CommandStart>> {
         match self.span_start_event() {
             None => Ok(None),
             Some(span_start_event) => {
@@ -154,7 +154,7 @@ impl BuckEvent {
                     .as_ref()
                     .ok_or_else(|| BuckEventError::MissingField(self.clone()))?
                 {
-                    buck2_data::span_start_event::Data::Command(command_start) => {
+                    bz_data::span_start_event::Data::Command(command_start) => {
                         Ok(Some(command_start))
                     }
                     _ => Ok(None),
@@ -164,16 +164,16 @@ impl BuckEvent {
     }
 }
 
-impl From<BuckEvent> for Box<buck2_data::BuckEvent> {
+impl From<BuckEvent> for Box<bz_data::BuckEvent> {
     fn from(e: BuckEvent) -> Self {
         e.event
     }
 }
 
-impl TryFrom<Box<buck2_data::BuckEvent>> for BuckEvent {
-    type Error = buck2_error::Error;
+impl TryFrom<Box<bz_data::BuckEvent>> for BuckEvent {
+    type Error = bz_error::Error;
 
-    fn try_from(event: Box<buck2_data::BuckEvent>) -> buck2_error::Result<BuckEvent> {
+    fn try_from(event: Box<bz_data::BuckEvent>) -> bz_error::Result<BuckEvent> {
         event.data.as_ref().ok_or(BuckEventError::MissingData)?;
         fn new_span_id(num: u64) -> Option<SpanId> {
             NonZeroU64::new(num).map(SpanId)
@@ -296,25 +296,25 @@ pub fn create_source_sink_pair() -> (ChannelEventSource, impl EventSink) {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = InvalidEvent)]
 enum BuckEventError {
-    #[error("The `buck2_data::BuckEvent` provided has no `Timestamp`")]
+    #[error("The `bz_data::BuckEvent` provided has no `Timestamp`")]
     MissingTimestamp,
-    #[error("The `buck2_data::BuckEvent` provided has no `Data`")]
+    #[error("The `bz_data::BuckEvent` provided has no `Data`")]
     MissingData,
     #[error("Sent an event missing one or more fields: `{0:?}`")]
     MissingField(BuckEvent),
 }
 
 pub fn init_late_bindings() {
-    buck2_core::event::EVENT_DISPATCH.init(&dispatch::EventDispatcherLateBinding);
+    bz_core::event::EVENT_DISPATCH.init(&dispatch::EventDispatcherLateBinding);
 }
 
 #[cfg(test)]
 mod tests {
-    use buck2_data::CommandStart;
-    use buck2_data::SpanStartEvent;
+    use bz_data::CommandStart;
+    use bz_data::SpanStartEvent;
 
     use super::*;
 
@@ -337,7 +337,7 @@ mod tests {
         );
         assert_eq!(
             test,
-            BuckEvent::try_from(Box::<buck2_data::BuckEvent>::from(test.clone())).unwrap()
+            BuckEvent::try_from(Box::<bz_data::BuckEvent>::from(test.clone())).unwrap()
         );
     }
 

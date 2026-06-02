@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_core::buck2_env;
+use bz_core::bz_env;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -20,28 +20,28 @@ pub struct ClientMetadata {
 }
 
 impl ClientMetadata {
-    pub fn to_proto(&self) -> buck2_data::ClientMetadata {
-        buck2_data::ClientMetadata {
+    pub fn to_proto(&self) -> bz_data::ClientMetadata {
+        bz_data::ClientMetadata {
             key: self.key.clone(),
             value: self.value.clone(),
         }
     }
 
-    pub fn from_env() -> buck2_error::Result<Vec<Self>> {
-        let client_metadata_str = buck2_env!("BUCK2_CLIENT_METADATA")?.unwrap_or_default();
+    pub fn from_env() -> bz_error::Result<Vec<Self>> {
+        let client_metadata_str = bz_env!("BUCK2_CLIENT_METADATA")?.unwrap_or_default();
         if client_metadata_str.is_empty() {
             return Ok(vec![]);
         }
         let client_metadatas = client_metadata_str
             .split(',')
             .map(parse_client_metadata)
-            .collect::<buck2_error::Result<Vec<_>>>()?;
+            .collect::<bz_error::Result<Vec<_>>>()?;
 
         Ok(client_metadatas)
     }
 }
 
-pub fn parse_client_metadata(value: &str) -> buck2_error::Result<ClientMetadata> {
+pub fn parse_client_metadata(value: &str) -> bz_error::Result<ClientMetadata> {
     const REGEX_TEXT: &str = "^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$";
     static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(REGEX_TEXT).unwrap());
 
@@ -59,7 +59,7 @@ pub fn parse_client_metadata(value: &str) -> buck2_error::Result<ClientMetadata>
     })
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum ClientMetadataError {
     #[error(

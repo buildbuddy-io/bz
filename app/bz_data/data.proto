@@ -857,7 +857,7 @@ message RageResult {
   google.protobuf.Duration command_duration = 12;
 
   optional string command = 13;
-  optional string buck2_revision = 14;
+  optional string bz_revision = 14;
   optional string username = 15;
   optional string hostname = 16;
   optional string os = 17;
@@ -899,14 +899,14 @@ message TargetCfg {
 message Snapshot {
   // Resident set size in bytes of the buck2 daemon.
   // Does not include subprocesses (e.g. local actions).
-  optional uint64 buck2_rss = 11;
+  optional uint64 bz_rss = 11;
   // Maximum resident set size in bytes of the buck2 daemon.
   // Does not include subprocesses (e.g. local actions).
-  uint64 buck2_max_rss = 1;
+  uint64 bz_max_rss = 1;
   // User CPU time of buck2 daemon, not including subprocesses.
-  uint64 buck2_user_cpu_us = 2;
+  uint64 bz_user_cpu_us = 2;
   // System CPU time of buck2 daemon, not including subprocesses.
-  uint64 buck2_system_cpu_us = 3;
+  uint64 bz_system_cpu_us = 3;
   // Queue size of the blocking executor.
   uint64 blocking_executor_io_queue_size = 4;
   // Tokio blocking queue depth.
@@ -1766,10 +1766,10 @@ message ActionExecutionEnd {
 
   // Revision hash (version) for this action. This is set only when the action
   // fails.
-  optional string buck2_revision = 31;
+  optional string bz_revision = 31;
   // Time when the buck2 binary servicing this action was built. This is set
   // only when the action fails.
-  optional string buck2_build_time = 32;
+  optional string bz_build_time = 32;
 
   // Was this command eligible for full hybrid execution (i.e. no exclusions
   // from the command, hybrid is turned on).
@@ -2518,7 +2518,7 @@ enum DaemonWasStartedReason {
   NO_DAEMON_PROCESS = 16;
 }
 
-// This is the origin for every sample in buck2_builds scuba table
+// This is the origin for every sample in bz_builds scuba table
 // It's sent from the client to Scribe at the end of each invocation
 message InvocationRecord {
   reserved 1, 22, 27, 28, 36, 61, 62, 66, 77, 82, 88, 89, 100, 234, 235, 400,
@@ -2536,7 +2536,7 @@ message InvocationRecord {
   google.protobuf.Duration client_walltime = 6;
   // Optional - present if BuildGraphExecutionInfo sent to client.
   google.protobuf.Duration critical_path_duration = 7;
-  // Optional - any contents are copied directly to scuba buck2_builds.
+  // Optional - any contents are copied directly to scuba bz_builds.
   TypedMetadata metadata = 8;
   // Tags for this command
   repeated string tags = 9;
@@ -3118,7 +3118,7 @@ message ProcessedErrorReport {
   optional string telemetry_message = 4;
   optional string source_location = 5;
   repeated string tags = 6;
-  // `buck2_error` crate has logic of selecting the most interesting error tag
+  // `bz_error` crate has logic of selecting the most interesting error tag
   // among all error tags. This is such tag.
   optional string best_tag = 7;
   repeated string sub_error_categories = 8;

@@ -11,11 +11,11 @@
 use std::convert::Infallible;
 
 use allocative::Allocative;
-use buck2_build_api::bxl::unconfigured_attribute::StarlarkCoercedAttr;
-use buck2_interpreter::types::cell_path::StarlarkCellPath;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::nodes::unconfigured::TargetNode;
+use bz_build_api::bxl::unconfigured_attribute::StarlarkCoercedAttr;
+use bz_interpreter::types::cell_path::StarlarkCellPath;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::nodes::unconfigured::TargetNode;
 use derive_more::Display;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;

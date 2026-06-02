@@ -11,14 +11,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use buck2_common::kill_util::try_terminate_process_gracefully;
-use buck2_common::local_resource_state::LocalResourceState;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_data::ReleaseLocalResourcesEnd;
-use buck2_data::ReleaseLocalResourcesStart;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::span_async_simple;
-use buck2_hash::StdBuckHashMap;
+use bz_common::kill_util::try_terminate_process_gracefully;
+use bz_common::local_resource_state::LocalResourceState;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_data::ReleaseLocalResourcesEnd;
+use bz_data::ReleaseLocalResourcesStart;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::span_async_simple;
+use bz_hash::StdBuckHashMap;
 use dice::DiceComputations;
 use dice::UserComputationData;
 use dupe::Dupe;
@@ -26,11 +26,11 @@ use tokio::sync::Mutex;
 
 #[derive(Default)]
 pub struct LocalResourceRegistry(
-    pub Arc<Mutex<StdBuckHashMap<ConfiguredTargetLabel, buck2_error::Result<LocalResourceState>>>>,
+    pub Arc<Mutex<StdBuckHashMap<ConfiguredTargetLabel, bz_error::Result<LocalResourceState>>>>,
 );
 
 impl LocalResourceRegistry {
-    pub(crate) async fn release_all_resources(&self) -> buck2_error::Result<()> {
+    pub(crate) async fn release_all_resources(&self) -> bz_error::Result<()> {
         let resources = {
             let mut lock = self.0.lock().await;
             lock.drain().flat_map(|(_, v)| v).collect::<Vec<_>>()
@@ -60,7 +60,7 @@ impl LocalResourceRegistry {
                 .into_iter()
                 .collect::<Result<(), _>>()?;
 
-            Ok::<(), buck2_error::Error>(())
+            Ok::<(), bz_error::Error>(())
         };
 
         let start = ReleaseLocalResourcesStart {};
@@ -68,7 +68,7 @@ impl LocalResourceRegistry {
 
         span_async_simple(start, cleanup(), end).await?;
 
-        Ok::<(), buck2_error::Error>(())
+        Ok::<(), bz_error::Error>(())
     }
 }
 
@@ -77,7 +77,7 @@ pub trait InitLocalResourceRegistry {
 }
 
 pub trait HasLocalResourceRegistry {
-    fn get_local_resource_registry(&self) -> buck2_error::Result<Arc<LocalResourceRegistry>>;
+    fn get_local_resource_registry(&self) -> bz_error::Result<Arc<LocalResourceRegistry>>;
 }
 
 impl InitLocalResourceRegistry for UserComputationData {
@@ -87,7 +87,7 @@ impl InitLocalResourceRegistry for UserComputationData {
 }
 
 impl HasLocalResourceRegistry for DiceComputations<'_> {
-    fn get_local_resource_registry(&self) -> buck2_error::Result<Arc<LocalResourceRegistry>> {
+    fn get_local_resource_registry(&self) -> bz_error::Result<Arc<LocalResourceRegistry>> {
         let data = self
             .per_transaction_data()
             .data

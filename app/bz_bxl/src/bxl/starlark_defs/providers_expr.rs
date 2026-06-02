@@ -8,22 +8,22 @@
  * above-listed licenses.
  */
 
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersLabelMaybeConfigured;
-use buck2_core::provider::label::ProvidersName;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersLabelMaybeConfigured;
+use bz_core::provider::label::ProvidersName;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
 use dice::DiceComputations;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -162,7 +162,7 @@ impl ProvidersExpr<ConfiguredProvidersLabel> {
         global_cfg_options_override: &GlobalCfgOptions,
         ctx: &BxlContext<'_>,
         dice: &'c mut DiceComputations<'_>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         match arg {
             AnyProvidersExprArg::One(arg) => Ok(ProvidersExpr::Literal(
                 Self::unpack_literal(arg, global_cfg_options_override, ctx, dice).await?,
@@ -178,7 +178,7 @@ impl ProvidersExpr<ConfiguredProvidersLabel> {
         global_cfg_options_override: &'c GlobalCfgOptions,
         ctx: &BxlContext<'_>,
         dice: &'c mut DiceComputations<'_>,
-    ) -> buck2_error::Result<ConfiguredProvidersLabel> {
+    ) -> bz_error::Result<ConfiguredProvidersLabel> {
         match arg {
             AnyProvidersLabelArg::Configured(arg) => Ok(arg.configured_providers_label()),
             AnyProvidersLabelArg::Unconfigured(arg) => {
@@ -195,7 +195,7 @@ impl ProvidersExpr<ConfiguredProvidersLabel> {
         global_cfg_options_override: &'c GlobalCfgOptions,
         ctx: &'c BxlContext<'_>,
         dice: &'c mut DiceComputations<'_>,
-    ) -> buck2_error::Result<ProvidersExpr<ConfiguredProvidersLabel>> {
+    ) -> bz_error::Result<ProvidersExpr<ConfiguredProvidersLabel>> {
         match arg {
             AnyProvidersLabelListArg::StarlarkTargetSet(s) => Ok(ProvidersExpr::Iterable(
                 dice.try_compute_join(s.0.iter(), |dice, node| {
@@ -236,7 +236,7 @@ impl ProvidersExpr<ProvidersLabel> {
     pub(crate) fn unpack<'v>(
         arg: ProvidersExprArg<'v>,
         ctx: &BxlContext<'_>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         match arg {
             ProvidersExprArg::One(arg) => Self::unpack_literal(arg, ctx),
             ProvidersExprArg::List(arg) => Self::unpack_iterable(arg, ctx),
@@ -246,14 +246,14 @@ impl ProvidersExpr<ProvidersLabel> {
     fn unpack_literal<'v>(
         value: ProvidersLabelArg<'v>,
         ctx: &BxlContext<'_>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(Self::Literal(Self::unpack_providers_label(value, ctx)?))
     }
 
     fn unpack_iterable<'c, 'v: 'c>(
         arg: ProvidersLabelListArg<'v>,
         ctx: &'c BxlContext<'_>,
-    ) -> buck2_error::Result<ProvidersExpr<ProvidersLabel>> {
+    ) -> bz_error::Result<ProvidersExpr<ProvidersLabel>> {
         match arg {
             ProvidersLabelListArg::TargetSet(s) => Ok(ProvidersExpr::Iterable(
                 s.0.iter()
@@ -282,7 +282,7 @@ impl<P: ProvidersLabelMaybeConfigured> ProvidersExpr<P> {
     fn unpack_providers_label<'v>(
         arg: ProvidersLabelArg<'v>,
         ctx: &BxlContext<'_>,
-    ) -> buck2_error::Result<ProvidersLabel> {
+    ) -> bz_error::Result<ProvidersLabel> {
         match arg {
             ProvidersLabelArg::Str(s) => {
                 Ok(ParsedPattern::<ProvidersPatternExtra>::parse_relaxed(

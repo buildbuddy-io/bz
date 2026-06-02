@@ -9,9 +9,9 @@
  */
 
 use allocative::Allocative;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::build_file_cell::BuildFileCell;
 use pagable::Pagable;
 
 #[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
@@ -26,7 +26,7 @@ impl InterpreterCellInfo {
         cell_name: BuildFileCell,
         cell_resolver: CellResolver,
         cell_alias_resolver: CellAliasResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(Self {
             cell_name,
             cell_resolver,

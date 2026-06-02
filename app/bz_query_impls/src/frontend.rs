@@ -11,16 +11,16 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_build_api::actions::query::ActionQueryNode;
-use buck2_build_api::query::oneshot::QUERY_FRONTEND;
-use buck2_build_api::query::oneshot::QueryFrontend;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_node::configured_universe::CqueryUniverse;
-use buck2_node::configured_universe::UNIVERSE_FROM_LITERALS;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
+use bz_build_api::actions::query::ActionQueryNode;
+use bz_build_api::query::oneshot::QUERY_FRONTEND;
+use bz_build_api::query::oneshot::QueryFrontend;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_node::configured_universe::CqueryUniverse;
+use bz_node::configured_universe::UNIVERSE_FROM_LITERALS;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationResult;
 use dice::DiceComputations;
 
 use crate::aquery::evaluator::get_aquery_evaluator;
@@ -43,7 +43,7 @@ impl QueryFrontend for QueryFrontendImpl {
         working_dir: &ProjectRelativePath,
         query: &str,
         query_args: &[String],
-    ) -> buck2_error::Result<QueryEvaluationResult<TargetNode>> {
+    ) -> bz_error::Result<QueryEvaluationResult<TargetNode>> {
         Ok(ctx
             .with_linear_recompute(|ctx| async move {
                 let evaluator = get_uquery_evaluator(&ctx, working_dir).await?;
@@ -66,7 +66,7 @@ impl QueryFrontend for QueryFrontendImpl {
         global_cfg_options: GlobalCfgOptions,
         target_universe: Option<&[String]>,
         collect_universes: bool,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         QueryEvaluationResult<ConfiguredTargetNode>,
         Option<Vec<Arc<CqueryUniverse>>>,
     )> {
@@ -100,7 +100,7 @@ impl QueryFrontend for QueryFrontendImpl {
         query: &str,
         query_args: &[String],
         global_cfg_options: GlobalCfgOptions,
-    ) -> buck2_error::Result<QueryEvaluationResult<ActionQueryNode>> {
+    ) -> bz_error::Result<QueryEvaluationResult<ActionQueryNode>> {
         Ok(ctx
             .with_linear_recompute(|ctx| async move {
                 let evaluator = get_aquery_evaluator(&ctx, working_dir, global_cfg_options).await?;
@@ -115,7 +115,7 @@ async fn universe_from_literals(
     cwd: &ProjectRelativePath,
     literals: &[String],
     global_cfg_options: GlobalCfgOptions,
-) -> buck2_error::Result<CqueryUniverse> {
+) -> bz_error::Result<CqueryUniverse> {
     ctx.with_linear_recompute(|ctx| async move {
         let query_delegate = get_dice_query_delegate(&ctx, cwd, global_cfg_options).await?;
         Ok(preresolve_literals_and_build_universe(

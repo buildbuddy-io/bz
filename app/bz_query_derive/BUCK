@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_query_derive",
+    name = "bz_query_derive",
     srcs = glob(
         ["src/**/*.rs"],
     ),

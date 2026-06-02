@@ -16,9 +16,9 @@ use std::process::Command;
 use std::process::ExitStatus;
 use std::time::Duration;
 
-use buck2_error::internal_error;
-use buck2_resource_control::ActionFreezeEventReceiver;
-use buck2_resource_control::path::CgroupPathBuf;
+use bz_error::internal_error;
+use bz_resource_control::ActionFreezeEventReceiver;
+use bz_resource_control::path::CgroupPathBuf;
 use tokio::process::ChildStderr;
 use tokio::process::ChildStdout;
 use windows_sys::Win32::Foundation::HANDLE;
@@ -39,7 +39,7 @@ impl ProcessCommandImpl {
     pub(crate) async fn new(
         mut cmd: Command,
         _cgroup: Option<CgroupPathBuf>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         // On windows we create suspended process to assign it to a job (group) and then resume.
         // This is necessary because the process might finish before we add it to a job
         cmd.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
@@ -87,7 +87,7 @@ pub(crate) struct ProcessGroupImpl {
 }
 
 impl ProcessGroupImpl {
-    fn new(child: Child) -> buck2_error::Result<ProcessGroupImpl> {
+    fn new(child: Child) -> bz_error::Result<ProcessGroupImpl> {
         let job = JobObject::new()?;
         job.assign_process(child.as_raw_handle() as HANDLE)?;
         let process = ProcessGroupImpl {
@@ -121,7 +121,7 @@ impl ProcessGroupImpl {
     pub(crate) async fn wait(
         &mut self,
         _freeze_rx: impl ActionFreezeEventReceiver,
-    ) -> buck2_error::Result<(ExitStatus, Vec<buck2_resource_control::OrphanProcessInfo>)> {
+    ) -> bz_error::Result<(ExitStatus, Vec<bz_resource_control::OrphanProcessInfo>)> {
         match &mut self.child {
             FusedChild::Done(exit) => Ok((*exit, Vec::new())),
             FusedChild::Child(child) => {
@@ -147,18 +147,18 @@ impl ProcessGroupImpl {
     pub(crate) async fn kill(
         &self,
         _graceful_shutdown_timeout_s: Option<u32>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         tokio::time::timeout(Duration::from_secs(10), self.job.terminate(0))
             .await
             .map_err(|_| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "Timed out on job object termination"
                 )
             })?
     }
 
-    fn resume(&self) -> buck2_error::Result<()> {
+    fn resume(&self) -> bz_error::Result<()> {
         let handle = self
             .child
             .as_option()

@@ -9,8 +9,8 @@
  */
 
 use async_trait::async_trait;
-use buck2_core::package::PackageLabel;
-use buck2_util::late_binding::LateBinding;
+use bz_core::package::PackageLabel;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 use starlark_map::small_map::SmallMap;
 
@@ -22,7 +22,7 @@ pub trait PackageValuesCalculation: Send + Sync + 'static {
         &self,
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
-    ) -> buck2_error::Result<SmallMap<MetadataKey, serde_json::Value>>;
+    ) -> bz_error::Result<SmallMap<MetadataKey, serde_json::Value>>;
 }
 
 pub static PACKAGE_VALUES_CALCULATION: LateBinding<&'static dyn PackageValuesCalculation> =

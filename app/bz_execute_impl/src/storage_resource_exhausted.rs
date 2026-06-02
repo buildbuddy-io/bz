@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_execute::re::error::RemoteExecutionError;
+use bz_execute::re::error::RemoteExecutionError;
 use remote_execution::TCode;
 use remote_execution::TStatus;
 

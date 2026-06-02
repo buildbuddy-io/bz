@@ -8,23 +8,23 @@
  * above-listed licenses.
  */
 
-use buck2_common::memory::allocator_stats;
+use bz_common::memory::allocator_stats;
 
-// TODO(raulgarcia4): Consider moving out this file to buck2_common,
-// similarly to what was done with buck2_common::process_stats.
+// TODO(raulgarcia4): Consider moving out this file to bz_common,
+// similarly to what was done with bz_common::process_stats.
 pub struct AllocatorStats {
     pub bytes_active: Option<u64>,
     pub bytes_allocated: Option<u64>,
 }
 
-pub fn get_allocator_stats() -> buck2_error::Result<AllocatorStats> {
-    fn set(stats: &serde_json::Value, val: &str, to: &mut Option<u64>) -> buck2_error::Result<()> {
+pub fn get_allocator_stats() -> bz_error::Result<AllocatorStats> {
+    fn set(stats: &serde_json::Value, val: &str, to: &mut Option<u64>) -> bz_error::Result<()> {
         if let serde_json::Value::Number(stat) = &stats["jemalloc"]["stats"][val] {
             *to = stat.as_u64();
             Ok(())
         } else {
-            Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::MallocStats,
+            Err(bz_error::bz_error!(
+                bz_error::ErrorTag::MallocStats,
                 "Allocator stat '{}' not found.",
                 val
             ))
@@ -51,20 +51,20 @@ pub fn get_allocator_stats() -> buck2_error::Result<AllocatorStats> {
 
 #[cfg(test)]
 mod tests {
-    use buck2_common::memory::has_jemalloc_stats;
+    use bz_common::memory::has_jemalloc_stats;
 
     use crate::jemalloc_stats::get_allocator_stats;
 
     #[test]
-    fn test_get_allocator_stats() -> buck2_error::Result<()> {
+    fn test_get_allocator_stats() -> bz_error::Result<()> {
         if has_jemalloc_stats() {
             if let Ok(alloc_stats) = get_allocator_stats() {
                 assert!(alloc_stats.bytes_active.is_some());
                 assert!(alloc_stats.bytes_allocated.is_some());
                 return Ok(());
             }
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::MallocStats,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::MallocStats,
                 "{}",
                 "Allocator stats not found"
             ));

@@ -13,12 +13,12 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-use buck2_cli_proto::StreamingRequest;
+use bz_cli_proto::StreamingRequest;
 use futures::Stream;
 use pin_project::pin_project;
 use tonic::Status;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum StreamingRequestError {
     #[error("Request returned error status: {0}")]
@@ -32,13 +32,13 @@ enum StreamingRequestError {
 /// The primary use for this is pulling messages of a specific type from
 /// the client via [`StreamingRequestHandler::message`]
 #[pin_project]
-pub struct StreamingRequestHandler<T: TryFrom<StreamingRequest, Error = buck2_error::Error>> {
+pub struct StreamingRequestHandler<T: TryFrom<StreamingRequest, Error = bz_error::Error>> {
     #[pin]
     client_stream: tonic::Streaming<StreamingRequest>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: TryFrom<StreamingRequest, Error = buck2_error::Error>> StreamingRequestHandler<T> {
+impl<T: TryFrom<StreamingRequest, Error = bz_error::Error>> StreamingRequestHandler<T> {
     pub fn new(client_stream: tonic::Streaming<StreamingRequest>) -> Self {
         Self {
             client_stream,
@@ -49,7 +49,7 @@ impl<T: TryFrom<StreamingRequest, Error = buck2_error::Error>> StreamingRequestH
     /// Get a message of type `T` from inside of a [`StreamingRequest`] envelope.
     ///
     /// Returns an error if the message is of the wrong type.
-    pub async fn message(&mut self) -> buck2_error::Result<T> {
+    pub async fn message(&mut self) -> bz_error::Result<T> {
         let request = match self.client_stream.message().await {
             Err(e) => return Err(StreamingRequestError::GrpcStatus(e).into()),
             Ok(Some(m)) => m,
@@ -58,7 +58,7 @@ impl<T: TryFrom<StreamingRequest, Error = buck2_error::Error>> StreamingRequestH
         request.try_into()
     }
 
-    fn map_poll(v: Option<Result<StreamingRequest, Status>>) -> Option<buck2_error::Result<T>> {
+    fn map_poll(v: Option<Result<StreamingRequest, Status>>) -> Option<bz_error::Result<T>> {
         match v {
             None => None,
             Some(Err(e)) => Some(Err(StreamingRequestError::GrpcStatus(e).into())),
@@ -70,10 +70,10 @@ impl<T: TryFrom<StreamingRequest, Error = buck2_error::Error>> StreamingRequestH
     }
 }
 
-impl<T: TryFrom<StreamingRequest, Error = buck2_error::Error>> Stream
+impl<T: TryFrom<StreamingRequest, Error = bz_error::Error>> Stream
     for StreamingRequestHandler<T>
 {
-    type Item = buck2_error::Result<T>;
+    type Item = bz_error::Result<T>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();

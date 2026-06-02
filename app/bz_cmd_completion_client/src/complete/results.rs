@@ -12,14 +12,14 @@ use std::collections::BTreeSet;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
-use buck2_common::buildfiles::parse_buildfile_name;
-use buck2_common::invocation_roots::InvocationRoots;
-use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
-use buck2_core::cells::name::CellName;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_hash::StdBuckHashMap;
+use bz_common::buildfiles::parse_buildfile_name;
+use bz_common::invocation_roots::InvocationRoots;
+use bz_common::legacy_configs::cells::BuckConfigBasedCells;
+use bz_core::cells::name::CellName;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_hash::StdBuckHashMap;
 
 use super::path_sanitizer::SanitizedPath;
 
@@ -81,7 +81,7 @@ impl<'a> CompletionResults<'a> {
     async fn buildfile_names(
         &mut self,
         abs_dir: &AbsNormPath,
-    ) -> buck2_error::Result<&Vec<FileNameBuf>> {
+    ) -> bz_error::Result<&Vec<FileNameBuf>> {
         let relative_to_project = self.roots.project_root.relativize(abs_dir)?;
         let cell_configs = &self.cell_configs;
         let cell_name = cell_configs.cell_resolver.find(&relative_to_project);

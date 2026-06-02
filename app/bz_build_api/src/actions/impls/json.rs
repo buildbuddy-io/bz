@@ -12,15 +12,15 @@ use std::io::Write;
 use std::io::sink;
 use std::sync::Arc;
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_error::BuckErrorContext;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_hash::BuckHashMap;
-use buck2_interpreter::types::cell_path::StarlarkCellPath;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_error::BuckErrorContext;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_hash::BuckHashMap;
+use bz_interpreter::types::cell_path::StarlarkCellPath;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
 use either::Either;
 use serde::Serialize;
@@ -66,7 +66,7 @@ pub struct SerializeValue<'a, 'v> {
 }
 
 struct Buck2ErrorResultOfSerializedValue<'a, 'v> {
-    result: buck2_error::Result<SerializeValue<'a, 'v>>,
+    result: bz_error::Result<SerializeValue<'a, 'v>>,
 }
 
 impl<'a, 'v> Serialize for Buck2ErrorResultOfSerializedValue<'a, 'v> {
@@ -85,7 +85,7 @@ impl<'a, 'v> SerializeValue<'a, 'v> {
     fn with_value(&self, x: Value<'v>) -> Buck2ErrorResultOfSerializedValue<'a, 'v> {
         Buck2ErrorResultOfSerializedValue {
             result: JsonUnpack::unpack_value_err(x)
-                .map_err(buck2_error::Error::from)
+                .map_err(bz_error::Error::from)
                 .map(|value| SerializeValue {
                     value,
                     fs: self.fs,
@@ -96,7 +96,7 @@ impl<'a, 'v> SerializeValue<'a, 'v> {
     }
 }
 
-fn err<R, E: serde::ser::Error>(res: buck2_error::Result<R>) -> Result<R, E> {
+fn err<R, E: serde::ser::Error>(res: bz_error::Result<R>) -> Result<R, E> {
     match res {
         Ok(v) => Ok(v),
         Err(e) => Err(serde::ser::Error::custom(format!("{e:#}"))),
@@ -130,7 +130,7 @@ pub enum JsonArtifact<'v> {
 }
 
 impl<'v> JsonArtifact<'v> {
-    fn artifact(&self) -> buck2_error::Result<Artifact> {
+    fn artifact(&self) -> bz_error::Result<Artifact> {
         match self {
             JsonArtifact::ValueAsInputArtifactLike(x) => Ok(x.0.get_bound_artifact()?.dupe()),
             JsonArtifact::StarlarkOutputArtifact(x) => match x.unpack() {
@@ -286,7 +286,7 @@ fn is_singleton_cmdargs(x: CommandLineArg) -> bool {
     }
 }
 
-pub fn validate_json(x: JsonUnpack) -> buck2_error::Result<()> {
+pub fn validate_json(x: JsonUnpack) -> bz_error::Result<()> {
     write_json(x, None, &mut sink(), false, false, &BuckHashMap::default())
 }
 
@@ -297,7 +297,7 @@ pub fn write_json(
     pretty: bool,
     absolute: bool,
     artifact_path_mapping: &dyn ArtifactPathMapper,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let value = SerializeValue {
         value,
         fs,
@@ -313,7 +313,7 @@ pub fn write_json(
         } else {
             serde_json::to_writer(&mut writer, &value)?;
         }
-        buck2_error::Ok(())
+        bz_error::Ok(())
     })()
     .buck_error_context("Error converting to JSON for `write_json`")
 }
@@ -321,7 +321,7 @@ pub fn write_json(
 pub fn visit_json_artifacts<'v>(
     v: Value<'v>,
     visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match JsonUnpack::unpack_value_err(v)? {
         JsonUnpack::None(_)
         | JsonUnpack::String(_)

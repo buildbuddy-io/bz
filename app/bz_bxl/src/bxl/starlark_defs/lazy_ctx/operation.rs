@@ -12,22 +12,22 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_recursion::async_recursion;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_interpreter::types::package_path::StarlarkPackagePath;
-use buck2_node::load_patterns::MissingTargetBehavior;
-use buck2_node::load_patterns::load_patterns;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_interpreter::types::package_path::StarlarkPackagePath;
+use bz_node::load_patterns::MissingTargetBehavior;
+use bz_node::load_patterns::load_patterns;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 use cquery::LazyCqueryOperation;
 use cquery::LazyCqueryResult;
 use derivative::Derivative;
@@ -74,7 +74,7 @@ enum LazyOperation {
     Analysis(ConfiguredProvidersLabel),
     ConfiguredTargetNode {
         arg: OwnedConfiguredTargetNodeArg,
-        global_cfg_options: buck2_error::Result<GlobalCfgOptions>,
+        global_cfg_options: bz_error::Result<GlobalCfgOptions>,
     },
     UnconfiguredTargetNode(OwnedTargetNodeArg),
     UnconfiguredTargetNodeKeepGoing(String),
@@ -101,7 +101,7 @@ enum LazyResult {
     Cquery(LazyCqueryResult),
     Join(Box<(LazyResult, LazyResult)>),
     Batch(Vec<LazyResult>),
-    Catch(Box<buck2_error::Result<LazyResult>>),
+    Catch(Box<bz_error::Result<LazyResult>>),
 }
 
 impl LazyResult {
@@ -109,7 +109,7 @@ impl LazyResult {
         self,
         heap: Heap<'v>,
         bxl_eval_extra: &BxlEvalExtra,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         match self {
             LazyResult::Analysis(analysis_res) => Ok(heap.alloc(analysis_res)),
             LazyResult::ConfiguredTargetNode(res) => res.into_value(heap, bxl_eval_extra),
@@ -127,7 +127,7 @@ impl LazyResult {
             LazyResult::Batch(res) => Ok(heap.alloc(AllocList(
                 res.into_iter()
                     .map(|v| v.into_value(heap, bxl_eval_extra))
-                    .collect::<buck2_error::Result<Vec<_>>>()?,
+                    .collect::<bz_error::Result<Vec<_>>>()?,
             ))),
             LazyResult::Catch(res) => {
                 let val = match *res {
@@ -146,7 +146,7 @@ impl LazyOperation {
         &self,
         dice: &mut DiceComputations<'_>,
         core_data: &BxlContextCoreData,
-    ) -> buck2_error::Result<LazyResult> {
+    ) -> bz_error::Result<LazyResult> {
         match self {
             LazyOperation::Analysis(label) => {
                 Ok(LazyResult::Analysis(analysis(dice, label).await?))
@@ -280,7 +280,7 @@ impl StarlarkLazy {
 
     pub(crate) fn new_configured_target_node(
         arg: OwnedConfiguredTargetNodeArg,
-        global_cfg_options: buck2_error::Result<GlobalCfgOptions>,
+        global_cfg_options: bz_error::Result<GlobalCfgOptions>,
     ) -> Self {
         Self {
             lazy: Arc::new(LazyOperation::ConfiguredTargetNode {
@@ -346,7 +346,7 @@ impl<'v> StarlarkValue<'v> for StarlarkLazy {
 async fn analysis(
     dice: &mut DiceComputations<'_>,
     label: &ConfiguredProvidersLabel,
-) -> buck2_error::Result<StarlarkAnalysisResult> {
+) -> bz_error::Result<StarlarkAnalysisResult> {
     let maybe_result = dice.get_analysis_result(label.target()).await?;
     match maybe_result {
         MaybeCompatible::Incompatible(reason) => Err(reason.to_err()),

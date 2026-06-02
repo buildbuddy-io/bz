@@ -10,11 +10,11 @@
 
 use std::sync::Arc;
 
-use buck2_core::cells::name::CellName;
-use buck2_test_api::data::ConfiguredTarget;
-use buck2_test_api::data::ExternalRunnerSpec;
-use buck2_test_api::data::ExternalRunnerSpecValue;
-use buck2_test_api::protocol::TestExecutor;
+use bz_core::cells::name::CellName;
+use bz_test_api::data::ConfiguredTarget;
+use bz_test_api::data::ExternalRunnerSpec;
+use bz_test_api::data::ExternalRunnerSpecValue;
+use bz_test_api::protocol::TestExecutor;
 use futures::future::BoxFuture;
 use futures::future::FutureExt;
 use itertools::Itertools;
@@ -28,7 +28,7 @@ pub trait TestProvider {
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'_>,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     fn labels(&self) -> Vec<&str>;
 
@@ -37,14 +37,14 @@ pub trait TestProvider {
         target: ConfiguredTarget,
         executor: Arc<dyn TestExecutor + 'exec>,
         working_dir_cell: CellName,
-    ) -> BoxFuture<'exec, buck2_error::Result<()>>;
+    ) -> BoxFuture<'exec, bz_error::Result<()>>;
 }
 
 impl TestProvider for FrozenExternalRunnerTestInfo {
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         FrozenExternalRunnerTestInfo::visit_artifacts(self, visitor)
     }
 
@@ -57,7 +57,7 @@ impl TestProvider for FrozenExternalRunnerTestInfo {
         target: ConfiguredTarget,
         executor: Arc<dyn TestExecutor + 'exec>,
         working_dir_cell: CellName,
-    ) -> BoxFuture<'exec, buck2_error::Result<()>> {
+    ) -> BoxFuture<'exec, bz_error::Result<()>> {
         let mut handle_index = 0;
 
         let command = self

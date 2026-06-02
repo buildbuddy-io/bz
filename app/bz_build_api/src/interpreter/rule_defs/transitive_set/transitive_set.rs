@@ -13,13 +13,13 @@ use std::iter;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::internal_error;
 use display_container::display_pair;
 use display_container::fmt_container;
 use display_container::iter_display_chain;
@@ -118,10 +118,10 @@ pub(crate) struct ProjectionBitSet(u64);
 impl ProjectionBitSet {
     const MAX_PROJECTIONS: usize = 64;
 
-    pub fn from_bools(bools: &[bool]) -> buck2_error::Result<Self> {
+    pub fn from_bools(bools: &[bool]) -> bz_error::Result<Self> {
         if bools.len() > Self::MAX_PROJECTIONS {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "TransitiveSet has {} projections, but at most {} are supported",
                 bools.len(),
                 Self::MAX_PROJECTIONS,
@@ -136,7 +136,7 @@ impl ProjectionBitSet {
         Ok(Self(bits))
     }
 
-    pub fn get(self, index: usize) -> buck2_error::Result<bool> {
+    pub fn get(self, index: usize) -> bz_error::Result<bool> {
         match self.0.checked_shr(index as u32) {
             Some(shifted) => Ok(shifted & 1 != 0),
             None => Err(internal_error!(
@@ -241,7 +241,7 @@ impl<'v, V: ValueLike<'v>> TransitiveSetGen<V> {
         definition.to_value().ptr_eq(self.definition.to_value())
     }
 
-    pub fn projection_name(&'v self, projection: usize) -> buck2_error::Result<&'v str> {
+    pub fn projection_name(&'v self, projection: usize) -> bz_error::Result<&'v str> {
         let def = self.definition.as_ref();
 
         Ok(def
@@ -253,7 +253,7 @@ impl<'v, V: ValueLike<'v>> TransitiveSetGen<V> {
             .as_str())
     }
 
-    pub fn get_projection_value(&self, projection: usize) -> buck2_error::Result<Option<V>> {
+    pub fn get_projection_value(&self, projection: usize) -> bz_error::Result<Option<V>> {
         match &self.node {
             None => Ok(None),
             Some(node) => Ok(Some(
@@ -274,7 +274,7 @@ impl<'v, V: ValueLike<'v>> TransitiveSetGen<V> {
 
     pub(crate) fn definition(
         &self,
-    ) -> buck2_error::Result<ValueTypedComplex<'v, TransitiveSetDefinition<'v>>> {
+    ) -> bz_error::Result<ValueTypedComplex<'v, TransitiveSetDefinition<'v>>> {
         ValueTypedComplex::unpack_value_err(self.definition.to_value())
             .buck_error_context("Must be a TransitiveSetDefinition")
     }
@@ -285,7 +285,7 @@ impl FrozenTransitiveSet {
         &self,
         projection: usize,
         visitor: &mut V,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(projection) = self.get_projection_value(projection)? {
             // It's either an args-like or a json projection. visit_json_artifacts handles both the way we want.
             visit_json_artifacts(projection.to_value(), visitor)?;
@@ -296,7 +296,7 @@ impl FrozenTransitiveSet {
     pub fn get_projection_sub_inputs(
         &self,
         projection: usize,
-    ) -> buck2_error::Result<Vec<ArtifactGroup>> {
+    ) -> bz_error::Result<Vec<ArtifactGroup>> {
         let mut sub_inputs = Vec::new();
 
         if let Some(projection) = self.get_projection_value(projection)? {
@@ -356,7 +356,7 @@ where
     pub fn iter_values<'a>(
         &'a self,
         ordering: TransitiveSetOrdering,
-    ) -> buck2_error::Result<Box<dyn Iterator<Item = Value<'v>> + 'a>>
+    ) -> bz_error::Result<Box<dyn Iterator<Item = Value<'v>> + 'a>>
     where
         'v: 'a,
     {
@@ -371,7 +371,7 @@ where
         &'a self,
         ordering: TransitiveSetOrdering,
         projection: usize,
-    ) -> buck2_error::Result<Box<dyn Iterator<Item = Value<'v>> + 'a>>
+    ) -> bz_error::Result<Box<dyn Iterator<Item = Value<'v>> + 'a>>
     where
         'v: 'a,
     {
@@ -458,7 +458,7 @@ impl<'v> TransitiveSet<'v> {
         value: Option<Value<'v>>,
         children: impl IntoIterator<Item = Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let def: &dyn TransitiveSetDefinitionLike = &*definition;
         if !def.has_id() {
             return Err(TransitiveSetError::TransitiveSetUsedBeforeAssignment.into());
@@ -501,11 +501,11 @@ impl<'v> TransitiveSet<'v> {
                             validate_json(JsonUnpack::unpack_value_err(projected_value)?)?;
                         }
                     }
-                    buck2_error::Ok(projected_value)
+                    bz_error::Ok(projected_value)
                 })
                 .collect::<Result<Box<[_]>, _>>()?;
 
-            buck2_error::Ok(NodeGen { value, projections })
+            bz_error::Ok(NodeGen { value, projections })
         })?;
 
         let reductions = def
@@ -531,7 +531,7 @@ impl<'v> TransitiveSet<'v> {
                         name: name.clone(),
                     })?;
 
-                buck2_error::Ok(reduced)
+                bz_error::Ok(reduced)
             })
             .collect::<Result<Box<[_]>, _>>()?;
 
@@ -567,7 +567,7 @@ impl<'v> TransitiveSet<'v> {
                 if self.is_eligible_for_dedupe {
                     self.is_eligible_for_dedupe = input
                         .is_eligible_for_dedupe(self.target_platform)
-                        == buck2_data::EligibleForDedupe::Eligible;
+                        == bz_data::EligibleForDedupe::Eligible;
                 }
             }
 
@@ -640,7 +640,7 @@ impl<'v> TransitiveSet<'v> {
                     }
                 }
 
-                Ok::<(bool, bool), buck2_error::Error>((
+                Ok::<(bool, bool), bz_error::Error>((
                     path_resolution_may_require_artifact_value,
                     is_eligible_for_dedupe,
                 ))
@@ -744,7 +744,7 @@ fn transitive_set_methods(builder: &mut MethodsBuilder) {
             Some(index) => index,
             None => {
                 return Err(
-                    buck2_error::Error::from(TransitiveSetError::ReductionDoesNotExist {
+                    bz_error::Error::from(TransitiveSetError::ReductionDoesNotExist {
                         reduction: reduction.into(),
                         valid_reductions: def
                             .operations()

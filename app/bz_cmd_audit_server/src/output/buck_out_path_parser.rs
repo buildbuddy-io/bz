@@ -10,26 +10,26 @@
 
 use std::iter::Peekable;
 
-use buck2_build_api::bxl::types::BxlFunctionLabel;
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::package::PackageLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::EQ_SIGN_SUBST;
-use buck2_core::target::name::TargetNameRef;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_build_api::bxl::types::BxlFunctionLabel;
+use bz_core::bxl::BxlFilePath;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::package::PackageLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::EQ_SIGN_SUBST;
+use bz_core::target::name::TargetNameRef;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use dupe::Dupe;
 use itertools::Itertools;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = InvalidBuckOutPath)]
 enum BuckOutPathParserError {
     #[error(
@@ -88,7 +88,7 @@ pub(crate) struct BuckOutPathParser {
 fn validate_buck_out_and_isolation_prefix<'v>(
     iter: &mut Peekable<impl Iterator<Item = &'v FileName>>,
     output_path: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // Validate path starts with buck-out.
     match iter.next() {
         Some(buck_out) => {
@@ -100,16 +100,16 @@ fn validate_buck_out_and_isolation_prefix<'v>(
                         BuckOutPathParserError::MaybeBuck1Path(output_path.to_owned()).into(),
                     );
                 } else {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Path does not start with buck-out"
                     ));
                 }
             }
         }
         None => {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Path does not start with buck-out"
             ));
         }
@@ -118,8 +118,8 @@ fn validate_buck_out_and_isolation_prefix<'v>(
     // Advance the iterator to isolation dir.
     match iter.next() {
         Some(_) => Ok(()),
-        None => Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        None => Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Path does not have an isolation dir"
         )),
     }
@@ -154,13 +154,13 @@ fn get_cell_path<'v>(
     iter: &mut Peekable<impl Iterator<Item = &'v FileName> + Clone>,
     cell_resolver: &'v CellResolver,
     generated_prefix: &'v str,
-) -> buck2_error::Result<BuckOutPathData> {
+) -> bz_error::Result<BuckOutPathData> {
     let is_anon = generated_prefix == "art-anon" || generated_prefix == "gen-anon";
     let is_test = generated_prefix == "test";
     // Get cell name and validate it exists
     let Some(cell_name) = iter.next() else {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid cell name"
         ));
     };
@@ -171,8 +171,8 @@ fn get_cell_path<'v>(
     cell_resolver.get(cell_name)?;
 
     let Some(potential_config_hash) = iter.peek() else {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Path does not have a platform configuration or content-based hash"
         ));
     };
@@ -207,8 +207,8 @@ fn get_cell_path<'v>(
     });
 
     if !found_hash {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Path does not have a platform configuration or content-based hash"
         ));
     };
@@ -259,8 +259,8 @@ fn get_cell_path<'v>(
         };
         Ok(buck_out_path_data)
     } else {
-        Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid target name"
         ))
     }
@@ -268,7 +268,7 @@ fn get_cell_path<'v>(
 
 fn get_target_name<'v>(
     iter: &mut Peekable<impl Iterator<Item = &'v FileName>>,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     // Get target name, which is prefixed and suffixed with "__"
     match iter.next() {
         Some(raw_target_name) => {
@@ -281,8 +281,8 @@ fn get_target_name<'v>(
                         target_name_with_underscores = target_name_with_underscores.join(next);
                     }
                     None => {
-                        return Err(buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        return Err(bz_error!(
+                            bz_error::ErrorTag::Input,
                             "Invalid target name"
                         ));
                     }
@@ -294,8 +294,8 @@ fn get_target_name<'v>(
                 &target_name_with_underscores[2..(target_name_with_underscores.len() - 2)];
             Ok(target_name.replace(EQ_SIGN_SUBST, "="))
         }
-        None => Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        None => Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid target name"
         )),
     }
@@ -304,7 +304,7 @@ fn get_target_name<'v>(
 fn get_target_label<'v>(
     iter: &mut Peekable<impl Iterator<Item = &'v FileName>>,
     path: CellPath,
-) -> buck2_error::Result<TargetLabel> {
+) -> bz_error::Result<TargetLabel> {
     let target_name = get_target_name(iter)?;
     let package = PackageLabel::from_cell_path(path.as_ref())?;
     let target = TargetNameRef::new(target_name.as_str())?;
@@ -315,7 +315,7 @@ fn get_target_label<'v>(
 fn get_bxl_function_label<'v>(
     iter: &mut Peekable<impl Iterator<Item = &'v FileName>>,
     path: CellPath,
-) -> buck2_error::Result<BxlFunctionLabel> {
+) -> bz_error::Result<BxlFunctionLabel> {
     let target_name = get_target_name(iter)?;
     let bxl_path = BxlFilePath::new(path)?;
     let bxl_function_label = BxlFunctionLabel {
@@ -333,7 +333,7 @@ impl BuckOutPathParser {
 
     // Validates and parses the buck-out path, returning the `BuckOutPathType`. Assumes
     // that the inputted path is not a symlink.
-    pub(crate) fn parse(&self, output_path: &str) -> buck2_error::Result<BuckOutPathType> {
+    pub(crate) fn parse(&self, output_path: &str) -> bz_error::Result<BuckOutPathType> {
         let path_as_forward_rel_path = ForwardRelativePathBuf::new(output_path.to_owned())?;
         let mut iter = path_as_forward_rel_path.iter().peekable();
 
@@ -350,7 +350,7 @@ impl BuckOutPathParser {
     fn parse_after_isolation_dir<'v>(
         &'v self,
         mut iter: Peekable<impl Iterator<Item = &'v FileName> + Clone>,
-    ) -> buck2_error::Result<BuckOutPathType> {
+    ) -> bz_error::Result<BuckOutPathType> {
         // Advance the iterator to the prefix (tmp, test, gen, art-anon, or art-bxl)
         match iter.next() {
             Some(part) => {
@@ -449,24 +449,24 @@ impl BuckOutPathParser {
                             common_attrs,
                         })
                     }
-                    _ => Err(buck2_error!(
-                        buck2_error::ErrorTag::InvalidBuckOutPath,
+                    _ => Err(bz_error!(
+                        bz_error::ErrorTag::InvalidBuckOutPath,
                         "Directory after isolation dir is invalid (should be gen, art, art-bxl, art-anon, tmp, or test)"
                     )),
                 };
 
                 // Validate for non-test outputs that the target name is not the last element in the path
                 if part != "test" && iter.peek().is_none() {
-                    Err(buck2_error!(
-                        buck2_error::ErrorTag::InvalidBuckOutPath,
+                    Err(bz_error!(
+                        bz_error::ErrorTag::InvalidBuckOutPath,
                         "No output artifacts found"
                     ))
                 } else {
                     result
                 }
             }
-            None => Err(buck2_error!(
-                buck2_error::ErrorTag::InvalidBuckOutPath,
+            None => Err(bz_error!(
+                bz_error::ErrorTag::InvalidBuckOutPath,
                 "Path is empty"
             )),
         }
@@ -477,20 +477,20 @@ impl BuckOutPathParser {
 mod tests {
     use std::collections::BTreeMap;
 
-    use buck2_build_api::bxl::types::BxlFunctionLabel;
-    use buck2_core::bxl::BxlFilePath;
-    use buck2_core::cells::CellResolver;
-    use buck2_core::cells::cell_path::CellPath;
-    use buck2_core::cells::cell_root_path::CellRootPath;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::cells::paths::CellRelativePath;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::configuration::data::ConfigurationDataData;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_core::package::PackageLabel;
-    use buck2_core::target::label::label::TargetLabel;
-    use buck2_core::target::name::TargetNameRef;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_build_api::bxl::types::BxlFunctionLabel;
+    use bz_core::bxl::BxlFilePath;
+    use bz_core::cells::CellResolver;
+    use bz_core::cells::cell_path::CellPath;
+    use bz_core::cells::cell_root_path::CellRootPath;
+    use bz_core::cells::name::CellName;
+    use bz_core::cells::paths::CellRelativePath;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::configuration::data::ConfigurationDataData;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_core::package::PackageLabel;
+    use bz_core::target::label::label::TargetLabel;
+    use bz_core::target::name::TargetNameRef;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     use dupe::Dupe;
 
     use crate::output::buck_out_path_parser::BuckOutPathParser;
@@ -536,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validation() -> buck2_error::Result<()> {
+    fn test_validation() -> bz_error::Result<()> {
         let (buck_out_parser, config_hash, _, _) = get_test_data();
 
         let malformed_path1 = "does/not/start/with/buck-out/blah/blah";
@@ -580,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn test_target_output() -> buck2_error::Result<()> {
+    fn test_target_output() -> bz_error::Result<()> {
         let (buck_out_parser, expected_config_hash, expected_target_label, expected_cell_path) =
             get_test_data();
 
@@ -616,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn test_target_content_based_output() -> buck2_error::Result<()> {
+    fn test_target_content_based_output() -> bz_error::Result<()> {
         let (buck_out_parser, _expected_config_hash, expected_target_label, expected_cell_path) =
             get_test_data();
 
@@ -657,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn test_target_output_with_slashes() -> buck2_error::Result<()> {
+    fn test_target_output_with_slashes() -> bz_error::Result<()> {
         let (buck_out_parser, expected_config_hash, expected_target_label, expected_cell_path) =
             get_test_data();
 
@@ -698,7 +698,7 @@ mod tests {
     }
 
     #[test]
-    fn test_target_output_with_eq_sign() -> buck2_error::Result<()> {
+    fn test_target_output_with_eq_sign() -> bz_error::Result<()> {
         let (buck_out_parser, expected_config_hash, expected_target_label, expected_cell_path) =
             get_test_data();
 
@@ -739,7 +739,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tmp_output() -> buck2_error::Result<()> {
+    fn test_tmp_output() -> bz_error::Result<()> {
         let (buck_out_parser, expected_config_hash, expected_target_label, expected_cell_path) =
             get_test_data();
 
@@ -770,7 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tmp_content_based_output() -> buck2_error::Result<()> {
+    fn test_tmp_content_based_output() -> bz_error::Result<()> {
         let (buck_out_parser, _expected_config_hash, expected_target_label, expected_cell_path) =
             get_test_data();
 
@@ -807,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn test_test_output() -> buck2_error::Result<()> {
+    fn test_test_output() -> bz_error::Result<()> {
         let (buck_out_parser, expected_config_hash, _, _) = get_test_data();
 
         let test_path =
@@ -836,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anon_output() -> buck2_error::Result<()> {
+    fn test_anon_output() -> bz_error::Result<()> {
         let (buck_out_parser, expected_config_hash, expected_target_label, expected_cell_path) =
             get_test_data();
 
@@ -869,7 +869,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anon_content_based_output() -> buck2_error::Result<()> {
+    fn test_anon_content_based_output() -> bz_error::Result<()> {
         let (buck_out_parser, _expected_config_hash, expected_target_label, expected_cell_path) =
             get_test_data();
 
@@ -908,7 +908,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bxl_output() -> buck2_error::Result<()> {
+    fn test_bxl_output() -> bz_error::Result<()> {
         let (buck_out_parser, expected_config_hash, _, _) = get_test_data();
 
         let path = format!(
@@ -947,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bxl_content_based_output() -> buck2_error::Result<()> {
+    fn test_bxl_content_based_output() -> bz_error::Result<()> {
         let (buck_out_parser, _, _, _) = get_test_data();
         let content_based_hash = "0123456789abcdef";
 
@@ -991,7 +991,7 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_package_path() -> buck2_error::Result<()> {
+    fn test_empty_package_path() -> bz_error::Result<()> {
         let (buck_out_parser, expected_config_hash, _, _) = get_test_data();
 
         let target_path =

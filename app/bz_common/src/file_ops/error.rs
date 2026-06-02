@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_core::cells::cell_path::CellPathRef;
+use bz_core::cells::cell_path::CellPathRef;
 use dice::DiceComputations;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -21,7 +21,7 @@ use crate::ignores::file_ignores::FileIgnoreResult;
 use crate::io::DirectoryDoesNotExistSuggestion;
 use crate::io::ReadDirError;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 pub(crate) enum FileOpsError {
     #[error("File not found: {0}")]
     // File not found errors are not inherently always user errors; however, we only use these
@@ -33,11 +33,11 @@ pub(crate) enum FileOpsError {
 
 pub enum FileReadError {
     NotFound(String),
-    Buck(buck2_error::Error),
+    Buck(bz_error::Error),
 }
 
 impl FileReadError {
-    pub fn with_package_context_information(self, package_path: String) -> buck2_error::Error {
+    pub fn with_package_context_information(self, package_path: String) -> bz_error::Error {
         match self {
             FileReadError::NotFound(path) => FileOpsError::FileNotFound(format!(
                 "`{path}`.\n     Included in `{package_path}` but does not exist"
@@ -47,7 +47,7 @@ impl FileReadError {
         }
     }
 
-    pub fn without_package_context_information(self) -> buck2_error::Error {
+    pub fn without_package_context_information(self) -> bz_error::Error {
         match self {
             FileReadError::NotFound(path) => FileOpsError::FileNotFound(path).into(),
             FileReadError::Buck(err) => err.dupe(),
@@ -56,16 +56,16 @@ impl FileReadError {
 }
 
 pub trait FileReadErrorContext<T> {
-    fn with_package_context_information(self, package_path: String) -> buck2_error::Result<T>;
-    fn without_package_context_information(self) -> buck2_error::Result<T>;
+    fn with_package_context_information(self, package_path: String) -> bz_error::Result<T>;
+    fn without_package_context_information(self) -> bz_error::Result<T>;
 }
 
 impl<T> FileReadErrorContext<T> for std::result::Result<T, FileReadError> {
-    fn with_package_context_information(self, package_path: String) -> buck2_error::Result<T> {
+    fn with_package_context_information(self, package_path: String) -> bz_error::Result<T> {
         self.map_err(|e| e.with_package_context_information(package_path))
     }
 
-    fn without_package_context_information(self) -> buck2_error::Result<T> {
+    fn without_package_context_information(self) -> bz_error::Result<T> {
         self.map_err(|e| e.without_package_context_information())
     }
 }

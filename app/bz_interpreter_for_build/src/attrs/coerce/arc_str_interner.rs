@@ -10,7 +10,7 @@
 
 use std::cell::RefCell;
 
-use buck2_util::arc_str::ArcStr;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 use hashbrown::HashTable;
 

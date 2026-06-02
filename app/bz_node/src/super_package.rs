@@ -45,9 +45,9 @@ impl SuperPackageData {
         default_testonly: bool,
         cfg_constructor: Option<Arc<dyn CfgConstructorImpl>>,
         test_config_unification_rollout: bool,
-    ) -> buck2_error::Result<SuperPackageData> {
+    ) -> bz_error::Result<SuperPackageData> {
         let modifier_key =
-            MetadataKeyRef::new(MODIFIER_METADATA_KEY).map_err(buck2_error::Error::from)?;
+            MetadataKeyRef::new(MODIFIER_METADATA_KEY).map_err(bz_error::Error::from)?;
         let cfg_modifiers = package_values
             .get_package_value_json(modifier_key)?
             .map(PackageCfgModifiersValue::new);
@@ -76,7 +76,7 @@ impl SuperPackage {
         default_testonly: bool,
         cfg_constructor: Option<Arc<dyn CfgConstructorImpl>>,
         test_config_unification_rollout: bool,
-    ) -> buck2_error::Result<SuperPackage> {
+    ) -> bz_error::Result<SuperPackage> {
         Ok(SuperPackage(Arc::new(SuperPackageData::new(
             package_values,
             visibility,
@@ -87,7 +87,7 @@ impl SuperPackage {
         )?)))
     }
 
-    pub fn empty<T: SuperPackageValues + Default>() -> buck2_error::Result<SuperPackage> {
+    pub fn empty<T: SuperPackageValues + Default>() -> bz_error::Result<SuperPackage> {
         SuperPackage::new(
             Arc::new(T::default()),
             VisibilitySpecification::default(),

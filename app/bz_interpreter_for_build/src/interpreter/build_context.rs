@@ -14,16 +14,16 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::package::PackageLabel;
-use buck2_interpreter::build_context::STARLARK_PATH_FROM_BUILD_CONTEXT;
-use buck2_interpreter::file_type::StarlarkFileType;
-use buck2_interpreter::paths::path::StarlarkPath;
-use buck2_node::rule_type::StarlarkRuleType;
+use bz_core::bxl::BxlFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellResolver;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::package::PackageLabel;
+use bz_interpreter::build_context::STARLARK_PATH_FROM_BUILD_CONTEXT;
+use bz_interpreter::file_type::StarlarkFileType;
+use bz_interpreter::paths::path::StarlarkPath;
+use bz_node::rule_type::StarlarkRuleType;
 use starlark::any::ProvidesStaticType;
 use starlark::eval::Evaluator;
 
@@ -38,7 +38,7 @@ use crate::interpreter::functions::host_info::HostInfo;
 use crate::interpreter::module_internals::ModuleInternals;
 use crate::super_package::eval_ctx::PackageFileEvalCtx;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum BuildContextError {
     #[error(
@@ -94,7 +94,7 @@ impl PerFileTypeContext {
     /// For example, for `foo//bar/PACKAGE` this returns `foo//bar`.
     /// For `foo//bar/baz/BUCK` this returns `foo//bar/baz`.
     /// Throws an error if it's used in any other context.
-    fn base_path(&self) -> buck2_error::Result<CellPath> {
+    fn base_path(&self) -> bz_error::Result<CellPath> {
         match self {
             PerFileTypeContext::Build(module) => {
                 Ok(module.buildfile_path().package().to_cell_path())
@@ -114,7 +114,7 @@ impl PerFileTypeContext {
     pub(crate) fn require_build(
         &self,
         function_name: &str,
-    ) -> buck2_error::Result<&ModuleInternals> {
+    ) -> bz_error::Result<&ModuleInternals> {
         match self {
             PerFileTypeContext::Build(internals) => Ok(internals),
             x => {
@@ -123,7 +123,7 @@ impl PerFileTypeContext {
         }
     }
 
-    pub(crate) fn into_build(self) -> buck2_error::Result<ModuleInternals> {
+    pub(crate) fn into_build(self) -> bz_error::Result<ModuleInternals> {
         match self {
             PerFileTypeContext::Build(internals) => Ok(internals),
             x => Err(BuildContextError::NotBuildFileNoFunction(x.file_type()).into()),
@@ -133,7 +133,7 @@ impl PerFileTypeContext {
     pub(crate) fn require_package_file(
         &self,
         function_name: &str,
-    ) -> buck2_error::Result<&PackageFileEvalCtx> {
+    ) -> bz_error::Result<&PackageFileEvalCtx> {
         match self {
             PerFileTypeContext::Package(ctx) => Ok(ctx),
             x => Err(
@@ -142,7 +142,7 @@ impl PerFileTypeContext {
         }
     }
 
-    pub(crate) fn into_package_file(self) -> buck2_error::Result<PackageFileEvalCtx> {
+    pub(crate) fn into_package_file(self) -> bz_error::Result<PackageFileEvalCtx> {
         match self {
             PerFileTypeContext::Package(ctx) => Ok(ctx),
             x => Err(BuildContextError::NotPackageFileNoFunction(x.file_type()).into()),
@@ -273,7 +273,7 @@ impl<'a> BuildContext<'a> {
 
     pub fn from_context<'v, 'a1>(
         eval: &Evaluator<'v, 'a1, 'a>,
-    ) -> buck2_error::Result<&'a1 BuildContext<'a>> {
+    ) -> bz_error::Result<&'a1 BuildContext<'a>> {
         let f = || eval.extra?.downcast_ref::<BuildContext>();
         f().ok_or_else(|| BuildContextError::UnavailableDuringAnalysis.into())
     }
@@ -290,7 +290,7 @@ impl<'a> BuildContext<'a> {
         self.cell_info.cell_resolver()
     }
 
-    pub fn require_package(&self) -> buck2_error::Result<PackageLabel> {
+    pub fn require_package(&self) -> bz_error::Result<PackageLabel> {
         match &self.additional {
             PerFileTypeContext::Build(module) => Ok(module.buildfile_path().package()),
             _ => Err(BuildContextError::PackageOnlyFromBuildFile.into()),
@@ -301,7 +301,7 @@ impl<'a> BuildContext<'a> {
         self.additional.starlark_path()
     }
 
-    pub(crate) fn base_path(&self) -> buck2_error::Result<CellPath> {
+    pub(crate) fn base_path(&self) -> bz_error::Result<CellPath> {
         self.additional.base_path()
     }
 }
@@ -399,7 +399,7 @@ impl ModuleInternals {
     pub fn from_context<'a>(
         ctx: &'a Evaluator,
         function_name: &str,
-    ) -> buck2_error::Result<&'a Self> {
+    ) -> bz_error::Result<&'a Self> {
         BuildContext::from_context(ctx)?
             .additional
             .require_build(function_name)

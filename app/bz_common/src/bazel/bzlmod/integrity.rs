@@ -1,5 +1,5 @@
 use base64::Engine;
-use buck2_error::buck2_error;
+use bz_error::bz_error;
 use sha1::Sha1;
 use sha2::Digest;
 use sha2::Sha256;
@@ -71,7 +71,7 @@ impl BzlmodIntegrityKind {
     }
 }
 
-pub fn parse_bzlmod_integrity(integrity: &str) -> buck2_error::Result<Option<BzlmodIntegrity>> {
+pub fn parse_bzlmod_integrity(integrity: &str) -> bz_error::Result<Option<BzlmodIntegrity>> {
     if integrity.is_empty() {
         return Ok(None);
     }
@@ -83,15 +83,15 @@ pub fn parse_bzlmod_integrity(integrity: &str) -> buck2_error::Result<Option<Bzl
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded)
             .map_err(|_| {
-                buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error!(
+                    bz_error::ErrorTag::Input,
                     "invalid base64 in bzlmod integrity `{}`",
                     integrity
                 )
             })?;
         if bytes.len() != kind.byte_len() {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "invalid bzlmod {} integrity `{}`",
                 kind.name(),
                 integrity
@@ -100,8 +100,8 @@ pub fn parse_bzlmod_integrity(integrity: &str) -> buck2_error::Result<Option<Bzl
         return Ok(Some(BzlmodIntegrity { kind, bytes }));
     }
 
-    Err(buck2_error!(
-        buck2_error::ErrorTag::Input,
+    Err(bz_error!(
+        bz_error::ErrorTag::Input,
         "unsupported bzlmod integrity `{}`",
         integrity
     ))

@@ -11,15 +11,15 @@
 use std::hash::Hash;
 use std::sync::Arc;
 
-use buck2_core::async_once_cell::AsyncOnceCell;
-use buck2_core::execution_types::executor_config::RePlatformFields;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_error::BuckErrorContext;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::re::client::ActionCacheWriteType;
-use buck2_execute::re::error::RemoteExecutionError;
-use buck2_execute::re::manager::ManagedRemoteExecutionClient;
-use buck2_hash::BuckDashMap;
+use bz_core::async_once_cell::AsyncOnceCell;
+use bz_core::execution_types::executor_config::RePlatformFields;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_error::BuckErrorContext;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::re::client::ActionCacheWriteType;
+use bz_execute::re::error::RemoteExecutionError;
+use bz_execute::re::manager::ManagedRemoteExecutionClient;
+use bz_hash::BuckDashMap;
 use dupe::Dupe;
 use remote_execution::TCode;
 
@@ -55,7 +55,7 @@ impl ActionCacheUploadPermissionChecker {
         re_client: &ManagedRemoteExecutionClient,
         platform: &RePlatformFields,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<Result<(), String>> {
+    ) -> bz_error::Result<Result<(), String>> {
         let (action, action_result) = empty_action_result(platform, digest_config)?;
 
         // This is CAS upload, if it fails, something is very broken.
@@ -105,7 +105,7 @@ impl ActionCacheUploadPermissionChecker {
         re_client: &ManagedRemoteExecutionClient,
         platform: &RePlatformFields,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<Result<(), String>> {
+    ) -> bz_error::Result<Result<(), String>> {
         let cache_value = self.cache_value(re_client.use_case, platform);
         cache_value
             .has_permission_to_upload_to_cache

@@ -31,10 +31,10 @@ common_shell_attributes = (
         """),
         "shell_libs": attrs.set(
             attrs.dep(providers = [ErlangAppInfo]),
-            default = ["prelude//erlang/shell:buck2_shell_utils"],
+            default = ["prelude//erlang/shell:bz_shell_utils"],
             doc = """
             This attribute allows to define additional dependencies for the shell. By default this is
-            set to `["prelude//erlang/shell:buck2_shell_utils"]` which includes a `user_default` module
+            set to `["prelude//erlang/shell:bz_shell_utils"]` which includes a `user_default` module
             that loads and compiles modules with buck2 mechanisms.
         """,
         ),

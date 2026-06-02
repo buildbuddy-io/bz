@@ -26,8 +26,8 @@ from dataclasses import dataclass
 import google.protobuf.proto as proto
 import grpc
 import proto.bazel.worker_protocol_pb2 as bazel_pb2
-import proto.buck2.worker_pb2 as buck2_pb2
-import proto.buck2.worker_pb2_grpc as buck2_pb2_grpc
+import proto.buck2.worker_pb2 as bz_pb2
+import proto.buck2.worker_pb2_grpc as bz_pb2_grpc
 
 
 @dataclass
@@ -92,7 +92,7 @@ class Implementation:
             return Response(exit_code=2, stderr=str(e))
 
 
-class Buck2Servicer(buck2_pb2_grpc.WorkerServicer):
+class Buck2Servicer(bz_pb2_grpc.WorkerServicer):
     """Buck2 remote persistent worker implementation."""
 
     def __init__(self):
@@ -107,7 +107,7 @@ class Buck2Servicer(buck2_pb2_grpc.WorkerServicer):
         host = socket.gethostname()
         pid = os.getpid()
         cwd = os.getcwd()
-        return buck2_pb2.ExecuteResponse(
+        return bz_pb2.ExecuteResponse(
             exit_code=response.exit_code,
             stderr=f"Buck2 persistent worker {host} {pid} {cwd}\n" + response.stderr,
         )
@@ -158,7 +158,7 @@ def main():
         server = grpc.server(
             futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 1)
         )
-        buck2_pb2_grpc.add_WorkerServicer_to_server(Buck2Servicer(), server)
+        bz_pb2_grpc.add_WorkerServicer_to_server(Buck2Servicer(), server)
         server.add_insecure_port(f"unix://{socket_path}")
         server.start()
         server.wait_for_termination()

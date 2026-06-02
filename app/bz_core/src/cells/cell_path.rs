@@ -9,8 +9,8 @@
  */
 
 use allocative::Allocative;
-use buck2_error::internal_error;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_error::internal_error;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use dupe::Dupe;
 use pagable::Pagable;
 use relative_path::RelativePath;
@@ -20,7 +20,7 @@ use crate::cells::name::CellName;
 use crate::cells::paths::CellRelativePath;
 use crate::cells::paths::CellRelativePathBuf;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[error("attempted to strip prefix of two CellPath with different cell names `{0}` and `{1}`")]
 #[buck2(tag = Tier0)]
 struct StripPrefixError(CellName, CellName);
@@ -68,10 +68,10 @@ impl CellPath {
     /// Creates an owned 'CellRelativePathBuf' with path adjoined to self.
     ///
     /// ```
-    /// use buck2_core::cells::cell_path::CellPath;
-    /// use buck2_core::cells::name::CellName;
-    /// use buck2_core::cells::paths::CellRelativePathBuf;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::cells::cell_path::CellPath;
+    /// use bz_core::cells::name::CellName;
+    /// use bz_core::cells::paths::CellRelativePathBuf;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// let path = CellPath::new(
     ///     CellName::testing_new("cell"),
@@ -86,7 +86,7 @@ impl CellPath {
     ///     path.join(other)
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn join<P: AsRef<ForwardRelativePath>>(&self, path: P) -> CellPath {
@@ -96,9 +96,9 @@ impl CellPath {
     /// Returns a relative path of the parent directory
     ///
     /// ```
-    /// use buck2_core::cells::cell_path::CellPath;
-    /// use buck2_core::cells::name::CellName;
-    /// use buck2_core::cells::paths::CellRelativePathBuf;
+    /// use bz_core::cells::cell_path::CellPath;
+    /// use bz_core::cells::name::CellName;
+    /// use bz_core::cells::paths::CellRelativePathBuf;
     ///
     /// assert_eq!(
     ///     Some(CellPath::new(
@@ -113,7 +113,7 @@ impl CellPath {
     ///     .map(|p| p.to_owned()),
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn parent(&self) -> Option<CellPathRef<'_>> {
@@ -126,9 +126,9 @@ impl CellPath {
     /// the parent method is used zero or more times in order.
     ///
     /// ```
-    /// use buck2_core::cells::cell_path::CellPath;
-    /// use buck2_core::cells::name::CellName;
-    /// use buck2_core::cells::paths::CellRelativePathBuf;
+    /// use bz_core::cells::cell_path::CellPath;
+    /// use bz_core::cells::name::CellName;
+    /// use bz_core::cells::paths::CellRelativePathBuf;
     ///
     /// let path = CellPath::testing_new("cell//foo/bar");
     /// let mut ancestors = path.ancestors();
@@ -147,7 +147,7 @@ impl CellPath {
     /// );
     /// assert_eq!(ancestors.next(), None);
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn ancestors(&self) -> impl Iterator<Item = CellPathRef<'_>> {
@@ -161,10 +161,10 @@ impl CellPath {
     /// path is not a 'ForwardRelativePath'
     ///
     /// ```
-    /// use buck2_core::cells::cell_path::CellPath;
-    /// use buck2_core::cells::name::CellName;
-    /// use buck2_core::cells::paths::CellRelativePathBuf;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    /// use bz_core::cells::cell_path::CellPath;
+    /// use bz_core::cells::name::CellName;
+    /// use bz_core::cells::paths::CellRelativePathBuf;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     ///
     /// let path = CellPath::new(
     ///     CellName::testing_new("cell"),
@@ -204,13 +204,13 @@ impl CellPath {
     ///     true
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn strip_prefix<'a>(
         &'a self,
         base: CellPathRef,
-    ) -> buck2_error::Result<&'a ForwardRelativePath> {
+    ) -> bz_error::Result<&'a ForwardRelativePath> {
         self.as_ref().strip_prefix(base)
     }
 
@@ -220,9 +220,9 @@ impl CellPath {
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::cells::cell_path::CellPath;
-    /// use buck2_core::cells::name::CellName;
-    /// use buck2_core::cells::paths::CellRelativePathBuf;
+    /// use bz_core::cells::cell_path::CellPath;
+    /// use bz_core::cells::name::CellName;
+    /// use bz_core::cells::paths::CellRelativePathBuf;
     ///
     /// assert_eq!(
     ///     CellPath::new(
@@ -246,12 +246,12 @@ impl CellPath {
     ///     true
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn join_normalized<P: AsRef<RelativePath>>(
         &self,
         path: P,
-    ) -> buck2_error::Result<CellPath> {
+    ) -> bz_error::Result<CellPath> {
         Ok(CellPath::new(self.cell, self.path.join_normalized(path)?))
     }
 
@@ -260,9 +260,9 @@ impl CellPath {
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::cells::cell_path::CellPath;
-    /// use buck2_core::cells::name::CellName;
-    /// use buck2_core::cells::paths::CellRelativePathBuf;
+    /// use bz_core::cells::cell_path::CellPath;
+    /// use bz_core::cells::name::CellName;
+    /// use bz_core::cells::paths::CellRelativePathBuf;
     ///
     /// assert!(
     ///     CellPath::new(
@@ -278,7 +278,7 @@ impl CellPath {
     ///     ),
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn starts_with(&self, base: CellPathRef) -> bool {
@@ -401,7 +401,7 @@ impl<'a> CellPathRef<'a> {
     }
 
     #[inline]
-    pub fn strip_prefix(&self, base: CellPathRef) -> buck2_error::Result<&'a ForwardRelativePath> {
+    pub fn strip_prefix(&self, base: CellPathRef) -> bz_error::Result<&'a ForwardRelativePath> {
         if self.cell != base.cell {
             return Err(StripPrefixError(self.cell, base.cell).into());
         }

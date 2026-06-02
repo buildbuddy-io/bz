@@ -8,22 +8,22 @@
  * above-listed licenses.
  */
 
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_ACTION_IMPL_GLOBALS;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_ANON_TARGETS_GLOBALS;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BUILD_API_GLOBALS;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BUILD_API_INTERNALS;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BXL_GLOBALS;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_CFG_CONSTRUCTOR_GLOBALS;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_TRANSITION_GLOBALS;
-use buck2_interpreter::starlark_promise::register_promise;
-use buck2_interpreter::types::cell_path::register_cell_path;
-use buck2_interpreter::types::cell_root::register_cell_root;
-use buck2_interpreter::types::configured_providers_label::register_providers_label;
-use buck2_interpreter::types::package_path::register_package_path;
-use buck2_interpreter::types::project_root::register_project_root;
-use buck2_interpreter::types::regex::register_buck_regex;
-use buck2_interpreter::types::target_label::register_target_label;
-use buck2_util::late_binding::LateBinding;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_ACTION_IMPL_GLOBALS;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_ANON_TARGETS_GLOBALS;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BUILD_API_GLOBALS;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BUILD_API_INTERNALS;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BXL_GLOBALS;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_CFG_CONSTRUCTOR_GLOBALS;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_TRANSITION_GLOBALS;
+use bz_interpreter::starlark_promise::register_promise;
+use bz_interpreter::types::cell_path::register_cell_path;
+use bz_interpreter::types::cell_root::register_cell_root;
+use bz_interpreter::types::configured_providers_label::register_providers_label;
+use bz_interpreter::types::package_path::register_package_path;
+use bz_interpreter::types::project_root::register_project_root;
+use bz_interpreter::types::regex::register_buck_regex;
+use bz_interpreter::types::target_label::register_target_label;
+use bz_util::late_binding::LateBinding;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::LibraryExtension;
 

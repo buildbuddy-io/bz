@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_interpreter_for_build::interpreter::testing::Tester;
-use buck2_interpreter_for_build::interpreter::testing::expect_error;
+use bz_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::interpreter::testing::expect_error;
 use indoc::indoc;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
@@ -17,7 +17,7 @@ use crate::interpreter::rule_defs::artifact::testing::artifactory;
 pub(crate) mod testing;
 
 #[test]
-fn source_artifact() -> buck2_error::Result<()> {
+fn source_artifact() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
     tester.additional_globals(artifactory);
     tester.run_starlark_bzl_test(indoc!(
@@ -89,9 +89,9 @@ fn source_artifact() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn artifact_default_info_provider_view() -> buck2_error::Result<()> {
+fn artifact_default_info_provider_view() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
-    tester.additional_globals(buck2_build_api::interpreter::rule_defs::register_rule_defs);
+    tester.additional_globals(bz_build_api::interpreter::rule_defs::register_rule_defs);
     tester.additional_globals(artifactory);
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -112,9 +112,9 @@ fn artifact_default_info_provider_view() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn bound_artifact() -> buck2_error::Result<()> {
+fn bound_artifact() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
-    tester.additional_globals(buck2_build_api::interpreter::rule_defs::register_rule_defs);
+    tester.additional_globals(bz_build_api::interpreter::rule_defs::register_rule_defs);
     tester.additional_globals(artifactory);
     tester.run_starlark_bzl_test(indoc!(
             r#"
@@ -178,7 +178,7 @@ fn bound_artifact() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn declared_artifact() -> buck2_error::Result<()> {
+fn declared_artifact() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
     tester.additional_globals(artifactory);
     tester.run_starlark_bzl_test(indoc!(
@@ -211,7 +211,7 @@ fn declared_artifact() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn output_artifact() -> buck2_error::Result<()> {
+fn output_artifact() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
     tester.additional_globals(artifactory);
     tester.run_starlark_bzl_test(indoc!(
@@ -261,9 +261,9 @@ fn output_artifact() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn declared_bound() -> buck2_error::Result<()> {
+fn declared_bound() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
-    tester.additional_globals(buck2_build_api::interpreter::rule_defs::register_rule_defs);
+    tester.additional_globals(bz_build_api::interpreter::rule_defs::register_rule_defs);
     tester.additional_globals(artifactory);
     tester.run_starlark_bzl_test(indoc!(
             r#"
@@ -315,7 +315,7 @@ fn declared_bound() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn project_declared_artifact() -> buck2_error::Result<()> {
+fn project_declared_artifact() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
     tester.additional_globals(artifactory);
     tester.run_starlark_bzl_test(indoc!(
@@ -347,7 +347,7 @@ fn project_declared_artifact() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_short_path() -> buck2_error::Result<()> {
+fn test_short_path() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
     tester.additional_globals(artifactory);
     tester.run_starlark_bzl_test(indoc!(
@@ -379,7 +379,7 @@ fn test_short_path() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn stringifies_for_command_line() -> buck2_error::Result<()> {
+fn stringifies_for_command_line() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
     tester.additional_globals(artifactory);
     tester.run_starlark_bzl_test(indoc!(
@@ -400,9 +400,9 @@ fn stringifies_for_command_line() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn bound_artifact_with_associated_artifacts() -> buck2_error::Result<()> {
+fn bound_artifact_with_associated_artifacts() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
-    tester.additional_globals(buck2_build_api::interpreter::rule_defs::register_rule_defs);
+    tester.additional_globals(bz_build_api::interpreter::rule_defs::register_rule_defs);
     tester.additional_globals(artifactory);
     tester.run_starlark_bzl_test(indoc!(
         r#"

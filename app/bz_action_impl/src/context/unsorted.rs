@@ -8,20 +8,20 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
-use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_build_api::interpreter::rule_defs::context::bazel_workspace_name_for_cell;
-use buck2_build_api::interpreter::rule_defs::digest_config::StarlarkDigestConfig;
-use buck2_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSetDefinition;
-use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
-use buck2_core::cells::external::external_cell_origin_for_cell;
-use buck2_core::fs::buck_out_path::BazelOutputPathKind;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_execute::execute::request::OutputType;
+use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use bz_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_build_api::interpreter::rule_defs::context::bazel_workspace_name_for_cell;
+use bz_build_api::interpreter::rule_defs::digest_config::StarlarkDigestConfig;
+use bz_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSetDefinition;
+use bz_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
+use bz_core::cells::external::external_cell_origin_for_cell;
+use bz_core::fs::buck_out_path::BazelOutputPathKind;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_execute::execute::request::OutputType;
 use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -43,8 +43,8 @@ fn bazel_action_output_path<'v>(
     }
 
     let sibling = <&dyn StarlarkArtifactLike<'v>>::unpack_value(sibling)?.ok_or_else(|| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "actions.declare_file sibling must be an artifact or None, got `{}`",
             sibling.get_type()
         )
@@ -112,8 +112,8 @@ fn bazel_shareable_output_path<'v>(
         return Ok(package_relative.to_owned());
     }
 
-    Err(buck2_error::buck2_error!(
-        buck2_error::ErrorTag::Input,
+    Err(bz_error::bz_error!(
+        bz_error::ErrorTag::Input,
         "Bazel shareable artifact path `{}` is outside current package `{}`",
         path,
         package_exec_path
@@ -215,8 +215,8 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
         if !artifact_root.is_none() {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "actions.declare_shareable_artifact artifact_root is not supported yet"
             )
             .into());
@@ -307,7 +307,7 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
             OutputType::FileOrDirectory
         };
         let has_content_based_path = has_content_based_path.unwrap_or(
-            *buck2_build_api::interpreter::rule_defs::context::DECLARE_OUTPUT_HAS_CONTENT_BASED_PATH_DEFAULT
+            *bz_build_api::interpreter::rule_defs::context::DECLARE_OUTPUT_HAS_CONTENT_BASED_PATH_DEFAULT
                 .get()
                 .unwrap_or(&false),
         );

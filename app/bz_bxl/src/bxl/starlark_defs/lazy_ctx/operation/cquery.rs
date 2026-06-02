@@ -10,10 +10,10 @@
 
 use allocative::Allocative;
 use async_recursion::async_recursion;
-use buck2_build_api::query::oneshot::QUERY_FRONTEND;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
+use bz_build_api::query::oneshot::QUERY_FRONTEND;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationResult;
 use dice::DiceComputations;
 use starlark::values::Heap;
 use starlark::values::Value;
@@ -64,7 +64,7 @@ impl LazyCqueryOperation {
         &self,
         dice: &mut DiceComputations<'_>,
         core_data: &BxlContextCoreData,
-    ) -> buck2_error::Result<LazyCqueryResult> {
+    ) -> bz_error::Result<LazyCqueryResult> {
         match &self.args {
             LazyCqueryArg::Eval {
                 query,
@@ -91,7 +91,7 @@ impl LazyCqueryOperation {
 }
 
 impl LazyCqueryResult {
-    pub(crate) fn into_value<'v>(self, heap: Heap<'v>) -> buck2_error::Result<Value<'v>> {
+    pub(crate) fn into_value<'v>(self, heap: Heap<'v>) -> bz_error::Result<Value<'v>> {
         match self {
             LazyCqueryResult::Eval(result) => parse_query_evaluation_result(result, heap),
         }

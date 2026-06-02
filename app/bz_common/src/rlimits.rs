@@ -9,8 +9,8 @@
  */
 
 #[cfg(unix)]
-pub fn raise_file_descriptor_limits() -> buck2_error::Result<()> {
-    use buck2_error::BuckErrorContext;
+pub fn raise_file_descriptor_limits() -> bz_error::Result<()> {
+    use bz_error::BuckErrorContext;
     use nix::sys::resource;
     use nix::sys::resource::Resource;
 
@@ -53,6 +53,6 @@ pub fn raise_file_descriptor_limits() -> buck2_error::Result<()> {
 }
 
 #[cfg(not(unix))]
-pub fn raise_file_descriptor_limits() -> buck2_error::Result<()> {
+pub fn raise_file_descriptor_limits() -> bz_error::Result<()> {
     Ok(())
 }

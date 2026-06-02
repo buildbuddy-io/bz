@@ -12,14 +12,14 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_event_log::FutureChildOutput;
-use buck2_event_log::should_block_on_log_upload;
-use buck2_event_log::should_upload_log;
-use buck2_event_log::wait_for_child_and_log;
-use buck2_event_observer::unpack_event::UnpackedBuckEvent;
-use buck2_event_observer::unpack_event::unpack_event;
-use buck2_events::BuckEvent;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_event_log::FutureChildOutput;
+use bz_event_log::should_block_on_log_upload;
+use bz_event_log::should_upload_log;
+use bz_event_log::wait_for_child_and_log;
+use bz_event_observer::unpack_event::UnpackedBuckEvent;
+use bz_event_observer::unpack_event::unpack_event;
+use bz_events::BuckEvent;
+use bz_fs::paths::file_name::FileNameBuf;
 use futures::Future;
 
 use crate::subscribers::subscriber::EventSubscriber;
@@ -39,7 +39,7 @@ impl ReLog {
 
     fn log_upload(
         &mut self,
-    ) -> impl Future<Output = buck2_error::Result<()>> + 'static + Send + Sync + use<> {
+    ) -> impl Future<Output = bz_error::Result<()>> + 'static + Send + Sync + use<> {
         // We put `None` in place of re_session_id which means we will only attempt to upload
         // the logs once no matter how many times this function is called
         let session_id = self.re_session_id.take();
@@ -59,12 +59,12 @@ impl EventSubscriber for ReLog {
         "RE log"
     }
 
-    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
+    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> bz_error::Result<()> {
         for event in events {
             if let UnpackedBuckEvent::Instant(
                 _,
                 _,
-                buck2_data::instant_event::Data::ReSession(session),
+                bz_data::instant_event::Data::ReSession(session),
             ) = unpack_event(event)?
             {
                 self.re_session_id = Some(session.session_id.clone());
@@ -73,7 +73,7 @@ impl EventSubscriber for ReLog {
         Ok(())
     }
 
-    async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
+    async fn finalize(mut self: Box<Self>) -> bz_error::Result<()> {
         self.log_upload().await
     }
 }
@@ -81,12 +81,12 @@ impl EventSubscriber for ReLog {
 async fn log_upload_impl(
     session_id: String,
     isolation_dir: FileNameBuf,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if !should_upload_log()? {
         return Ok(());
     }
 
-    let mut buck = buck2_util::process::async_background_command(std::env::current_exe()?);
+    let mut buck = bz_util::process::async_background_command(std::env::current_exe()?);
     let command = buck
         .arg("--isolation-dir")
         .arg(isolation_dir.as_str())

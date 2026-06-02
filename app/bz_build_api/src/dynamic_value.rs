@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
+use bz_core::deferred::dynamic::DynamicLambdaResultsKey;
 use dupe::Dupe;
 use pagable::Pagable;
 

@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_health_check::report::DisplayReport;
-use buck2_health_check::report::Message;
+use bz_health_check::report::DisplayReport;
+use bz_health_check::report::Message;
 use superconsole::Component;
 use superconsole::Dimensions;
 use superconsole::DrawMode;
@@ -25,19 +25,19 @@ use crate::subscribers::system_warning::system_memory_exceeded_msg;
 
 /// This component is used to display system warnings for a command e.g. memory pressure, low disk space etc.
 pub(crate) struct SystemWarningComponent<'a> {
-    pub(crate) last_snapshot: Option<&'a buck2_data::Snapshot>,
-    pub(crate) system_info: &'a buck2_data::SystemInfo,
+    pub(crate) last_snapshot: Option<&'a bz_data::Snapshot>,
+    pub(crate) system_info: &'a bz_data::SystemInfo,
     pub(crate) health_check_reports: Option<&'a Vec<DisplayReport>>,
 }
 
 impl Component for SystemWarningComponent<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         _dimensions: Dimensions,
         _mode: DrawMode,
-    ) -> buck2_error::Result<Lines> {
+    ) -> bz_error::Result<Lines> {
         let mut lines = Vec::new();
 
         if let Some(memory_pressure) =

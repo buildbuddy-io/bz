@@ -10,12 +10,12 @@
 
 use remote_execution as RE;
 
-pub fn platform_to_proto(platform: &RE::Platform) -> buck2_data::RePlatform {
-    buck2_data::RePlatform {
+pub fn platform_to_proto(platform: &RE::Platform) -> bz_data::RePlatform {
+    bz_data::RePlatform {
         properties: platform
             .properties
             .iter()
-            .map(|property| buck2_data::re_platform::Property {
+            .map(|property| bz_data::re_platform::Property {
                 name: property.name.clone(),
                 value: property.value.clone(),
             })

@@ -9,22 +9,22 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::LspRequest;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::common::ui::ConsoleType;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::events_ctx::PartialResultCtx;
-use buck2_client_ctx::events_ctx::PartialResultHandler;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::ide_support::ide_message_stream;
-use buck2_client_ctx::stream_util::reborrow_stream_for_static;
-use buck2_client_ctx::streaming::StreamingCommand;
+use bz_cli_proto::LspRequest;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::common::ui::ConsoleType;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::events_ctx::PartialResultCtx;
+use bz_client_ctx::events_ctx::PartialResultHandler;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::ide_support::ide_message_stream;
+use bz_client_ctx::stream_util::reborrow_stream_for_static;
+use bz_client_ctx::streaming::StreamingCommand;
 use futures::stream::StreamExt;
 use lsp_server::Message;
 use once_cell::sync::Lazy;
@@ -59,7 +59,7 @@ impl StreamingCommand for LspCommand {
                 Ok(lsp_json) => Some(LspRequest { lsp_json }),
                 Err(e) => {
                     let _ignored =
-                        buck2_client_ctx::eprintln!("Could not read message from stdin: `{}`", e);
+                        bz_client_ctx::eprintln!("Could not read message from stdin: `{}`", e);
                     None
                 }
             }
@@ -121,13 +121,13 @@ struct LspPartialResultHandler;
 
 #[async_trait]
 impl PartialResultHandler for LspPartialResultHandler {
-    type PartialResult = buck2_cli_proto::LspMessage;
+    type PartialResult = bz_cli_proto::LspMessage;
 
     async fn handle_partial_result(
         &mut self,
         mut ctx: PartialResultCtx<'_>,
         partial_res: Self::PartialResult,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let lsp_message: lsp_server::Message = serde_json::from_str(&partial_res.lsp_json)?;
         let mut buffer = Vec::new();
         lsp_message.write(&mut buffer)?;

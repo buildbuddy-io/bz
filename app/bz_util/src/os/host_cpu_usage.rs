@@ -18,7 +18,7 @@ pub struct HostCpuUsage {
 }
 
 impl HostCpuUsage {
-    pub fn get() -> buck2_error::Result<Self> {
+    pub fn get() -> bz_error::Result<Self> {
         #[cfg(target_os = "macos")]
         {
             let sc_clk_tck = crate::os::unix_like::sc_clk_tck::sc_clk_tck()?;
@@ -32,8 +32,8 @@ impl HostCpuUsage {
                     system_millis,
                 })
             } else {
-                Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::CpuStats,
+                Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::CpuStats,
                     "Error getting host CPU usage"
                 ))
             }
@@ -51,16 +51,16 @@ impl HostCpuUsage {
                     system_millis,
                 })
             } else {
-                Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::CpuStats,
+                Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::CpuStats,
                     "Error getting host CPU usage"
                 ))
             }
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Unimplemented,
+            Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Unimplemented,
                 "HostCpuUsage is not implemented for this platform"
             ))
         }

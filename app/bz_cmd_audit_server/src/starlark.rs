@@ -14,10 +14,10 @@ mod module;
 mod package_deps;
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::starlark::StarlarkCommand;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::starlark::StarlarkCommand;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 use crate::ServerAuditSubcommand;
 
@@ -26,9 +26,9 @@ impl ServerAuditSubcommand for StarlarkCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             StarlarkCommand::Module(cmd) => {
                 module::server_execute(cmd, server_ctx, stdout, client_ctx).await

@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::DigestConfig;
 use derive_more::Display;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;

@@ -5,7 +5,7 @@ but not generic or stable enough to be published on crates.io as standalone crat
 """
 edition = "2024"
 license = { workspace = true }
-name = "buck2_util"
+name = "bz_util"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -21,10 +21,10 @@ sysinfo = { workspace = true }
 tracing = { workspace = true }
 triomphe = { workspace = true }
 
-buck2_env = { workspace = true }
-buck2_error = { workspace = true }
-buck2_hash = { workspace = true }
-buck2_wrapper_common = { workspace = true }
+bz_env = { workspace = true }
+bz_error = { workspace = true }
+bz_hash = { workspace = true }
+bz_wrapper_common = { workspace = true }
 serde = { workspace = true }
 static_assertions = { workspace = true }
 tokio = { workspace = true }
@@ -44,4 +44,4 @@ serde_json = { workspace = true }
 three_billion_instructions = { workspace = true }
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(debug)", "cfg(buck2_asan)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(debug)", "cfg(bz_asan)"] }

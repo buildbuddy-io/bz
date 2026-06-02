@@ -11,12 +11,12 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 use starlark::environment::Module;
 use starlark::values::FrozenValueTyped;
 use starlark::values::Heap;
@@ -47,16 +47,16 @@ pub trait AttrResolutionContext<'v> {
     fn get_dep(
         &mut self,
         target: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<FrozenValueTyped<'v, FrozenProviderCollection>>;
+    ) -> bz_error::Result<FrozenValueTyped<'v, FrozenProviderCollection>>;
 
     fn resolve_unkeyed_placeholder(
         &mut self,
         name: &str,
-    ) -> buck2_error::Result<Option<FrozenCommandLineArg>>;
+    ) -> bz_error::Result<Option<FrozenCommandLineArg>>;
 
     /// Provides the result of the query. This will only provide results for queries that are reported during the configured attr traversal.
     // TODO(cjhopman): Ideally, we wouldn't need to split query attr resolution in this way, but processing queries is an async operation and the starlark Heap cannot be used in async code.
-    fn resolve_query(&mut self, query: &str) -> buck2_error::Result<Arc<AnalysisQueryResult>>;
+    fn resolve_query(&mut self, query: &str) -> bz_error::Result<Arc<AnalysisQueryResult>>;
 
     fn execution_platform_resolution(&self) -> &ExecutionPlatformResolution;
 }

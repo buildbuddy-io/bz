@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::callable::register_provider;
-use buck2_build_api::interpreter::rule_defs::register_rule_defs;
-use buck2_core::bzl::ImportPath;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_build_api::interpreter::rule_defs::provider::callable::register_provider;
+use bz_build_api::interpreter::rule_defs::register_rule_defs;
+use bz_core::bzl::ImportPath;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
 
 fn provider_tester() -> Tester {
@@ -22,7 +22,7 @@ fn provider_tester() -> Tester {
 }
 
 #[test]
-fn provider_callables_are_hashable() -> buck2_error::Result<()> {
+fn provider_callables_are_hashable() -> bz_error::Result<()> {
     let mut tester = provider_tester();
 
     tester.run_starlark_test(indoc!(
@@ -47,7 +47,7 @@ fn provider_callables_are_hashable() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn creates_providers() -> buck2_error::Result<()> {
+fn creates_providers() -> bz_error::Result<()> {
     // TODO(nmj): Starlark doesn't let you call 'new_invoker()' on is_mutable types.
     //                 Once that's fixed, make sure we can call 'FooInfo' before the module is
     //                 frozen.

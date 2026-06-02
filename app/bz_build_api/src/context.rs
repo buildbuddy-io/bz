@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-use buck2_core::fs::buck_out_path::register_bazel_artifact_buck_out_path;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::fs::buck_out_path::BuckOutPathResolver;
+use bz_core::fs::buck_out_path::register_bazel_artifact_buck_out_path;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::DiceTransactionUpdater;
@@ -29,14 +29,14 @@ use pagable::pagable_typetag;
 
 #[async_trait]
 pub trait HasBuildContextData {
-    async fn get_buck_out_path(&mut self) -> buck2_error::Result<BuckOutPathResolver>;
+    async fn get_buck_out_path(&mut self) -> bz_error::Result<BuckOutPathResolver>;
 }
 
 pub trait SetBuildContextData {
     fn set_buck_out_path(
         &mut self,
         path: Option<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }
 
 #[derive(PartialEq, Eq, Allocative, Pagable)]
@@ -63,7 +63,7 @@ impl InjectedKey for BuildDataKey {
 
 #[async_trait]
 impl HasBuildContextData for DiceComputations<'_> {
-    async fn get_buck_out_path(&mut self) -> buck2_error::Result<BuckOutPathResolver> {
+    async fn get_buck_out_path(&mut self) -> bz_error::Result<BuckOutPathResolver> {
         let data = self.compute(&BuildDataKey).await?;
         Ok(BuckOutPathResolver::new(data.buck_out_path.to_buf()))
     }
@@ -73,7 +73,7 @@ impl SetBuildContextData for DiceTransactionUpdater {
     fn set_buck_out_path(
         &mut self,
         path: Option<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let buck_out_path =
             path.unwrap_or_else(|| ProjectRelativePathBuf::unchecked_new("buck-out/v2".to_owned()));
         register_bazel_artifact_buck_out_path(buck_out_path.clone());

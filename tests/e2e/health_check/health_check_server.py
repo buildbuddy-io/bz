@@ -17,7 +17,7 @@ import time
 from concurrent import futures
 
 import grpc
-from buck2.app.buck2_health_check_proto import health_check_pb2, health_check_pb2_grpc
+from buck2.app.bz_health_check_proto import health_check_pb2, health_check_pb2_grpc
 
 
 class HealthChecker(health_check_pb2_grpc.HealthCheckServicer):

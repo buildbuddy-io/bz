@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_util::arc_str::ArcS;
+use bz_util::arc_str::ArcS;
 use derive_more::Display;
 use dupe::Dupe;
 use pagable::Pagable;

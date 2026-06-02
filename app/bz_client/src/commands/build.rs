@@ -12,37 +12,37 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use buck2_cli_proto::BuildRequest;
-use buck2_cli_proto::BuildTarget;
-use buck2_cli_proto::TargetCfg;
-use buck2_cli_proto::build_request::BuildProviders;
-use buck2_cli_proto::build_request::ResponseOptions;
-use buck2_cli_proto::build_request::build_providers;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::command_outcome::CommandOutcome;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::PrintOutputsFormat;
-use buck2_client_ctx::common::build::CommonBuildOptions;
-use buck2_client_ctx::common::build::CommonOutputOptions;
-use buck2_client_ctx::common::target_cfg::TargetCfgWithUniverseOptions;
-use buck2_client_ctx::common::timeout::CommonTimeoutOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::NoPartialResultHandler;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ClientIoError;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::final_console::FinalConsole;
-use buck2_client_ctx::output_destination_arg::OutputDestinationArg;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_core::buck2_env;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_cli_proto::BuildRequest;
+use bz_cli_proto::BuildTarget;
+use bz_cli_proto::TargetCfg;
+use bz_cli_proto::build_request::BuildProviders;
+use bz_cli_proto::build_request::ResponseOptions;
+use bz_cli_proto::build_request::build_providers;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::command_outcome::CommandOutcome;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::PrintOutputsFormat;
+use bz_client_ctx::common::build::CommonBuildOptions;
+use bz_client_ctx::common::build::CommonOutputOptions;
+use bz_client_ctx::common::target_cfg::TargetCfgWithUniverseOptions;
+use bz_client_ctx::common::timeout::CommonTimeoutOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::NoPartialResultHandler;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ClientIoError;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::final_console::FinalConsole;
+use bz_client_ctx::output_destination_arg::OutputDestinationArg;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_core::bz_env;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 #[cfg(fbcode_build)]
 use superconsole::style::Color;
@@ -207,18 +207,18 @@ pub enum FinalArtifactMaterializations {
     None,
 }
 pub trait MaterializationsToProto {
-    fn to_proto(&self) -> buck2_cli_proto::build_request::Materializations;
+    fn to_proto(&self) -> bz_cli_proto::build_request::Materializations;
 }
 impl MaterializationsToProto for Option<FinalArtifactMaterializations> {
-    fn to_proto(&self) -> buck2_cli_proto::build_request::Materializations {
+    fn to_proto(&self) -> bz_cli_proto::build_request::Materializations {
         match self {
             Some(FinalArtifactMaterializations::All) => {
-                buck2_cli_proto::build_request::Materializations::Materialize
+                bz_cli_proto::build_request::Materializations::Materialize
             }
             Some(FinalArtifactMaterializations::None) => {
-                buck2_cli_proto::build_request::Materializations::Skip
+                bz_cli_proto::build_request::Materializations::Skip
             }
-            None => buck2_cli_proto::build_request::Materializations::Default,
+            None => bz_cli_proto::build_request::Materializations::Default,
         }
     }
 }
@@ -230,22 +230,22 @@ pub enum FinalArtifactUploads {
     Never,
 }
 pub trait UploadsToProto {
-    fn to_proto(&self) -> buck2_cli_proto::build_request::Uploads;
+    fn to_proto(&self) -> bz_cli_proto::build_request::Uploads;
 }
 impl UploadsToProto for Option<FinalArtifactUploads> {
-    fn to_proto(&self) -> buck2_cli_proto::build_request::Uploads {
+    fn to_proto(&self) -> bz_cli_proto::build_request::Uploads {
         match self {
-            Some(FinalArtifactUploads::Always) => buck2_cli_proto::build_request::Uploads::Always,
-            Some(FinalArtifactUploads::Never) => buck2_cli_proto::build_request::Uploads::Never,
-            None => buck2_cli_proto::build_request::Uploads::Never,
+            Some(FinalArtifactUploads::Always) => bz_cli_proto::build_request::Uploads::Always,
+            Some(FinalArtifactUploads::Never) => bz_cli_proto::build_request::Uploads::Never,
+            None => bz_cli_proto::build_request::Uploads::Never,
         }
     }
 }
 
 pub fn print_build_result(
     console: &FinalConsole,
-    errors: &[buck2_data::ErrorReport],
-) -> buck2_error::Result<()> {
+    errors: &[bz_data::ErrorReport],
+) -> bz_error::Result<()> {
     for error in errors {
         console.print_error(&error.message)?;
     }
@@ -315,9 +315,9 @@ impl StreamingCommand for BuildCommand {
             print_build_failed(&console)?;
         }
 
-        if buck2_env!("BUCK2_TEST_BUILD_ERROR", bool, applicability = testing)? {
-            return buck2_error!(
-                buck2_error::ErrorTag::TestOnly,
+        if bz_env!("BUCK2_TEST_BUILD_ERROR", bool, applicability = testing)? {
+            return bz_error!(
+                bz_error::ErrorTag::TestOnly,
                 "Injected Build Response Error"
             )
             .into();
@@ -390,7 +390,7 @@ pub(crate) fn print_build_succeeded(
     console: &FinalConsole,
     ctx: &ClientCommandContext<'_>,
     extra: Option<&str>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if ctx.verbosity.print_success_message() {
         console.print_success_no_newline("BUILD SUCCEEDED")?;
         console.print_stderr(extra.unwrap_or_default())?;
@@ -430,7 +430,7 @@ pub(crate) fn print_buck_ui_and_rating(
     console: &FinalConsole,
     ctx: &ClientCommandContext<'_>,
     used_superconsole: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let show_rating = should_show_rating(&ctx.trace_id);
 
     if used_superconsole {
@@ -474,7 +474,7 @@ fn is_in_rating_sample(first_byte: u8) -> bool {
     first_byte >> 4 == 0
 }
 
-pub(crate) fn print_build_failed(console: &FinalConsole) -> buck2_error::Result<()> {
+pub(crate) fn print_build_failed(console: &FinalConsole) -> bz_error::Result<()> {
     console.print_error("BUILD FAILED")
 }
 
@@ -482,7 +482,7 @@ pub(crate) fn print_build_failed(console: &FinalConsole) -> buck2_error::Result<
 fn print_build_rating(
     console: &FinalConsole,
     ctx: &ClientCommandContext<'_>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // Only show rating prompt to humans, not AI
     if !console.is_tty() {
         return Ok(());
@@ -544,14 +544,14 @@ mod tests {
 
     use super::*;
 
-    fn parse(args: &[&str]) -> buck2_error::Result<BuildCommand> {
+    fn parse(args: &[&str]) -> bz_error::Result<BuildCommand> {
         Ok(BuildCommand::try_parse_from(
             std::iter::once("program").chain(args.iter().copied()),
         )?)
     }
 
     #[test]
-    fn infos_default() -> buck2_error::Result<()> {
+    fn infos_default() -> bz_error::Result<()> {
         let opts = parse(&[])?;
 
         assert_eq!(opts.default_info(), Action::Build);
@@ -562,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn infos_noop() -> buck2_error::Result<()> {
+    fn infos_noop() -> bz_error::Result<()> {
         let opts = parse(&[
             "--skip-test-info",
             "--build-default-info",
@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn infos_configure() -> buck2_error::Result<()> {
+    fn infos_configure() -> bz_error::Result<()> {
         let opts = parse(&["--skip-default-info"])?;
         assert_eq!(opts.default_info(), Action::Skip);
 
@@ -591,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn infos_validation() -> buck2_error::Result<()> {
+    fn infos_validation() -> bz_error::Result<()> {
         // Test duplicate args
         assert_matches!(
             parse(&["--build-default-info", "--skip-default-info"]),
@@ -614,7 +614,7 @@ mod tests {
     }
 
     #[test]
-    fn bep_sets_buildbuddy_bes_defaults() -> buck2_error::Result<()> {
+    fn bep_sets_buildbuddy_bes_defaults() -> bz_error::Result<()> {
         let opts = parse(&["--bep"])?;
         let event_log_opts = &opts.common_opts.event_log_opts;
 
@@ -628,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn bes_sets_buildbuddy_bes_defaults() -> buck2_error::Result<()> {
+    fn bes_sets_buildbuddy_bes_defaults() -> bz_error::Result<()> {
         let opts = parse(&["--bes"])?;
         let event_log_opts = &opts.common_opts.event_log_opts;
 
@@ -642,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn bep_allows_explicit_bes_overrides() -> buck2_error::Result<()> {
+    fn bep_allows_explicit_bes_overrides() -> bz_error::Result<()> {
         let opts = parse(&[
             "--bep",
             "--bes_backend=grpc://example.com",
@@ -683,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn rating_sample_works_with_real_trace_id() -> buck2_error::Result<()> {
+    fn rating_sample_works_with_real_trace_id() -> bz_error::Result<()> {
         use std::str::FromStr;
 
         // First byte = 0x00 → high nibble 0 → sampled.

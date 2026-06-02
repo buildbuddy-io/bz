@@ -10,11 +10,11 @@
 
 use std::cmp::Ordering;
 
-use buck2_node::attrs::attr_type::dict::DictAttrType;
-use buck2_node::attrs::attr_type::dict::DictLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::attr_type::dict::DictAttrType;
+use bz_node::attrs::attr_type::dict::DictLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::dict::DictRef;
@@ -29,7 +29,7 @@ impl AttrTypeCoerce for DictAttrType {
         configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         let dict = DictRef::unpack_value_err(value)?;
         let mut res = Vec::with_capacity(dict.len());
         if self.sorted {

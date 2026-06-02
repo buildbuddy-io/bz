@@ -15,8 +15,8 @@ use std::io::Cursor;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use buck2_core::buck2_env;
-use buck2_fs::paths::abs_path::AbsPathBuf;
+use bz_core::bz_env;
+use bz_fs::paths::abs_path::AbsPathBuf;
 
 #[allow(unsafe_op_in_unsafe_fn)]
 #[allow(unused_imports)]
@@ -30,11 +30,11 @@ mod output_format_flatbuffers;
 #[allow(unused_extern_crates)]
 #[allow(clippy::extra_unused_lifetimes)]
 mod output_format_generated;
-use buck2_common::manifold::Bucket;
-use buck2_common::manifold::ManifoldClient;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_common::manifold::Bucket;
+use bz_common::manifold::ManifoldClient;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 
 const HTML_PLACEHOLDER: &str = "XXDATAXX";
 
@@ -62,7 +62,7 @@ pub async fn main(
     output: Option<&AbsPathBuf>,
     fbs_dump: Option<&AbsPathBuf>,
     manifold_path: Option<&str>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let fbs = flatbuffers::gen_fbs(data, executed_actions, changed_files)?;
 
     let fbs = fbs.finished_data();
@@ -87,7 +87,7 @@ pub async fn main(
     Ok(())
 }
 
-pub fn output_format<T: QueryTarget>(data: TargetSet<T>) -> buck2_error::Result<String> {
+pub fn output_format<T: QueryTarget>(data: TargetSet<T>) -> bz_error::Result<String> {
     let fbs = output_format_flatbuffers::gen_fbs(data)?;
     let fbs = fbs.finished_data();
     let html_out = inline_fbs(fbs, None, include_str!("output_format.html"))?;
@@ -98,19 +98,19 @@ pub fn inline_fbs(
     fbs: &[u8],
     fbs_dump: Option<&AbsPathBuf>,
     html_in: &str,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let base64 = STANDARD.encode(fbs);
     // For dev purposes, dump the base64 encoded flatbuffer to a file
     if let Some(fbs_dump) = fbs_dump {
         fs::write(fbs_dump, &base64)?;
     }
-    let env = buck2_env!("BUCK2_DUMP_FBS", applicability = testing)?;
+    let env = bz_env!("BUCK2_DUMP_FBS", applicability = testing)?;
     if let Some(fbs_dump) = env {
         fs::write(fbs_dump, &base64)?;
     }
     if !html_in.contains(HTML_PLACEHOLDER) {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Explain,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Explain,
             "HTML template is not valid"
         ));
     }

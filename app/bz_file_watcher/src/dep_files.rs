@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_util::late_binding::LateBinding;
+use bz_util::late_binding::LateBinding;
 
 pub static FLUSH_DEP_FILES: LateBinding<fn()> = LateBinding::new("FLUSH_DEP_FILES");
 pub static FLUSH_NON_LOCAL_DEP_FILES: LateBinding<fn()> =

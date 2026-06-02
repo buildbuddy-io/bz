@@ -10,10 +10,10 @@
 
 use std::iter;
 
-use buck2_core::directory_digest::DirectoryDigest;
-use buck2_fs::paths::IntoFileNameBufIterator;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_core::directory_digest::DirectoryDigest;
+use bz_fs::paths::IntoFileNameBufIterator;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
 use either::Either;
 use starlark_map::small_map::SmallMap;
 
@@ -27,7 +27,7 @@ use crate::directory::walk::OrderedDirectoryWalkType;
 use crate::directory::walk::UnorderedDirectoryWalkType;
 use crate::directory::walk::WalkType;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 pub enum DirectorySearchError<L> {
     #[error("Search traverses a leaf")]
@@ -41,7 +41,7 @@ impl<L> DirectorySearchError<L> {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 pub enum DirectoryFilterError {
     #[error("Filter traverses a leaf")]
@@ -297,7 +297,7 @@ mod tests {
     use crate::directory::test::path;
 
     #[test]
-    fn test_search() -> buck2_error::Result<()> {
+    fn test_search() -> bz_error::Result<()> {
         let mut b = TestDirectoryBuilder::empty();
         b.insert(path("a/b"), DirectoryEntry::Leaf(NopEntry))?;
         b.insert(path("b/c"), DirectoryEntry::Leaf(NopEntry))?;
@@ -349,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn test_filter() -> buck2_error::Result<()> {
+    fn test_filter() -> bz_error::Result<()> {
         let mut b = TestDirectoryBuilder::empty();
         b.insert(path("a/aa"), DirectoryEntry::Leaf(NopEntry))?;
         b.insert(path("a/a"), DirectoryEntry::Leaf(NopEntry))?;
@@ -393,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_continues_on_error() -> buck2_error::Result<()> {
+    fn test_filter_continues_on_error() -> bz_error::Result<()> {
         let mut b = TestDirectoryBuilder::empty();
         b.insert(path("a/aa/aaa"), DirectoryEntry::Leaf(NopEntry))?;
         b.insert(path("a/aa/bbb"), DirectoryEntry::Leaf(NopEntry))?;

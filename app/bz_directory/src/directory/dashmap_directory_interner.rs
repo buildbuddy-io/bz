@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::sync::Weak;
 
 use allocative::Allocative;
-use buck2_core::directory_digest::DirectoryDigest;
-use buck2_hash::BuckHasherBuilder;
+use bz_core::directory_digest::DirectoryDigest;
+use bz_hash::BuckHasherBuilder;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use dupe::Clone_;
@@ -118,7 +118,7 @@ mod tests {
     use crate::directory::test::path;
 
     #[test]
-    fn test_directory_interner() -> buck2_error::Result<()> {
+    fn test_directory_interner() -> bz_error::Result<()> {
         let interner = DashMapDirectoryInterner::new();
 
         let d1 = {
@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn test_directory_interner_deep() -> buck2_error::Result<()> {
+    fn test_directory_interner_deep() -> bz_error::Result<()> {
         let interner = DashMapDirectoryInterner::new();
 
         let d1 = {

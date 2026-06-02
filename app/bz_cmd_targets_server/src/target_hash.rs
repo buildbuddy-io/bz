@@ -14,26 +14,26 @@ use std::sync::Arc;
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
-use buck2_build_api::configure_targets::get_compatible_targets;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::file_ops::error::FileReadErrorContext;
-use buck2_common::file_ops::metadata::PathMetadata;
-use buck2_common::file_ops::metadata::PathMetadataOrRedirection;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabelWithModifiers;
-use buck2_core::target::configured_or_unconfigured::ConfiguredOrUnconfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::environment::QueryTargetDepsSuccessors;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::traversal::AsyncNodeLookup;
-use buck2_query::query::traversal::async_depth_first_postorder_traversal;
+use bz_build_api::configure_targets::get_compatible_targets;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::file_ops::error::FileReadErrorContext;
+use bz_common::file_ops::metadata::PathMetadata;
+use bz_common::file_ops::metadata::PathMetadataOrRedirection;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabelWithModifiers;
+use bz_core::target::configured_or_unconfigured::ConfiguredOrUnconfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::environment::QueryTargetDepsSuccessors;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::traversal::AsyncNodeLookup;
+use bz_query::query::traversal::async_depth_first_postorder_traversal;
 use dice::DiceComputations;
 use dice::DiceTransaction;
 use dice_futures::spawn::DropcancelJoinHandle;
@@ -109,7 +109,7 @@ pub enum TargetHashesFileMode {
 #[async_trait]
 trait FileHasher: Send + Sync {
     /// Obtain information about a path in some manner.
-    async fn hash_path(&self, path: &CellPath) -> buck2_error::Result<Vec<u8>>;
+    async fn hash_path(&self, path: &CellPath) -> bz_error::Result<Vec<u8>>;
 }
 
 struct PathsOnlyFileHasher {
@@ -118,7 +118,7 @@ struct PathsOnlyFileHasher {
 
 #[async_trait]
 impl FileHasher for PathsOnlyFileHasher {
-    async fn hash_path(&self, path: &CellPath) -> buck2_error::Result<Vec<u8>> {
+    async fn hash_path(&self, path: &CellPath) -> bz_error::Result<Vec<u8>> {
         if self.pseudo_changed_paths.contains(path) {
             Ok(vec![0u8])
         } else {
@@ -133,13 +133,13 @@ struct PathsAndContentsHasher {
 
 #[async_trait]
 impl FileHasher for PathsAndContentsHasher {
-    async fn hash_path(&self, cell_path: &CellPath) -> buck2_error::Result<Vec<u8>> {
+    async fn hash_path(&self, cell_path: &CellPath) -> bz_error::Result<Vec<u8>> {
         #[async_recursion]
         async fn hash_item(
             ctx: &mut DiceComputations<'_>,
             cell_path: CellPathRef<'async_recursion>,
             res: &mut Vec<u8>,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             let info = DiceFileComputations::read_path_metadata(ctx, cell_path.dupe())
                 .await
                 .without_package_context_information()?;
@@ -192,7 +192,7 @@ impl FileHasher for PathsAndContentsHasher {
 }
 
 /// Types of node that can be target hashed (just configured and unconfigured).
-/// This trait is purposely defined here instead of in buck2_node crate
+/// This trait is purposely defined here instead of in bz_node crate
 /// so that we can only access the public fields of these nodes.
 #[async_trait]
 pub(crate) trait TargetHashingTargetNode: QueryTarget {
@@ -206,10 +206,10 @@ pub(crate) trait TargetHashingTargetNode: QueryTarget {
         dice: &mut DiceComputations,
         loaded_targets: Vec<(
             PackageLabelWithModifiers,
-            buck2_error::Result<Vec<TargetNode>>,
+            bz_error::Result<Vec<TargetNode>>,
         )>,
         global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<TargetSet<Self>>;
+    ) -> bz_error::Result<TargetSet<Self>>;
 }
 
 #[async_trait]
@@ -222,10 +222,10 @@ impl TargetHashingTargetNode for ConfiguredTargetNode {
         dice: &mut DiceComputations,
         loaded_targets: Vec<(
             PackageLabelWithModifiers,
-            buck2_error::Result<Vec<TargetNode>>,
+            bz_error::Result<Vec<TargetNode>>,
         )>,
         global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<TargetSet<Self>> {
+    ) -> bz_error::Result<TargetSet<Self>> {
         let result =
             get_compatible_targets(dice, loaded_targets.into_iter(), global_cfg_options, false)
                 .await?;
@@ -243,10 +243,10 @@ impl TargetHashingTargetNode for TargetNode {
         _dice: &mut DiceComputations,
         loaded_targets: Vec<(
             PackageLabelWithModifiers,
-            buck2_error::Result<Vec<TargetNode>>,
+            bz_error::Result<Vec<TargetNode>>,
         )>,
         _global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<TargetSet<Self>> {
+    ) -> bz_error::Result<TargetSet<Self>> {
         let mut target_set = TargetSet::new();
         for (_package_with_modifiers, result) in loaded_targets {
             target_set.extend(result?);
@@ -256,10 +256,10 @@ impl TargetHashingTargetNode for TargetNode {
 }
 pub struct TargetHashes {
     // key is an unconfigured target label, but the hash is generated from the configured target label.
-    target_mapping: StdBuckHashMap<TargetLabel, buck2_error::Result<BuckTargetHash>>,
+    target_mapping: StdBuckHashMap<TargetLabel, bz_error::Result<BuckTargetHash>>,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum TargetHashError {
     #[error(
@@ -269,7 +269,7 @@ enum TargetHashError {
 }
 
 impl TargetHashes {
-    pub fn get(&self, label: &TargetLabel) -> Option<&buck2_error::Result<BuckTargetHash>> {
+    pub fn get(&self, label: &TargetLabel) -> Option<&bz_error::Result<BuckTargetHash>> {
         self.target_mapping.get(label)
     }
 
@@ -279,13 +279,13 @@ impl TargetHashes {
         targets: TargetSet<T>,
         file_hasher: Option<Arc<dyn FileHasher>>,
         use_fast_hash: bool,
-    ) -> buck2_error::Result<Self>
+    ) -> bz_error::Result<Self>
     where
         T::Key: ConfiguredOrUnconfiguredTargetLabel,
     {
         let mut hashes: StdBuckHashMap<
             T::Key,
-            Shared<DropcancelJoinHandle<buck2_error::Result<BuckTargetHash>>>,
+            Shared<DropcancelJoinHandle<bz_error::Result<BuckTargetHash>>>,
         > = StdBuckHashMap::default();
 
         let visit = |target: T| {
@@ -323,7 +323,7 @@ impl TargetHashes {
                                         let file_hash = file_hasher.hash_path(&cell_path).await;
                                         (cell_path, file_hash)
                                     });
-                                    buck2_error::Ok(())
+                                    bz_error::Ok(())
                                 })?;
                             }
 
@@ -359,7 +359,7 @@ impl TargetHashes {
             .map(|(target, fut)| async move { (target, fut.await) })
             .collect();
 
-        let mut target_mapping: StdBuckHashMap<TargetLabel, buck2_error::Result<BuckTargetHash>> =
+        let mut target_mapping: StdBuckHashMap<TargetLabel, bz_error::Result<BuckTargetHash>> =
             StdBuckHashMap::default();
 
         // TODO(cjhopman): FuturesOrdered/Unordered interacts poorly with tokio cooperative scheduling
@@ -384,7 +384,7 @@ impl TargetHashes {
         targets: TargetSet<T>,
         file_hasher: Option<Arc<dyn FileHasher>>,
         use_fast_hash: bool,
-    ) -> buck2_error::Result<Self>
+    ) -> bz_error::Result<Self>
     where
         T::Key: ConfiguredOrUnconfiguredTargetLabel,
     {
@@ -393,7 +393,7 @@ impl TargetHashes {
             .map(|target| {
                 let file_hasher = file_hasher.dupe();
                 async move {
-                    let hash_result: buck2_error::Result<BuckTargetHash> = try {
+                    let hash_result: bz_error::Result<BuckTargetHash> = try {
                         let mut hasher = TargetHashes::new_hasher(use_fast_hash);
                         TargetHashes::hash_node(&target, &mut *hasher);
 
@@ -405,7 +405,7 @@ impl TargetHashes {
                                     let file_hash = file_hasher.hash_path(&cell_path).await;
                                     (cell_path, file_hash)
                                 });
-                                buck2_error::Ok(())
+                                bz_error::Ok(())
                             })?;
 
                             let input_hashes = join_all(input_futs).await;
@@ -421,7 +421,7 @@ impl TargetHashes {
             })
             .collect();
 
-        let target_mapping: StdBuckHashMap<TargetLabel, buck2_error::Result<BuckTargetHash>> =
+        let target_mapping: StdBuckHashMap<TargetLabel, bz_error::Result<BuckTargetHash>> =
             join_all(hashing_futures).await.into_iter().collect();
         Ok(Self { target_mapping })
     }
@@ -437,13 +437,13 @@ impl TargetHashes {
         lookup: L,
         targets: Vec<(
             PackageLabelWithModifiers,
-            buck2_error::Result<Vec<TargetNode>>,
+            bz_error::Result<Vec<TargetNode>>,
         )>,
         global_cfg_options: &GlobalCfgOptions,
         file_hash_mode: TargetHashesFileMode,
         use_fast_hash: bool,
         target_hash_recursive: bool,
-    ) -> buck2_error::Result<Self>
+    ) -> bz_error::Result<Self>
     where
         T::Key: ConfiguredOrUnconfiguredTargetLabel,
     {
@@ -487,9 +487,9 @@ impl TargetHashes {
     }
 
     fn hash_deps(
-        dep_hashes: Vec<buck2_error::Result<BuckTargetHash>>,
+        dep_hashes: Vec<bz_error::Result<BuckTargetHash>>,
         hasher: &mut dyn BuckTargetHasher,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for target_hash in dep_hashes {
             hasher.write_u128(target_hash?.0);
         }
@@ -497,9 +497,9 @@ impl TargetHashes {
     }
 
     fn hash_files(
-        file_digests: Vec<(CellPath, buck2_error::Result<Vec<u8>>)>,
+        file_digests: Vec<(CellPath, bz_error::Result<Vec<u8>>)>,
         mut hasher: &mut dyn BuckTargetHasher,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for (path, digest) in file_digests {
             path.hash(&mut hasher);
             let digest = digest?;

@@ -13,9 +13,9 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_util::cycle_detector::CycleDescriptor;
-use buck2_util::cycle_detector::LazyCycleDetector;
-use buck2_util::cycle_detector::LazyCycleDetectorGuard;
+use bz_util::cycle_detector::CycleDescriptor;
+use bz_util::cycle_detector::LazyCycleDetector;
+use bz_util::cycle_detector::LazyCycleDetectorGuard;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::DynKey;
@@ -44,17 +44,17 @@ pub struct CycleDetectorAdapter<D: CycleAdapterDescriptor> {
     inner: LazyCycleDetector<D>,
 }
 
-pub struct CycleGuardResult<R, E>(buck2_error::Result<Result<R, E>>);
+pub struct CycleGuardResult<R, E>(bz_error::Result<Result<R, E>>);
 
 impl<R, E> CycleGuardResult<R, E> {
-    /// Converts the result from GuardThis into an buck2_error::Result.
+    /// Converts the result from GuardThis into an bz_error::Result.
     ///
     /// This is a separate function to get the borrowing of the &mut DiceComputations, (which in
     /// guard_this will have been borrowed by the passed in future).
     pub async fn into_result(
         self,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<Result<R, E>> {
+    ) -> bz_error::Result<Result<R, E>> {
         match &self.0 {
             Ok(Ok(_)) => {}
             _ => {
@@ -72,7 +72,7 @@ impl<R, E> CycleGuardResult<R, E> {
 pub struct CycleGuard<D: CycleAdapterDescriptor>(Option<Arc<CycleAdapterGuard<D>>>);
 
 impl<D: CycleAdapterDescriptor> CycleGuard<D> {
-    pub fn new(ctx: &DiceComputations<'_>) -> buck2_error::Result<Self> {
+    pub fn new(ctx: &DiceComputations<'_>) -> bz_error::Result<Self> {
         Ok(Self(ctx.cycle_guard()?))
     }
 
@@ -92,7 +92,7 @@ impl<D: CycleAdapterDescriptor> CycleGuard<D> {
         fut: Fut,
     ) -> CycleGuardResult<R, D::Error> {
         #[allow(clippy::redundant_closure_call)]
-        let res: buck2_error::Result<Result<R, D::Error>> = (|| async move {
+        let res: bz_error::Result<Result<R, D::Error>> = (|| async move {
             match &self.0 {
                 Some(v) => v.guard.guard_this(fut).await,
                 None => Ok(Ok(fut.await)),

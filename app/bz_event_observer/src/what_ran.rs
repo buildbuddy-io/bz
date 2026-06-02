@@ -13,10 +13,10 @@ use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
 
-use buck2_data::ActionName;
-use buck2_data::SchedulingMode;
-use buck2_data::re_platform::Property;
-use buck2_events::span::SpanId;
+use bz_data::ActionName;
+use bz_data::SchedulingMode;
+use bz_data::re_platform::Property;
+use bz_events::span::SpanId;
 use dupe::Dupe;
 use regex::Regex;
 use superconsole::Line;
@@ -49,7 +49,7 @@ pub struct WhatRanOptionsRegex<'a> {
     filter_category_regex: Option<Regex>,
 }
 impl<'a> WhatRanOptionsRegex<'a> {
-    pub fn from_options(options: &'a WhatRanOptions) -> buck2_error::Result<Self> {
+    pub fn from_options(options: &'a WhatRanOptions) -> bz_error::Result<Self> {
         let filter_category_regex = match &options.filter_category {
             Some(filter_category) => Some(Regex::new(&format!(r"^{filter_category}$"))?),
             None => None,
@@ -64,27 +64,27 @@ impl<'a> WhatRanOptionsRegex<'a> {
 /// An action that makes sense to use to contextualize a command we ran.
 #[derive(Clone)]
 pub enum WhatRanRelevantAction {
-    ActionExecution(buck2_data::ActionExecutionStart),
-    TestDiscovery(buck2_data::TestDiscoveryStart),
-    TestRun(buck2_data::TestRunStart),
-    SetupLocalResources(buck2_data::SetupLocalResourcesStart),
+    ActionExecution(bz_data::ActionExecutionStart),
+    TestDiscovery(bz_data::TestDiscoveryStart),
+    TestRun(bz_data::TestRunStart),
+    SetupLocalResources(bz_data::SetupLocalResourcesStart),
 }
 
 impl WhatRanRelevantAction {
     /// Extract a relevant action from an event's data, if we can find one.
-    pub fn from_buck_data(data: &buck2_data::buck_event::Data) -> Option<Self> {
+    pub fn from_buck_data(data: &bz_data::buck_event::Data) -> Option<Self> {
         match data {
-            buck2_data::buck_event::Data::SpanStart(span) => match &span.data {
-                Some(buck2_data::span_start_event::Data::ActionExecution(action)) => {
+            bz_data::buck_event::Data::SpanStart(span) => match &span.data {
+                Some(bz_data::span_start_event::Data::ActionExecution(action)) => {
                     Some(Self::ActionExecution(action.clone()))
                 }
-                Some(buck2_data::span_start_event::Data::TestDiscovery(suite)) => {
+                Some(bz_data::span_start_event::Data::TestDiscovery(suite)) => {
                     Some(Self::TestDiscovery(suite.clone()))
                 }
-                Some(buck2_data::span_start_event::Data::TestStart(test)) => {
+                Some(bz_data::span_start_event::Data::TestStart(test)) => {
                     Some(Self::TestRun(test.clone()))
                 }
-                Some(buck2_data::span_start_event::Data::LocalResources(setup)) => {
+                Some(bz_data::span_start_event::Data::LocalResources(setup)) => {
                     Some(Self::SetupLocalResources(setup.clone()))
                 }
                 _ => None,
@@ -133,7 +133,7 @@ pub enum WhatRanOutputCommandExtra<'a> {
 
 /// Output to log commands that ran. The expectation is that we can use this to print out events.
 pub trait WhatRanOutputWriter {
-    fn emit_command(&mut self, command: WhatRanOutputCommand<'_>) -> buck2_error::Result<()>;
+    fn emit_command(&mut self, command: WhatRanOutputCommand<'_>) -> bz_error::Result<()>;
 }
 
 /// Storage provided for events. The expectations is that any previously event that would qualify
@@ -160,7 +160,7 @@ pub fn emit_what_ran_entry(
     std_err: Option<&str>,
     duration: Option<std::time::Duration>,
     scheduling_mode: Option<SchedulingMode>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let should_emit = options
         .filter_category_regex
         .as_ref()
@@ -223,13 +223,13 @@ pub fn emit_what_ran_entry(
 /// The reproduction details for this command.
 #[derive(Debug, Clone)]
 pub enum CommandReproducer {
-    CacheQuery(buck2_data::CacheQuery),
-    CacheHit(buck2_data::CacheHit),
+    CacheQuery(bz_data::CacheQuery),
+    CacheHit(bz_data::CacheHit),
     LocalDepFileCacheHit,
-    ReExecute(buck2_data::ReExecute),
-    LocalExecute(buck2_data::LocalExecute),
-    WorkerExecute(buck2_data::WorkerExecute),
-    WorkerInit(buck2_data::WorkerInit),
+    ReExecute(bz_data::ReExecute),
+    LocalExecute(bz_data::LocalExecute),
+    WorkerExecute(bz_data::WorkerExecute),
+    WorkerInit(bz_data::WorkerInit),
 }
 
 impl CommandReproducer {
@@ -238,8 +238,8 @@ impl CommandReproducer {
             Self::CacheQuery(..) => "cache_query".to_owned(),
             Self::CacheHit(cache) => {
                 let cache_type = cache.cache_type;
-                match buck2_data::CacheHitType::try_from(cache_type) {
-                    Ok(buck2_data::CacheHitType::RemoteDepFileCache) => {
+                match bz_data::CacheHitType::try_from(cache_type) {
+                    Ok(bz_data::CacheHitType::RemoteDepFileCache) => {
                         "re_dep_file_cache".to_owned()
                     }
                     _ => "cache".to_owned(),
@@ -254,45 +254,45 @@ impl CommandReproducer {
     }
 
     pub fn from_buck_data(
-        data: &buck2_data::buck_event::Data,
+        data: &bz_data::buck_event::Data,
         options: &WhatRanOptions,
     ) -> Option<Self> {
-        if let buck2_data::buck_event::Data::SpanStart(span) = data
-            && let Some(buck2_data::span_start_event::Data::ExecutorStage(executor_stage)) =
+        if let bz_data::buck_event::Data::SpanStart(span) = data
+            && let Some(bz_data::span_start_event::Data::ExecutorStage(executor_stage)) =
                 &span.data
         {
             match &executor_stage.stage {
-                Some(buck2_data::executor_stage_start::Stage::CacheQuery(cache_hit))
+                Some(bz_data::executor_stage_start::Stage::CacheQuery(cache_hit))
                     if options.emit_cache_queries =>
                 {
                     return Some(CommandReproducer::CacheQuery(cache_hit.clone()));
                 }
-                Some(buck2_data::executor_stage_start::Stage::CacheHit(cache_hit))
+                Some(bz_data::executor_stage_start::Stage::CacheHit(cache_hit))
                     if !options.skip_cache_hits =>
                 {
                     return Some(CommandReproducer::CacheHit(cache_hit.clone()));
                 }
-                Some(buck2_data::executor_stage_start::Stage::Re(re_stage))
+                Some(bz_data::executor_stage_start::Stage::Re(re_stage))
                     if !options.skip_remote_executions =>
                 {
-                    if let Some(buck2_data::re_stage::Stage::Execute(execute)) = &re_stage.stage {
+                    if let Some(bz_data::re_stage::Stage::Execute(execute)) = &re_stage.stage {
                         return Some(CommandReproducer::ReExecute(execute.clone()));
                     }
                 }
-                Some(buck2_data::executor_stage_start::Stage::Local(local_stage)) => {
+                Some(bz_data::executor_stage_start::Stage::Local(local_stage)) => {
                     if !options.skip_local_executions {
                         match &local_stage.stage {
-                            Some(buck2_data::local_stage::Stage::Execute(local_execute)) => {
+                            Some(bz_data::local_stage::Stage::Execute(local_execute)) => {
                                 return Some(CommandReproducer::LocalExecute(
                                     local_execute.clone(),
                                 ));
                             }
-                            Some(buck2_data::local_stage::Stage::WorkerExecute(worker_execute)) => {
+                            Some(bz_data::local_stage::Stage::WorkerExecute(worker_execute)) => {
                                 return Some(CommandReproducer::WorkerExecute(
                                     worker_execute.clone(),
                                 ));
                             }
-                            Some(buck2_data::local_stage::Stage::WorkerInit(worker_init)) => {
+                            Some(bz_data::local_stage::Stage::WorkerInit(worker_init)) => {
                                 return Some(CommandReproducer::WorkerInit(worker_init.clone()));
                             }
                             _ => {}
@@ -350,12 +350,12 @@ impl fmt::Display for CommandReproducer {
 }
 
 pub struct Command<'a> {
-    env: &'a Vec<buck2_data::EnvironmentEntry>,
+    env: &'a Vec<bz_data::EnvironmentEntry>,
     argv: &'a Vec<String>,
 }
 
-impl<'a> From<&'a buck2_data::LocalCommand> for Command<'a> {
-    fn from(command: &'a buck2_data::LocalCommand) -> Self {
+impl<'a> From<&'a bz_data::LocalCommand> for Command<'a> {
+    fn from(command: &'a bz_data::LocalCommand) -> Self {
         Command {
             env: &command.env,
             argv: &command.argv,
@@ -363,8 +363,8 @@ impl<'a> From<&'a buck2_data::LocalCommand> for Command<'a> {
     }
 }
 
-impl<'a> From<&'a buck2_data::WorkerCommand> for Command<'a> {
-    fn from(command: &'a buck2_data::WorkerCommand) -> Self {
+impl<'a> From<&'a bz_data::WorkerCommand> for Command<'a> {
+    fn from(command: &'a bz_data::WorkerCommand) -> Self {
         Command {
             env: &command.env,
             argv: &command.argv,
@@ -372,8 +372,8 @@ impl<'a> From<&'a buck2_data::WorkerCommand> for Command<'a> {
     }
 }
 
-impl<'a> From<&'a buck2_data::WorkerInitCommand> for Command<'a> {
-    fn from(command: &'a buck2_data::WorkerInitCommand) -> Self {
+impl<'a> From<&'a bz_data::WorkerInitCommand> for Command<'a> {
+    fn from(command: &'a bz_data::WorkerInitCommand) -> Self {
         Command {
             env: &command.env,
             argv: &command.argv,
@@ -381,7 +381,7 @@ impl<'a> From<&'a buck2_data::WorkerInitCommand> for Command<'a> {
     }
 }
 
-pub fn worker_command_as_fallback_to_string(command: &buck2_data::WorkerCommand) -> String {
+pub fn worker_command_as_fallback_to_string(command: &bz_data::WorkerCommand) -> String {
     let mut argv = command.fallback_exe.to_vec();
     argv.extend(command.argv.to_vec());
     command_to_string(Command {
@@ -417,7 +417,7 @@ pub fn command_to_string<'a>(command: impl Into<Command<'a>>) -> String {
 }
 
 impl WhatRanOutputWriter for SuperConsole {
-    fn emit_command(&mut self, command: WhatRanOutputCommand<'_>) -> buck2_error::Result<()> {
+    fn emit_command(&mut self, command: WhatRanOutputCommand<'_>) -> bz_error::Result<()> {
         // TODO: Change this API to just produce a String.
         let msg = WhatRanCommandConsoleFormat {
             reason: command.reason,
@@ -450,7 +450,7 @@ impl fmt::Display for WhatRanCommandConsoleFormat<'_> {
     }
 }
 
-fn executor_with_platform(execute: &buck2_data::ReExecute) -> String {
+fn executor_with_platform(execute: &bz_data::ReExecute) -> String {
     let exec = if execute.persistent_worker {
         "re_worker"
     } else {
@@ -472,8 +472,8 @@ fn executor_with_platform(execute: &buck2_data::ReExecute) -> String {
 
 #[cfg(test)]
 mod tests {
-    use buck2_data::ReExecute;
-    use buck2_data::RePlatform;
+    use bz_data::ReExecute;
+    use bz_data::RePlatform;
 
     use super::*;
 
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn test_executor_with_platform_no_platform() {
-        let execute = buck2_data::ReExecute::default();
+        let execute = bz_data::ReExecute::default();
         let result = executor_with_platform(&execute);
         assert_eq!(result, "re".to_owned());
     }

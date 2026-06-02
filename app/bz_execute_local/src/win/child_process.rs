@@ -129,12 +129,12 @@ unsafe extern "system" fn callback(ptr: *mut std::ffi::c_void, _timer_fired: boo
 
 #[cfg(test)]
 mod tests {
-    use buck2_util::process::background_command;
+    use bz_util::process::background_command;
 
     use crate::win::child_process::ChildProcess;
 
     #[tokio::test]
-    async fn test_child_process() -> buck2_error::Result<()> {
+    async fn test_child_process() -> bz_error::Result<()> {
         let mut cmd = background_command("cmd");
         let cmd = cmd.arg("/c").arg("exit 2");
 

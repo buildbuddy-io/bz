@@ -13,9 +13,9 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_node::cfg_constructor::CfgConstructorImpl;
-use buck2_node::metadata::key::MetadataKey;
-use buck2_util::late_binding::LateBinding;
+use bz_node::cfg_constructor::CfgConstructorImpl;
+use bz_node::metadata::key::MetadataKey;
+use bz_util::late_binding::LateBinding;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::FrozenModule;
 use starlark::eval::Evaluator;
@@ -85,7 +85,7 @@ pub struct FrozenPackageFileExtra {
 
 /// Resolve `FrozenPackageFileExtra.cfg_constructor` to a `CfgConstructorImpl`.
 pub static MAKE_CFG_CONSTRUCTOR: LateBinding<
-    fn(OwnedFrozenValue) -> buck2_error::Result<Arc<dyn CfgConstructorImpl>>,
+    fn(OwnedFrozenValue) -> bz_error::Result<Arc<dyn CfgConstructorImpl>>,
 > = LateBinding::new("MAKE_CFG_CONSTRUCTOR");
 
 // TODO(nga): this does not need to be fully starlark_value,
@@ -127,7 +127,7 @@ impl<'v> Freeze for PackageFileExtra<'v> {
 impl<'v> PackageFileExtra<'v> {
     pub fn get_or_init(
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<&'v PackageFileExtra<'v>> {
+    ) -> bz_error::Result<&'v PackageFileExtra<'v>> {
         Ok(InterpreterExtraValue::get(eval.module())?
             .package_extra
             .get_or_init(Default::default))
@@ -137,7 +137,7 @@ impl<'v> PackageFileExtra<'v> {
 impl FrozenPackageFileExtra {
     pub(crate) fn get(
         module: &FrozenModule,
-    ) -> buck2_error::Result<Option<OwnedFrozenPackageFileExtra>> {
+    ) -> bz_error::Result<Option<OwnedFrozenPackageFileExtra>> {
         Ok(OwnedFrozenPackageFileExtra::new(
             FrozenInterpreterExtraValue::get(module)?,
         ))

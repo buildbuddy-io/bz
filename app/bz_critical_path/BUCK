@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_critical_path",
+    name = "bz_critical_path",
     srcs = glob(["src/**/*.rs"]),
     test_deps = [
         "fbsource//third-party/rust:rand",
@@ -13,7 +13,7 @@ rust_library(
     deps = [
         "fbsource//third-party/rust:crossbeam",
         "fbsource//third-party/rust:derive_more",
-        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_error:bz_error",
         "//bz/starlark-rust/starlark_map:starlark_map",
     ],
 )

@@ -2,7 +2,7 @@
 description = "Remote-execution support for Buck"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_execute"
+name = "bz_execute"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -49,23 +49,23 @@ sorted_vector_map = { workspace = true }
 starlark_map = { workspace = true }
 strong_hash = { workspace = true }
 
-buck2_action_metadata_proto = { workspace = true }
-buck2_build_info = { workspace = true }
-buck2_build_signals = { workspace = true }
-buck2_cli_proto = { workspace = true }
-buck2_common = { workspace = true }
-buck2_core = { workspace = true }
-buck2_data = { workspace = true }
-buck2_directory = { workspace = true }
-buck2_error = { workspace = true }
-buck2_events = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_hash = { workspace = true }
-buck2_http = { workspace = true }
-buck2_miniperf_proto = { workspace = true }
-buck2_re_configuration = { workspace = true }
-buck2_util = { workspace = true }
-buck2_wrapper_common = { workspace = true }
+bz_action_metadata_proto = { workspace = true }
+bz_build_info = { workspace = true }
+bz_build_signals = { workspace = true }
+bz_cli_proto = { workspace = true }
+bz_common = { workspace = true }
+bz_core = { workspace = true }
+bz_data = { workspace = true }
+bz_directory = { workspace = true }
+bz_error = { workspace = true }
+bz_events = { workspace = true }
+bz_fs = { workspace = true }
+bz_hash = { workspace = true }
+bz_http = { workspace = true }
+bz_miniperf_proto = { workspace = true }
+bz_re_configuration = { workspace = true }
+bz_util = { workspace = true }
+bz_wrapper_common = { workspace = true }
 dice_futures = { workspace = true }
 
 [dev-dependencies]

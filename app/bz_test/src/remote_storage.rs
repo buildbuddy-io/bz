@@ -12,20 +12,20 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileDigestConfig;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_error::Ok;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest::CasDigestToReExt;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_hash::StdBuckHashSet;
-use buck2_test_api::data::RemoteStorageConfig;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileDigestConfig;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_error::Ok;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest::CasDigestToReExt;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_hash::StdBuckHashSet;
+use bz_test_api::data::RemoteStorageConfig;
 use dupe::Dupe;
 use remote_execution::NamedDigest;
 use remote_execution::TDigest;
@@ -49,7 +49,7 @@ impl ReClientWithCache {
         &self,
         artifact: &ArtifactValue,
         config: &RemoteStorageConfig,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match &config.ttl_config {
             Some(ttl_config) => {
                 // Note that deps represent artifacts that symlinks depend on. Currently, test artifact trees
@@ -99,7 +99,7 @@ impl ReClientWithCache {
         digest_config: DigestConfig,
         ttl_seconds: i64,
         use_case: &str,
-    ) -> buck2_error::Result<TDigest> {
+    ) -> bz_error::Result<TDigest> {
         let file_config = FileDigestConfig::build(digest_config.cas_digest_config());
         let file_path = AbsPathBuf::new(local_path)?;
         let tracked_digest =
@@ -152,13 +152,13 @@ fn collect_digests(directory_entry: &ActionDirectoryEntry<ActionSharedDirectory>
 
 #[cfg(test)]
 mod tests {
-    use buck2_common::file_ops::metadata::FileMetadata;
-    use buck2_common::file_ops::metadata::TrackedFileDigest;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_execute::digest_config::DigestConfig;
-    use buck2_execute::directory::ActionDirectoryBuilder;
-    use buck2_execute::directory::extract_artifact_value;
-    use buck2_execute::directory::insert_file;
+    use bz_common::file_ops::metadata::FileMetadata;
+    use bz_common::file_ops::metadata::TrackedFileDigest;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_execute::digest_config::DigestConfig;
+    use bz_execute::directory::ActionDirectoryBuilder;
+    use bz_execute::directory::extract_artifact_value;
+    use bz_execute::directory::insert_file;
 
     use super::*;
 

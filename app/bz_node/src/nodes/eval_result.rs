@@ -14,17 +14,17 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_common::starlark_profiler::StarlarkProfileDataAndStatsDyn;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::PackageSpec;
-use buck2_core::pattern::pattern_type::PatternType;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::TargetName;
-use buck2_core::target::name::TargetNameRef;
+use bz_common::package_listing::listing::PackageListing;
+use bz_common::starlark_profiler::StarlarkProfileDataAndStatsDyn;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::PackageSpec;
+use bz_core::pattern::pattern_type::PatternType;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetName;
+use bz_core::target::name::TargetNameRef;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use gazebo::prelude::*;
@@ -65,7 +65,7 @@ pub fn is_generated_target(node: TargetNodeRef) -> bool {
     false
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 // WARN: CI uses this message to filter targets
 // If you change this message, please also update https://fburl.com/code/z0azzcc3
 #[error(
@@ -323,7 +323,7 @@ impl EvaluationResult {
     fn maybe_bazel_input_file_target(
         &self,
         name: &TargetNameRef,
-    ) -> buck2_error::Result<Option<TargetNode>> {
+    ) -> bz_error::Result<Option<TargetNode>> {
         if !is_bazel_compat_build_file(&self.buildfile_path) {
             return Ok(None);
         }
@@ -346,7 +346,7 @@ impl EvaluationResult {
         )?))
     }
 
-    pub fn resolve_target_node(&self, path: &TargetNameRef) -> buck2_error::Result<TargetNode> {
+    pub fn resolve_target_node(&self, path: &TargetNameRef) -> bz_error::Result<TargetNode> {
         if let Some(target) = self.get_target(path) {
             return Ok(target.to_owned());
         }
@@ -372,7 +372,7 @@ impl EvaluationResult {
     pub fn resolve_target<'a>(
         &'a self,
         path: &TargetNameRef,
-    ) -> buck2_error::Result<TargetNodeRef<'a>> {
+    ) -> bz_error::Result<TargetNodeRef<'a>> {
         self.get_target(path)
             .ok_or_else(|| self.missing_target_error(path).into())
     }
@@ -439,7 +439,7 @@ fn is_bazel_compat_build_file(buildfile_path: &BuildFilePath) -> bool {
     filename == "BUILD" && (cell == "root" || cell == "bazel_tools" || is_bzlmod_cell_name(cell))
 }
 
-fn bazel_input_file_rule() -> buck2_error::Result<Arc<Rule>> {
+fn bazel_input_file_rule() -> bz_error::Result<Arc<Rule>> {
     Ok(Arc::new(Rule {
         attributes: AttributeSpec::from(Vec::new(), false, &RuleIncomingTransition::None, false)?,
         rule_type: RuleType::BazelInputFile,
@@ -459,9 +459,9 @@ fn bazel_input_file_rule() -> buck2_error::Result<Arc<Rule>> {
 fn attr_id(
     spec: &AttributeSpec,
     name: &str,
-) -> buck2_error::Result<crate::attrs::spec::AttributeId> {
+) -> bz_error::Result<crate::attrs::spec::AttributeId> {
     spec.attribute_id_by_name(name).ok_or_else(|| {
-        buck2_error::internal_error!("missing attr `{name}` in Bazel input-file rule")
+        bz_error::internal_error!("missing attr `{name}` in Bazel input-file rule")
     })
 }
 
@@ -470,7 +470,7 @@ fn bazel_input_file_target(
     name: &TargetNameRef,
     buildfile_path: &BuildFilePath,
     super_package: &SuperPackage,
-) -> buck2_error::Result<TargetNode> {
+) -> bz_error::Result<TargetNode> {
     let rule = bazel_input_file_rule()?;
     let name_id = attr_id(&rule.attributes, "name")?;
     let visibility_id = attr_id(&rule.attributes, VISIBILITY_ATTRIBUTE.name)?;
@@ -559,7 +559,7 @@ impl Display for SuggestedSimilarTargets {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::target::label::label::TargetLabel;
+    use bz_core::target::label::label::TargetLabel;
 
     use crate::nodes::eval_result::MissingTargets;
 

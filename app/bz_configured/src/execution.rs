@@ -12,49 +12,49 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::actions::execute::dice_data::HasFallbackExecutorConfig;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::constraint_value_info::FrozenConstraintValueInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::execution_platform_registration_info::FrozenExecutionPlatformRegistrationInfo;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::pattern::resolve::ResolveTargetPatterns;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::configuration::compatibility::ResultMaybeCompatible;
-use buck2_core::configuration::data::BazelBuildSettingValue;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::execution_types::execution::ExecutionPlatform;
-use buck2_core::execution_types::execution::ExecutionPlatformError;
-use buck2_core::execution_types::execution::ExecutionPlatformIncompatibleReason;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
-use buck2_core::execution_types::execution_platforms::ExecutionPlatformFallback;
-use buck2_core::execution_types::execution_platforms::ExecutionPlatforms;
-use buck2_core::execution_types::execution_platforms::ExecutionPlatformsData;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
+use bz_build_api::actions::execute::dice_data::HasFallbackExecutorConfig;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::interpreter::rule_defs::provider::builtin::constraint_value_info::FrozenConstraintValueInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::execution_platform_registration_info::FrozenExecutionPlatformRegistrationInfo;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::pattern::resolve::ResolveTargetPatterns;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::configuration::compatibility::ResultMaybeCompatible;
+use bz_core::configuration::data::BazelBuildSettingValue;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::execution_types::execution::ExecutionPlatform;
+use bz_core::execution_types::execution::ExecutionPlatformError;
+use bz_core::execution_types::execution::ExecutionPlatformIncompatibleReason;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::execution_types::execution::ExecutionPlatformResolutionPartial;
+use bz_core::execution_types::execution_platforms::ExecutionPlatformFallback;
+use bz_core::execution_types::execution_platforms::ExecutionPlatforms;
+use bz_core::execution_types::execution_platforms::ExecutionPlatformsData;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
 use dice_futures::cancellation::CancellationContext;
-use buck2_node::attrs::configuration_context::AttrConfigurationContext;
-use buck2_node::attrs::configuration_context::AttrConfigurationContextImpl;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::attrs::spec::internal::EXEC_COMPATIBLE_WITH_ATTRIBUTE;
-use buck2_node::configuration::calculation::CellNameForConfigurationResolution;
-use buck2_node::configuration::resolved::ConfigurationSettingKey;
-use buck2_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
-use buck2_node::execution::GetExecutionPlatforms;
-use buck2_node::execution::GetExecutionPlatformsImpl;
-use buck2_node::execution::EXECUTION_PLATFORMS_BUCKCONFIG;
-use buck2_node::execution::GET_EXECUTION_PLATFORMS;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::nodes::unconfigured::TargetNodeRef;
+use bz_node::attrs::configuration_context::AttrConfigurationContext;
+use bz_node::attrs::configuration_context::AttrConfigurationContextImpl;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::attrs::spec::internal::EXEC_COMPATIBLE_WITH_ATTRIBUTE;
+use bz_node::configuration::calculation::CellNameForConfigurationResolution;
+use bz_node::configuration::resolved::ConfigurationSettingKey;
+use bz_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
+use bz_node::execution::GetExecutionPlatforms;
+use bz_node::execution::GetExecutionPlatformsImpl;
+use bz_node::execution::EXECUTION_PLATFORMS_BUCKCONFIG;
+use bz_node::execution::GET_EXECUTION_PLATFORMS;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::nodes::unconfigured::TargetNodeRef;
 use derive_more::Display;
 use futures::future::FutureExt;
 use dice::DiceComputations;
@@ -75,13 +75,13 @@ use crate::configuration::get_platform_configuration;
 use crate::nodes::GatheredDeps;
 use crate::nodes::LookingUpConfiguredNodeContext;
 use crate::nodes::gather_deps;
-use buck2_core::configuration::pair::Configuration;
-use buck2_node::cfg_constructor::CFG_CONSTRUCTOR_CALCULATION_IMPL;
+use bz_core::configuration::pair::Configuration;
+use bz_node::cfg_constructor::CFG_CONSTRUCTOR_CALCULATION_IMPL;
 
 const BAZEL_EXTRA_EXECUTION_PLATFORMS_OPTION: &str =
     "//command_line_option:extra_execution_platforms";
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ExecutionPlatformComputationError {
     #[error("Can't find toolchain_dep execution platform using configuration `{0}`")]
@@ -108,7 +108,7 @@ async fn legacy_execution_platform(
 
 async fn bazel_host_platform_target(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<TargetLabel> {
+) -> bz_error::Result<TargetLabel> {
     let cell_resolver = ctx.get_cell_resolver().await?;
     let root_cell = cell_resolver.root_cell();
     let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
@@ -122,7 +122,7 @@ async fn bazel_host_platform_target(
 
 async fn bazel_host_execution_platform(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<ExecutionPlatform> {
+) -> bz_error::Result<ExecutionPlatform> {
     let host_platform = bazel_host_platform_target(ctx).await?;
     let cfg = get_platform_configuration(ctx, &host_platform).await?;
     Ok(ExecutionPlatform::platform(
@@ -136,7 +136,7 @@ async fn legacy_execution_platform_for_node(
     ctx: &mut DiceComputations<'_>,
     node: TargetNodeRef<'_>,
     cfg: &ConfigurationNoExec,
-) -> buck2_error::Result<ExecutionPlatform> {
+) -> bz_error::Result<ExecutionPlatform> {
     if node.is_bazel_rule() {
         bazel_host_execution_platform(ctx).await
     } else {
@@ -147,7 +147,7 @@ async fn legacy_execution_platform_for_node(
 async fn parse_bazel_target_pattern(
     ctx: &mut DiceComputations<'_>,
     pattern: &str,
-) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
+) -> bz_error::Result<ParsedPattern<TargetPatternExtra>> {
     let cell_resolver = ctx.get_cell_resolver().await?;
     let root_cell = cell_resolver.root_cell();
     let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
@@ -163,7 +163,7 @@ async fn parse_bazel_target_pattern(
 async fn bazel_extra_execution_platform_targets(
     ctx: &mut DiceComputations<'_>,
     cfg: &ConfigurationData,
-) -> buck2_error::Result<Vec<TargetLabel>> {
+) -> bz_error::Result<Vec<TargetLabel>> {
     if !cfg.is_bound() {
         return Ok(Vec::new());
     }
@@ -207,7 +207,7 @@ async fn bazel_extra_execution_platform_targets(
                     let result = ctx
                         .get_interpreter_results(package_with_modifiers.package)
                         .await?;
-                    buck2_error::Ok((result, spec))
+                    bz_error::Ok((result, spec))
                 }
                 .boxed()
             },
@@ -228,7 +228,7 @@ async fn bazel_extra_execution_platform_targets(
 async fn bazel_execution_platform_from_target(
     ctx: &mut DiceComputations<'_>,
     target: &TargetLabel,
-) -> buck2_error::Result<ExecutionPlatform> {
+) -> bz_error::Result<ExecutionPlatform> {
     let cfg = get_platform_configuration(ctx, target).await?;
     let data = cfg.data()?.clone();
     let cfg = ConfigurationData::from_platform(target.to_string(), data, true)?;
@@ -244,7 +244,7 @@ pub async fn find_execution_platform_by_configuration(
     exec_cfg: &ConfigurationData,
     cfg: &ConfigurationData,
     search_bazel_host_platform: bool,
-) -> buck2_error::Result<ExecutionPlatform> {
+) -> bz_error::Result<ExecutionPlatform> {
     match ctx.get_execution_platforms().await? {
         Some(platforms) if exec_cfg != &ConfigurationData::unbound_exec() => {
             for c in platforms.candidates() {
@@ -257,10 +257,10 @@ pub async fn find_execution_platform_by_configuration(
                     for target in bazel_extra_execution_platform_targets(ctx, cfg).await? {
                         let platform = bazel_execution_platform_from_target(ctx, &target).await?;
                         if platform.cfg() == exec_cfg {
-                            return buck2_error::Ok(Some(platform));
+                            return bz_error::Ok(Some(platform));
                         }
                     }
-                    buck2_error::Ok(None)
+                    bz_error::Ok(None)
                 }
                 .boxed()
                 .await?;
@@ -272,7 +272,7 @@ pub async fn find_execution_platform_by_configuration(
                     return Ok(host);
                 }
             }
-            Err(buck2_error::Error::from(
+            Err(bz_error::Error::from(
                 ExecutionPlatformComputationError::ToolchainDepMissingPlatform(exec_cfg.dupe()),
             ))
         }
@@ -310,7 +310,7 @@ impl ExecutionPlatformConstraints {
         node: TargetNodeRef,
         gathered_deps: &GatheredDeps,
         cfg_ctx: &(dyn AttrConfigurationContext + Sync),
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let exec_compatible_with: Arc<[_]> = if let Some(a) =
             node.known_attr_or_none(EXEC_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
         {
@@ -362,7 +362,7 @@ impl ExecutionPlatformConstraints {
         ctx: &mut DiceComputations<'_>,
         cell: CellNameForConfigurationResolution,
         append_bazel_host_platform: bool,
-    ) -> buck2_error::Result<ExecutionPlatformResolutionPartial> {
+    ) -> bz_error::Result<ExecutionPlatformResolutionPartial> {
         ctx.compute(&ExecutionPlatformResolutionKey {
             target_node_cell: cell,
             exec_compatible_with: self.exec_compatible_with,
@@ -379,7 +379,7 @@ async fn resolve_bazel_extra_execution_platforms(
     node_cell: CellNameForConfigurationResolution,
     cfg: &ConfigurationData,
     constraints: &ExecutionPlatformConstraints,
-) -> buck2_error::Result<Option<ExecutionPlatformResolutionPartial>> {
+) -> bz_error::Result<Option<ExecutionPlatformResolutionPartial>> {
     let extra_execution_platforms = bazel_extra_execution_platform_targets(ctx, cfg).await?;
     if extra_execution_platforms.is_empty() {
         return Ok(None);
@@ -429,12 +429,12 @@ impl ToolchainExecutionPlatformCompatibilityKey {
     async fn compute_impl(
         &self,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<Result<(), ExecutionPlatformIncompatibleReason>> {
+    ) -> bz_error::Result<Result<(), ExecutionPlatformIncompatibleReason>> {
         let node = ctx.get_target_node(self.target.unconfigured()).await?;
         if node.transition_deps().next().is_some() {
             // We could actually check this when defining the rule, but a bit of a corner
             // case, and much simpler to do so here.
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 ExecutionPlatformComputationError::ToolchainTransitionDep(
                     self.target.unconfigured().dupe(),
                 ),
@@ -482,7 +482,7 @@ impl ToolchainExecutionPlatformCompatibilityKey {
 
 #[async_trait]
 impl Key for ToolchainExecutionPlatformCompatibilityKey {
-    type Value = buck2_error::Result<Result<(), ExecutionPlatformIncompatibleReason>>;
+    type Value = bz_error::Result<Result<(), ExecutionPlatformIncompatibleReason>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -510,7 +510,7 @@ async fn check_toolchain_execution_platform_compatibility(
     ctx: &mut DiceComputations<'_>,
     target: TargetConfiguredTargetLabel,
     exec_platform: ExecutionPlatform,
-) -> buck2_error::Result<Result<(), ExecutionPlatformIncompatibleReason>> {
+) -> bz_error::Result<Result<(), ExecutionPlatformIncompatibleReason>> {
     ctx.compute(&ToolchainExecutionPlatformCompatibilityKey {
         target,
         exec_platform,
@@ -522,7 +522,7 @@ pub(crate) async fn get_execution_platform_toolchain_dep(
     ctx: &mut DiceComputations<'_>,
     target_label: &TargetConfiguredTargetLabel,
     target_node: TargetNodeRef<'_>,
-) -> buck2_error::Result<MaybeCompatible<ExecutionPlatformResolutionPartial>> {
+) -> bz_error::Result<MaybeCompatible<ExecutionPlatformResolutionPartial>> {
     assert!(target_node.is_toolchain_rule());
     let target_cfg = target_label.cfg();
     let target_cell = target_node.label().pkg().cell_name();
@@ -534,7 +534,7 @@ pub(crate) async fn get_execution_platform_toolchain_dep(
     )
     .await?;
     if target_node.transition_deps().next().is_some() {
-        Err(buck2_error::Error::from(
+        Err(bz_error::Error::from(
             ExecutionPlatformComputationError::ToolchainTransitionDep(
                 target_label.unconfigured().dupe(),
             ),
@@ -581,7 +581,7 @@ pub(crate) async fn resolve_execution_platform(
     matched_cfg_keys: &MatchedConfigurationSettingKeysWithCfg,
     gathered_deps: &GatheredDeps,
     cfg_ctx: &(dyn AttrConfigurationContext + Sync),
-) -> buck2_error::Result<ExecutionPlatformResolutionPartial> {
+) -> bz_error::Result<ExecutionPlatformResolutionPartial> {
     let constraints = ExecutionPlatformConstraints::new(node, gathered_deps, cfg_ctx)?;
     let node_cell = CellNameForConfigurationResolution(node.label().pkg().cell_name());
     if node.is_bazel_rule()
@@ -617,7 +617,7 @@ pub(crate) async fn resolve_execution_platform(
 /// Returns the configured [ExecutionPlatforms] or None if `build.execution_platforms` is not configured.
 async fn compute_execution_platforms(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<Option<ExecutionPlatforms>> {
+) -> bz_error::Result<Option<ExecutionPlatforms>> {
     let cells = ctx.get_cell_resolver().await?;
     let cell_alias_resolver = ctx.get_cell_alias_resolver(cells.root_cell()).await?;
 
@@ -643,7 +643,7 @@ async fn compute_execution_platforms(
         .provider_collection()
         .builtin_provider::<FrozenExecutionPlatformRegistrationInfo>()
         .ok_or_else(|| {
-            buck2_error::Error::from(
+            bz_error::Error::from(
                 ExecutionPlatformComputationError::MissingExecutionPlatformRegistrationInfo(
                     execution_platforms_target.dupe(),
                 ),
@@ -659,7 +659,7 @@ async fn compute_execution_platforms(
             .provider_collection()
             .builtin_provider::<FrozenConstraintValueInfo>()
             .ok_or_else(|| {
-                buck2_error::Error::from(
+                bz_error::Error::from(
                     ExecutionPlatformComputationError::MissingConstraintValueInfo(
                         marker_label.dupe(),
                     ),
@@ -757,7 +757,7 @@ async fn check_execution_platform(
     exec_deps: &[TargetLabel],
     exec_platform: &ExecutionPlatform,
     toolchain_deps: &[TargetConfiguredTargetLabel],
-) -> buck2_error::Result<Result<(), ExecutionPlatformIncompatibleReason>> {
+) -> bz_error::Result<Result<(), ExecutionPlatformIncompatibleReason>> {
     let matched_cfg_keys = get_matched_cfg_keys(
         ctx,
         exec_platform.cfg(),
@@ -841,7 +841,7 @@ async fn check_execution_platform(
 
 async fn get_execution_platforms_enabled(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<ExecutionPlatforms> {
+) -> bz_error::Result<ExecutionPlatforms> {
     ctx.get_execution_platforms()
         .await?
         .ok_or_else(|| internal_error!("Execution platforms are not enabled"))
@@ -854,7 +854,7 @@ async fn resolve_execution_platform_from_constraints(
     exec_deps: &[TargetLabel],
     toolchain_deps: &[TargetConfiguredTargetLabel],
     append_bazel_host_platform: bool,
-) -> buck2_error::Result<ExecutionPlatformResolutionPartial> {
+) -> bz_error::Result<ExecutionPlatformResolutionPartial> {
     let mut skipped = Vec::new();
     let execution_platforms = get_execution_platforms_enabled(ctx).await?;
     if append_bazel_host_platform {
@@ -969,7 +969,7 @@ impl Display for ExecutionPlatformResolutionKey {
 
 #[async_trait]
 impl Key for ExecutionPlatformResolutionKey {
-    type Value = buck2_error::Result<ExecutionPlatformResolutionPartial>;
+    type Value = bz_error::Result<ExecutionPlatformResolutionPartial>;
 
     async fn compute(
         &self,
@@ -1006,7 +1006,7 @@ pub struct ExecutionPlatformsKey;
 
 #[async_trait]
 impl Key for ExecutionPlatformsKey {
-    type Value = buck2_error::Result<Option<ExecutionPlatforms>>;
+    type Value = bz_error::Result<Option<ExecutionPlatforms>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -1032,7 +1032,7 @@ impl GetExecutionPlatformsImpl for GetExecutionPlatformsInstance {
     async fn get_execution_platforms_impl(
         &self,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<Option<ExecutionPlatforms>> {
+    ) -> bz_error::Result<Option<ExecutionPlatforms>> {
         ctx.compute(&ExecutionPlatformsKey).await?
     }
 
@@ -1043,7 +1043,7 @@ impl GetExecutionPlatformsImpl for GetExecutionPlatformsInstance {
         toolchain_deps: Arc<[TargetConfiguredTargetLabel]>,
         exec_compatible_with: Arc<[ConfigurationSettingKey]>,
         cell: CellNameForConfigurationResolution,
-    ) -> buck2_error::Result<ExecutionPlatformResolutionPartial> {
+    ) -> bz_error::Result<ExecutionPlatformResolutionPartial> {
         ExecutionPlatformConstraints::new_constraints(
             exec_deps,
             toolchain_deps,

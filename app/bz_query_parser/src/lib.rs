@@ -105,7 +105,7 @@ impl<'a, E: nom::error::ParseError<Span<'a>> + nom::error::ContextError<Span<'a>
 {
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 enum ParseError {
     #[error("{0}")]
     #[buck2(input)]
@@ -241,7 +241,7 @@ fn convert_to_str_error(err: VerboseError<Span<'_>>) -> VerboseError<&str> {
 }
 
 /// Parses a query string into a SpannedExpr. Requires that the entire input is consumed.
-pub fn parse_expr(input: &str) -> buck2_error::Result<SpannedExpr<'_>> {
+pub fn parse_expr(input: &str) -> bz_error::Result<SpannedExpr<'_>> {
     let span = Span::new(input);
     // Parse with fast error (`()`) first,
     // and on error reparse again with `VerboseError` to get detailed errors.
@@ -551,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn test_expr() -> buck2_error::Result<()> {
+    fn test_expr() -> bz_error::Result<()> {
         run_tests(
             expr,
             &[
@@ -636,7 +636,7 @@ mod tests {
     }
 
     #[test]
-    fn test_function() -> buck2_error::Result<()> {
+    fn test_function() -> bz_error::Result<()> {
         run_tests(
             expr_function,
             &["a()", "a(a)", "a(a, b, c)", "a(a,   b,   c)"],
@@ -649,7 +649,7 @@ mod tests {
     }
 
     #[test]
-    fn test_set() -> buck2_error::Result<()> {
+    fn test_set() -> bz_error::Result<()> {
         run_tests(
             expr_set,
             &["set(a)", "set(a b c)", "set(a   b   c)", "set(%s)", "set()"],
@@ -662,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn test_word() -> buck2_error::Result<()> {
+    fn test_word() -> bz_error::Result<()> {
         run_tests(
             expr_word,
             &[
@@ -682,13 +682,13 @@ mod tests {
     }
 
     #[test]
-    fn test_integer() -> buck2_error::Result<()> {
+    fn test_integer() -> bz_error::Result<()> {
         run_tests(expr_int, &["0", "1234"], &["w123", ".1", ""], &["0123"]);
         Ok(())
     }
 
     #[test]
-    fn test_trailing_infix() -> buck2_error::Result<()> {
+    fn test_trailing_infix() -> bz_error::Result<()> {
         run_tests(
             trailing_infix,
             &[

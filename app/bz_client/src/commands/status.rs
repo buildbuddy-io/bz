@@ -10,19 +10,19 @@
 
 use std::time::Duration;
 
-use buck2_cli_proto::StatusResponse;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::daemon::client::connect::BuckdConnectConstraints;
-use buck2_client_ctx::daemon::client::connect::connect_buckd;
-use buck2_client_ctx::daemon::client::connect::establish_connection_existing;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::subscribers::stdout_stderr_forwarder::StdoutStderrForwarder;
-use buck2_common::argv::Argv;
-use buck2_common::argv::SanitizedArgv;
-use buck2_common::daemon_dir::DaemonDir;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
+use bz_cli_proto::StatusResponse;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::daemon::client::connect::BuckdConnectConstraints;
+use bz_client_ctx::daemon::client::connect::connect_buckd;
+use bz_client_ctx::daemon::client::connect::establish_connection_existing;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::subscribers::stdout_stderr_forwarder::StdoutStderrForwarder;
+use bz_common::argv::Argv;
+use bz_common::argv::SanitizedArgv;
+use bz_common::daemon_dir::DaemonDir;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
 use chrono::DateTime;
 use humantime::format_duration;
 use walkdir::WalkDir;
@@ -43,7 +43,7 @@ impl StatusCommand {
         self,
         _matches: BuckArgMatches<'_>,
         ctx: ClientCommandContext<'_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         ctx.with_runtime(|ctx| async move {
             let mut events_ctx = EventsCtx::new(None, vec![Box::new(StdoutStderrForwarder)]);
             if self.all {
@@ -52,7 +52,7 @@ impl StatusCommand {
                 let walker = WalkDir::new(&root).follow_links(false).into_iter();
                 for entry in walker {
                     let entry =
-                        entry.map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+                        entry.map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?;
                     if entry.file_type().is_dir() {
                         let dir = DaemonDir {
                             path: entry.into_path().try_into()?,
@@ -81,7 +81,7 @@ impl StatusCommand {
                     }
                 }
 
-                buck2_client_ctx::println!("{}", serde_json::to_string_pretty(&statuses)?)?;
+                bz_client_ctx::println!("{}", serde_json::to_string_pretty(&statuses)?)?;
             } else {
                 match connect_buckd(
                     BuckdConnectConstraints::ExistingOnly,
@@ -91,7 +91,7 @@ impl StatusCommand {
                 .await
                 {
                     Err(_) => {
-                        buck2_client_ctx::eprintln!("no buckd running")?;
+                        bz_client_ctx::eprintln!("no buckd running")?;
                         // Should this be an error?
                     }
                     Ok(mut client) => {
@@ -105,7 +105,7 @@ impl StatusCommand {
                                 )
                                 .await?,
                         )?;
-                        buck2_client_ctx::println!(
+                        bz_client_ctx::println!(
                             "{}",
                             serde_json::to_string_pretty(&json_status)?
                         )?;
@@ -122,7 +122,7 @@ impl StatusCommand {
     }
 }
 
-fn timestamp_to_string(seconds: u64, nanos: u32) -> buck2_error::Result<String> {
+fn timestamp_to_string(seconds: u64, nanos: u32) -> bz_error::Result<String> {
     Ok(DateTime::from_timestamp(seconds as i64, nanos)
         .ok_or_else(|| internal_error!("Incorrect seconds/nanos argument"))?
         .format("%Y-%m-%dT%H:%M:%SZ")
@@ -134,7 +134,7 @@ fn duration_to_string(duration: Duration) -> String {
     format_duration(duration).to_string()
 }
 
-fn process_status(status: StatusResponse) -> buck2_error::Result<serde_json::Value> {
+fn process_status(status: StatusResponse) -> bz_error::Result<serde_json::Value> {
     let timestamp = match status.start_time {
         None => "unknown".to_owned(),
         Some(timestamp) => timestamp_to_string(timestamp.seconds as u64, timestamp.nanos as u32)?,

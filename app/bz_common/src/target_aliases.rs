@@ -10,8 +10,8 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::target_aliases::TargetAliasResolver;
-use buck2_hash::BuckIndexSet;
+use bz_core::target_aliases::TargetAliasResolver;
+use bz_hash::BuckIndexSet;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::Key;
@@ -27,7 +27,7 @@ use crate::dice::cells::HasCellResolver;
 use crate::legacy_configs::configs::LegacyBuckConfig;
 use crate::legacy_configs::dice::HasLegacyConfigs;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum AliasResolutionError {
     #[error("No [alias] section in buckconfig")]
@@ -61,7 +61,7 @@ impl PartialEq for BuckConfigTargetAliasResolver {
 }
 
 impl TargetAliasResolver for BuckConfigTargetAliasResolver {
-    fn get<'a>(&'a self, name: &str) -> buck2_error::Result<Option<&'a str>> {
+    fn get<'a>(&'a self, name: &str) -> bz_error::Result<Option<&'a str>> {
         match self.resolve_alias(name) {
             Ok(a) => Ok(Some(a)),
             Err(AliasResolutionError::MissingAliasSection | AliasResolutionError::NotAnAlias) => {
@@ -71,7 +71,7 @@ impl TargetAliasResolver for BuckConfigTargetAliasResolver {
                 e @ AliasResolutionError::AliasChainBroken(..)
                 | e @ AliasResolutionError::AliasCycle(..),
             ) => {
-                Err(buck2_error::Error::from(e).context(format!("Error resolving alias `{name}`")))
+                Err(bz_error::Error::from(e).context(format!("Error resolving alias `{name}`")))
             }
         }
     }
@@ -134,7 +134,7 @@ impl BuckConfigTargetAliasResolver {
 #[async_trait]
 pub trait HasTargetAliasResolver {
     async fn target_alias_resolver(&mut self)
-    -> buck2_error::Result<BuckConfigTargetAliasResolver>;
+    -> bz_error::Result<BuckConfigTargetAliasResolver>;
 }
 
 #[derive(Debug, Display, Hash, PartialEq, Eq, Clone, Allocative, Pagable)]
@@ -143,13 +143,13 @@ struct TargetAliasResolverKey();
 
 #[async_trait]
 impl Key for TargetAliasResolverKey {
-    type Value = buck2_error::Result<BuckConfigTargetAliasResolver>;
+    type Value = bz_error::Result<BuckConfigTargetAliasResolver>;
 
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
         _cancellations: &CancellationContext,
-    ) -> buck2_error::Result<BuckConfigTargetAliasResolver> {
+    ) -> bz_error::Result<BuckConfigTargetAliasResolver> {
         let root_cell = ctx.get_cell_resolver().await?.root_cell();
         let legacy_configs = ctx.get_legacy_config_for_cell(root_cell).await?;
         Ok(BuckConfigTargetAliasResolver::new(legacy_configs.dupe()))
@@ -171,7 +171,7 @@ impl Key for TargetAliasResolverKey {
 impl HasTargetAliasResolver for DiceComputations<'_> {
     async fn target_alias_resolver(
         &mut self,
-    ) -> buck2_error::Result<BuckConfigTargetAliasResolver> {
+    ) -> bz_error::Result<BuckConfigTargetAliasResolver> {
         Ok(self.compute(&TargetAliasResolverKey()).await??)
     }
 }
@@ -186,7 +186,7 @@ mod tests {
     use crate::target_aliases::BuckConfigTargetAliasResolver;
 
     #[test]
-    fn test_aliases() -> buck2_error::Result<()> {
+    fn test_aliases() -> bz_error::Result<()> {
         let config = legacy_configs::configs::testing::parse(
             &[(
                 "config",

@@ -11,41 +11,41 @@
 use std::sync::Arc;
 use std::sync::LazyLock;
 
-use buck2_action_impl::dynamic::attrs_starlark::StarlarkDynamicAttrType;
-use buck2_action_impl::dynamic::bxl::EVAL_BXL_FOR_DYNAMIC_OUTPUT;
-use buck2_action_impl::dynamic::deferred::DynamicLambdaArgs;
-use buck2_action_impl::dynamic::deferred::DynamicLambdaCtxDataSpec;
-use buck2_action_impl::dynamic::deferred::InputArtifactsMaterialized;
-use buck2_action_impl::dynamic::deferred::dynamic_lambda_ctx_data;
-use buck2_action_impl::dynamic::deferred::invoke_dynamic_output_lambda;
-use buck2_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallable;
-use buck2_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallbackParam;
-use buck2_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallbackParamSpec;
-use buck2_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallbackReturnType;
-use buck2_action_impl::dynamic::new_dynamic_actions_callable;
-use buck2_action_impl::dynamic::params::FrozenDynamicLambdaParams;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::analysis::registry::RecordedAnalysisValues;
-use buck2_build_api::dynamic_value::DynamicValue;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
-use buck2_common::events::HasEvents;
-use buck2_common::scope::scope_and_collect_with_dice;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKeyBxl;
-use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_interpreter::factory::BuckStarlarkModule;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
-use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_action_impl::dynamic::attrs_starlark::StarlarkDynamicAttrType;
+use bz_action_impl::dynamic::bxl::EVAL_BXL_FOR_DYNAMIC_OUTPUT;
+use bz_action_impl::dynamic::deferred::DynamicLambdaArgs;
+use bz_action_impl::dynamic::deferred::DynamicLambdaCtxDataSpec;
+use bz_action_impl::dynamic::deferred::InputArtifactsMaterialized;
+use bz_action_impl::dynamic::deferred::dynamic_lambda_ctx_data;
+use bz_action_impl::dynamic::deferred::invoke_dynamic_output_lambda;
+use bz_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallable;
+use bz_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallbackParam;
+use bz_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallbackParamSpec;
+use bz_action_impl::dynamic::dynamic_actions_callable::DynamicActionsCallbackReturnType;
+use bz_action_impl::dynamic::new_dynamic_actions_callable;
+use bz_action_impl::dynamic::params::FrozenDynamicLambdaParams;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::analysis::registry::RecordedAnalysisValues;
+use bz_build_api::dynamic_value::DynamicValue;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use bz_common::events::HasEvents;
+use bz_common::scope::scope_and_collect_with_dice;
+use bz_core::deferred::base_deferred_key::BaseDeferredKeyBxl;
+use bz_core::deferred::dynamic::DynamicLambdaResultsKey;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_hash::BuckIndexMap;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_interpreter::factory::BuckStarlarkModule;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::print_handler::EventDispatcherPrintHandler;
+use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationObserver;
 use dupe::Dupe;
@@ -76,7 +76,7 @@ pub(crate) async fn eval_bxl_for_dynamic_output<'v>(
     resolved_dynamic_values: StdBuckHashMap<DynamicValue, FrozenProviderCollectionValue>,
     _digest_config: DigestConfig,
     liveness: CancellationObserver,
-) -> buck2_error::Result<RecordedAnalysisValues> {
+) -> bz_error::Result<RecordedAnalysisValues> {
     // TODO(wendyy) emit telemetry, support profiler
     let dynamic_key =
         BxlDynamicKey::from_base_deferred_key_dyn_impl_err(base_deferred_key.clone())?;
@@ -137,7 +137,7 @@ pub(crate) async fn eval_bxl_for_dynamic_output<'v>(
                     let eval_provider = StarlarkEvaluatorProvider::new(dice_ctx, eval_kind).await?;
                     tokio::task::block_in_place(|| eval_ctx.do_eval(eval_provider, dice_ctx))
                 }),
-                || Err(buck2_error!(buck2_error::ErrorTag::Tier0, "cancelled")),
+                || Err(bz_error!(bz_error::ErrorTag::Tier0, "cancelled")),
             )
         })
     }
@@ -168,7 +168,7 @@ impl BxlDynamicOutputEvaluator<'_> {
         self,
         provider: StarlarkEvaluatorProvider,
         dice: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<RecordedAnalysisValues> {
+    ) -> bz_error::Result<RecordedAnalysisValues> {
         BuckStarlarkModule::with_profiling(|env| {
             let bxl_dice = BxlDiceComputations::new(dice, self.liveness.dupe());
 

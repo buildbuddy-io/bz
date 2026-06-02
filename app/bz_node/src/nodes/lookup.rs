@@ -9,9 +9,9 @@
  */
 
 use async_trait::async_trait;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_query::query::traversal::AsyncNodeLookup;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_query::query::traversal::AsyncNodeLookup;
 use dice::LinearRecomputeDiceComputations;
 
 use crate::nodes::configured::ConfiguredTargetNode;
@@ -23,7 +23,7 @@ pub struct TargetNodeLookup<'c, 'd>(pub &'c LinearRecomputeDiceComputations<'d>)
 
 #[async_trait]
 impl AsyncNodeLookup<TargetNode> for TargetNodeLookup<'_, '_> {
-    async fn get(&self, label: &TargetLabel) -> buck2_error::Result<TargetNode> {
+    async fn get(&self, label: &TargetLabel) -> bz_error::Result<TargetNode> {
         Ok(self.0.get().get_target_node(label).await?)
     }
 }
@@ -35,7 +35,7 @@ impl AsyncNodeLookup<ConfiguredTargetNode> for ConfiguredTargetNodeLookup<'_, '_
     async fn get(
         &self,
         label: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<ConfiguredTargetNode> {
+    ) -> bz_error::Result<ConfiguredTargetNode> {
         self.0
             .get()
             .get_configured_target_node(label)

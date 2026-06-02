@@ -10,7 +10,7 @@
 
 use std::fmt::Write;
 
-use buck2_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::exit_result::ExitResult;
 use clap::Command;
 use clap::builder::PossibleValue;
 use regex::Regex;

@@ -8,15 +8,15 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineInputs;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_build_api::interpreter::rule_defs::register_rule_defs;
-use buck2_core::bzl::ImportPath;
-use buck2_interpreter::types::regex::register_buck_regex;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
-use buck2_interpreter_for_build::interpreter::testing::expect_error;
-use buck2_interpreter_for_build::label::testing::label_creator;
+use bz_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineInputs;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_build_api::interpreter::rule_defs::register_rule_defs;
+use bz_core::bzl::ImportPath;
+use bz_interpreter::types::regex::register_buck_regex;
+use bz_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::interpreter::testing::expect_error;
+use bz_interpreter_for_build::label::testing::label_creator;
 use indoc::indoc;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
@@ -44,7 +44,7 @@ pub(crate) fn inputs_helper(builder: &mut GlobalsBuilder) {
     }
 }
 
-fn tester() -> buck2_error::Result<Tester> {
+fn tester() -> bz_error::Result<Tester> {
     let mut tester = Tester::new()?;
     tester.additional_globals(testing::command_line_stringifier);
     tester.additional_globals(inputs_helper);
@@ -56,7 +56,7 @@ fn tester() -> buck2_error::Result<Tester> {
 }
 
 #[test]
-fn stringifies_correctly() -> buck2_error::Result<()> {
+fn stringifies_correctly() -> bz_error::Result<()> {
     let mut tester = tester()?;
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -103,7 +103,7 @@ fn stringifies_correctly() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn displays_correctly() -> buck2_error::Result<()> {
+fn displays_correctly() -> bz_error::Result<()> {
     let mut tester = tester()?;
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -134,7 +134,7 @@ fn displays_correctly_replace_regex() {
 }
 
 #[test]
-fn command_line_builder() -> buck2_error::Result<()> {
+fn command_line_builder() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let content = indoc!(
         r#"
@@ -265,7 +265,7 @@ fn command_line_builder() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_relative_absolute_old() -> buck2_error::Result<()> {
+fn test_relative_absolute_old() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -287,7 +287,7 @@ fn test_relative_absolute_old() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_relative_absolute() -> buck2_error::Result<()> {
+fn test_relative_absolute() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -307,7 +307,7 @@ fn test_relative_absolute() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_relative_to_propagated_up_and_down() -> buck2_error::Result<()> {
+fn test_relative_to_propagated_up_and_down() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -330,7 +330,7 @@ fn test_relative_to_propagated_up_and_down() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_relative_to_does_not_affect_new_artifacts() -> buck2_error::Result<()> {
+fn test_relative_to_does_not_affect_new_artifacts() -> bz_error::Result<()> {
     let mut tester = tester().unwrap();
     let content = indoc!(
         r#"
@@ -351,7 +351,7 @@ fn test_relative_to_does_not_affect_new_artifacts() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_parent() -> buck2_error::Result<()> {
+fn test_parent() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -381,7 +381,7 @@ fn test_parent() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_parent_n() -> buck2_error::Result<()> {
+fn test_parent_n() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -400,7 +400,7 @@ fn test_parent_n() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_parent_n_too_many_parents() -> buck2_error::Result<()> {
+fn test_parent_n_too_many_parents() -> bz_error::Result<()> {
     let mut tester = tester()?;
 
     let too_many_parent_calls = indoc!(
@@ -423,7 +423,7 @@ fn test_parent_n_too_many_parents() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_parent_n_parent_type() -> buck2_error::Result<()> {
+fn test_parent_n_parent_type() -> bz_error::Result<()> {
     let mut tester = tester()?;
 
     let bad_count = indoc!(
@@ -446,7 +446,7 @@ fn test_parent_n_parent_type() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_format() -> buck2_error::Result<()> {
+fn test_format() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -491,7 +491,7 @@ fn test_format() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_joined_with_empty_args() -> buck2_error::Result<()> {
+fn test_joined_with_empty_args() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -513,7 +513,7 @@ fn test_joined_with_empty_args() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_inputs_outputs() -> buck2_error::Result<()> {
+fn test_inputs_outputs() -> bz_error::Result<()> {
     let mut tester = tester()?;
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -544,7 +544,7 @@ fn test_inputs_outputs() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_ignore_artifacts() -> buck2_error::Result<()> {
+fn test_ignore_artifacts() -> bz_error::Result<()> {
     let mut tester = tester()?;
     tester.run_starlark_bzl_test(indoc!(
         r#"
@@ -568,7 +568,7 @@ fn test_ignore_artifacts() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_frozen_inputs_outputs() -> buck2_error::Result<()> {
+fn test_frozen_inputs_outputs() -> bz_error::Result<()> {
     let mut tester = tester()?;
 
     tester.add_import(
@@ -606,7 +606,7 @@ fn test_frozen_inputs_outputs() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_quote_style_shell() -> buck2_error::Result<()> {
+fn test_quote_style_shell() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -625,7 +625,7 @@ fn test_quote_style_shell() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_prepend() -> buck2_error::Result<()> {
+fn test_prepend() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -640,7 +640,7 @@ fn test_prepend() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_list_list() -> buck2_error::Result<()> {
+fn test_list_list() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -655,7 +655,7 @@ fn test_list_list() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_concat() -> buck2_error::Result<()> {
+fn test_concat() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -684,7 +684,7 @@ fn test_concat() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_replace_regex() -> buck2_error::Result<()> {
+fn test_replace_regex() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -710,7 +710,7 @@ fn test_replace_regex() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_replace_regex_old() -> buck2_error::Result<()> {
+fn test_replace_regex_old() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"
@@ -736,7 +736,7 @@ fn test_replace_regex_old() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_replace_regex_regex() -> buck2_error::Result<()> {
+fn test_replace_regex_regex() -> bz_error::Result<()> {
     let mut tester = tester()?;
     let contents = indoc!(
         r#"

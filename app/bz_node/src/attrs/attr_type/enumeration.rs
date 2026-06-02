@@ -12,7 +12,7 @@ use std::fmt;
 use std::hash::Hash;
 
 use allocative::Allocative;
-use buck2_util::arc_str::ArcStr;
+use bz_util::arc_str::ArcStr;
 use pagable::Pagable;
 use starlark_map::ordered_set::OrderedSet;
 
@@ -21,7 +21,7 @@ pub struct EnumAttrType {
     pub variants: OrderedSet<ArcStr>,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum EnumAttrError {
     #[error("enum.attr() variant names must all be lowercase, got `{0}`")]
@@ -31,7 +31,7 @@ enum EnumAttrError {
 }
 
 impl EnumAttrType {
-    pub fn new(variants: Vec<String>) -> buck2_error::Result<Self> {
+    pub fn new(variants: Vec<String>) -> bz_error::Result<Self> {
         let mut result = OrderedSet::with_capacity(variants.len());
         for x in variants {
             if x != x.to_lowercase() {

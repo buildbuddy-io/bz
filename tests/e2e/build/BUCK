@@ -1,8 +1,8 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_e2e_test")
+load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
 
 oncall("build_infra")
 
-buck2_e2e_test(
+bz_e2e_test(
     name = "test_build_isolated",
     srcs = ["test_build_isolated.py"],
     data = "//bz/tests/targets:isolated_targets",
@@ -18,7 +18,7 @@ buck2_e2e_test(
     ],
 )
 
-buck2_e2e_test(
+bz_e2e_test(
     name = "test_build_inplace",
     srcs = ["test_build_inplace.py"],
     require_nano_prelude = True,
@@ -27,7 +27,7 @@ buck2_e2e_test(
     ],
 )
 
-buck2_e2e_test(
+bz_e2e_test(
     name = "test_worker",
     srcs = ["test_worker.py"],
     labels = ["long_running"],
@@ -36,7 +36,7 @@ buck2_e2e_test(
     ],
 )
 
-buck2_e2e_test(
+bz_e2e_test(
     name = "test_remote_worker",
     srcs = ["test_remote_worker.py"],
     labels = ["long_running"],
@@ -45,11 +45,11 @@ buck2_e2e_test(
         "windows",
     ],
     test_with_deployed_buck2 = False,
-    use_compiled_buck2_client_and_tpx = True,
+    use_compiled_bz_client_and_tpx = True,
     deps = ["//bz/tests/e2e_util:utils"],
 )
 
-buck2_e2e_test(
+bz_e2e_test(
     name = "test_action_digest",
     srcs = ["test_action_digest.py"],
     # This test is currently broken on Windows due to rustc_link non-determinism
@@ -66,7 +66,7 @@ buck2_e2e_test(
     ],
 )
 
-buck2_e2e_test(
+bz_e2e_test(
     name = "test_rust_build_reproducibility",
     srcs = ["test_rust_build_reproducibility.py"],
     skip_for_os = ["windows"],

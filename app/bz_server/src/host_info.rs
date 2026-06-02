@@ -8,19 +8,19 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::client_context::HostArchOverride;
-use buck2_cli_proto::client_context::HostPlatformOverride;
-use buck2_core::soft_error;
-use buck2_error::BuckErrorContext;
-use buck2_interpreter::extra::InterpreterHostArchitecture;
-use buck2_interpreter::extra::InterpreterHostPlatform;
-use buck2_interpreter::extra::xcode::XcodeVersionInfo;
+use bz_cli_proto::client_context::HostArchOverride;
+use bz_cli_proto::client_context::HostPlatformOverride;
+use bz_core::soft_error;
+use bz_error::BuckErrorContext;
+use bz_interpreter::extra::InterpreterHostArchitecture;
+use bz_interpreter::extra::InterpreterHostPlatform;
+use bz_interpreter::extra::xcode::XcodeVersionInfo;
 
 pub fn get_host_info(
     host_platform: HostPlatformOverride,
     host_arch: HostArchOverride,
     host_xcode_override: &Option<String>,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     InterpreterHostPlatform,
     InterpreterHostArchitecture,
     Option<XcodeVersionInfo>,

@@ -13,11 +13,11 @@
 use std::fmt::Display;
 use std::path::PathBuf;
 
-use buck2_common::cas_digest::CasDigest;
-use buck2_common::cas_digest::TrackedCasDigest;
-use buck2_common::file_ops::metadata::FileDigestKind;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_common::cas_digest::CasDigest;
+use bz_common::cas_digest::TrackedCasDigest;
+use bz_common::file_ops::metadata::FileDigestKind;
+use bz_fs::paths::RelativePathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use serde::Serialize;
 use serde::Serializer;
 
@@ -73,7 +73,7 @@ pub struct ArtifactMetadataJson {
 
 #[cfg(test)]
 mod tests {
-    use buck2_common::cas_digest::CasDigestConfig;
+    use bz_common::cas_digest::CasDigestConfig;
 
     use super::*;
 

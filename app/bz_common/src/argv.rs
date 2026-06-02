@@ -11,9 +11,9 @@
 use std::fmt::Display;
 use std::sync::Arc;
 
-use buck2_core::cells::cell_path::CellPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_hash::StdBuckHashSet;
+use bz_core::cells::cell_path::CellPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_hash::StdBuckHashSet;
 use gazebo::prelude::VecExt;
 
 /// Argv contains the bare process argv and the "expanded" argv. The expanded argv is
@@ -395,14 +395,14 @@ impl Argv {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::cells::cell_path::CellPath;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_core::cells::cell_path::CellPath;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 
     use super::*;
 
     #[test]
-    fn test_get_representative_config_flags() -> buck2_error::Result<()> {
+    fn test_get_representative_config_flags() -> bz_error::Result<()> {
         let mut argv = ExpandedArgvBuilder::new();
 
         argv.push("-c".to_owned());
@@ -469,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_representative_config_flags_for_flagfiles() -> buck2_error::Result<()> {
+    fn test_get_representative_config_flags_for_flagfiles() -> bz_error::Result<()> {
         let project_argfile = |path: &str| ArgFilePath::Project(CellPath::testing_new(path));
         let external_root = ProjectRootTemp::new().unwrap();
         let external_root = external_root.path();
@@ -522,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_representative_config_flags_stops_at_double_dash() -> buck2_error::Result<()> {
+    fn test_get_representative_config_flags_stops_at_double_dash() -> bz_error::Result<()> {
         let mut argv = ExpandedArgvBuilder::new();
         argv.push("-c".to_owned());
         argv.push("section.option=value".to_owned());

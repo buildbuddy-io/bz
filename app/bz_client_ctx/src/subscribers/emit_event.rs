@@ -10,13 +10,13 @@
 
 use std::fmt;
 
-use buck2_event_observer::what_ran::CommandReproducer;
-use buck2_event_observer::what_ran::WhatRanOptions;
-use buck2_event_observer::what_ran::WhatRanOptionsRegex;
-use buck2_event_observer::what_ran::WhatRanOutputWriter;
-use buck2_event_observer::what_ran::WhatRanState;
-use buck2_event_observer::what_ran::emit_what_ran_entry;
-use buck2_events::span::SpanId;
+use bz_event_observer::what_ran::CommandReproducer;
+use bz_event_observer::what_ran::WhatRanOptions;
+use bz_event_observer::what_ran::WhatRanOptionsRegex;
+use bz_event_observer::what_ran::WhatRanOutputWriter;
+use bz_event_observer::what_ran::WhatRanState;
+use bz_event_observer::what_ran::emit_what_ran_entry;
+use bz_events::span::SpanId;
 use derive_more::From;
 use dupe::Dupe;
 
@@ -25,10 +25,10 @@ use dupe::Dupe;
 /// directly because *most* events are *not* relevant so we save the lookup in that case.
 pub(crate) fn emit_event_if_relevant(
     parent_span_id: OptionalSpanId,
-    data: &buck2_data::buck_event::Data,
+    data: &bz_data::buck_event::Data,
     state: &impl WhatRanState,
     output: &mut impl WhatRanOutputWriter,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let options = WhatRanOptions::default();
     let options_regex = WhatRanOptionsRegex::from_options(&options)?;
     if let Some(repro) = CommandReproducer::from_buck_data(data, options_regex.options) {

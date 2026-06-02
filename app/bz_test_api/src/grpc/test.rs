@@ -11,8 +11,8 @@
 use std::time::Duration;
 
 use assert_matches::assert_matches;
-use buck2_error::BuckErrorContext as _;
-use buck2_grpc::DuplexChannel;
+use bz_error::BuckErrorContext as _;
+use bz_grpc::DuplexChannel;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 
@@ -25,17 +25,17 @@ struct MockExecutor;
 
 #[async_trait::async_trait]
 impl TestExecutor for MockExecutor {
-    async fn external_runner_spec(&self, _: ExternalRunnerSpec) -> buck2_error::Result<()> {
+    async fn external_runner_spec(&self, _: ExternalRunnerSpec) -> bz_error::Result<()> {
         Ok(())
     }
 
-    async fn end_of_test_requests(&self) -> buck2_error::Result<()> {
+    async fn end_of_test_requests(&self) -> bz_error::Result<()> {
         Ok(())
     }
 }
 
 #[tokio::test]
-async fn test_basic() -> buck2_error::Result<()> {
+async fn test_basic() -> bz_error::Result<()> {
     let (client_io, server_io) = tokio::io::duplex(64);
     let server = spawn_executor_server(to_duplex_channel(server_io), MockExecutor);
     let client = TestExecutorClient::new(client_io)
@@ -66,7 +66,7 @@ async fn test_basic() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_client_disconnect() -> buck2_error::Result<()> {
+async fn test_client_disconnect() -> bz_error::Result<()> {
     let (client_io, server_io) = tokio::io::duplex(64);
     let mut server =
         spawn_executor_server(to_duplex_channel(server_io), MockExecutor).into_join_handle();

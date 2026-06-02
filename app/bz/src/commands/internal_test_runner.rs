@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_error::ErrorTag;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_error::ErrorTag;
 use clap::Parser;
 use tokio::runtime::Runtime;
 
@@ -21,11 +21,11 @@ use tokio::runtime::Runtime;
 pub(crate) struct InternalTestRunnerCommand {
     #[cfg(unix)]
     #[clap(flatten)]
-    unix_runner: buck2_test_runner::unix::Buck2TestRunnerUnix,
+    unix_runner: bz_test_runner::unix::Buck2TestRunnerUnix,
 
     #[cfg(not(unix))]
     #[clap(flatten)]
-    tcp_runner: buck2_test_runner::tcp::Buck2TestRunnerTcp,
+    tcp_runner: bz_test_runner::tcp::Buck2TestRunnerTcp,
 }
 
 impl InternalTestRunnerCommand {
@@ -38,7 +38,7 @@ impl InternalTestRunnerCommand {
         events_ctx.log_invocation_record = false;
 
         // Internal test runner should only be used in the open source version of Buck2.
-        if buck2_core::is_open_source()
+        if bz_core::is_open_source()
             || std::env::var("BUCK2_ALLOW_INTERNAL_TEST_RUNNER_DO_NOT_USE").is_ok()
         {
             let runtime = Runtime::new().expect("Failed to create Tokio runtime");
@@ -55,7 +55,7 @@ impl InternalTestRunnerCommand {
                 })
                 .into()
         } else {
-            buck2_error::buck2_error!(
+            bz_error::bz_error!(
                 ErrorTag::Input,
                 "Cannot use internal test runner. Config value must be provided for test.v2_test_executor."
             ).into()

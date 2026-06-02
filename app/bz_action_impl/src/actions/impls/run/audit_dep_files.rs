@@ -11,17 +11,17 @@
 use std::borrow::Cow;
 use std::io::Write;
 
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::audit_dep_files::AUDIT_DEP_FILES;
-use buck2_core::category::Category;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::materialize::materializer::HasMaterializer;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::audit_dep_files::AUDIT_DEP_FILES;
+use bz_core::category::Category;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::materialize::materializer::HasMaterializer;
 use dice::DiceTransaction;
 
 use crate::actions::impls::run::RunActionKey;
@@ -41,7 +41,7 @@ async fn audit_dep_files(
     category: Category,
     identifier: Option<String>,
     stdout: &mut (dyn Write + Send),
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let key = RunActionKey::new(BaseDeferredKey::TargetLabel(label), category, identifier);
 
     let state = get_dep_files(&key)
@@ -50,8 +50,8 @@ async fn audit_dep_files(
     let declared_dep_files = match state.declared_dep_files() {
         Some(declared_dep_files) => declared_dep_files,
         None => {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Trying to audit dep files for an action that doesn't declare any dep files!"
             ));
         }
@@ -78,8 +78,8 @@ async fn audit_dep_files(
     let dirs = match &*fingerprints {
         StoredFingerprints::Digests(..) => {
             // This is bit awkward but this only for testing right now so that's OK
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Fingerprints were stored as digests! You probably need to use BUCK2_KEEP_DEP_FILE_DIRECTORIES=true"
             ));
         }

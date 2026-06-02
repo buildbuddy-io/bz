@@ -10,12 +10,12 @@
 
 use std::sync::Arc;
 
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_build_api::anon_target::AnonTargetDependentAnalysisResults;
-use buck2_build_api::anon_target::AnonTargetDyn;
-use buck2_build_api::bxl::anon_target::EVAL_BXL_FOR_ANON_TARGET;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
+use bz_build_api::analysis::AnalysisResult;
+use bz_build_api::anon_target::AnonTargetDependentAnalysisResults;
+use bz_build_api::anon_target::AnonTargetDyn;
+use bz_build_api::bxl::anon_target::EVAL_BXL_FOR_ANON_TARGET;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::global_cfg_options::GlobalCfgOptions;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationObserver;
 
@@ -26,7 +26,7 @@ pub(crate) async fn eval_bxl_for_anon_target(
     dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
     execution_platform: ExecutionPlatformResolution,
     liveness: CancellationObserver,
-) -> buck2_error::Result<AnalysisResult> {
+) -> bz_error::Result<AnalysisResult> {
     (EVAL_BXL_FOR_ANON_TARGET.get()?)(
         dice,
         anon_target,

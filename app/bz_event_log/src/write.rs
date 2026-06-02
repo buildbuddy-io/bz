@@ -14,14 +14,14 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 
-use buck2_cli_proto::*;
-use buck2_common::argv::SanitizedArgv;
-use buck2_error::BuckErrorContext;
-use buck2_events::BuckEvent;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::working_dir::AbsWorkingDir;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_cli_proto::*;
+use bz_common::argv::SanitizedArgv;
+use bz_error::BuckErrorContext;
+use bz_events::BuckEvent;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::working_dir::AbsWorkingDir;
+use bz_wrapper_common::invocation_id::TraceId;
 use futures::future::Future;
 use prost::Message;
 use serde::Serialize;
@@ -95,7 +95,7 @@ impl WriteEventLog {
     }
 
     /// Get the command line arguments and cwd and serialize them for replaying later.
-    async fn log_invocation(&mut self, trace_id: TraceId) -> buck2_error::Result<()> {
+    async fn log_invocation(&mut self, trace_id: TraceId) -> bz_error::Result<()> {
         let command_line_args = self.sanitized_argv.argv.clone();
         let expanded_command_line_args = self
             .sanitized_argv
@@ -113,7 +113,7 @@ impl WriteEventLog {
         self.write_ln(&[invocation]).await
     }
 
-    async fn write_ln<'b, T, I>(&'b mut self, events: I) -> buck2_error::Result<()>
+    async fn write_ln<'b, T, I>(&'b mut self, events: I) -> bz_error::Result<()>
     where
         T: SerializeForLog + 'b,
         I: IntoIterator<Item = &'b T> + Clone + 'b,
@@ -148,7 +148,7 @@ impl WriteEventLog {
         }
     }
 
-    async fn ensure_log_writers_opened(&mut self, event: &BuckEvent) -> buck2_error::Result<()> {
+    async fn ensure_log_writers_opened(&mut self, event: &BuckEvent) -> bz_error::Result<()> {
         let (logdir, maybe_extra_path, maybe_extra_user_event_log_path) = match &self.state {
             LogWriterState::Unopened {
                 logdir,
@@ -157,8 +157,8 @@ impl WriteEventLog {
             } => (logdir, extra_path, extra_user_event_log_path),
             LogWriterState::Opened { .. } => return Ok(()),
             LogWriterState::Closed => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "Received events after logs were closed"
                 ));
             }
@@ -255,9 +255,9 @@ async fn start_persist_event_log_subprocess(
     path: EventLogPathBuf,
     trace_id: TraceId,
     bytes_written: Option<Arc<AtomicU64>>,
-) -> buck2_error::Result<NamedEventLogWriter> {
+) -> bz_error::Result<NamedEventLogWriter> {
     let current_exe = std::env::current_exe().buck_error_context("No current_exe")?;
-    let mut command = buck2_util::process::async_background_command(current_exe);
+    let mut command = bz_util::process::async_background_command(current_exe);
     // @oss-disable: #[cfg(unix)]
     #[cfg(all(tokio_unstable, unix))] // @oss-enable
     {
@@ -311,7 +311,7 @@ async fn open_event_log_for_writing(
     path: EventLogPathBuf,
     bytes_written: Option<Arc<AtomicU64>>,
     event_log_type: EventLogType,
-) -> buck2_error::Result<NamedEventLogWriter> {
+) -> bz_error::Result<NamedEventLogWriter> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -334,7 +334,7 @@ async fn open_event_log_for_writing(
 }
 
 impl WriteEventLog {
-    pub async fn write_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
+    pub async fn write_events(&mut self, events: &[Arc<BuckEvent>]) -> bz_error::Result<()> {
         let mut event_refs = Vec::new();
         let mut first = true;
         for event in events {
@@ -355,8 +355,8 @@ impl WriteEventLog {
 
     pub async fn write_result(
         &mut self,
-        result: &buck2_cli_proto::CommandResult,
-    ) -> buck2_error::Result<()> {
+        result: &bz_cli_proto::CommandResult,
+    ) -> bz_error::Result<()> {
         match &self.state {
             LogWriterState::Opened { .. } | LogWriterState::Closed => {}
             LogWriterState::Unopened { .. } => {
@@ -374,7 +374,7 @@ impl WriteEventLog {
         self.write_ln(&[event]).await
     }
 
-    pub async fn flush_files(&mut self) -> buck2_error::Result<()> {
+    pub async fn flush_files(&mut self) -> bz_error::Result<()> {
         let writers = match &mut self.state {
             LogWriterState::Opened { writers } => writers,
             LogWriterState::Unopened { .. } | LogWriterState::Closed => return Ok(()),
@@ -389,18 +389,18 @@ impl WriteEventLog {
 }
 
 impl SerializeForLog for Invocation {
-    fn serialize_to_json(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()> {
+    fn serialize_to_json(&self, buf: &mut Vec<u8>) -> bz_error::Result<()> {
         serde_json::to_writer(buf, &self.clone().to_proto())
             .buck_error_context("Failed to serialize event")
     }
 
-    fn serialize_to_protobuf_length_delimited(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()> {
+    fn serialize_to_protobuf_length_delimited(&self, buf: &mut Vec<u8>) -> bz_error::Result<()> {
         self.clone().to_proto().encode_length_delimited(buf)?;
         Ok(())
     }
 
     // Always log invocation record to user event log for `buck2 log show` compatibility
-    fn maybe_serialize_user_event(&self, buf: &mut Vec<u8>) -> buck2_error::Result<bool> {
+    fn maybe_serialize_user_event(&self, buf: &mut Vec<u8>) -> bz_error::Result<bool> {
         serde_json::to_writer(buf, &self.clone().to_proto())
             .buck_error_context("Failed to serialize event")?;
         Ok(true)
@@ -410,15 +410,15 @@ impl SerializeForLog for Invocation {
 #[derive(Serialize)]
 pub enum StreamValueForWrite<'a> {
     Result(&'a CommandResult),
-    Event(&'a buck2_data::BuckEvent),
+    Event(&'a bz_data::BuckEvent),
 }
 
 impl SerializeForLog for StreamValueForWrite<'_> {
-    fn serialize_to_json(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()> {
+    fn serialize_to_json(&self, buf: &mut Vec<u8>) -> bz_error::Result<()> {
         serde_json::to_writer(buf, &self).buck_error_context("Failed to serialize event")
     }
 
-    fn serialize_to_protobuf_length_delimited(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()> {
+    fn serialize_to_protobuf_length_delimited(&self, buf: &mut Vec<u8>) -> bz_error::Result<()> {
         // We use `CommandProgressForWrite` here to avoid cloning `BuckEvent`.
         // `CommandProgressForWrite` serialization is bitwise identical to `CommandProgress`.
         // See the protobuf spec
@@ -428,14 +428,14 @@ impl SerializeForLog for StreamValueForWrite<'_> {
             Self::Event(e) => command_progress_for_write::Progress::Event(e.encode_to_vec()),
             Self::Result(res) => command_progress_for_write::Progress::Result((*res).clone()),
         };
-        let stream_val = buck2_cli_proto::CommandProgressForWrite {
+        let stream_val = bz_cli_proto::CommandProgressForWrite {
             progress: Some(progress),
         };
         stream_val.encode_length_delimited(buf)?;
         Ok(())
     }
 
-    fn maybe_serialize_user_event(&self, buf: &mut Vec<u8>) -> buck2_error::Result<bool> {
+    fn maybe_serialize_user_event(&self, buf: &mut Vec<u8>) -> bz_error::Result<bool> {
         if let StreamValueForWrite::Event(event) = self {
             if let Some(user_event) = try_get_user_event(event)? {
                 serde_json::to_writer(buf, &user_event)
@@ -452,11 +452,11 @@ impl SerializeForLog for StreamValueForWrite<'_> {
 mod tests {
     use std::time::SystemTime;
 
-    use buck2_common::argv::Argv;
-    use buck2_common::argv::ExpandedArgv;
-    use buck2_data::LoadBuildFileStart;
-    use buck2_data::SpanStartEvent;
-    use buck2_events::span::SpanId;
+    use bz_common::argv::Argv;
+    use bz_common::argv::ExpandedArgv;
+    use bz_data::LoadBuildFileStart;
+    use bz_data::SpanStartEvent;
+    use bz_events::span::SpanId;
     use futures::TryStreamExt;
     use tempfile::TempDir;
 
@@ -465,7 +465,7 @@ mod tests {
     use crate::utils::Compression;
 
     impl WriteEventLog {
-        async fn new_test(log: EventLogPathBuf) -> buck2_error::Result<Self> {
+        async fn new_test(log: EventLogPathBuf) -> bz_error::Result<Self> {
             Ok(Self {
                 state: LogWriterState::Opened {
                     writers: vec![
@@ -493,8 +493,8 @@ mod tests {
             TraceId::new(),
             Some(SpanId::next()),
             None,
-            buck2_data::buck_event::Data::SpanStart(SpanStartEvent {
-                data: Some(buck2_data::span_start_event::Data::Load(
+            bz_data::buck_event::Data::SpanStart(SpanStartEvent {
+                data: Some(bz_data::span_start_event::Data::Load(
                     LoadBuildFileStart {
                         module_id: "foo".to_owned(),
                         cell: "bar".to_owned(),
@@ -505,16 +505,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_protobuf_decoding_gzip() -> buck2_error::Result<()> {
+    async fn test_protobuf_decoding_gzip() -> bz_error::Result<()> {
         test_protobuf_decoding(Encoding::PROTO_GZIP).await
     }
 
     #[tokio::test]
-    async fn test_protobuf_decoding_zstd() -> buck2_error::Result<()> {
+    async fn test_protobuf_decoding_zstd() -> bz_error::Result<()> {
         test_protobuf_decoding(Encoding::PROTO_ZSTD).await
     }
 
-    async fn test_protobuf_decoding(encoding: Encoding) -> buck2_error::Result<()> {
+    async fn test_protobuf_decoding(encoding: Encoding) -> bz_error::Result<()> {
         //Create log dir
         let tmp_dir = TempDir::new()?;
 
@@ -562,11 +562,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tick_makes_valid_log_zstd() -> buck2_error::Result<()> {
+    async fn test_tick_makes_valid_log_zstd() -> bz_error::Result<()> {
         test_tick_makes_valid_log(Encoding::PROTO_ZSTD).await
     }
 
-    async fn test_tick_makes_valid_log(encoding: Encoding) -> buck2_error::Result<()> {
+    async fn test_tick_makes_valid_log(encoding: Encoding) -> bz_error::Result<()> {
         if cfg!(windows) {
             // Do not want to deal with exclusivity issues on Windows.
             return Ok(());
@@ -636,7 +636,7 @@ mod tests {
         StreamValueForWrite::Event(event.event())
             .serialize_to_protobuf_length_delimited(&mut actual)
             .unwrap();
-        let expected = buck2_cli_proto::CommandProgress {
+        let expected = bz_cli_proto::CommandProgress {
             progress: Some(command_progress::Progress::Event(event.into())),
         }
         .encode_length_delimited_to_vec();

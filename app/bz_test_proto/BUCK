@@ -4,19 +4,19 @@ load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
 oncall("build_infra")
 
 rust_protobuf_library(
-    name = "buck2_test_proto",
+    name = "bz_test_proto",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",
-    proto_srcs = ":buck2_test_proto.proto",
+    proto_srcs = ":bz_test_proto.proto",
     deps = [
         "fbsource//third-party/rust:prost-types",
-        "//bz/app/bz_data:buck2_data",
-        "//bz/app/bz_host_sharing_proto:buck2_host_sharing_proto",
+        "//bz/app/bz_data:bz_data",
+        "//bz/app/bz_host_sharing_proto:bz_host_sharing_proto",
     ],
 )
 
 proto_srcs(
-    name = "buck2_test_proto.proto",
+    name = "bz_test_proto.proto",
     srcs = ["test.proto"],
     visibility = ["PUBLIC"],
     deps = [

@@ -11,16 +11,16 @@
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_analysis::analysis::calculation::resolve_queries;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::analysis_queries::AuditAnalysisQueriesCommand;
-use buck2_common::pattern::parse_from_cli::parse_and_resolve_patterns_from_cli_args;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_analysis::analysis::calculation::resolve_queries;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::analysis_queries::AuditAnalysisQueriesCommand;
+use bz_common::pattern::parse_from_cli::parse_and_resolve_patterns_from_cli_args;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::label::label::TargetLabel;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 use crate::ServerAuditSubcommand;
 use crate::common::target_resolution_config::audit_command_target_resolution_config;
@@ -30,9 +30,9 @@ impl ServerAuditSubcommand for AuditAnalysisQueriesCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(server_ctx
             .with_dice_ctx(|server_ctx, mut ctx| async move {
                 let target_resolution_config =
@@ -51,7 +51,7 @@ impl ServerAuditSubcommand for AuditAnalysisQueriesCommand {
 
                 for (package_with_modifiers, spec) in resolved_pattern.specs {
                     match spec {
-                        buck2_core::pattern::pattern::PackageSpec::Targets(targets) => {
+                        bz_core::pattern::pattern::PackageSpec::Targets(targets) => {
                             for (target, TargetPatternExtra) in targets {
                                 let label = TargetLabel::new(
                                     package_with_modifiers.package,
@@ -85,9 +85,9 @@ impl ServerAuditSubcommand for AuditAnalysisQueriesCommand {
                                 }
                             }
                         }
-                        buck2_core::pattern::pattern::PackageSpec::All() => {
-                            return Err(buck2_error::buck2_error!(
-                                buck2_error::ErrorTag::Unimplemented,
+                        bz_core::pattern::pattern::PackageSpec::All() => {
+                            return Err(bz_error::bz_error!(
+                                bz_error::ErrorTag::Unimplemented,
                                 "PackageSpec::All not implemented"
                             ));
                         }

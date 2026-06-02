@@ -12,17 +12,17 @@ use std::io::Write;
 use std::path::Path;
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::file_package::AuditFilePackageCommand;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::package_listing::dice::DicePackageListingResolver;
-use buck2_common::package_listing::resolver::PackageListingResolver;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_fs::working_dir::AbsWorkingDir;
-use buck2_hash::BuckIndexMap;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::file_package::AuditFilePackageCommand;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::package_listing::dice::DicePackageListingResolver;
+use bz_common::package_listing::resolver::PackageListingResolver;
+use bz_core::fs::project::ProjectRoot;
+use bz_fs::working_dir::AbsWorkingDir;
+use bz_hash::BuckIndexMap;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use dice::DiceComputations;
 
 use crate::ServerAuditSubcommand;
@@ -39,9 +39,9 @@ impl ServerAuditSubcommand for AuditFilePackageCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(server_ctx
             .with_dice_ctx(|server_ctx, mut ctx| async move {
                 let cwd_abs = server_ctx.working_dir_abs();
@@ -73,7 +73,7 @@ async fn audit_build_package(
     paths: &[String],
     cwd_abs: &AbsWorkingDir,
     project_root: &ProjectRoot,
-) -> buck2_error::Result<BuckIndexMap<String, Package>> {
+) -> bz_error::Result<BuckIndexMap<String, Package>> {
     let cells = ctx.get_cell_resolver().await?;
 
     let mut mappings = BuckIndexMap::default();

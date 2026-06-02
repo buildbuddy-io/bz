@@ -11,7 +11,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use buck2_util::os::host_cpu_usage::HostCpuUsage;
+use bz_util::os::host_cpu_usage::HostCpuUsage;
 use dupe::Dupe;
 
 /// Host CPU usage since a buck2 command was started.
@@ -27,7 +27,7 @@ pub(crate) struct CpuUsageCollector {
 }
 
 impl CpuUsageCollector {
-    pub(crate) fn new() -> buck2_error::Result<Self> {
+    pub(crate) fn new() -> bz_error::Result<Self> {
         let start = Arc::new(Mutex::new(None));
         let handle = start.dupe();
         tokio::task::spawn_blocking(move || {

@@ -21,7 +21,7 @@ pub mod efm;
 #[cfg(test)]
 mod efm_tests;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum ErrorFormatError {
     #[error("Parse error: {0}")]

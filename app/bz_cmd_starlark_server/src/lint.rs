@@ -12,21 +12,21 @@ use std::io::Write;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_starlark_client::lint::StarlarkLintCommand;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_common::io::IoProvider;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
-use buck2_error::internal_error;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::file_type::StarlarkFileType;
-use buck2_interpreter::paths::path::StarlarkPath;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_starlark_client::lint::StarlarkLintCommand;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::dice::data::HasIoProvider;
+use bz_common::io::IoProvider;
+use bz_core::cells::CellResolver;
+use bz_core::cells::name::CellName;
+use bz_error::internal_error;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::file_type::StarlarkFileType;
+use bz_interpreter::paths::path::StarlarkPath;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use dice::DiceTransaction;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
@@ -57,7 +57,7 @@ impl<'a> Cache<'a> {
     pub(crate) async fn get_names(
         &mut self,
         path: &StarlarkPath<'_>,
-    ) -> buck2_error::Result<Arc<StdBuckHashSet<String>>> {
+    ) -> bz_error::Result<Arc<StdBuckHashSet<String>>> {
         let path_type = path.file_type();
         let cell = path.cell();
         if let Some(res) = self.cached.get(&(cell, path_type)) {
@@ -75,7 +75,7 @@ async fn lint_file(
     cell_resolver: &CellResolver,
     io: &dyn IoProvider,
     cache: &mut Cache<'_>,
-) -> buck2_error::Result<Vec<Lint>> {
+) -> bz_error::Result<Vec<Lint>> {
     let dialect = path.file_type().dialect(false);
     let proj_path = cell_resolver.resolve_path(path.path().as_ref().as_ref())?;
     let path_str = proj_path.to_string();
@@ -107,9 +107,9 @@ impl StarlarkServerSubcommand for StarlarkLintCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         server_ctx
             .with_dice_ctx(|server_ctx, mut ctx| async move {
                 let cell_resolver = &ctx.get_cell_resolver().await?;
@@ -129,8 +129,8 @@ impl StarlarkServerSubcommand for StarlarkLintCommand {
                     }
                 }
                 if lint_count > 0 {
-                    Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Found {} lints",
                         lint_count
                     ))
@@ -140,7 +140,7 @@ impl StarlarkServerSubcommand for StarlarkLintCommand {
                         "Found no lints in {} files",
                         files.len()
                     )?;
-                    buck2_error::Ok(())
+                    bz_error::Ok(())
                 }
             })
             .await

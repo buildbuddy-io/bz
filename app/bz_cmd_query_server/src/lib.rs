@@ -9,16 +9,16 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::AqueryRequest;
-use buck2_cli_proto::AqueryResponse;
-use buck2_cli_proto::CqueryRequest;
-use buck2_cli_proto::CqueryResponse;
-use buck2_cli_proto::StdoutBytes;
-use buck2_cli_proto::UqueryRequest;
-use buck2_cli_proto::UqueryResponse;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::late_bindings::QueryServerCommands;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::AqueryRequest;
+use bz_cli_proto::AqueryResponse;
+use bz_cli_proto::CqueryRequest;
+use bz_cli_proto::CqueryResponse;
+use bz_cli_proto::StdoutBytes;
+use bz_cli_proto::UqueryRequest;
+use bz_cli_proto::UqueryResponse;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::late_bindings::QueryServerCommands;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 pub(crate) mod dot;
 pub(crate) mod html;
@@ -38,7 +38,7 @@ impl QueryServerCommands for QueryServerCommandsInstance {
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<StdoutBytes>,
         req: UqueryRequest,
-    ) -> buck2_error::Result<UqueryResponse> {
+    ) -> bz_error::Result<UqueryResponse> {
         uquery_command(ctx, partial_result_dispatcher, req).await
     }
 
@@ -47,7 +47,7 @@ impl QueryServerCommands for QueryServerCommandsInstance {
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<StdoutBytes>,
         req: CqueryRequest,
-    ) -> buck2_error::Result<CqueryResponse> {
+    ) -> bz_error::Result<CqueryResponse> {
         cquery_command(ctx, partial_result_dispatcher, req).await
     }
 
@@ -56,12 +56,12 @@ impl QueryServerCommands for QueryServerCommandsInstance {
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<StdoutBytes>,
         req: AqueryRequest,
-    ) -> buck2_error::Result<AqueryResponse> {
+    ) -> bz_error::Result<AqueryResponse> {
         aquery_command(ctx, partial_result_dispatcher, req).await
     }
 }
 
 pub fn init_late_bindings() {
-    buck2_server_ctx::late_bindings::QUERY_SERVER_COMMANDS.init(&QueryServerCommandsInstance);
+    bz_server_ctx::late_bindings::QUERY_SERVER_COMMANDS.init(&QueryServerCommandsInstance);
     query::printer::init_print_action_node();
 }

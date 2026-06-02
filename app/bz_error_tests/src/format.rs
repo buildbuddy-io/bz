@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_util::golden_test_helper::trim_rust_backtrace;
+use bz_util::golden_test_helper::trim_rust_backtrace;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[error("test error")]
 #[buck2(tag = Input)]
 struct TestError;
@@ -24,7 +24,7 @@ fn assert_eq_no_backtrace<T: AsRef<str>, U: AsRef<str>>(a: T, b: U) {
 
 #[test]
 fn test_shows_context() {
-    let e = buck2_error::Error::from(TestError)
+    let e = bz_error::Error::from(TestError)
         .context("context 1")
         .context("context 2");
     assert_eq_no_backtrace(
@@ -40,12 +40,12 @@ Caused by:
 
 #[test]
 fn test_with_context_from_source() {
-    #[derive(buck2_error::Error, Debug)]
+    #[derive(bz_error::Error, Debug)]
     #[error("with source")]
     #[buck2(tag = Environment)]
     struct E(#[source] TestError);
 
-    let e = buck2_error::Error::from(E(TestError)).context("context");
+    let e = bz_error::Error::from(E(TestError)).context("context");
 
     assert_eq_no_backtrace(
         format!("{e:?}"),

@@ -14,7 +14,7 @@ use std::env;
 use std::ffi::OsString;
 use std::io;
 use std::path::Path;
-#[cfg(not(buck2_build))]
+#[cfg(not(bz_build))]
 use std::path::PathBuf;
 
 fn get_env(key: &str) -> Option<OsString> {
@@ -22,7 +22,7 @@ fn get_env(key: &str) -> Option<OsString> {
     env::var_os(key)
 }
 
-#[cfg(not(buck2_build))]
+#[cfg(not(bz_build))]
 unsafe fn set_var(
     var: &str,
     override_var: &str,
@@ -61,7 +61,7 @@ unsafe fn set_var(
 ///
 /// Note: repo root is expected to be a relative or absolute path to the root of the repository.
 unsafe fn maybe_set_protoc() {
-    #[cfg(not(buck2_build))]
+    #[cfg(not(bz_build))]
     {
         // `cargo build` of `buck2` does not require external `protoc` dependency
         // because it uses prebuilt bundled `protoc` binary from `protoc-bin-vendored` crate.
@@ -81,7 +81,7 @@ unsafe fn maybe_set_protoc() {
 
 /// Set $PROTOC_INCLUDE.
 unsafe fn maybe_set_protoc_include() {
-    #[cfg(not(buck2_build))]
+    #[cfg(not(bz_build))]
     {
         unsafe {
             set_var(

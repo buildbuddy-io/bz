@@ -9,25 +9,25 @@
  */
 
 use async_trait::async_trait;
-use buck2_downward_api::DownwardApi;
-use buck2_hash::StdBuckHashMap;
+use bz_downward_api::DownwardApi;
+use bz_hash::StdBuckHashMap;
 use tracing::Level;
 
 pub struct BuckTestDownwardApi;
 
 #[async_trait]
 impl DownwardApi for BuckTestDownwardApi {
-    async fn console(&self, _level: Level, msg: String) -> buck2_error::Result<()> {
+    async fn console(&self, _level: Level, msg: String) -> bz_error::Result<()> {
         // TODO(brasselsprouts): use the level and hook it up with our superconsole
         eprintln!("{}", msg);
         Ok(())
     }
 
-    async fn log(&self, _level: Level, _msg: String) -> buck2_error::Result<()> {
+    async fn log(&self, _level: Level, _msg: String) -> bz_error::Result<()> {
         unimplemented!("TODO(bobyf)")
     }
 
-    async fn external(&self, _data: StdBuckHashMap<String, String>) -> buck2_error::Result<()> {
+    async fn external(&self, _data: StdBuckHashMap<String, String>) -> bz_error::Result<()> {
         unimplemented!("need buck event stream to implement")
     }
 }

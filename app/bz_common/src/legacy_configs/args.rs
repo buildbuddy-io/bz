@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::ConfigOverride;
-use buck2_cli_proto::config_override::ConfigType;
-use buck2_core::cells::cell_root_path::CellRootPathBuf;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::abs_path::AbsPathBuf;
+use bz_cli_proto::ConfigOverride;
+use bz_cli_proto::config_override::ConfigType;
+use bz_core::cells::cell_root_path::CellRootPathBuf;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::abs_path::AbsPathBuf;
 use pagable::Pagable;
 
 use crate::legacy_configs::configs::ConfigArgumentParseError;
@@ -62,7 +62,7 @@ pub(crate) struct ResolvedConfigFlag {
 fn resolve_config_flag_arg(
     cell: Option<CellRootPathBuf>,
     raw_arg: &str,
-) -> buck2_error::Result<ResolvedConfigFlag> {
+) -> bz_error::Result<ResolvedConfigFlag> {
     let (raw_section_and_key, raw_value) = raw_arg
         .split_once('=')
         .ok_or_else(|| ConfigArgumentParseError::NoEqualsSeparator(raw_arg.to_owned()))?;
@@ -86,7 +86,7 @@ async fn resolve_config_file_arg(
     cell: Option<CellRootPathBuf>,
     arg: &str,
     file_ops: &mut dyn ConfigParserFileOps,
-) -> buck2_error::Result<ResolvedConfigFile> {
+) -> bz_error::Result<ResolvedConfigFile> {
     if let Some(cell_path) = cell {
         let proj_path = cell_path.as_project_relative_path().join_normalized(arg)?;
         return Ok(ResolvedConfigFile::Project(proj_path));
@@ -111,7 +111,7 @@ async fn resolve_config_file_arg(
 pub(crate) async fn resolve_config_args(
     args: &[ConfigOverride],
     file_ops: &mut dyn ConfigParserFileOps,
-) -> buck2_error::Result<Vec<ResolvedLegacyConfigArg>> {
+) -> bz_error::Result<Vec<ResolvedLegacyConfigArg>> {
     let mut resolved_args = Vec::new();
 
     for u in args {
@@ -142,17 +142,17 @@ pub(crate) async fn resolve_config_args(
 
 pub(crate) fn to_proto_config_args(
     args: &[ResolvedLegacyConfigArg],
-) -> Vec<buck2_data::BuckconfigComponent> {
-    use buck2_data::buckconfig_component::Data::ConfigFile;
-    use buck2_data::buckconfig_component::Data::ConfigValue;
-    use buck2_data::config_file::Data::GlobalExternalConfig;
-    use buck2_data::config_file::Data::ProjectRelativePath;
+) -> Vec<bz_data::BuckconfigComponent> {
+    use bz_data::buckconfig_component::Data::ConfigFile;
+    use bz_data::buckconfig_component::Data::ConfigValue;
+    use bz_data::config_file::Data::GlobalExternalConfig;
+    use bz_data::config_file::Data::ProjectRelativePath;
 
     args.iter()
         .map(|arg| {
             let data = match arg {
                 ResolvedLegacyConfigArg::Flag(resolved_config_flag) => {
-                    ConfigValue(buck2_data::ConfigValue {
+                    ConfigValue(bz_data::ConfigValue {
                         section: resolved_config_flag.section.to_owned(),
                         key: resolved_config_flag.key.to_owned(),
                         value: resolved_config_flag
@@ -167,20 +167,20 @@ pub(crate) fn to_proto_config_args(
                     })
                 }
                 ResolvedLegacyConfigArg::File(ResolvedConfigFile::Project(p)) => {
-                    ConfigFile(buck2_data::ConfigFile {
+                    ConfigFile(bz_data::ConfigFile {
                         data: Some(ProjectRelativePath(p.to_string())),
                     })
                 }
                 ResolvedLegacyConfigArg::File(ResolvedConfigFile::Global(p)) => {
-                    ConfigFile(buck2_data::ConfigFile {
-                        data: Some(GlobalExternalConfig(buck2_data::GlobalExternalConfig {
+                    ConfigFile(bz_data::ConfigFile {
+                        data: Some(GlobalExternalConfig(bz_data::GlobalExternalConfig {
                             values: p.parser.to_proto_external_config_values(true),
                             origin_path: p.origin_path.to_str().unwrap_or("").to_owned(),
                         })),
                     })
                 }
             };
-            buck2_data::BuckconfigComponent { data: Some(data) }
+            bz_data::BuckconfigComponent { data: Some(data) }
         })
         .collect()
 }
@@ -190,7 +190,7 @@ mod tests {
     use super::resolve_config_flag_arg;
 
     #[test]
-    fn test_argument_pair() -> buck2_error::Result<()> {
+    fn test_argument_pair() -> bz_error::Result<()> {
         // Valid Formats
 
         let normal_pair = resolve_config_flag_arg(None, "apple.key=value")?;

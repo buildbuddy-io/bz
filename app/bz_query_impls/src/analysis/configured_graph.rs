@@ -14,13 +14,13 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_hash::BuckIndexMap;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_node::nodes::configured_ref::ConfiguredGraphNodeRef;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_hash::BuckIndexMap;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_node::nodes::configured_ref::ConfiguredGraphNodeRef;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::Key;
@@ -56,18 +56,18 @@ pub(crate) struct AnalysisConfiguredGraphQueryDelegate<'a, 'd> {
 
 #[async_trait]
 impl ConfiguredGraphQueryEnvironmentDelegate for AnalysisConfiguredGraphQueryDelegate<'_, '_> {
-    fn eval_literal(&self, literal: &str) -> buck2_error::Result<ConfiguredTargetNode> {
+    fn eval_literal(&self, literal: &str) -> bz_error::Result<ConfiguredTargetNode> {
         self.resolved_literals
             .get(literal)
             .duped()
-            .ok_or_else(|| buck2_error::buck2_error!(buck2_error::ErrorTag::Tier0, ""))
+            .ok_or_else(|| bz_error::bz_error!(bz_error::ErrorTag::Tier0, ""))
     }
 
     async fn get_targets_from_template_placeholder_info(
         &self,
         template_name: StaticStr,
         targets: TargetSet<ConfiguredGraphNodeRef>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
+    ) -> bz_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
         #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
         #[display("template_placeholder_info_query({})", template_name)]
         #[pagable_typetag(dice::DiceKeyDyn)]
@@ -81,7 +81,7 @@ impl ConfiguredGraphQueryEnvironmentDelegate for AnalysisConfiguredGraphQueryDel
 
         #[async_trait]
         impl Key for TemplatePlaceholderInfoQueryKey {
-            type Value = buck2_error::Result<Arc<TargetSet<ConfiguredGraphNodeRef>>>;
+            type Value = bz_error::Result<Arc<TargetSet<ConfiguredGraphNodeRef>>>;
 
             async fn compute(
                 &self,
@@ -166,7 +166,7 @@ impl ConfiguredGraphQueryEnvironmentDelegate for AnalysisConfiguredGraphQueryDel
 fn find_target_nodes(
     targets: TargetSet<ConfiguredGraphNodeRef>,
     label_to_artifact: BuckIndexMap<ConfiguredTargetLabel, Artifact>,
-) -> buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
+) -> bz_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
     let mut queue: VecDeque<_> = targets.iter().duped().collect();
     let mut seen = targets;
     let mut result = TargetSet::new();

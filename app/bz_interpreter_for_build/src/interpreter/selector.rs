@@ -12,10 +12,10 @@ use std::fmt;
 use std::fmt::Display;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::select_fail::StarlarkSelectFail;
-use buck2_interpreter::types::select_incompatible::StarlarkSelectIncompatible;
+use bz_error::BuckErrorContext;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::select_fail::StarlarkSelectFail;
+use bz_interpreter::types::select_incompatible::StarlarkSelectIncompatible;
 use serde::Serialize;
 use serde::Serializer;
 use serde::ser::SerializeMap;
@@ -52,7 +52,7 @@ use starlark::values::dict::DictType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum SelectError {
     #[error("select() condition was not a string or label, got `{0}`.")]
@@ -128,7 +128,7 @@ impl<'v> StarlarkSelector<'v> {
         } else if let Some(key) = StarlarkProvidersLabel::from_value(key) {
             Ok(key.starlark_label_string())
         } else {
-            Err(buck2_error::Error::from(SelectError::KeyNotStringOrLabel(key.to_repr())).into())
+            Err(bz_error::Error::from(SelectError::KeyNotStringOrLabel(key.to_repr())).into())
         }
     }
 
@@ -172,7 +172,7 @@ impl<'v> StarlarkSelector<'v> {
                 mapped.insert_hashed(k, Self::dict_union(v, &other, heap));
             } else {
                 return Err(
-                    buck2_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
+                    bz_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
                         Self::select_value_type(v).unwrap_or_else(|| v.get_type().to_owned()),
                         "dict".to_owned(),
                     ))
@@ -201,7 +201,7 @@ impl<'v> StarlarkSelector<'v> {
                 mapped.insert_hashed(k, Self::dict_union(other.clone(), &v, heap));
             } else {
                 return Err(
-                    buck2_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
+                    bz_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
                         "dict".to_owned(),
                         Self::select_value_type(v).unwrap_or_else(|| v.get_type().to_owned()),
                     ))
@@ -215,7 +215,7 @@ impl<'v> StarlarkSelector<'v> {
         )))
     }
 
-    pub fn from_concat<I>(iter: I, heap: Heap<'v>) -> buck2_error::Result<Value<'v>>
+    pub fn from_concat<I>(iter: I, heap: Heap<'v>) -> bz_error::Result<Value<'v>>
     where
         I: IntoIterator<Item = Value<'v>>,
     {
@@ -223,7 +223,7 @@ impl<'v> StarlarkSelector<'v> {
             selector: Option<StarlarkSelector<'v>>,
             values: &mut I,
             heap: Heap<'v>,
-        ) -> buck2_error::Result<NoneOr<StarlarkSelector<'v>>>
+        ) -> bz_error::Result<NoneOr<StarlarkSelector<'v>>>
         where
             I: Iterator<Item = Value<'v>>,
         {
@@ -258,7 +258,7 @@ impl<'v> StarlarkSelector<'v> {
         // The recursion depth of this function is determined by the depth of
         // the input `select()` objects, which could be unbounded. Detect such
         // cases and return an error nicely rather than panic'ing.
-        buck2_util::threads::check_stack_overflow()?;
+        bz_util::threads::check_stack_overflow()?;
 
         fn invoke<'v>(
             eval: &mut Evaluator<'v, '_, '_>,
@@ -320,8 +320,8 @@ impl<'v> StarlarkSelector<'v> {
             eval.eval_function(func, &[val], &[])?
                 .unpack_bool()
                 .ok_or_else(|| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Expected testing function to have a boolean return type"
                     )
                     .into()
@@ -433,7 +433,7 @@ where
         match self {
             Self::Primary(v) => {
                 let selector = DictRef::from_value(v.get().to_value())
-                    .ok_or_else(|| buck2_error::internal_error!("validated at construction"))?;
+                    .ok_or_else(|| bz_error::internal_error!("validated at construction"))?;
                 StarlarkSelector::union_dict_into_primary(selector, other, heap)
             }
             Self::Sum(..) => starlark::values::ValueError::unsupported_with(self, "|", other_value),
@@ -452,7 +452,7 @@ where
         Some(match self {
             Self::Primary(v) => {
                 let Some(selector) = DictRef::from_value(v.get().to_value()) else {
-                    return Some(Err(buck2_error::internal_error!(
+                    return Some(Err(bz_error::internal_error!(
                         "validated at construction"
                     )
                     .into()));

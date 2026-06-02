@@ -4,16 +4,16 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::category::CategoryRef;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_error::internal_error;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::materialize::materializer::WriteRequest;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::buck_indexmap;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_signals::env::WaitingData;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::category::CategoryRef;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_error::internal_error;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::materialize::materializer::WriteRequest;
+use bz_hash::BuckIndexSet;
+use bz_hash::buck_indexmap;
 use dupe::Dupe;
 use starlark::values::OwnedFrozenValue;
 
@@ -26,7 +26,7 @@ use crate::actions::execute::action_executor::ActionOutputs;
 use crate::actions::execute::error::ExecuteError;
 use crate::artifact_groups::ArtifactGroup;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum WorkspaceStatusActionError {
     #[error("workspace status action received no outputs")]
@@ -99,7 +99,7 @@ impl UnregisteredAction for UnregisteredWorkspaceStatusAction {
         outputs: BuckIndexSet<BuildArtifact>,
         starlark_data: Option<OwnedFrozenValue>,
         error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         let _unused = (starlark_data, error_handler);
         let mut outputs = outputs.into_iter();
         let output = outputs
@@ -123,11 +123,11 @@ struct WorkspaceStatusAction {
 
 #[async_trait]
 impl Action for WorkspaceStatusAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::Write
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::Write
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         Ok(Cow::Borrowed(&[]))
     }
 

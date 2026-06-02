@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_event_observer::starlark_debug::StarlarkDebuggerState;
+use bz_event_observer::starlark_debug::StarlarkDebuggerState;
 use gazebo::prelude::*;
 use superconsole::Component;
 use superconsole::Lines;
@@ -19,13 +19,13 @@ pub(crate) struct StarlarkDebuggerComponent<'s> {
 }
 
 impl Component for StarlarkDebuggerComponent<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         _dimensions: superconsole::Dimensions,
         _mode: superconsole::DrawMode,
-    ) -> buck2_error::Result<superconsole::Lines> {
+    ) -> bz_error::Result<superconsole::Lines> {
         let state = self.starlark_debugger_state;
 
         if !state.debugger_attached {

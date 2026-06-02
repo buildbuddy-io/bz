@@ -188,7 +188,7 @@ def list_starlark_files(git: bool):
     return starlark_files
 
 
-def rustfmt(buck2_dir: Path, ci: bool, git: bool) -> None:
+def rustfmt(bz_dir: Path, ci: bool, git: bool) -> None:
     """
     Make the formatting consistent, using the custom rustfmt,
     which is a pre-release of rustfmt 2.0.
@@ -208,7 +208,7 @@ def rustfmt(buck2_dir: Path, ci: bool, git: bool) -> None:
     ).stdout.strip()
     env = os.environ.copy()
     env["RUSTFMT"] = str(
-        buck2_dir.parent.parent / "tools" / "third-party" / "rustfmt" / "rustfmt"
+        bz_dir.parent.parent / "tools" / "third-party" / "rustfmt" / "rustfmt"
     )
 
     if run([cargo_fmt, "--"], env=env).returncode != 0:
@@ -488,8 +488,8 @@ def main() -> None:
     args = parser.parse_args()
 
     # Change to buck2 directory
-    buck2_dir = Path(__file__).parent.absolute()
-    os.chdir(str(buck2_dir))
+    bz_dir = Path(__file__).parent.absolute()
+    os.chdir(str(bz_dir))
 
     package_args = [f"--package={p.rstrip('/')}" for p in args.packages]
     if args.exclude:
@@ -515,7 +515,7 @@ def main() -> None:
 
     if not (args.lint_starlark_only or args.rustdoc_only or args.test_only):
         with timing():
-            rustfmt(buck2_dir, args.ci, args.git)
+            rustfmt(bz_dir, args.ci, args.git)
 
     if not (
         args.lint_only

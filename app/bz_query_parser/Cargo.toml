@@ -2,7 +2,7 @@
 description = "Buck2 query language parser"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_query_parser"
+name = "bz_query_parser"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -15,5 +15,5 @@ nom-language = { workspace = true }
 dupe = { workspace = true }
 gazebo = { workspace = true }
 
-buck2_error = { workspace = true }
-buck2_util = { workspace = true }
+bz_error = { workspace = true }
+bz_util = { workspace = true }

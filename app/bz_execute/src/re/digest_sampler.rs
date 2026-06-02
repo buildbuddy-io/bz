@@ -15,7 +15,7 @@ use crate::execute::action_digest::ActionDigest;
 /// This sampling is stable for a single action digest; return `Some(sampling_rate)` if the digest
 /// should be taken and `None` otherwise
 pub fn should_sample_action_digest(digest: &ActionDigest) -> Option<u64> {
-    let lg_sample_rate = buck2_core::buck2_env!(
+    let lg_sample_rate = bz_core::bz_env!(
         "BUCK2_ACTION_DIGEST_TRACE_LG_SAMPLE_RATE",
         type=u32,
         applicability = testing

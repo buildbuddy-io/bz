@@ -9,11 +9,11 @@
  */
 
 use allocative::Allocative;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePathBuf;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePathBuf;
 use pagable::Pagable;
 
 #[derive(Debug, derive_more::Display, Clone, Eq, PartialEq, Allocative, Pagable)]
@@ -43,7 +43,7 @@ impl PreludePath {
     }
 }
 
-pub fn prelude_path(cell_resolver: &CellResolver) -> buck2_error::Result<Option<PreludePath>> {
+pub fn prelude_path(cell_resolver: &CellResolver) -> bz_error::Result<Option<PreludePath>> {
     let alias_resolver = cell_resolver.root_cell_cell_alias_resolver();
     let Ok(prelude_cell) = alias_resolver.resolve("prelude") else {
         return Ok(None);

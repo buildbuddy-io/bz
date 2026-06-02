@@ -11,7 +11,7 @@ COMMON_RUSTC_ENV = {
     "CARGO_PKG_HOMEPAGE": "",
     "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
     "CARGO_PKG_LICENSE_FILE": "",
-    "CARGO_PKG_NAME": "buck2_core",
+    "CARGO_PKG_NAME": "bz_core",
     "CARGO_PKG_README": "",
     "CARGO_PKG_REPOSITORY": "https://github.com/facebook/buck2",
     "CARGO_PKG_VERSION": "0.1.0",
@@ -23,7 +23,7 @@ COMMON_RUSTC_ENV = {
 
 cargo_build_script(
     name = "build_script",
-    crate_name = "buck2_core_build_script",
+    crate_name = "bz_core_build_script",
     crate_root = "build.rs",
     srcs = ["build.rs"],
     edition = "2024",
@@ -37,8 +37,8 @@ cargo_build_script(
 )
 
 rust_library(
-    name = "buck2_core",
-    crate_name = "buck2_core",
+    name = "bz_core",
+    crate_name = "bz_core",
     crate_root = "src/lib.rs",
     srcs = glob(["src/**/*.rs"]),
     edition = "2024",
@@ -46,17 +46,17 @@ rust_library(
     deps = all_crate_deps(normal = True) + [
         ":build_script",
         "//allocative/allocative:allocative",
-        "//app/bz_data:buck2_data",
-        "//app/bz_env:buck2_env",
-        "//app/bz_error:buck2_error",
-        "//app/bz_fs:buck2_fs",
-        "//app/bz_util:buck2_util",
+        "//app/bz_data:bz_data",
+        "//app/bz_env:bz_env",
+        "//app/bz_error:bz_error",
+        "//app/bz_fs:bz_fs",
+        "//app/bz_util:bz_util",
         "//gazebo/cmp_any:cmp_any",
         "//gazebo/dupe:dupe",
         "//gazebo/gazebo:gazebo",
         "//gazebo/strong_hash:strong_hash",
         "//pagable:pagable",
-        "//shed/buck2_hash:buck2_hash",
+        "//shed/bz_hash:bz_hash",
         "//shed/lock_free_hashtable:lock_free_hashtable",
         "//shed/static_interner:static_interner",
         "//starlark-rust/starlark_map:starlark_map",

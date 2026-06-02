@@ -16,7 +16,7 @@
 //! implementation.
 
 use allocative::Allocative;
-use buck2_hash::BuckHasher;
+use bz_hash::BuckHasher;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
 use pagable::Pagable;
@@ -62,7 +62,7 @@ pub struct Category(Intern<CategoryData>);
 pub struct CategoryRef<'a>(&'a str);
 
 impl Category {
-    pub fn new(s: String) -> buck2_error::Result<Self> {
+    pub fn new(s: String) -> bz_error::Result<Self> {
         CategoryRef::new(&s)?;
         Ok(Category(CATEGORY_INTERNER.intern(s)))
     }
@@ -101,7 +101,7 @@ impl<'a> CategoryRef<'a> {
         self.0
     }
 
-    pub fn new(s: &'a str) -> buck2_error::Result<Self> {
+    pub fn new(s: &'a str) -> bz_error::Result<Self> {
         static CATEGORY_REGEX: Lazy<Regex> =
             Lazy::new(|| Regex::new("^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$").unwrap());
 
@@ -117,7 +117,7 @@ impl<'a> CategoryRef<'a> {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum CategoryParseError {
     #[error(

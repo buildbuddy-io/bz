@@ -14,11 +14,11 @@ use std::marker::PhantomData;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_query_derive::query_module;
-use buck2_query_parser::BinaryOp;
-use buck2_query_parser::Expr;
-use buck2_query_parser::spanned::Spanned;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_query_derive::query_module;
+use bz_query_parser::BinaryOp;
+use bz_query_parser::Expr;
+use bz_query_parser::spanned::Spanned;
 use gazebo::variants::VariantName;
 
 use crate::query::environment::QueryEnvironment;
@@ -43,7 +43,7 @@ pub mod docs;
 pub mod helpers;
 
 pub trait QueryLiteralVisitor<'a> {
-    fn target_pattern(&mut self, pattern: &'a str) -> buck2_error::Result<()>;
+    fn target_pattern(&mut self, pattern: &'a str) -> bz_error::Result<()>;
 }
 
 pub trait HasModuleDescription {
@@ -199,7 +199,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// We recommend using it with the `--output-format=dot` parameter to generate a [Graphviz](https://graphviz.org/) [DOT](https://graphviz.org/doc/info/lang.html) file that can then be rendered as an image.
     ///
     /// ```text
-    /// $ buck2 uquery "allpaths(//bz:bz, //bz/app/bz_validation:buck2_validation)" --output-format=dot > result.dot
+    /// $ buck2 uquery "allpaths(//bz:bz, //bz/app/bz_validation:bz_validation)" --output-format=dot > result.dot
     /// $ dot -Tpng result.dot -o image.png
     /// ```
     /// produces the following image:
@@ -236,12 +236,12 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// For example:
     ///
     /// ```text
-    /// $ buck2 uquery 'somepath(//bz:bz, //bz/app/bz_node:buck2_node)'
+    /// $ buck2 uquery 'somepath(//bz:bz, //bz/app/bz_node:bz_node)'
     ///
     /// //bz:bz
     /// //bz/app/bz:buck2-bin
-    /// //bz/app/bz_analysis:buck2_analysis
-    /// //bz/app/bz_node:buck2_node
+    /// //bz/app/bz_analysis:bz_analysis
+    /// //bz/app/bz_node:bz_node
     /// ```
     async fn somepath(
         &self,
@@ -274,13 +274,13 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     ///
     /// For example:
     /// ```text
-    /// $ buck2 uquery "attrfilter(deps, '//bz/app/bz_validation:buck2_validation', '//...')"
+    /// $ buck2 uquery "attrfilter(deps, '//bz/app/bz_validation:bz_validation', '//...')"
     ///
     /// //bz/app/bz:buck2-bin
-    /// //bz/app/bz_server:buck2_server
-    /// //bz/app/bz_server:buck2_server-unittest
+    /// //bz/app/bz_server:bz_server
+    /// //bz/app/bz_server:bz_server-unittest
     /// ```
-    /// returns targets that contain `//bz/app/bz_validation:buck2_validation` target in their `deps` attribute.
+    /// returns targets that contain `//bz/app/bz_validation:bz_validation` target in their `deps` attribute.
     async fn attrfilter(
         &self,
         attr: String,
@@ -328,8 +328,8 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// $ buck2 uquery "attrregexfilter(deps, '.+validation$', '//...')"
     ///
     /// //bz/app/bz:buck2-bin
-    /// //bz/app/bz_server:buck2_server
-    /// //bz/app/bz_server:buck2_server-unittest
+    /// //bz/app/bz_server:bz_server
+    /// //bz/app/bz_server:bz_server-unittest
     /// ```
     /// returns targets whose `deps` attribute contains at least one target suffixed with 'validation'.
     async fn attrregexfilter(
@@ -358,7 +358,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// In order to find the build file associated with a source file, combine the owner operator with buildfile.
     /// Examples:
     /// ```text
-    /// $ buck2 uquery "buildfile(//bz/app/bz_action_impl_tests:buck2_action_impl_tests)"
+    /// $ buck2 uquery "buildfile(//bz/app/bz_action_impl_tests:bz_action_impl_tests)"
     /// ```
     /// and
     /// ```text
@@ -472,7 +472,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// ```text
     /// $ buck2 uquery "filter(validation$, //bz/app/...)"
     ///
-    /// //bz/app/bz_validation:buck2_validation
+    /// //bz/app/bz_validation:bz_validation
     /// ```
     /// returns all targets within `//bz/app` that have a label with a `validation` suffix.
     async fn filter(&self, regex: String, set: QueryValueSet<Env::Target>) -> QueryFuncResult<Env> {
@@ -797,7 +797,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         attr: &str,
         value: &str,
         targets: &TargetSet<Env::Target>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         targets.attrfilter(attr, &|v| Ok(v == value))
     }
 
@@ -806,7 +806,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         attr: &str,
         value: &str,
         targets: &TargetSet<Env::Target>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         targets.nattrfilter(attr, &|v| Ok(v == value))
     }
 
@@ -815,7 +815,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         attr: &str,
         value: &str,
         targets: &TargetSet<Env::Target>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         targets.attrregexfilter(attr, value)
     }
 
@@ -827,7 +827,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         &self,
         env: &Env,
         universe: &TargetSet<Env::Target>,
-    ) -> buck2_error::Result<FileSet> {
+    ) -> bz_error::Result<FileSet> {
         env.allbuildfiles(universe).await
     }
 
@@ -836,7 +836,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         env: &Env,
         universe: &FileSet,
         argset: &FileSet,
-    ) -> buck2_error::Result<FileSet> {
+    ) -> bz_error::Result<FileSet> {
         env.rbuildfiles(universe, argset).await
     }
 
@@ -847,7 +847,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         targets: &TargetSet<Env::Target>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr<'_>>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         DepsFunction::<Env> {
             _marker: PhantomData,
         }
@@ -860,15 +860,15 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         &self,
         regex: &str,
         targets: &TargetSet<Env::Target>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         targets.filter_name(regex)
     }
 
-    pub fn filter_file_set(&self, regex: &str, files: &FileSet) -> buck2_error::Result<FileSet> {
+    pub fn filter_file_set(&self, regex: &str, files: &FileSet) -> bz_error::Result<FileSet> {
         files.filter_name(regex)
     }
 
-    pub fn inputs(&self, targets: &TargetSet<Env::Target>) -> buck2_error::Result<FileSet> {
+    pub fn inputs(&self, targets: &TargetSet<Env::Target>) -> bz_error::Result<FileSet> {
         targets.inputs()
     }
 
@@ -884,7 +884,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         &self,
         env: &Env,
         files: &FileSet,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         env.owner(files).await
     }
 
@@ -892,7 +892,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         &self,
         env: &Env,
         paths: &FileSet,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         env.targets_in_buildfile(paths).await
     }
 
@@ -904,7 +904,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         targets: &TargetSet<Env::Target>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr<'_>>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         DepsFunction::<Env> {
             _marker: PhantomData,
         }
@@ -916,7 +916,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         &self,
         env: &Env,
         targets: &TargetSet<Env::Target>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         env.testsof(targets).await
     }
 
@@ -924,7 +924,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         &self,
         env: &Env,
         targets: &TargetSet<Env::Target>,
-    ) -> buck2_error::Result<Vec<MaybeCompatible<Env::Target>>> {
+    ) -> bz_error::Result<Vec<MaybeCompatible<Env::Target>>> {
         env.testsof_with_default_target_platform(targets).await
     }
 
@@ -994,8 +994,8 @@ impl<Env: QueryEnvironment> DefaultQueryFunctions<Env> {
         Ft: Fn(
             &TargetSet<Env::Target>,
             &TargetSet<Env::Target>,
-        ) -> buck2_error::Result<TargetSet<Env::Target>>,
-        Ff: Fn(&FileSet, &FileSet) -> buck2_error::Result<FileSet>,
+        ) -> bz_error::Result<TargetSet<Env::Target>>,
+        Ff: Fn(&FileSet, &FileSet) -> bz_error::Result<FileSet>,
     {
         match (left, right) {
             (QueryValue::TargetSet(l), QueryValue::TargetSet(r)) => {

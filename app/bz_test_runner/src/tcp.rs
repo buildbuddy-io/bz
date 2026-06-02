@@ -10,8 +10,8 @@
 
 use std::net::SocketAddr;
 
-use buck2_error::BuckErrorContext;
-use buck2_grpc::DuplexChannel;
+use bz_error::BuckErrorContext;
+use bz_grpc::DuplexChannel;
 use clap::Parser;
 use tokio::net::TcpStream;
 
@@ -27,7 +27,7 @@ pub struct Buck2TestRunnerTcp {
 }
 
 impl Buck2TestRunnerTcp {
-    pub async fn run(self) -> buck2_error::Result<()> {
+    pub async fn run(self) -> bz_error::Result<()> {
         // NOTE: We can remove this code once Tokio supports UNIX domain socket or Named pipe
         // https://github.com/tokio-rs/tokio/issues/2201
 
@@ -41,11 +41,11 @@ impl Buck2TestRunnerTcp {
         let orchestrator_addr: SocketAddr = self
             .orchestrator_addr
             .parse()
-            .map_err(|e| buck2_error::internal_error!("Invalid orchestrator address {:#}", e))?;
+            .map_err(|e| bz_error::internal_error!("Invalid orchestrator address {:#}", e))?;
         let executor_addr: SocketAddr = self
             .executor_addr
             .parse()
-            .map_err(|e| buck2_error::internal_error!("Invalid executor address {:#}", e))?;
+            .map_err(|e| bz_error::internal_error!("Invalid executor address {:#}", e))?;
 
         let orchestrator_io = TcpStream::connect(&orchestrator_addr)
             .await

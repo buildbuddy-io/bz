@@ -40,7 +40,7 @@ pub trait ClaimManager: Send + Sync + 'static {
 pub trait Claim: Send + Sync + fmt::Debug + 'static {
     /// Release a claim. This can be done to make it available again after acquiring it. Once the
     /// claim is released, the claim holder should no longer write any output.
-    fn release(self: Box<Self>) -> buck2_error::Result<()>;
+    fn release(self: Box<Self>) -> bz_error::Result<()>;
 }
 
 #[derive(Debug)]
@@ -89,7 +89,7 @@ pub struct MutexClaim {
 }
 
 impl Claim for MutexClaim {
-    fn release(mut self: Box<Self>) -> buck2_error::Result<()> {
+    fn release(mut self: Box<Self>) -> bz_error::Result<()> {
         *self.guard = ClaimStatus::NotClaimed;
         Ok(())
     }

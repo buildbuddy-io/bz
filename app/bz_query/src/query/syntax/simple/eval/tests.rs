@@ -15,10 +15,10 @@
 use std::borrow::Cow;
 
 use async_trait::async_trait;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_query_parser::parse_expr;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_query_parser::parse_expr;
 use derive_more::Display;
 use dupe::Dupe;
 
@@ -115,8 +115,8 @@ impl QueryTarget for Target {
 
     fn attr_any_matches(
         _attr: &Self::Attr<'_>,
-        _filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        _filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         unimplemented!()
     }
 
@@ -148,25 +148,25 @@ struct Env;
 impl QueryEnvironment for Env {
     type Target = Target;
 
-    async fn get_node(&self, _node_ref: &TargetRef) -> buck2_error::Result<Self::Target> {
+    async fn get_node(&self, _node_ref: &TargetRef) -> bz_error::Result<Self::Target> {
         unimplemented!()
     }
 
     async fn get_node_for_default_configured_target(
         &self,
         _node_ref: &TargetRef,
-    ) -> buck2_error::Result<MaybeCompatible<Self::Target>> {
+    ) -> bz_error::Result<MaybeCompatible<Self::Target>> {
         unimplemented!()
     }
 
     async fn eval_literals(
         &self,
         _literal: &[&str],
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         unimplemented!()
     }
 
-    async fn eval_file_literal(&self, _literal: &str) -> buck2_error::Result<FileSet> {
+    async fn eval_file_literal(&self, _literal: &str) -> bz_error::Result<FileSet> {
         unimplemented!()
     }
 
@@ -174,8 +174,8 @@ impl QueryEnvironment for Env {
         &self,
         _root: &TargetSet<Self::Target>,
         _delegate: impl AsyncChildVisitor<Self::Target>,
-        _visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
-    ) -> buck2_error::Result<()> {
+        _visit: impl FnMut(Self::Target) -> bz_error::Result<()> + Send,
+    ) -> bz_error::Result<()> {
         unimplemented!()
     }
 
@@ -183,26 +183,26 @@ impl QueryEnvironment for Env {
         &self,
         _root: &TargetSet<Self::Target>,
         _delegate: impl AsyncChildVisitor<Self::Target>,
-        _visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
+        _visit: impl FnMut(Self::Target) -> bz_error::Result<()> + Send,
         _depth: u32,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         unimplemented!()
     }
 
-    async fn owner(&self, _paths: &FileSet) -> buck2_error::Result<TargetSet<Self::Target>> {
+    async fn owner(&self, _paths: &FileSet) -> bz_error::Result<TargetSet<Self::Target>> {
         unimplemented!()
     }
 
     async fn targets_in_buildfile(
         &self,
         _paths: &FileSet,
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         unimplemented!()
     }
 }
 
 #[tokio::test]
-pub async fn test_missing_arg() -> buck2_error::Result<()> {
+pub async fn test_missing_arg() -> bz_error::Result<()> {
     let input = "kind(a, kind(a, kind()))";
     let parsed = parse_expr(input)?;
     match QueryEvaluator::new(&Env, &DefaultQueryFunctionsModule::new())

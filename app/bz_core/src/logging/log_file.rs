@@ -26,7 +26,7 @@ pub struct TracingLogFile {
 }
 
 impl TracingLogFile {
-    pub fn new(file: PathBuf) -> buck2_error::Result<Self> {
+    pub fn new(file: PathBuf) -> bz_error::Result<Self> {
         let mut global = TRACING_LOG.lock().unwrap();
         Ok(if let Some(this) = &*global {
             this.dupe()
@@ -43,7 +43,7 @@ impl TracingLogFile {
         })
     }
 
-    pub fn refresh() -> buck2_error::Result<()> {
+    pub fn refresh() -> bz_error::Result<()> {
         let this = TRACING_LOG.lock().unwrap();
 
         if let Some(this) = this.as_ref() {

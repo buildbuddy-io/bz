@@ -10,29 +10,29 @@
 
 use std::fmt;
 
-use buck2_error::ErrorTag;
-use buck2_error::source_location::SourceLocation;
-use buck2_event_observer::display::TargetDisplayOptions;
-use buck2_event_observer::display::display_action_error;
+use bz_error::ErrorTag;
+use bz_error::source_location::SourceLocation;
+use bz_event_observer::display::TargetDisplayOptions;
+use bz_event_observer::display::display_action_error;
 
 use crate::actions::execute::error::ExecuteError;
 
 #[derive(Debug)]
 pub struct ActionError {
     execute_error: ExecuteError,
-    name: buck2_data::ActionName,
-    key: buck2_data::ActionKey,
-    last_command: Option<buck2_data::CommandExecution>,
-    error_diagnostics: Option<buck2_data::ActionErrorDiagnostics>,
+    name: bz_data::ActionName,
+    key: bz_data::ActionKey,
+    last_command: Option<bz_data::CommandExecution>,
+    error_diagnostics: Option<bz_data::ActionErrorDiagnostics>,
     infra_error_tag: Option<ErrorTag>,
 }
 
-impl From<ActionError> for buck2_error::Error {
-    fn from(this: ActionError) -> buck2_error::Error {
+impl From<ActionError> for bz_error::Error {
+    fn from(this: ActionError) -> bz_error::Error {
         let is_command_failure = this.last_command.as_ref().is_some_and(|c| {
             matches!(
                 c.status,
-                Some(buck2_data::command_execution::Status::Failure { .. })
+                Some(bz_data::command_execution::Status::Failure { .. })
             )
         });
 
@@ -50,7 +50,7 @@ impl From<ActionError> for buck2_error::Error {
 
                 if is_command_failure {
                     if let Some(diagnostic) = &this.error_diagnostics {
-                        if let Some(buck2_data::action_error_diagnostics::Data::SubErrors(
+                        if let Some(bz_data::action_error_diagnostics::Data::SubErrors(
                             sub_errors,
                         )) = diagnostic.data.as_ref()
                         {
@@ -86,7 +86,7 @@ impl From<ActionError> for buck2_error::Error {
         let base_error = match this.execute_error {
             ExecuteError::Error { error } => error.tag([ErrorTag::AnyActionExecution]).context(msg),
             // FIXME(JakobDegen): What about `CommandExecutionError`?
-            _ => buck2_error::Error::new(
+            _ => bz_error::Error::new(
                 msg,
                 ErrorTag::AnyActionExecution,
                 source_location,
@@ -105,10 +105,10 @@ impl From<ActionError> for buck2_error::Error {
 impl ActionError {
     pub(crate) fn new(
         execute_error: ExecuteError,
-        name: buck2_data::ActionName,
-        key: buck2_data::ActionKey,
-        last_command: Option<buck2_data::CommandExecution>,
-        error_diagnostics: Option<buck2_data::ActionErrorDiagnostics>,
+        name: bz_data::ActionName,
+        key: bz_data::ActionKey,
+        last_command: Option<bz_data::CommandExecution>,
+        error_diagnostics: Option<bz_data::ActionErrorDiagnostics>,
         infra_error_tag: Option<ErrorTag>,
     ) -> Self {
         Self {
@@ -121,13 +121,13 @@ impl ActionError {
         }
     }
 
-    pub(crate) fn as_proto_field(&self) -> buck2_data::action_execution_end::Error {
+    pub(crate) fn as_proto_field(&self) -> bz_data::action_execution_end::Error {
         match &self.execute_error {
-            ExecuteError::MissingOutputs { declared } => buck2_data::CommandOutputsMissing {
+            ExecuteError::MissingOutputs { declared } => bz_data::CommandOutputsMissing {
                 message: format!("Action failed to produce outputs: {}", error_items(declared)),
             }
             .into(),
-            ExecuteError::MismatchedOutputs { declared, real } => buck2_data::CommandOutputsMissing {
+            ExecuteError::MismatchedOutputs { declared, real } => bz_data::CommandOutputsMissing {
                 message: format!(
                     "Action didn't produce the right set of outputs.\nExpected {}`\nreal {}",
                     error_items(declared),
@@ -135,24 +135,24 @@ impl ActionError {
                 ),
             }
             .into(),
-            ExecuteError::WrongOutputType {path, declared, real} => buck2_data::CommandOutputsMissing {
+            ExecuteError::WrongOutputType {path, declared, real} => bz_data::CommandOutputsMissing {
                 message: format!(
                     "Action didn't produce output of the right type.\nExpected {path} to be {declared:?}\nreal {real:?}",
                 ),
             }
             .into(),
             ExecuteError::Error { error } => format!("{error:#}").into(),
-            ExecuteError::CommandExecutionError { .. } => buck2_data::CommandExecutionError {}.into(),
+            ExecuteError::CommandExecutionError { .. } => bz_data::CommandExecutionError {}.into(),
         }
     }
 
-    pub(crate) fn as_proto_event(&self) -> buck2_data::ActionError {
+    pub(crate) fn as_proto_event(&self) -> bz_data::ActionError {
         let field = match self.as_proto_field() {
-            buck2_data::action_execution_end::Error::Unknown(e) => e.into(),
-            buck2_data::action_execution_end::Error::MissingOutputs(e) => e.into(),
-            buck2_data::action_execution_end::Error::CommandExecutionError(e) => e.into(),
+            bz_data::action_execution_end::Error::Unknown(e) => e.into(),
+            bz_data::action_execution_end::Error::MissingOutputs(e) => e.into(),
+            bz_data::action_execution_end::Error::CommandExecutionError(e) => e.into(),
         };
-        buck2_data::ActionError {
+        bz_data::ActionError {
             error: Some(field),
             name: Some(self.name.clone()),
             key: Some(self.key.clone()),
@@ -180,33 +180,33 @@ fn error_items<T: fmt::Display>(xs: &[T]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use buck2_error::ErrorTag;
-    use buck2_error::buck2_error;
+    use bz_error::ErrorTag;
+    use bz_error::bz_error;
 
     use super::*;
 
     #[test]
     fn test_error_conversion() {
-        let error = buck2_error!(ErrorTag::Http, "error");
+        let error = bz_error!(ErrorTag::Http, "error");
 
         let execute_error = ExecuteError::Error { error };
 
         let action_error = ActionError::new(
             execute_error,
-            buck2_data::ActionName {
+            bz_data::ActionName {
                 category: "category".to_owned(),
                 identifier: "identifier".to_owned(),
             },
-            buck2_data::ActionKey {
+            bz_data::ActionKey {
                 id: vec![],
                 key: "key".to_owned(),
-                owner: Some(buck2_data::action_key::Owner::TargetLabel(
-                    buck2_data::ConfiguredTargetLabel {
-                        label: Some(buck2_data::TargetLabel {
+                owner: Some(bz_data::action_key::Owner::TargetLabel(
+                    bz_data::ConfiguredTargetLabel {
+                        label: Some(bz_data::TargetLabel {
                             package: "package".to_owned(),
                             name: "name".to_owned(),
                         }),
-                        configuration: Some(buck2_data::Configuration {
+                        configuration: Some(bz_data::Configuration {
                             full_name: "conf".into(),
                         }),
                         execution_configuration: None,
@@ -218,10 +218,10 @@ mod tests {
             None,
         );
 
-        let buck2_error = buck2_error::Error::from(action_error);
+        let bz_error = bz_error::Error::from(action_error);
 
         assert_eq!(
-            buck2_error.tags(),
+            bz_error.tags(),
             vec![ErrorTag::AnyActionExecution, ErrorTag::Http]
         );
     }

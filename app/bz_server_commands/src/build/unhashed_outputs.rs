@@ -11,18 +11,18 @@
 use std::path;
 use std::time::Instant;
 
-use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
-use buck2_build_api::build::BuildProviderType;
-use buck2_build_api::build::ProviderArtifacts;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_error::BuckErrorContext;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_hash::StdBuckHashSet;
-use buck2_query::__derive_refs::indexmap::IndexMap;
+use bz_artifact::artifact::artifact_type::BaseArtifactKind;
+use bz_build_api::build::BuildProviderType;
+use bz_build_api::build::ProviderArtifacts;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project::ProjectRoot;
+use bz_error::BuckErrorContext;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_hash::StdBuckHashSet;
+use bz_query::__derive_refs::indexmap::IndexMap;
 use itertools::Itertools;
 use tracing::info;
 
@@ -30,7 +30,7 @@ pub(crate) fn create_unhashed_outputs(
     provider_artifacts: Vec<ProviderArtifacts>,
     artifact_fs: &ArtifactFs,
     fs: &ProjectRoot,
-) -> buck2_error::Result<u64> {
+) -> bz_error::Result<u64> {
     let buck_out_root = fs.resolve(artifact_fs.buck_out_path_resolver().root());
 
     let start = std::time::Instant::now();
@@ -87,7 +87,7 @@ fn create_unhashed_link(
     unhashed_path: &AbsNormPathBuf,
     original_path: &AbsNormPathBuf,
     buck_out_root: &AbsNormPathBuf,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // Remove the final path separator if it exists so that the path looks like a file and not a directory or else symlink() fails.
     tracing::debug!("Creating link: `{}` -> `{}`", unhashed_path, original_path);
 

@@ -10,8 +10,8 @@
 
 macro_rules! late_binding_ty {
     ($name:ident, $late:ident) => {
-        static $late: buck2_util::late_binding::LateBinding<starlark::typing::Ty> =
-            buck2_util::late_binding::LateBinding::new(stringify!($name));
+        static $late: bz_util::late_binding::LateBinding<starlark::typing::Ty> =
+            bz_util::late_binding::LateBinding::new(stringify!($name));
 
         #[allow(clippy::empty_enums)]
         pub enum $name {}

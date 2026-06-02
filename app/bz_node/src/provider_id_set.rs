@@ -12,7 +12,7 @@ use std::slice;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::provider::id::ProviderId;
+use bz_core::provider::id::ProviderId;
 use dupe::Dupe;
 use pagable::Pagable;
 use strong_hash::StrongHash;

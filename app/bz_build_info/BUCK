@@ -3,10 +3,10 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_build_info",
+    name = "bz_build_info",
     srcs = glob(["src/**/*.rs"]),
     deps = [
-        "//bz/app/bz_util:buck2_util",
+        "//bz/app/bz_util:bz_util",
         # @oss-disable[end= ]: "//common/rust/build_info:build_info",
     ],
 )

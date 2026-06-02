@@ -15,16 +15,16 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_common::bazel::bzlmod::BZLMOD_MODULE_EXTENSION_EVALUATOR;
-use buck2_common::bazel::bzlmod::BzlmodModuleExtensionEvaluator;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_common::file_ops::delegate::FileOpsDelegate;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_core::cells::cell_root_path::CellRootPath;
-use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::name::CellName;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_common::bazel::bzlmod::BZLMOD_MODULE_EXTENSION_EVALUATOR;
+use bz_common::bazel::bzlmod::BzlmodModuleExtensionEvaluator;
+use bz_common::dice::data::HasIoProvider;
+use bz_common::file_ops::delegate::FileOpsDelegate;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_core::cells::cell_root_path::CellRootPath;
+use bz_core::cells::external::BzlmodModuleExtensionRepoSetup;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::name::CellName;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
 use dice::CancellationContext;
 use dice::DiceComputations;
 
@@ -36,7 +36,7 @@ struct ConcreteExternalCellsImpl;
 
 struct ConcreteBzlmodModuleExtensionEvaluator;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum ExternalCellsError {
     #[error("Tried to expand external cell to `{0}`, but that directory already contains data!")]
@@ -44,13 +44,13 @@ enum ExternalCellsError {
 }
 
 #[async_trait]
-impl buck2_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsImpl {
+impl bz_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsImpl {
     async fn get_file_ops_delegate(
         &self,
         ctx: &mut DiceComputations<'_>,
         cell_name: CellName,
         origin: ExternalCellOrigin,
-    ) -> buck2_error::Result<Arc<dyn FileOpsDelegate>> {
+    ) -> bz_error::Result<Arc<dyn FileOpsDelegate>> {
         match origin {
             ExternalCellOrigin::Bundled(cell_name) => {
                 Ok(bundled::get_file_ops_delegate(ctx, cell_name).await? as _)
@@ -72,7 +72,7 @@ impl buck2_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsIm
         ctx: &mut DiceComputations<'_>,
         cell_name: CellName,
         origin: ExternalCellOrigin,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match origin {
             ExternalCellOrigin::BzlmodGenerated(setup) => {
                 bzlmod::ensure_generated_cell_alias_resolver_ready(ctx, cell_name, setup).await
@@ -87,7 +87,7 @@ impl buck2_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsIm
         cell_name: CellName,
         origin: ExternalCellOrigin,
         cancellations: &CancellationContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match origin {
             ExternalCellOrigin::Bzlmod(setup) => {
                 bzlmod::prepare_cached_cell_root(ctx, cell_name, setup, cancellations).await
@@ -100,7 +100,7 @@ impl buck2_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsIm
         }
     }
 
-    fn check_bundled_cell_exists(&self, cell_name: CellName) -> buck2_error::Result<()> {
+    fn check_bundled_cell_exists(&self, cell_name: CellName) -> bz_error::Result<()> {
         bundled::find_bundled_data(cell_name).map(|_| ())
     }
 
@@ -110,7 +110,7 @@ impl buck2_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsIm
         cell: CellName,
         origin: ExternalCellOrigin,
         path: &CellRootPath,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let dest_path = path.as_project_relative_path().to_buf();
         let io = ctx.global_data().get_io_provider();
 
@@ -153,12 +153,12 @@ impl BzlmodModuleExtensionEvaluator for ConcreteBzlmodModuleExtensionEvaluator {
         &self,
         ctx: &mut DiceComputations<'_>,
         setup: BzlmodModuleExtensionRepoSetup,
-    ) -> buck2_error::Result<Vec<String>> {
+    ) -> bz_error::Result<Vec<String>> {
         bzlmod::evaluate_module_extension(ctx, setup).await
     }
 }
 
 pub fn init_late_bindings() {
-    buck2_common::external_cells::EXTERNAL_CELLS_IMPL.init(&ConcreteExternalCellsImpl);
+    bz_common::external_cells::EXTERNAL_CELLS_IMPL.init(&ConcreteExternalCellsImpl);
     BZLMOD_MODULE_EXTENSION_EVALUATOR.init(&ConcreteBzlmodModuleExtensionEvaluator);
 }

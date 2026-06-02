@@ -11,15 +11,15 @@
 use std::hash::Hash;
 
 use allocative::Allocative;
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::NonDefaultProvidersName;
-use buck2_core::provider::label::ProviderName;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::BuckErrorContext;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::NonDefaultProvidersName;
+use bz_core::provider::label::ProviderName;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::BuckErrorContext;
 use derive_more::Display;
 use derive_more::From;
 use dupe::Dupe;
@@ -350,7 +350,7 @@ enum SubtargetNameArg<'v> {
     Str(&'v str),
 }
 
-fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Result<ProvidersName> {
+fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> bz_error::Result<ProvidersName> {
     let subtarget = match subtarget_name {
         SubtargetNameArg::List(list) => list
             .items
@@ -358,7 +358,7 @@ fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Res
             .map(|name| {
                 ProviderName::new(name).buck_error_context("for parameter `subtarget_name`")
             })
-            .collect::<buck2_error::Result<Vec<_>>>()?,
+            .collect::<bz_error::Result<Vec<_>>>()?,
         SubtargetNameArg::Str(str) => {
             vec![
                 ProviderName::new(str.to_owned())
@@ -371,7 +371,7 @@ fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Res
         ProvidersName::Default
     } else {
         ProvidersName::NonDefault(triomphe::Arc::new(NonDefaultProvidersName::Named(
-            buck2_util::arc_str::ArcSlice::from_iter(subtarget),
+            bz_util::arc_str::ArcSlice::from_iter(subtarget),
         )))
     })
 }

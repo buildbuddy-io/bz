@@ -12,9 +12,9 @@ use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 
-use buck2_events::daemon_id::DaemonId;
-use buck2_hash::StdBuckHashMap;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_events::daemon_id::DaemonId;
+use bz_hash::StdBuckHashMap;
+use bz_wrapper_common::invocation_id::TraceId;
 use tokio::sync::mpsc;
 
 use crate::CommandType;
@@ -33,7 +33,7 @@ pub(crate) struct EventSenderState {
 impl EventSenderState {
     pub(crate) fn new(daemon_id: &DaemonId, estimated_memory_cap: u64) -> Self {
         Self {
-            metadata: buck2_events::metadata::collect(daemon_id),
+            metadata: bz_events::metadata::collect(daemon_id),
             estimated_memory_cap,
             last_scheduled_event_time: None,
             memory_reading: MemoryReading {
@@ -81,7 +81,7 @@ impl EventSenderState {
         {
             self.last_scheduled_event_time = Some(now);
             self.send_event(
-                buck2_data::ResourceControlEventKind::Scheduled,
+                bz_data::ResourceControlEventKind::Scheduled,
                 None,
                 actions_running,
                 actions_suspended,
@@ -91,7 +91,7 @@ impl EventSenderState {
 
     pub(crate) fn send_event(
         &mut self,
-        kind: buck2_data::ResourceControlEventKind,
+        kind: bz_data::ResourceControlEventKind,
         cgroup: Option<&Scene>,
         actions_running: u64,
         actions_suspended: u64,
@@ -102,7 +102,7 @@ impl EventSenderState {
 
     fn make_event(
         &self,
-        kind: buck2_data::ResourceControlEventKind,
+        kind: bz_data::ResourceControlEventKind,
         cgroup: Option<&Scene>,
         actions_running: u64,
         actions_suspended: u64,
@@ -133,7 +133,7 @@ impl EventSenderState {
 pub(crate) struct ResourceControlEventMostly {
     time_event_generated: SystemTime,
     metadata: StdBuckHashMap<String, String>,
-    kind: buck2_data::ResourceControlEventKind,
+    kind: bz_data::ResourceControlEventKind,
 
     memory_reading: MemoryReading,
     estimated_memory_cap: u64,
@@ -150,8 +150,8 @@ pub(crate) struct ResourceControlEventMostly {
 }
 
 impl ResourceControlEventMostly {
-    pub(crate) fn complete(self, uuid: &TraceId) -> buck2_data::ResourceControlEvent {
-        buck2_data::ResourceControlEvent {
+    pub(crate) fn complete(self, uuid: &TraceId) -> bz_data::ResourceControlEvent {
+        bz_data::ResourceControlEvent {
             uuid: uuid.to_string(),
             kind: self.kind.into(),
 
@@ -178,7 +178,7 @@ impl ResourceControlEventMostly {
 
             metadata: self.metadata,
 
-            ancestor_cgroup_constraints: Some(buck2_data::AncestorCgroupConstraints {
+            ancestor_cgroup_constraints: Some(bz_data::AncestorCgroupConstraints {
                 // FIXME(JakobDegen): Replace with more appropriate columns
                 memory_max: Some(self.estimated_memory_cap),
                 memory_high: Some(self.estimated_memory_cap),

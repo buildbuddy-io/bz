@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 use derivative::Derivative;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
@@ -126,15 +126,15 @@ impl LocalResourceState {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 
     use super::EnvironmentVariable;
     use crate::local_resource_state::LocalResource;
     use crate::local_resource_state::LocalResourceState;
 
     #[tokio::test]
-    async fn test_canary() -> buck2_error::Result<()> {
+    async fn test_canary() -> bz_error::Result<()> {
         let target =
             ConfiguredTargetLabel::testing_parse("foo//bar:baz", ConfigurationData::testing_new());
         let specs = vec![

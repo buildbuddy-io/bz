@@ -15,8 +15,8 @@ use std::mem;
 use std::ptr;
 use std::sync::Arc;
 
-use buck2_error::BuckErrorContext;
-use buck2_wrapper_common::win::winapi_handle::WinapiHandle;
+use bz_error::BuckErrorContext;
+use bz_wrapper_common::win::winapi_handle::WinapiHandle;
 use dupe::Dupe;
 use windows_sys::Win32::Foundation::FALSE;
 use windows_sys::Win32::Foundation::HANDLE;
@@ -44,7 +44,7 @@ pub(crate) struct JobObject {
 }
 
 impl JobObject {
-    pub(crate) fn new() -> buck2_error::Result<Self> {
+    pub(crate) fn new() -> bz_error::Result<Self> {
         let job_handle = unsafe {
             WinapiHandle::new_check_last_os_error(CreateJobObjectW(ptr::null(), ptr::null()))
                 .buck_error_context("CreateJobObject")?
@@ -69,18 +69,18 @@ impl JobObject {
         })
     }
 
-    pub(crate) fn assign_process(&self, process: HANDLE) -> buck2_error::Result<()> {
+    pub(crate) fn assign_process(&self, process: HANDLE) -> bz_error::Result<()> {
         result_bool(unsafe { AssignProcessToJobObject(self.job_handle.handle(), process) })
     }
 
-    pub(crate) async fn terminate(&self, exit_code: u32) -> buck2_error::Result<()> {
+    pub(crate) async fn terminate(&self, exit_code: u32) -> bz_error::Result<()> {
         result_bool(unsafe { TerminateJobObject(self.job_handle.handle(), exit_code) })?;
         self.wait().await
     }
 
     // waits until all processes in a job have exited
     // https://devblogs.microsoft.com/oldnewthing/20130405-00/?p=4743
-    async fn wait(&self) -> buck2_error::Result<()> {
+    async fn wait(&self) -> bz_error::Result<()> {
         const MAX_RETRY_ATTEMPT: usize = 10;
         let job = self.job_handle.dupe();
         let completion_port = self.completion_handle.dupe();
@@ -105,7 +105,7 @@ fn has_active_processes(
     job: &WinapiHandle,
     completion_port: &WinapiHandle,
     timeout: u32,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let mut completion_code: u32 = 0;
     let mut completion_key: usize = 0;
     let mut overlapped = mem::MaybeUninit::<OVERLAPPED>::uninit();
@@ -143,7 +143,7 @@ fn has_active_processes(
 fn associate_job_with_completion_port(
     job: &WinapiHandle,
     completion_port: &WinapiHandle,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut associate_completion = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
         CompletionKey: job.handle(),
         CompletionPort: completion_port.handle(),
@@ -161,7 +161,7 @@ fn associate_job_with_completion_port(
     })
 }
 
-fn set_job_limits(job: &WinapiHandle) -> buck2_error::Result<()> {
+fn set_job_limits(job: &WinapiHandle) -> bz_error::Result<()> {
     // SAFETY: JOBOBJECT_EXTENDED_LIMIT_INFORMATION is a plain C struct of integers/pointers;
     // all-zeros is a valid representation. windows-sys structs have no Default impl.
     let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };

@@ -10,24 +10,24 @@
 
 use std::path::PathBuf;
 
-use buck2_cli_proto::new_generic::DocsOutputFormat;
-use buck2_cli_proto::new_generic::DocsResponse;
-use buck2_cli_proto::new_generic::DocsStarlarkRequest;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::name::CellName;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::parse_import::ParseImportOptions;
-use buck2_interpreter::parse_import::RelativeImports;
-use buck2_interpreter::parse_import::parse_import_with_config;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
+use bz_cli_proto::new_generic::DocsOutputFormat;
+use bz_cli_proto::new_generic::DocsResponse;
+use bz_cli_proto::new_generic::DocsStarlarkRequest;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::bxl::BxlFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::name::CellName;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::parse_import::ParseImportOptions;
+use bz_interpreter::parse_import::RelativeImports;
+use bz_interpreter::parse_import::parse_import_with_config;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
 use dice::DiceTransaction;
 use futures::FutureExt;
 use starlark::docs::multipage::DocModuleInfo;
@@ -77,7 +77,7 @@ fn parse_starlark_paths(
     cell_resolver: &CellAliasResolver,
     current_dir: &CellPath,
     symbol_patterns: &[String],
-) -> buck2_error::Result<StdBuckHashSet<StarlarkFilePath>> {
+) -> bz_error::Result<StdBuckHashSet<StarlarkFilePath>> {
     let parse_options = ParseImportOptions {
         allow_missing_at_symbol: true,
         relative_import_option: RelativeImports::Allow {
@@ -108,7 +108,7 @@ pub(crate) async fn docs_starlark(
     server_ctx: &dyn ServerCommandContextTrait,
     mut dice_ctx: DiceTransaction,
     request: &DocsStarlarkRequest,
-) -> buck2_error::Result<DocsResponse> {
+) -> bz_error::Result<DocsResponse> {
     let cell_resolver = dice_ctx.get_cell_resolver().await?;
     let cwd = server_ctx.working_dir();
     let current_cell_path = cell_resolver.get_cell_path(cwd);
@@ -130,7 +130,7 @@ pub(crate) async fn docs_starlark(
                     .await?
                     .env()
                     .documentation();
-                buck2_error::Ok((path, doc))
+                bz_error::Ok((path, doc))
             }
             .boxed()
         })

@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_events::dispatch::EventDispatcher;
+use bz_events::dispatch::EventDispatcher;
 use dice::DiceComputations;
 use dice::UserComputationData;
 

@@ -11,11 +11,11 @@
 use std::fmt::Write;
 use std::time::Duration;
 
-use buck2_event_observer::display;
-use buck2_event_observer::display::TargetDisplayOptions;
-use buck2_event_observer::fmt_duration;
-use buck2_event_observer::span_tracker::BuckEventSpanHandle;
-use buck2_event_observer::span_tracker::BuckEventSpanTracker;
+use bz_event_observer::display;
+use bz_event_observer::display::TargetDisplayOptions;
+use bz_event_observer::fmt_duration;
+use bz_event_observer::span_tracker::BuckEventSpanHandle;
+use bz_event_observer::span_tracker::BuckEventSpanTracker;
 use superconsole::Component;
 use superconsole::Dimensions;
 use superconsole::DrawMode;
@@ -63,7 +63,7 @@ impl TimedListBody<'_> {
                 .event
                 .span_start_event()
                 .and_then(|start| start.data.as_ref()),
-            Some(buck2_data::span_start_event::Data::DiceStateUpdateStage(..))
+            Some(bz_data::span_start_event::Data::DiceStateUpdateStage(..))
         )
     }
 
@@ -72,7 +72,7 @@ impl TimedListBody<'_> {
         span: &BuckEventSpanHandle,
         rows: &mut Vec<TimedRow>,
         display_platform: bool,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let timekeeper = &self.state.timekeeper;
         for child in span.children() {
             if self.is_promoted_detail_span(&child) {
@@ -89,7 +89,7 @@ impl TimedListBody<'_> {
         Ok(())
     }
 
-    fn active_dice_fallback_row(&self) -> buck2_error::Result<Option<TimedRow>> {
+    fn active_dice_fallback_row(&self) -> bz_error::Result<Option<TimedRow>> {
         let Some(summary) = active_dice_summary(self.state.simple_console.observer().dice_state())
         else {
             return Ok(None);
@@ -110,7 +110,7 @@ impl TimedListBody<'_> {
         single_child: BuckEventSpanHandle,
         remaining_children: usize,
         display_platform: bool,
-    ) -> buck2_error::Result<TimedRow> {
+    ) -> bz_error::Result<TimedRow> {
         let info = root.info();
         let child_info = single_child.info();
 
@@ -154,7 +154,7 @@ impl TimedListBody<'_> {
         )
     }
 
-    fn draw_root(&self, root: &BuckEventSpanHandle) -> buck2_error::Result<Vec<TimedRow>> {
+    fn draw_root(&self, root: &BuckEventSpanHandle) -> bz_error::Result<Vec<TimedRow>> {
         let timekeeper = &self.state.timekeeper;
         let config = &self.state.config;
         let two_lines = config.two_lines;
@@ -196,9 +196,9 @@ impl TimedListBody<'_> {
 }
 
 impl Component for TimedListBody<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         let config = &self.state.config;
         let max_lines = config.max_lines;
 
@@ -248,13 +248,13 @@ impl Component for TimedListBody<'_> {
 struct TimedListHeader;
 
 impl Component for TimedListHeader {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         dimensions: Dimensions,
         _mode: DrawMode,
-    ) -> buck2_error::Result<Lines> {
+    ) -> bz_error::Result<Lines> {
         Ok(Lines(vec![Line::unstyled(&"-".repeat(dimensions.width))?]))
     }
 }
@@ -273,9 +273,9 @@ impl<'a> TimedList<'a> {
 }
 
 impl Component for TimedList<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         let span_tracker: &BuckEventSpanTracker = self.state.simple_console.observer().spans();
 
         match mode {
@@ -305,15 +305,15 @@ mod tests {
     use std::sync::Arc;
     use std::time::SystemTime;
 
-    use buck2_data::FakeStart;
-    use buck2_data::SpanStartEvent;
-    use buck2_event_observer::action_stats::ActionStats;
-    use buck2_event_observer::span_tracker::EventTimestamp;
-    use buck2_event_observer::verbosity::Verbosity;
-    use buck2_events::BuckEvent;
-    use buck2_events::span::SpanId;
-    use buck2_hash::StdBuckHashMap;
-    use buck2_wrapper_common::invocation_id::TraceId;
+    use bz_data::FakeStart;
+    use bz_data::SpanStartEvent;
+    use bz_event_observer::action_stats::ActionStats;
+    use bz_event_observer::span_tracker::EventTimestamp;
+    use bz_event_observer::verbosity::Verbosity;
+    use bz_events::BuckEvent;
+    use bz_events::span::SpanId;
+    use bz_hash::StdBuckHashMap;
+    use bz_wrapper_common::invocation_id::TraceId;
     use dupe::Dupe;
     use itertools::Itertools;
 
@@ -369,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn test_normal() -> buck2_error::Result<()> {
+    fn test_normal() -> bz_error::Result<()> {
         let tick = Tick::now();
 
         let label = Arc::new(BuckEvent::new(
@@ -377,8 +377,8 @@ mod tests {
             TraceId::new(),
             Some(SpanId::next()),
             None,
-            buck2_data::buck_event::Data::SpanStart(SpanStartEvent {
-                data: Some(buck2_data::span_start_event::Data::Fake(FakeStart {
+            bz_data::buck_event::Data::SpanStart(SpanStartEvent {
+                data: Some(bz_data::span_start_event::Data::Fake(FakeStart {
                     caramba: "test".to_owned(),
                 })),
             }),
@@ -389,8 +389,8 @@ mod tests {
             TraceId::new(),
             Some(SpanId::next()),
             None,
-            buck2_data::buck_event::Data::SpanStart(SpanStartEvent {
-                data: Some(buck2_data::span_start_event::Data::Fake(FakeStart {
+            bz_data::buck_event::Data::SpanStart(SpanStartEvent {
+                data: Some(bz_data::span_start_event::Data::Fake(FakeStart {
                     caramba: "foo".to_owned(),
                 })),
             }),
@@ -439,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining() -> buck2_error::Result<()> {
+    fn test_remaining() -> bz_error::Result<()> {
         let tick = Tick::now();
 
         let e1 = BuckEvent::new(
@@ -447,8 +447,8 @@ mod tests {
             TraceId::new(),
             Some(SpanId::next()),
             None,
-            buck2_data::buck_event::Data::SpanStart(SpanStartEvent {
-                data: Some(buck2_data::span_start_event::Data::Fake(FakeStart {
+            bz_data::buck_event::Data::SpanStart(SpanStartEvent {
+                data: Some(bz_data::span_start_event::Data::Fake(FakeStart {
                     caramba: "e1".to_owned(),
                 })),
             }),
@@ -459,8 +459,8 @@ mod tests {
             TraceId::new(),
             Some(SpanId::next()),
             None,
-            buck2_data::buck_event::Data::SpanStart(SpanStartEvent {
-                data: Some(buck2_data::span_start_event::Data::Fake(FakeStart {
+            bz_data::buck_event::Data::SpanStart(SpanStartEvent {
+                data: Some(bz_data::span_start_event::Data::Fake(FakeStart {
                     caramba: "e2".to_owned(),
                 })),
             }),
@@ -471,8 +471,8 @@ mod tests {
             TraceId::new(),
             Some(SpanId::next()),
             None,
-            buck2_data::buck_event::Data::SpanStart(SpanStartEvent {
-                data: Some(buck2_data::span_start_event::Data::Fake(FakeStart {
+            bz_data::buck_event::Data::SpanStart(SpanStartEvent {
+                data: Some(bz_data::span_start_event::Data::Fake(FakeStart {
                     caramba: "e3".to_owned(),
                 })),
             }),
@@ -525,7 +525,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remaining_with_pending() -> buck2_error::Result<()> {
+    async fn test_remaining_with_pending() -> bz_error::Result<()> {
         let tick = Tick::now();
 
         let mut state = SuperConsoleState::new(
@@ -595,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dice_state_update_stages_render_as_rows() -> buck2_error::Result<()> {
+    fn test_dice_state_update_stages_render_as_rows() -> bz_error::Result<()> {
         let tick = Tick::now();
 
         let parent = SpanId::next();
@@ -607,7 +607,7 @@ mod tests {
             Some(parent),
             None,
             SpanStartEvent {
-                data: Some(buck2_data::DiceSynchronizeSectionStart {}.into()),
+                data: Some(bz_data::DiceSynchronizeSectionStart {}.into()),
             }
             .into(),
         ));
@@ -618,7 +618,7 @@ mod tests {
             Some(child),
             Some(parent),
             SpanStartEvent {
-                data: Some(buck2_data::DiceStateUpdateStart {}.into()),
+                data: Some(bz_data::DiceStateUpdateStart {}.into()),
             }
             .into(),
         ));
@@ -630,7 +630,7 @@ mod tests {
             Some(child),
             SpanStartEvent {
                 data: Some(
-                    buck2_data::DiceStateUpdateStageStart {
+                    bz_data::DiceStateUpdateStageStart {
                         stage: "evaluating bzlmod module extension `foo.bzl`%`deps`".to_owned(),
                     }
                     .into(),
@@ -683,7 +683,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_active_dice_renders_fallback_row_without_spans() -> buck2_error::Result<()> {
+    async fn test_active_dice_renders_fallback_row_without_spans() -> bz_error::Result<()> {
         let tick = Tick::now();
         let mut state = SuperConsoleState::new(
             fake_timekeeper(tick),
@@ -719,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn test_children() -> buck2_error::Result<()> {
+    fn test_children() -> bz_error::Result<()> {
         let tick = Tick::now();
 
         let parent = SpanId::next();
@@ -731,8 +731,8 @@ mod tests {
             Some(parent),
             SpanStartEvent {
                 data: Some(
-                    buck2_data::ExecutorStageStart {
-                        stage: Some(buck2_data::PrepareAction {}.into()),
+                    bz_data::ExecutorStageStart {
+                        stage: Some(bz_data::PrepareAction {}.into()),
                     }
                     .into(),
                 ),
@@ -793,10 +793,10 @@ mod tests {
             Some(parent),
             SpanStartEvent {
                 data: Some(
-                    buck2_data::ExecutorStageStart {
+                    bz_data::ExecutorStageStart {
                         stage: Some(
-                            buck2_data::ReStage {
-                                stage: Some(buck2_data::ReDownload {}.into()),
+                            bz_data::ReStage {
+                                stage: Some(bz_data::ReDownload {}.into()),
                             }
                             .into(),
                         ),
@@ -841,14 +841,14 @@ mod tests {
             TraceId::new(),
             None,
             None,
-            buck2_data::InstantEvent {
+            bz_data::InstantEvent {
                 data: Some(
-                    buck2_data::DiceStateSnapshot {
+                    bz_data::DiceStateSnapshot {
                         key_states: {
                             let mut map = StdBuckHashMap::default();
                             map.insert(
                                 "BuildKey".to_owned(),
-                                buck2_data::DiceKeyState {
+                                bz_data::DiceKeyState {
                                     started: 5,
                                     finished: 2,
                                     check_deps_started: 2,
@@ -876,16 +876,16 @@ mod tests {
             None,
             SpanStartEvent {
                 data: Some(
-                    buck2_data::ActionExecutionStart {
-                        key: Some(buck2_data::ActionKey {
+                    bz_data::ActionExecutionStart {
+                        key: Some(bz_data::ActionKey {
                             id: Default::default(),
-                            owner: Some(buck2_data::action_key::Owner::TargetLabel(
-                                buck2_data::ConfiguredTargetLabel {
-                                    label: Some(buck2_data::TargetLabel {
+                            owner: Some(bz_data::action_key::Owner::TargetLabel(
+                                bz_data::ConfiguredTargetLabel {
+                                    label: Some(bz_data::TargetLabel {
                                         package: "pkg".into(),
                                         name: "target".into(),
                                     }),
-                                    configuration: Some(buck2_data::Configuration {
+                                    configuration: Some(bz_data::Configuration {
                                         full_name: "conf".into(),
                                     }),
                                     execution_configuration: None,
@@ -893,11 +893,11 @@ mod tests {
                             )),
                             key: "".to_owned(),
                         }),
-                        name: Some(buck2_data::ActionName {
+                        name: Some(bz_data::ActionName {
                             category: "category".into(),
                             identifier: "identifier".into(),
                         }),
-                        kind: buck2_data::ActionKind::NotSet as i32,
+                        kind: bz_data::ActionKind::NotSet as i32,
                     }
                     .into(),
                 ),

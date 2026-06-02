@@ -3,7 +3,7 @@ authors = ["Facebook"]
 description = "uquery, cquery, aquery and analysis query implementations for Buck2"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_query_impls"
+name = "bz_query_impls"
 repository = { workspace = true }
 version = "0.0.0"
 
@@ -25,19 +25,19 @@ gazebo = { workspace = true }
 pagable = { workspace = true }
 starlark = { workspace = true }
 
-buck2_artifact = { workspace = true }
-buck2_build_api = { workspace = true }
-buck2_common = { workspace = true }
-buck2_core = { workspace = true }
-buck2_error = { workspace = true }
-buck2_events = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_hash = { workspace = true }
-buck2_interpreter = { workspace = true }
-buck2_node = { workspace = true }
-buck2_query = { workspace = true }
-buck2_query_parser = { workspace = true }
-buck2_util = { workspace = true }
+bz_artifact = { workspace = true }
+bz_build_api = { workspace = true }
+bz_common = { workspace = true }
+bz_core = { workspace = true }
+bz_error = { workspace = true }
+bz_events = { workspace = true }
+bz_fs = { workspace = true }
+bz_hash = { workspace = true }
+bz_interpreter = { workspace = true }
+bz_node = { workspace = true }
+bz_query = { workspace = true }
+bz_query_parser = { workspace = true }
+bz_util = { workspace = true }
 dice_futures = { workspace = true }
 
 [dev-dependencies]

@@ -9,9 +9,9 @@
  */
 
 use async_trait::async_trait;
-use buck2_core::configuration::compatibility::ResultMaybeCompatible;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_util::late_binding::LateBinding;
+use bz_core::configuration::compatibility::ResultMaybeCompatible;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 
 use crate::nodes::configured::ConfiguredTargetNode;

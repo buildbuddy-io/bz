@@ -18,23 +18,23 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 
 use allocative::Allocative;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::bxl::build_result::BxlBuildResult;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineInputs;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_common::events::HasEvents;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::starlark_error::from_starlark_with_options;
-use buck2_execute::path::artifact_path::ArtifactPath;
-use buck2_hash::BuckIndexSet;
-use buck2_server_ctx::bxl::BxlStreamingTracker;
-use buck2_server_ctx::bxl::GetBxlStreamingTracker;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::bxl::build_result::BxlBuildResult;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineInputs;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_common::events::HasEvents;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project::ProjectRoot;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::starlark_error::from_starlark_with_options;
+use bz_execute::path::artifact_path::ArtifactPath;
+use bz_hash::BuckIndexSet;
+use bz_server_ctx::bxl::BxlStreamingTracker;
+use bz_server_ctx::bxl::GetBxlStreamingTracker;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;
@@ -158,7 +158,7 @@ pub(crate) enum EnsuredArtifactOrGroup {
 }
 
 impl EnsuredArtifactOrGroup {
-    pub(crate) fn into_artifact_groups(self) -> buck2_error::Result<Vec<ArtifactGroup>> {
+    pub(crate) fn into_artifact_groups(self) -> bz_error::Result<Vec<ArtifactGroup>> {
         match self {
             EnsuredArtifactOrGroup::Artifact(artifact) => {
                 let as_artifact = artifact.as_artifact();
@@ -192,14 +192,14 @@ impl OutputStreamState {
         }
     }
 
-    pub(crate) fn take_state(&self) -> buck2_error::Result<OutputStreamOutcome> {
+    pub(crate) fn take_state(&self) -> bz_error::Result<OutputStreamOutcome> {
         let state = self.inner.try_lock().unwrap().take().unwrap();
         let artifacts = state
             .artifacts_to_ensure
             .into_iter()
             .map(EnsuredArtifactOrGroup::into_artifact_groups)
             .flatten_ok()
-            .collect::<buck2_error::Result<BuckIndexSet<ArtifactGroup>>>()?;
+            .collect::<bz_error::Result<BuckIndexSet<ArtifactGroup>>>()?;
         let pending_streaming_outputs = state
             .pending_streaming_outputs
             .into_iter()
@@ -208,10 +208,10 @@ impl OutputStreamState {
                     .into_iter()
                     .map(|ensured_artifact| ensured_artifact.into_artifact_groups())
                     .flatten_ok()
-                    .collect::<buck2_error::Result<BuckIndexSet<ArtifactGroup>>>()?;
+                    .collect::<bz_error::Result<BuckIndexSet<ArtifactGroup>>>()?;
                 Ok((artifacts, output_str))
             })
-            .collect::<buck2_error::Result<Vec<(BuckIndexSet<ArtifactGroup>, Vec<u8>)>>>()?;
+            .collect::<bz_error::Result<Vec<(BuckIndexSet<ArtifactGroup>, Vec<u8>)>>>()?;
         Ok(OutputStreamOutcome {
             ensured_artifacts: artifacts,
             output: state.output,
@@ -224,7 +224,7 @@ impl OutputStreamState {
     fn populate_ensured_artifacts(
         &self,
         ensured: EnsuredArtifactOrGroup,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.inner
             .lock()
             .unwrap()
@@ -386,7 +386,7 @@ impl StarlarkOutputStream {
         sep: &'v str,
         eval: &mut Evaluator<'v, '_, '_>,
         mut output: impl Write,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut first = true;
 
         fn write_item(
@@ -394,7 +394,7 @@ impl StarlarkOutputStream {
             sep: &str,
             first: &mut bool,
             item: &dyn std::fmt::Display,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             if !*first {
                 write!(output, "{sep}{item}")?;
             } else {
@@ -448,7 +448,7 @@ impl StarlarkOutputStream {
         pretty: bool,
         eval: &mut Evaluator<'v, '_, '_>,
         mut output: impl Write,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         /// A wrapper with a Serialize instance so we can pass down the necessary context.
         struct SerializeValue<'a, 'v, 'd, 's> {
             value: Value<'v>,
@@ -502,8 +502,8 @@ impl StarlarkOutputStream {
                                             self.artifact_fs,
                                         )?;
                                         seq_ser.serialize_element(&path).map_err(|err| {
-                                            buck2_error!(
-                                                buck2_error::ErrorTag::Tier0,
+                                            bz_error!(
+                                                bz_error::ErrorTag::Tier0,
                                                 "{}",
                                                 format!("{:#}", err)
                                             )
@@ -817,7 +817,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                         artifact.clone(),
                     ))?;
 
-                    Ok::<EnsuredArtifact, buck2_error::Error>(artifact)
+                    Ok::<EnsuredArtifact, bz_error::Error>(artifact)
                 })?;
 
                 Ok(heap.alloc(artifacts))
@@ -843,7 +843,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                             label.get_hashed().map_err(|e| {
                                 from_starlark_with_options(
                                     e,
-                                    buck2_error::starlark_error::NativeErrorHandling::Unknown,
+                                    bz_error::starlark_error::NativeErrorHandling::Unknown,
                                     false,
                                 )
                             })?,
@@ -853,7 +853,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
                             )?),
                         ))
                     })
-                    .collect::<buck2_error::Result<_>>()?,
+                    .collect::<bz_error::Result<_>>()?,
             ))),
             EnsureMultipleArtifactsArg::CmdLine(cmd_line) => {
                 // TODO(nga): we should not be doing that here.
@@ -878,7 +878,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
 
 pub(crate) fn get_cmd_line_inputs(
     cmd_line: &dyn CommandLineArgLike,
-) -> buck2_error::Result<StarlarkCommandLineInputs> {
+) -> bz_error::Result<StarlarkCommandLineInputs> {
     let mut visitor = SimpleCommandLineArtifactVisitor::new();
     cmd_line.visit_artifacts(&mut visitor)?;
     let inputs = StarlarkCommandLineInputs {
@@ -892,7 +892,7 @@ pub(crate) fn get_artifact_path_display(
     abs: bool,
     project_fs: &ProjectRoot,
     artifact_fs: &ArtifactFs,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     // We always use the configuration-based path, since that's what we expose to the user.
     let resolved = artifact_path.resolve_configuration_hash_path(artifact_fs)?;
     Ok(if abs {
@@ -905,7 +905,7 @@ pub(crate) fn get_artifact_path_display(
 fn get_artifacts_from_bxl_build_result(
     bxl_build_result: &StarlarkBxlBuildResult,
     output_stream: &StarlarkOutputStream,
-) -> buck2_error::Result<Vec<EnsuredArtifact>> {
+) -> bz_error::Result<Vec<EnsuredArtifact>> {
     match &bxl_build_result.0 {
         BxlBuildResult::None => Ok(Vec::new()),
         BxlBuildResult::Built { result, .. } => result
@@ -929,6 +929,6 @@ fn get_artifacts_from_bxl_build_result(
                 ))?;
                 artifact
             })
-            .collect::<buck2_error::Result<_>>(),
+            .collect::<bz_error::Result<_>>(),
     }
 }

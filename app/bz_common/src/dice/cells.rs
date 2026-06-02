@@ -12,13 +12,13 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::external::external_cell_origin_for_cell;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::cells::name::CellName;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::external_cell_origin_for_cell;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::cells::name::CellName;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
 use derive_more::Display;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -43,38 +43,38 @@ use crate::legacy_configs::dice::HasLegacyConfigs;
 
 #[async_trait]
 pub trait HasCellResolver {
-    async fn get_cell_resolver(&mut self) -> buck2_error::Result<CellResolver>;
+    async fn get_cell_resolver(&mut self) -> bz_error::Result<CellResolver>;
 
-    async fn is_cell_resolver_key_set(&mut self) -> buck2_error::Result<bool>;
+    async fn is_cell_resolver_key_set(&mut self) -> bz_error::Result<bool>;
 
     async fn get_cell_alias_resolver(
         &mut self,
         cell: CellName,
-    ) -> buck2_error::Result<CellAliasResolver>;
+    ) -> bz_error::Result<CellAliasResolver>;
 
     async fn get_cell_alias_resolver_for_dir(
         &mut self,
         dir: &ProjectRelativePath,
-    ) -> buck2_error::Result<CellAliasResolver>;
+    ) -> bz_error::Result<CellAliasResolver>;
 }
 
 pub trait SetCellResolver {
-    fn set_cell_resolver(&mut self, cell_resolver: CellResolver) -> buck2_error::Result<()>;
+    fn set_cell_resolver(&mut self, cell_resolver: CellResolver) -> bz_error::Result<()>;
 
-    fn set_none_cell_resolver(&mut self) -> buck2_error::Result<()>;
+    fn set_none_cell_resolver(&mut self) -> bz_error::Result<()>;
 }
 
 pub trait SetExternalCellOrigins {
     fn set_external_cell_origins_from_cell_resolver(
         &mut self,
         cell_resolver: &CellResolver,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     fn set_changed_external_cell_origins(
         &mut self,
         previous: &CellResolver,
         current: &CellResolver,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }
 
 #[async_trait]
@@ -82,7 +82,7 @@ pub trait HasExternalCellOrigins {
     async fn get_external_cell_origin(
         &mut self,
         cell: CellName,
-    ) -> buck2_error::Result<Option<ExternalCellOrigin>>;
+    ) -> bz_error::Result<Option<ExternalCellOrigin>>;
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
@@ -175,27 +175,27 @@ fn external_cell_origin_shape_equal(
 
 #[async_trait]
 impl HasCellResolver for DiceComputations<'_> {
-    async fn get_cell_resolver(&mut self) -> buck2_error::Result<CellResolver> {
+    async fn get_cell_resolver(&mut self) -> bz_error::Result<CellResolver> {
         self.compute(&CellResolverKey).await?.ok_or_else(|| {
             panic!("Tried to retrieve CellResolverKey from the graph, but key has None value")
         })
     }
 
-    async fn is_cell_resolver_key_set(&mut self) -> buck2_error::Result<bool> {
+    async fn is_cell_resolver_key_set(&mut self) -> bz_error::Result<bool> {
         Ok(self.compute(&CellResolverKey).await?.is_some())
     }
 
     async fn get_cell_alias_resolver(
         &mut self,
         cell: CellName,
-    ) -> buck2_error::Result<CellAliasResolver> {
+    ) -> bz_error::Result<CellAliasResolver> {
         Ok(self.compute(&CellAliasResolverKey(cell)).await??)
     }
 
     async fn get_cell_alias_resolver_for_dir(
         &mut self,
         dir: &ProjectRelativePath,
-    ) -> buck2_error::Result<CellAliasResolver> {
+    ) -> bz_error::Result<CellAliasResolver> {
         let cell = self.get_cell_resolver().await?.find(dir);
         self.get_cell_alias_resolver(cell).await
     }
@@ -206,7 +206,7 @@ impl HasExternalCellOrigins for DiceComputations<'_> {
     async fn get_external_cell_origin(
         &mut self,
         cell: CellName,
-    ) -> buck2_error::Result<Option<ExternalCellOrigin>> {
+    ) -> bz_error::Result<Option<ExternalCellOrigin>> {
         if is_bzlmod_cell_name(cell.as_str()) {
             let cell_in_resolver = match self.compute(&CellResolverKey).await? {
                 Some(resolver) => resolver.contains_declared(cell),
@@ -243,7 +243,7 @@ struct CellAliasResolverKey(CellName);
 
 #[async_trait]
 impl Key for CellAliasResolverKey {
-    type Value = buck2_error::Result<CellAliasResolver>;
+    type Value = bz_error::Result<CellAliasResolver>;
 
     async fn compute(
         &self,
@@ -301,7 +301,7 @@ impl Key for CellAliasResolverKey {
                 &BazelCompatBazelrcOptions::default(),
             );
             resolver.get(self.0).map_err(|_| {
-                buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "Unknown cell `{}`", self.0)
+                bz_error::bz_error!(bz_error::ErrorTag::Input, "Unknown cell `{}`", self.0)
             })?;
             return BuckConfigBasedCells::get_bazel_cell_alias_resolver_from_config(
                 self.0, &resolver, &config,
@@ -320,7 +320,7 @@ impl Key for CellAliasResolverKey {
             config
         };
         resolver.get(self.0).map_err(|_| {
-            buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "Unknown cell `{}`", self.0)
+            bz_error::bz_error!(bz_error::ErrorTag::Input, "Unknown cell `{}`", self.0)
         })?;
         if bzlmod_module_aliases.is_some()
             || self.0.as_str() == "bazel_tools"
@@ -357,12 +357,12 @@ impl Key for CellAliasResolverKey {
 }
 
 impl SetCellResolver for DiceTransactionUpdater {
-    fn set_cell_resolver(&mut self, cell_resolver: CellResolver) -> buck2_error::Result<()> {
+    fn set_cell_resolver(&mut self, cell_resolver: CellResolver) -> bz_error::Result<()> {
         self.set_external_cell_origins_from_cell_resolver(&cell_resolver)?;
         Ok(self.changed_to(vec![(CellResolverKey, Some(cell_resolver))])?)
     }
 
-    fn set_none_cell_resolver(&mut self) -> buck2_error::Result<()> {
+    fn set_none_cell_resolver(&mut self) -> bz_error::Result<()> {
         Ok(self.changed_to(vec![(CellResolverKey, None)])?)
     }
 }
@@ -371,7 +371,7 @@ impl SetExternalCellOrigins for DiceTransactionUpdater {
     fn set_external_cell_origins_from_cell_resolver(
         &mut self,
         cell_resolver: &CellResolver,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let origins = cell_resolver
             .cells()
             .map(|(cell, instance)| {
@@ -388,7 +388,7 @@ impl SetExternalCellOrigins for DiceTransactionUpdater {
         &mut self,
         previous: &CellResolver,
         current: &CellResolver,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut changed = Vec::new();
         for (cell, current_instance) in current.cells() {
             let previous_origin = previous

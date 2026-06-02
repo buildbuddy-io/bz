@@ -110,11 +110,11 @@ the above benefits apply, Buck2 provides the following benefits:
     [reduced from 300s to 80s](https://fb.workplace.com/groups/132499338763090/posts/132580122088345).
 - **Better observability** - Buck2 populates many Scuba tables with information
   about
-  [loading](https://www.internalfb.com/intern/scuba/query/?dataset=buck2_loads),
-  [analysis](https://www.internalfb.com/intern/scuba/query/?dataset=buck2_analyses),
-  [builds](https://www.internalfb.com/intern/scuba/query/?dataset=buck2_builds)
+  [loading](https://www.internalfb.com/intern/scuba/query/?dataset=bz_loads),
+  [analysis](https://www.internalfb.com/intern/scuba/query/?dataset=bz_analyses),
+  [builds](https://www.internalfb.com/intern/scuba/query/?dataset=bz_builds)
   and
-  [errors](https://www.internalfb.com/intern/scuba/query/?dataset=buck2_action_errors),
+  [errors](https://www.internalfb.com/intern/scuba/query/?dataset=bz_action_errors),
   and more. The architecture of Buck2 ensures that all important information can
   be recorded in a uniform manner, enabling sensible trade-offs to be made about
   what to store vs for how long.

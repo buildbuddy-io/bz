@@ -11,7 +11,7 @@
 use std::marker::PhantomData;
 use std::sync::OnceLock;
 
-use buck2_interpreter::types::provider::callable::ProviderCallableLike;
+use bz_interpreter::types::provider::callable::ProviderCallableLike;
 use dupe::Dupe;
 use starlark::environment::GlobalsBuilder;
 use starlark::typing::Ty;

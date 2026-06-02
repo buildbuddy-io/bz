@@ -16,10 +16,10 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
-use buck2_error::ContextValue;
-use buck2_error::TypedContext;
-use buck2_util::arc_str::ArcStr;
+use bz_error::BuckErrorContext;
+use bz_error::ContextValue;
+use bz_error::TypedContext;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 use itertools::Either;
 use pagable::Pagable;
@@ -28,7 +28,7 @@ use strong_hash::StrongHash;
 use crate::provider::label::ProvidersLabel;
 use crate::target::configured_target_label::ConfiguredTargetLabel;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = CompatibilityError)]
 enum CompatibilityErrors {
     /// Target is immediately incompatible with the configuration.
@@ -63,7 +63,7 @@ impl<T> MaybeCompatible<T> {
     /// Converts to a result. Incompatible values get converted to an error.
     ///
     /// This is just a convenience for treating incompatibility as an error.
-    pub fn require_compatible(self) -> buck2_error::Result<T> {
+    pub fn require_compatible(self) -> bz_error::Result<T> {
         match self {
             MaybeCompatible::Incompatible(reason) => Err(reason.to_err()),
             MaybeCompatible::Compatible(result) => Ok(result),
@@ -119,11 +119,11 @@ impl<T> MaybeCompatible<T> {
 pub enum ResultMaybeCompatible<T> {
     Compatible(T),
     Incompatible(Arc<IncompatiblePlatformReason>),
-    Err(buck2_error::Error),
+    Err(bz_error::Error),
 }
 
-impl<T> From<buck2_error::Error> for ResultMaybeCompatible<T> {
-    fn from(value: buck2_error::Error) -> Self {
+impl<T> From<bz_error::Error> for ResultMaybeCompatible<T> {
+    fn from(value: bz_error::Error) -> Self {
         Self::Err(value)
     }
 }
@@ -143,7 +143,7 @@ impl<T> ResultMaybeCompatible<T> {
 
     pub fn map_err(
         self,
-        func: impl FnOnce(buck2_error::Error) -> buck2_error::Error,
+        func: impl FnOnce(bz_error::Error) -> bz_error::Error,
     ) -> ResultMaybeCompatible<T> {
         match self {
             Self::Compatible(t) => ResultMaybeCompatible::Compatible(t),
@@ -154,7 +154,7 @@ impl<T> ResultMaybeCompatible<T> {
 
     pub fn try_map<U>(
         self,
-        func: impl FnOnce(T) -> Result<U, buck2_error::Error>,
+        func: impl FnOnce(T) -> Result<U, bz_error::Error>,
     ) -> ResultMaybeCompatible<U> {
         match self {
             Self::Compatible(t) => ResultMaybeCompatible::Compatible(func(t)?),
@@ -186,7 +186,7 @@ impl<T> ResultMaybeCompatible<T> {
             Self::Compatible(v) => ResultMaybeCompatible::Compatible(v),
             Self::Incompatible(v) => ResultMaybeCompatible::Incompatible(v),
             Self::Err(e) => {
-                buck2_error::Result::<!>::Err(e.into()).with_internal_error(f)?;
+                bz_error::Result::<!>::Err(e.into()).with_internal_error(f)?;
             }
         }
     }
@@ -201,7 +201,7 @@ impl<T> ResultMaybeCompatible<T> {
     }
 
     #[track_caller]
-    pub fn tag(self, tag: buck2_error::ErrorTag) -> ResultMaybeCompatible<T> {
+    pub fn tag(self, tag: bz_error::ErrorTag) -> ResultMaybeCompatible<T> {
         match self {
             Self::Err(e) => ResultMaybeCompatible::Err(e.tag(vec![tag])),
             Self::Compatible(v) => ResultMaybeCompatible::Compatible(v),
@@ -242,7 +242,7 @@ impl<T> ResultMaybeCompatible<T> {
 
     /// Convert incompatibility to an error. Returns `Ok(t)` for `Compatible(t)`,
     /// and `Err(...)` for both `Incompatible` and `Err`.
-    pub fn require_compatible(self) -> Result<T, buck2_error::Error> {
+    pub fn require_compatible(self) -> Result<T, bz_error::Error> {
         match self {
             ResultMaybeCompatible::Compatible(t) => Ok(t),
             ResultMaybeCompatible::Incompatible(reason) => Err(reason.to_err()),
@@ -252,7 +252,7 @@ impl<T> ResultMaybeCompatible<T> {
 
     /// Convert to `Result<MaybeCompatible<T>>`, separating the error case from
     /// the compatible/incompatible cases.
-    pub fn ok(self) -> Result<MaybeCompatible<T>, buck2_error::Error> {
+    pub fn ok(self) -> Result<MaybeCompatible<T>, bz_error::Error> {
         match self {
             ResultMaybeCompatible::Compatible(t) => Ok(MaybeCompatible::Compatible(t)),
             ResultMaybeCompatible::Incompatible(reason) => {
@@ -275,7 +275,7 @@ impl<T> std::ops::FromResidual<ResultMaybeCompatible<std::convert::Infallible>>
     }
 }
 
-impl<T, E: Into<buck2_error::Error>> std::ops::FromResidual<Result<std::convert::Infallible, E>>
+impl<T, E: Into<bz_error::Error>> std::ops::FromResidual<Result<std::convert::Infallible, E>>
     for ResultMaybeCompatible<T>
 {
     fn from_residual(residual: Result<std::convert::Infallible, E>) -> Self {
@@ -345,7 +345,7 @@ pub struct IncompatiblePlatformReason {
 }
 
 impl IncompatiblePlatformReason {
-    pub fn to_err(&self) -> buck2_error::Error {
+    pub fn to_err(&self) -> bz_error::Error {
         match self.cause {
             IncompatiblePlatformReasonCause::UnsatisfiedConfig(_)
             | IncompatiblePlatformReasonCause::SelectIncompatible(_) => {
@@ -357,7 +357,7 @@ impl IncompatiblePlatformReason {
         }
     }
 
-    pub fn to_soft_err(&self) -> buck2_error::Error {
+    pub fn to_soft_err(&self) -> bz_error::Error {
         match &self.cause {
             IncompatiblePlatformReasonCause::UnsatisfiedConfig(_)
             | IncompatiblePlatformReasonCause::SelectIncompatible(_) => self.to_err(),

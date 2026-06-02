@@ -11,26 +11,26 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::artifact_groups::promise::PromiseArtifactAttr;
-use buck2_core::package::PackageLabel;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::attr_type::arg::ConfiguredStringWithMacros;
-use buck2_node::attrs::attr_type::bool::BoolLiteral;
-use buck2_node::attrs::attr_type::dep::DepAttr;
-use buck2_node::attrs::attr_type::dict::DictLiteral;
-use buck2_node::attrs::attr_type::list::ListLiteral;
-use buck2_node::attrs::attr_type::string::StringLiteral;
-use buck2_node::attrs::attr_type::tuple::TupleLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coerced_attr_with_type::CoercedAttrWithType;
-use buck2_node::attrs::configured_traversal::ConfiguredAttrTraversal;
-use buck2_node::attrs::display::AttrDisplayWithContext;
-use buck2_node::attrs::fmt_context::AttrFmtContext;
-use buck2_node::attrs::json::ToJsonWithContext;
-use buck2_node::attrs::serialize::AttrSerializeWithContext;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::artifact_groups::promise::PromiseArtifactAttr;
+use bz_core::package::PackageLabel;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::attr_type::arg::ConfiguredStringWithMacros;
+use bz_node::attrs::attr_type::bool::BoolLiteral;
+use bz_node::attrs::attr_type::dep::DepAttr;
+use bz_node::attrs::attr_type::dict::DictLiteral;
+use bz_node::attrs::attr_type::list::ListLiteral;
+use bz_node::attrs::attr_type::string::StringLiteral;
+use bz_node::attrs::attr_type::tuple::TupleLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coerced_attr_with_type::CoercedAttrWithType;
+use bz_node::attrs::configured_traversal::ConfiguredAttrTraversal;
+use bz_node::attrs::display::AttrDisplayWithContext;
+use bz_node::attrs::fmt_context::AttrFmtContext;
+use bz_node::attrs::json::ToJsonWithContext;
+use bz_node::attrs::serialize::AttrSerializeWithContext;
 use dupe::Dupe;
 use gazebo::prelude::SliceExt;
 use pagable::Pagable;
@@ -119,7 +119,7 @@ impl AttrDisplayWithContext for AnonTargetAttr {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum AnonTargetAttrError {
     #[error("Inconsistent number of elements in tuple")]
@@ -127,7 +127,7 @@ enum AnonTargetAttrError {
 }
 
 impl ToJsonWithContext for AnonTargetAttr {
-    fn to_json(&self, ctx: &AttrFmtContext) -> buck2_error::Result<serde_json::Value> {
+    fn to_json(&self, ctx: &AttrFmtContext) -> bz_error::Result<serde_json::Value> {
         match self {
             AnonTargetAttr::Bool(v) => Ok(to_value(v)?),
             AnonTargetAttr::Int(v) => Ok(to_value(v)?),
@@ -146,7 +146,7 @@ impl ToJsonWithContext for AnonTargetAttr {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum AnonTargetFromCoercedAttrError {
     #[error("Anon targets do not support default values for `{0}`, specify `{1}` explicitly")]
@@ -159,7 +159,7 @@ impl AnonTargetAttr {
         &self,
         pkg: PackageLabel,
         traversal: &mut dyn ConfiguredAttrTraversal,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             AnonTargetAttr::Bool(_) => Ok(()),
             AnonTargetAttr::Int(_) => Ok(()),
@@ -198,7 +198,7 @@ impl AnonTargetAttr {
     pub(crate) fn traverse_anon_attr(
         &self,
         traversal: &mut dyn AnonTargetAttrTraversal,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             AnonTargetAttr::Bool(_) => Ok(()),
             AnonTargetAttr::Int(_) => Ok(()),
@@ -250,7 +250,7 @@ impl AnonTargetAttr {
         attr_name: &str,
         attr: &CoercedAttr,
         ty: &AttrType,
-    ) -> buck2_error::Result<AnonTargetAttr> {
+    ) -> bz_error::Result<AnonTargetAttr> {
         Ok(match CoercedAttrWithType::pack(attr, ty)? {
             CoercedAttrWithType::AnyList(list) => AnonTargetAttr::List(ListLiteral(
                 list.try_map(|v| AnonTargetAttr::from_coerced_attr(attr_name, v, ty))?
@@ -265,7 +265,7 @@ impl AnonTargetAttr {
                 dict.try_map(|(k, v)| {
                     let k2 = AnonTargetAttr::from_coerced_attr(attr_name, k, ty)?;
                     let v2 = AnonTargetAttr::from_coerced_attr(attr_name, v, ty)?;
-                    buck2_error::Ok((k2, v2))
+                    bz_error::Ok((k2, v2))
                 })?
                 .into(),
             )),
@@ -286,14 +286,14 @@ impl AnonTargetAttr {
                     list.iter()
                         .zip(&t.xs)
                         .map(|(v, vt)| AnonTargetAttr::from_coerced_attr(attr_name, v, vt))
-                        .collect::<buck2_error::Result<_>>()?,
+                        .collect::<bz_error::Result<_>>()?,
                 ))
             }
             CoercedAttrWithType::Dict(dict, t) => AnonTargetAttr::Dict(DictLiteral(
                 dict.try_map(|(k, v)| {
                     let k2 = AnonTargetAttr::from_coerced_attr(attr_name, k, &t.key)?;
                     let v2 = AnonTargetAttr::from_coerced_attr(attr_name, v, &t.value)?;
-                    buck2_error::Ok((k2, v2))
+                    bz_error::Ok((k2, v2))
                 })?
                 .into(),
             )),

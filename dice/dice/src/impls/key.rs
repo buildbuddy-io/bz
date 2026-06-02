@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_hash::BuckHasher;
+use bz_hash::BuckHasher;
 use cmp_any::PartialEqAny;
 use derive_more::Display;
 use dice_futures::cancellation::CancellationContext;

@@ -22,7 +22,7 @@ use crate::interpreter::globspec::GlobSpec;
 use crate::interpreter::interpreter_for_dir::package_listing_strategy_from_glob_patterns;
 use crate::interpreter::module_internals::ModuleInternals;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum GlobFunctionError {
     #[error("glob include patterns matched no files and allow_empty is false: `{0:?}`")]
@@ -75,7 +75,7 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
             include_directories,
         })? {
             if !allow_empty && res.is_empty() {
-                return Err(buck2_error::Error::from(GlobFunctionError::EmptyResult(
+                return Err(bz_error::Error::from(GlobFunctionError::EmptyResult(
                     include.items.clone(),
                 ))
                 .into());

@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BUILD_API_GLOBALS;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BUILD_API_INTERNALS;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BUILD_API_GLOBALS;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_BUILD_API_INTERNALS;
 use starlark::environment::GlobalsBuilder;
 
 use crate::actions::error_handler::register_action_error_handler_for_testing;

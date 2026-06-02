@@ -11,13 +11,13 @@
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_core::buck2_env;
-use buck2_data::*;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::dispatch::Span;
-use buck2_events::dispatch::with_dispatcher_async;
-use buck2_hash::StdBuckHashMap;
-use buck2_util::threads::thread_spawn;
+use bz_core::bz_env;
+use bz_data::*;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::dispatch::Span;
+use bz_events::dispatch::with_dispatcher_async;
+use bz_hash::StdBuckHashMap;
+use bz_util::threads::thread_spawn;
 use dice::DiceEvent;
 use dice::DiceEventListener;
 use dupe::Dupe;
@@ -41,13 +41,13 @@ pub struct BuckDiceTracker {
 }
 
 impl BuckDiceTracker {
-    pub fn new(events: EventDispatcher) -> buck2_error::Result<Self> {
+    pub fn new(events: EventDispatcher) -> bz_error::Result<Self> {
         let (event_forwarder, receiver) = mpsc::unbounded();
         let snapshot_interval =
-            buck2_env!("BUCK2_DICE_SNAPSHOT_INTERVAL_MS", type=u64, default = 500)
+            bz_env!("BUCK2_DICE_SNAPSHOT_INTERVAL_MS", type=u64, default = 500)
                 .map(Duration::from_millis)?;
         let show_dice_key_progress_spans =
-            buck2_env!("BUCK2_DICE_PROGRESS_KEY_SPANS", type=bool, default=false)?;
+            bz_env!("BUCK2_DICE_PROGRESS_KEY_SPANS", type=bool, default=false)?;
 
         thread_spawn("buck2-dice-tracker", move || {
             let runtime = tokio::runtime::Builder::new_current_thread()

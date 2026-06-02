@@ -13,11 +13,11 @@ use std::fmt;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_build_api::bxl::types::BxlFunctionLabel;
-use buck2_core::bxl::BxlFilePath;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_interpreter::build_context::starlark_path_from_build_context;
+use bz_build_api::bxl::types::BxlFunctionLabel;
+use bz_core::bxl::BxlFilePath;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_interpreter::build_context::starlark_path_from_build_context;
 use cli_args::CliArgs;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
@@ -84,8 +84,8 @@ fn bxl_impl<'v>(
     let bxl_path = (*starlark_path_from_build_context(eval)?
         .unpack_bxl_file()
         .ok_or_else(|| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error!(
+                bz_error::ErrorTag::Input,
                 "`bxl` can only be declared in bxl files"
             )
         })?)
@@ -97,9 +97,9 @@ fn bxl_impl<'v>(
     for (arg, def) in cli_args.entries {
         if let Some(short) = def.short {
             if short_args.contains(&short) {
-                let buck2_error: buck2_error::Error =
+                let bz_error: bz_error::Error =
                     CliArgError::DuplicateShort(short.to_owned()).into();
-                return Err(buck2_error.into());
+                return Err(bz_error.into());
             } else {
                 short_args.insert(short.to_owned());
             }
@@ -117,7 +117,7 @@ fn bxl_impl<'v>(
 }
 
 /// Errors around rule declaration, instantiation, validation, etc
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BxlError {
     #[error("Bxl defined in `{0}` must be assigned to a variable, e.g. `my_bxl = bxl_main(...)`")]
@@ -232,7 +232,7 @@ impl FrozenBxlFunction {
         &self,
         clap: clap::ArgMatches,
         ctx: &CliResolutionCtx<'a>,
-    ) -> buck2_error::Result<OrderedMap<String, CliArgValue>> {
+    ) -> bz_error::Result<OrderedMap<String, CliArgValue>> {
         let mut res = OrderedMap::with_capacity(self.cli_args.len());
 
         for (arg, cli) in self.cli_args.iter() {

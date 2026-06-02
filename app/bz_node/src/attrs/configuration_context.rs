@@ -10,19 +10,19 @@
 
 use std::sync::Arc;
 
-use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
-use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::configuration::pair::ConfigurationWithExec;
-use buck2_core::configuration::transition::applied::TransitionApplied;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::internal_error;
+use bz_core::configuration::compatibility::IncompatiblePlatformReason;
+use bz_core::configuration::compatibility::IncompatiblePlatformReasonCause;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::configuration::pair::ConfigurationWithExec;
+use bz_core::configuration::transition::applied::TransitionApplied;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::internal_error;
 use dupe::Dupe;
 use starlark_map::ordered_map::OrderedMap;
 use starlark_map::sorted_map::SortedMap;
@@ -30,7 +30,7 @@ use starlark_map::sorted_map::SortedMap;
 use crate::configuration::resolved::MatchedConfigurationSettingKeys;
 use crate::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 pub enum PlatformConfigurationError {
     #[error("Could not find configuration for platform target `{0}`")]
@@ -51,18 +51,18 @@ pub trait AttrConfigurationContext {
         None
     }
 
-    fn base_exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec>;
+    fn base_exec_cfg(&self) -> bz_error::Result<ConfigurationNoExec>;
 
     /// Must be equal to `(cfg, Some(exec_cfg))`.
     fn toolchain_cfg(&self) -> ConfigurationWithExec;
 
-    fn platform_cfg(&self, label: &TargetLabel) -> buck2_error::Result<ConfigurationData>;
+    fn platform_cfg(&self, label: &TargetLabel) -> bz_error::Result<ConfigurationData>;
 
     /// Map of transition ids resolved to configurations
     /// using current node configuration as input.
     fn resolved_transitions(
         &self,
-    ) -> buck2_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>>;
+    ) -> bz_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>>;
 
     /// Constructs an `IncompatiblePlatformReason` for this target from the given cause.
     fn incompatible_platform_reason(
@@ -77,7 +77,7 @@ pub trait AttrConfigurationContext {
     fn configure_exec_target(
         &self,
         label: &ProvidersLabel,
-    ) -> buck2_error::Result<ConfiguredProvidersLabel> {
+    ) -> bz_error::Result<ConfiguredProvidersLabel> {
         Ok(label.configure_pair(self.base_exec_cfg()?.cfg_pair().dupe()))
     }
 
@@ -93,7 +93,7 @@ pub trait AttrConfigurationContext {
         &self,
         label: &ProvidersLabel,
         tr: &TransitionId,
-    ) -> buck2_error::Result<ConfiguredProvidersLabel> {
+    ) -> bz_error::Result<ConfiguredProvidersLabel> {
         let cfg = self
             .resolved_transitions()?
             .get(tr)
@@ -105,7 +105,7 @@ pub trait AttrConfigurationContext {
         &self,
         label: &ProvidersLabel,
         tr: &TransitionId,
-    ) -> buck2_error::Result<SortedMap<String, ConfiguredProvidersLabel>> {
+    ) -> bz_error::Result<SortedMap<String, ConfiguredProvidersLabel>> {
         let cfg = self
             .resolved_transitions()?
             .get(tr)
@@ -176,14 +176,14 @@ impl AttrConfigurationContext for AttrConfigurationContextImpl<'_> {
         })
     }
 
-    fn base_exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
+    fn base_exec_cfg(&self) -> bz_error::Result<ConfigurationNoExec> {
         Ok(self.execution_platform_resolution.base_cfg())
     }
 
     fn configure_exec_target(
         &self,
         label: &ProvidersLabel,
-    ) -> buck2_error::Result<ConfiguredProvidersLabel> {
+    ) -> bz_error::Result<ConfiguredProvidersLabel> {
         let cfg = self
             .execution_platform_resolution
             .cfg_for_exec_dep(label.target())?;
@@ -194,7 +194,7 @@ impl AttrConfigurationContext for AttrConfigurationContextImpl<'_> {
         self.toolchain_cfg.dupe()
     }
 
-    fn platform_cfg(&self, label: &TargetLabel) -> buck2_error::Result<ConfigurationData> {
+    fn platform_cfg(&self, label: &TargetLabel) -> bz_error::Result<ConfigurationData> {
         match self.platform_cfgs.get(label) {
             Some(configuration) => Ok(configuration.dupe()),
             None => Err(PlatformConfigurationError::UnknownPlatformTarget(label.dupe()).into()),
@@ -203,7 +203,7 @@ impl AttrConfigurationContext for AttrConfigurationContextImpl<'_> {
 
     fn resolved_transitions(
         &self,
-    ) -> buck2_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>> {
+    ) -> bz_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>> {
         Ok(self.resolved_transitions)
     }
 }

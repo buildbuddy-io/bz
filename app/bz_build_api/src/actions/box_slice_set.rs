@@ -12,7 +12,7 @@ use std::slice;
 use std::vec;
 
 use allocative::Allocative;
-use buck2_hash::BuckIndexSet;
+use bz_hash::BuckIndexSet;
 use pagable::Pagable;
 
 /// It is a boxed slice, where all elements are unique.

@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_error::BuckErrorContext;
+use bz_error::BuckErrorContext;
 use futures::future;
 use futures::stream;
 use futures::stream::StreamExt;
@@ -26,12 +26,12 @@ use self::drop_notifier::DropNotifier;
 
 pub struct ServerHandle {
     channel: DropNotifier,
-    handle: JoinHandle<buck2_error::Result<()>>,
+    handle: JoinHandle<bz_error::Result<()>>,
 }
 
 impl ServerHandle {
     /// Tell the server to shutdown and wait for it to exit.
-    pub async fn shutdown(self) -> buck2_error::Result<()> {
+    pub async fn shutdown(self) -> bz_error::Result<()> {
         self.channel.notify_now();
         self.handle
             .await
@@ -40,7 +40,7 @@ impl ServerHandle {
 
     /// Obtain the JoinHandle to the task driving the server, without asking the server to
     /// shutdown.
-    pub fn into_join_handle(self) -> JoinHandle<buck2_error::Result<()>> {
+    pub fn into_join_handle(self) -> JoinHandle<bz_error::Result<()>> {
         self.channel.cancel();
         self.handle
     }

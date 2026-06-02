@@ -12,7 +12,7 @@ buck_filegroup(
 )
 
 rust_unittest(
-    name = "buck2_error_tests",
+    name = "bz_error_tests",
     srcs = glob(["src/**/*.rs"]),
     env = {
         # Some of our tests include testcase files relative to CARGO_MANIFEST_DIR.
@@ -21,8 +21,8 @@ rust_unittest(
     },
     deps = [
         "fbsource//third-party/rust:anyhow",
-        "//bz/app/bz_error:buck2_error",
-        "//bz/app/bz_util:buck2_util",
+        "//bz/app/bz_error:bz_error",
+        "//bz/app/bz_util:bz_util",
         "//bz/starlark-rust/starlark:starlark",
     ],
 )

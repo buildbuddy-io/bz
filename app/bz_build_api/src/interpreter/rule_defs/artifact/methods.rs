@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use dupe::Dupe;
 use starlark::environment::MethodsBuilder;
 use starlark::values::AllocValue;

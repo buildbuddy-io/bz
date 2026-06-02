@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::register_rule_defs;
-use buck2_core::bzl::ImportPath;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
-use buck2_interpreter_for_build::interpreter::testing::expect_error;
-use buck2_interpreter_for_build::label::testing::label_creator;
+use bz_build_api::interpreter::rule_defs::register_rule_defs;
+use bz_core::bzl::ImportPath;
+use bz_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::interpreter::testing::expect_error;
+use bz_interpreter_for_build::label::testing::label_creator;
 use indoc::indoc;
 
 fn new_tester() -> Tester {
@@ -23,7 +23,7 @@ fn new_tester() -> Tester {
 }
 
 #[test]
-fn test_construction() -> buck2_error::Result<()> {
+fn test_construction() -> bz_error::Result<()> {
     let mut tester = new_tester();
     let test = indoc!(
         r#"
@@ -39,7 +39,7 @@ fn test_construction() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_missing_fields_validation() -> buck2_error::Result<()> {
+fn test_missing_fields_validation() -> bz_error::Result<()> {
     let mut tester = new_tester();
     {
         let test = indoc!(
@@ -187,7 +187,7 @@ fn test_validation_7() {
 }
 
 #[test]
-fn test_validation_at_freeze() -> buck2_error::Result<()> {
+fn test_validation_at_freeze() -> bz_error::Result<()> {
     let mut tester = new_tester();
     let test = indoc!(
         r#"

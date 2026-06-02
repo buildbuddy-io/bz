@@ -11,22 +11,22 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_build_api::query::bxl::BxlCqueryFunctions;
-use buck2_build_api::query::bxl::NEW_BXL_CQUERY_FUNCTIONS;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::target_aliases::HasTargetAliasResolver;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_node::configured_universe::CqueryUniverse;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_query::query::syntax::simple::eval::file_set::FileSet;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::syntax::simple::eval::values::QueryValueDepth;
-use buck2_query::query::syntax::simple::functions::DefaultQueryFunctions;
-use buck2_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
-use buck2_query::query::syntax::simple::functions::helpers::CapturedExpr;
+use bz_build_api::query::bxl::BxlCqueryFunctions;
+use bz_build_api::query::bxl::NEW_BXL_CQUERY_FUNCTIONS;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::target_aliases::HasTargetAliasResolver;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_node::configured_universe::CqueryUniverse;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_query::query::syntax::simple::eval::file_set::FileSet;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::syntax::simple::eval::values::QueryValueDepth;
+use bz_query::query::syntax::simple::functions::DefaultQueryFunctions;
+use bz_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
+use bz_query::query::syntax::simple::functions::helpers::CapturedExpr;
 use dice::DiceComputations;
 use dice::LinearRecomputeDiceComputations;
 use dupe::Dupe;
@@ -49,7 +49,7 @@ impl BxlCqueryFunctionsImpl {
     async fn setup_dice_query_delegate<'c, 'd>(
         &self,
         dice: &'c LinearRecomputeDiceComputations<'d>,
-    ) -> buck2_error::Result<DiceQueryDelegate<'c, 'd>> {
+    ) -> bz_error::Result<DiceQueryDelegate<'c, 'd>> {
         let cell_resolver = dice.get().get_cell_resolver().await?;
         let cell_alias_resolver = dice
             .get()
@@ -74,7 +74,7 @@ impl BxlCqueryFunctionsImpl {
         &self,
         dice_query_delegate: &'c DiceQueryDelegate<'c, 'd>,
         universe: Option<&TargetSet<ConfiguredTargetNode>>,
-    ) -> buck2_error::Result<CqueryEnvironment<'c>> {
+    ) -> bz_error::Result<CqueryEnvironment<'c>> {
         let universe = match universe {
             Some(u) => Some(Arc::new(CqueryUniverse::build(u)?)),
             None => None,
@@ -96,10 +96,10 @@ impl BxlCqueryFunctions for BxlCqueryFunctionsImpl {
         from: &TargetSet<ConfiguredTargetNode>,
         to: &TargetSet<ConfiguredTargetNode>,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>> {
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>> {
         Ok(dice
             .with_linear_recompute(|dice| async move {
-                buck2_error::Ok(
+                bz_error::Ok(
                     cquery_functions()
                         .allpaths(
                             &self
@@ -122,10 +122,10 @@ impl BxlCqueryFunctions for BxlCqueryFunctionsImpl {
         from: &TargetSet<ConfiguredTargetNode>,
         to: &TargetSet<ConfiguredTargetNode>,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>> {
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>> {
         Ok(dice
             .with_linear_recompute(|dice| async move {
-                buck2_error::Ok(
+                bz_error::Ok(
                     cquery_functions()
                         .somepath(
                             &self
@@ -147,7 +147,7 @@ impl BxlCqueryFunctions for BxlCqueryFunctionsImpl {
         dice: &mut DiceComputations<'_>,
         file_set: &FileSet,
         target_universe: Option<&TargetSet<ConfiguredTargetNode>>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>> {
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>> {
         Ok(dice
             .with_linear_recompute(|dice| async move {
                 let query_delegate = self.setup_dice_query_delegate(&dice).await?;
@@ -163,7 +163,7 @@ impl BxlCqueryFunctions for BxlCqueryFunctionsImpl {
         targets: &TargetSet<ConfiguredTargetNode>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>> {
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>> {
         Ok(dice
             .with_linear_recompute(|dice| async move {
                 cquery_functions()
@@ -188,7 +188,7 @@ impl BxlCqueryFunctions for BxlCqueryFunctionsImpl {
         targets: &TargetSet<ConfiguredTargetNode>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>> {
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>> {
         Ok(dice
             .with_linear_recompute(|dice| async move {
                 cquery_functions()
@@ -211,7 +211,7 @@ impl BxlCqueryFunctions for BxlCqueryFunctionsImpl {
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<ConfiguredTargetNode>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>> {
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>> {
         Ok(dice
             .with_linear_recompute(|dice| async move {
                 cquery_functions()
@@ -230,7 +230,7 @@ impl BxlCqueryFunctions for BxlCqueryFunctionsImpl {
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<ConfiguredTargetNode>,
-    ) -> buck2_error::Result<Vec<MaybeCompatible<ConfiguredTargetNode>>> {
+    ) -> bz_error::Result<Vec<MaybeCompatible<ConfiguredTargetNode>>> {
         Ok(dice
             .with_linear_recompute(|dice| async move {
                 cquery_functions()

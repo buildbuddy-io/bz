@@ -7,7 +7,7 @@ meaning code changes here are not "atomically" updated.
 """
 edition = "2024"
 license = { workspace = true }
-name = "buck2_wrapper_common"
+name = "bz_wrapper_common"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -20,8 +20,8 @@ shlex = { workspace = true }
 sysinfo = { workspace = true }
 uuid = { workspace = true }
 
-buck2_error = { workspace = true }
-buck2_hash = { workspace = true }
+bz_error = { workspace = true }
+bz_hash = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }
@@ -32,4 +32,4 @@ windows-sys = { workspace = true }
 [dev-dependencies]
 serde_json = { workspace = true }
 
-buck2_util = { workspace = true }
+bz_util = { workspace = true }

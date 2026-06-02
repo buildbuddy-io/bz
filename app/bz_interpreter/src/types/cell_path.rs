@@ -11,7 +11,7 @@
 use std::hash::Hash;
 
 use allocative::Allocative;
-use buck2_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path::CellPath;
 use derive_more::Display;
 use pagable::Pagable;
 use serde::Serialize;

@@ -27,8 +27,8 @@ use std::collections::hash_map::Iter;
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-use buck2_error::buck2_error;
-use buck2_hash::StdBuckHashMap;
+use bz_error::bz_error;
+use bz_hash::StdBuckHashMap;
 
 /// Tree that stores data in the leaves. Think of the key as the path to the
 /// leaf containing the value. The data/value is of type `V`, and each edge
@@ -108,7 +108,7 @@ impl<K: 'static + Eq + Hash + Clone, V: 'static> DataTree<K, V> {
     pub fn get_subtree<'a, I, Q>(
         &self,
         key: &mut I,
-    ) -> buck2_error::Result<Option<&StdBuckHashMap<K, Self>>>
+    ) -> bz_error::Result<Option<&StdBuckHashMap<K, Self>>>
     where
         K: 'a + Borrow<Q>,
         Q: 'a + Hash + Eq + ?Sized,
@@ -117,8 +117,8 @@ impl<K: 'static + Eq + Hash + Clone, V: 'static> DataTree<K, V> {
         let mut entries = match self {
             Self::Tree(t) => t,
             Self::Data(..) => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "Data found where tree expected"
                 ));
             }
@@ -133,8 +133,8 @@ impl<K: 'static + Eq + Hash + Clone, V: 'static> DataTree<K, V> {
             entries = match node {
                 Self::Tree(t) => t,
                 Self::Data(..) => {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::Tier0,
                         "Data found where tree expected"
                     ));
                 }
@@ -315,8 +315,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use assert_matches::assert_matches;
-    use buck2_fs::paths::file_name::FileNameBuf;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_fs::paths::file_name::FileNameBuf;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 
     use super::*;
 

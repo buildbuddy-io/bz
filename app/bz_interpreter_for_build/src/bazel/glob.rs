@@ -4,20 +4,20 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::file_ops::dice::FollowedPathType;
-use buck2_common::file_ops::metadata::SimpleDirEntry;
-use buck2_common::find_buildfile::find_buildfile;
-use buck2_common::package_listing::PackageListingStrategy;
-use buck2_common::package_listing::dice::DicePackageListingResolver;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_core::package::package_relative_path::PackageRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::file_ops::dice::FollowedPathType;
+use bz_common::file_ops::metadata::SimpleDirEntry;
+use bz_common::find_buildfile::find_buildfile;
+use bz_common::package_listing::PackageListingStrategy;
+use bz_common::package_listing::dice::DicePackageListingResolver;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::package::PackageLabel;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_core::package::package_relative_path::PackageRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::file_name::FileNameBuf;
 use dice::DiceComputations;
 use dice::Key;
 use dice::OkPagableValueSerialize;
@@ -109,7 +109,7 @@ impl fmt::Display for BazelPackageDataBatchKey {
 
 #[async_trait]
 impl Key for BazelPackageDataKey {
-    type Value = buck2_error::Result<Arc<Vec<String>>>;
+    type Value = bz_error::Result<Arc<Vec<String>>>;
 
     async fn compute(
         &self,
@@ -140,7 +140,7 @@ impl Key for BazelPackageDataKey {
 
 #[async_trait]
 impl Key for BazelPackageDataBatchKey {
-    type Value = buck2_error::Result<Arc<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>>>;
+    type Value = bz_error::Result<Arc<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>>>;
 
     async fn compute(
         &self,
@@ -185,7 +185,7 @@ pub(crate) async fn compute_bazel_package_data(
     ctx: &mut DiceComputations<'_>,
     package: PackageLabel,
     requests: BTreeSet<BazelPackageDataRequest>,
-) -> buck2_error::Result<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>> {
+) -> bz_error::Result<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>> {
     Ok((*ctx
         .compute(&BazelPackageDataBatchKey { package, requests })
         .await??)
@@ -196,7 +196,7 @@ async fn compute_package_data_from_single_listing(
     ctx: &mut DiceComputations<'_>,
     package: PackageLabel,
     requests: &BTreeSet<BazelPackageDataRequest>,
-) -> buck2_error::Result<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>> {
+) -> bz_error::Result<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>> {
     let mut strategy = PackageListingStrategy::Shallow;
     for request in requests {
         strategy = strategy.union(&match request {
@@ -254,7 +254,7 @@ async fn compute_glob(
     ctx: &mut DiceComputations<'_>,
     package: PackageLabel,
     request: &BazelGlobRequest,
-) -> buck2_error::Result<Vec<String>> {
+) -> bz_error::Result<Vec<String>> {
     let spec = GlobSpec::new(&request.include, &request.exclude)?;
     let strategy = package_listing_strategy_from_glob_patterns(&request.include);
     if should_use_fast_package_listing_for_bazel_package_data(ctx, package.dupe()).await? {
@@ -348,7 +348,7 @@ async fn add_exact_matches_from_file_values(
     spec: &GlobSpec,
     include_directories: bool,
     results: &mut Vec<String>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for exact in spec.exact_matches() {
         if !spec.matches(exact) {
             continue;
@@ -371,7 +371,7 @@ async fn add_exact_matches_from_file_values(
 async fn compute_subpackages(
     ctx: &mut DiceComputations<'_>,
     package: PackageLabel,
-) -> buck2_error::Result<Vec<String>> {
+) -> bz_error::Result<Vec<String>> {
     if should_use_fast_package_listing_for_bazel_package_data(ctx, package.dupe()).await? {
         let listing = DicePackageListingResolver(ctx)
             .resolve_package_listing_with_strategy(package, PackageListingStrategy::Recursive)
@@ -419,7 +419,7 @@ struct Visit {
 async fn read_dir_entries(
     ctx: &mut DiceComputations<'_>,
     path: CellPathRef<'_>,
-) -> buck2_error::Result<Arc<[SimpleDirEntry]>> {
+) -> bz_error::Result<Arc<[SimpleDirEntry]>> {
     Ok(DiceFileComputations::read_dir_ext(ctx, path)
         .await
         .with_buck_error_context(|| format!("Error reading `{path}` while evaluating Bazel glob"))?
@@ -429,14 +429,14 @@ async fn read_dir_entries(
 fn missing_buildfile(
     package: CellPathRef<'_>,
     buildfile_candidates: &[FileNameBuf],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let candidates = buildfile_candidates
         .iter()
         .map(|candidate| format!("`{candidate}`"))
         .collect::<Vec<_>>()
         .join(", ");
-    Err(buck2_error::buck2_error!(
-        buck2_error::ErrorTag::Input,
+    Err(bz_error::bz_error!(
+        bz_error::ErrorTag::Input,
         "package `{package}` has no build file; expected one of {candidates}"
     ))
 }
@@ -444,7 +444,7 @@ fn missing_buildfile(
 async fn should_use_fast_package_listing_for_bazel_package_data(
     ctx: &mut DiceComputations<'_>,
     package: PackageLabel,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let cells = ctx.get_cell_resolver().await?;
     let cell = cells.get(package.cell_name())?;
     Ok(matches!(

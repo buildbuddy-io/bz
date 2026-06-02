@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_error::BuckErrorContext;
-use buck2_util::tokio_runtime::new_tokio_runtime;
+use bz_error::BuckErrorContext;
+use bz_util::tokio_runtime::new_tokio_runtime;
 
 /// Tokio runtime used by the client commands.
-pub fn client_tokio_runtime() -> buck2_error::Result<tokio::runtime::Runtime> {
+pub fn client_tokio_runtime() -> bz_error::Result<tokio::runtime::Runtime> {
     // Do not use current thread because current thread may have too low thread size.
     new_tokio_runtime("buck2-cli")
         // Tokio creates this number of threads,

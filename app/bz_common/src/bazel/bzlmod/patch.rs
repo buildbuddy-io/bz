@@ -3,9 +3,9 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
 
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::conversion::from_any_with_tag;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::conversion::from_any_with_tag;
 
 #[derive(Debug)]
 struct NativePatchFile {
@@ -35,7 +35,7 @@ pub fn apply_unified_patch_file(
     directory: &Path,
     patch_file: &Path,
     patch_strip: u32,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let patch = fs::read_to_string(patch_file)
         .with_buck_error_context(|| format!("Error reading `{}`", patch_file.display()))?;
     apply_unified_patch(directory, &patch, patch_strip)
@@ -45,11 +45,11 @@ pub fn apply_unified_patch(
     directory: &Path,
     patch: &str,
     patch_strip: u32,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let file_patches = parse_native_bzlmod_patch(patch)?;
     if file_patches.is_empty() && !patch.trim().is_empty() {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "bzlmod patch did not contain a unified diff hunk"
         ));
     }
@@ -59,7 +59,7 @@ pub fn apply_unified_patch(
     Ok(())
 }
 
-fn parse_native_bzlmod_patch(patch: &str) -> buck2_error::Result<Vec<NativePatchFile>> {
+fn parse_native_bzlmod_patch(patch: &str) -> bz_error::Result<Vec<NativePatchFile>> {
     let lines = patch.lines().collect::<Vec<_>>();
     let mut files = Vec::new();
     let mut current: Option<NativePatchFile> = None;
@@ -152,7 +152,7 @@ fn parse_native_bzlmod_patch(patch: &str) -> buck2_error::Result<Vec<NativePatch
 fn finish_native_patch_file(
     files: &mut Vec<NativePatchFile>,
     file: Option<NativePatchFile>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(file) = file {
         if file.hunks.is_empty() && file.file_mode.is_none() && file.old_path == file.new_path {
             return Ok(());
@@ -193,7 +193,7 @@ fn patch_header_path(path: &str) -> &str {
 fn parse_native_bzlmod_hunk(
     lines: &[&str],
     start: usize,
-) -> buck2_error::Result<(NativePatchHunk, usize)> {
+) -> bz_error::Result<(NativePatchHunk, usize)> {
     let (old_start, old_len, new_len) = parse_native_bzlmod_hunk_header(lines[start])?;
     let mut hunk = NativePatchHunk {
         old_start,
@@ -230,8 +230,8 @@ fn parse_native_bzlmod_hunk(
                 new_count += 1;
             }
             _ => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Invalid bzlmod patch hunk line `{}`",
                     line
                 ));
@@ -241,8 +241,8 @@ fn parse_native_bzlmod_hunk(
     }
 
     if old_count != old_len || new_count != new_len {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid bzlmod patch hunk: expected -{}, +{} lines, saw -{}, +{}",
             old_len,
             new_len,
@@ -254,13 +254,13 @@ fn parse_native_bzlmod_hunk(
     Ok((hunk, index))
 }
 
-fn parse_native_bzlmod_hunk_header(header: &str) -> buck2_error::Result<(usize, usize, usize)> {
+fn parse_native_bzlmod_hunk_header(header: &str) -> bz_error::Result<(usize, usize, usize)> {
     let header = header
         .strip_prefix("@@ ")
         .and_then(|header| header.split_once(" @@").map(|(header, _)| header))
         .ok_or_else(|| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid bzlmod patch hunk header `{}`",
                 header
             )
@@ -274,12 +274,12 @@ fn parse_native_bzlmod_hunk_header(header: &str) -> buck2_error::Result<(usize, 
 fn parse_native_bzlmod_hunk_range(
     range: Option<&str>,
     prefix: char,
-) -> buck2_error::Result<(usize, usize)> {
+) -> bz_error::Result<(usize, usize)> {
     let range = range
         .and_then(|range| range.strip_prefix(prefix))
         .ok_or_else(|| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid bzlmod patch hunk range"
             )
         })?;
@@ -294,15 +294,15 @@ fn apply_native_bzlmod_file_patch(
     directory: &Path,
     file_patch: NativePatchFile,
     patch_strip: u32,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let old_target_path = native_bzlmod_patch_path(&file_patch.old_path, patch_strip);
     let new_target_path = native_bzlmod_patch_path(&file_patch.new_path, patch_strip);
     let target_path = new_target_path
         .as_ref()
         .or(old_target_path.as_ref())
         .ok_or_else(|| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error!(
+                bz_error::ErrorTag::Input,
                 "bzlmod patch file did not contain a usable target path"
             )
         })?;
@@ -315,8 +315,8 @@ fn apply_native_bzlmod_file_patch(
         .map(|path| safe_join_native_bzlmod_patch_path(directory, path))
         .transpose()?;
     let target = new_target.as_ref().or(old_target.as_ref()).ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error!(
+            bz_error::ErrorTag::Input,
             "bzlmod patch file did not contain a usable target path"
         )
     })?;
@@ -326,7 +326,7 @@ fn apply_native_bzlmod_file_patch(
         .or_else(|| new_target.as_ref().filter(|path| path.exists()));
     let old_text = match input_target {
         Some(path) => fs::read_to_string(path).map_err(|error| {
-            from_any_with_tag(error, buck2_error::ErrorTag::Input).context(format!(
+            from_any_with_tag(error, bz_error::ErrorTag::Input).context(format!(
                 "Error reading `{}` before applying bzlmod patch",
                 path.display()
             ))
@@ -348,7 +348,7 @@ fn apply_native_bzlmod_file_patch(
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(
-                    from_any_with_tag(error, buck2_error::ErrorTag::Input).context(format!(
+                    from_any_with_tag(error, bz_error::ErrorTag::Input).context(format!(
                         "Error deleting `{}` after applying bzlmod patch",
                         old_target.display()
                     )),
@@ -401,15 +401,15 @@ pub fn patch_path_after_strip(path: &str, patch_strip: u32) -> Option<String> {
 fn safe_join_native_bzlmod_patch_path(
     directory: &Path,
     relative: &str,
-) -> buck2_error::Result<PathBuf> {
+) -> bz_error::Result<PathBuf> {
     let path = Path::new(relative);
     if path.is_absolute()
         || path
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
     {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid bzlmod patch path `{}`",
             relative
         ));
@@ -440,7 +440,7 @@ fn apply_native_bzlmod_hunks(
     target_path: &str,
     old_lines: &[String],
     hunks: &[NativePatchHunk],
-) -> buck2_error::Result<Vec<String>> {
+) -> bz_error::Result<Vec<String>> {
     let mut result = old_lines.to_owned();
     let mut sorted_hunks = hunks.iter().collect::<Vec<_>>();
     sorted_hunks.sort_by_key(|hunk| hunk.old_start);
@@ -542,7 +542,7 @@ fn apply_native_bzlmod_hunk_at(
     hunk: &NativePatchHunk,
     position: usize,
     fuzz: usize,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let source_lines = native_bzlmod_patch_source_lines(hunk);
     let target_lines = native_bzlmod_patch_target_lines(hunk);
     let source_end = source_lines
@@ -583,9 +583,9 @@ fn native_bzlmod_patch_target_lines(hunk: &NativePatchHunk) -> Vec<String> {
         .collect()
 }
 
-fn native_bzlmod_patch_mismatch(target_path: &str, line: usize) -> buck2_error::Error {
-    buck2_error!(
-        buck2_error::ErrorTag::Input,
+fn native_bzlmod_patch_mismatch(target_path: &str, line: usize) -> bz_error::Error {
+    bz_error!(
+        bz_error::ErrorTag::Input,
         "bzlmod patch does not apply cleanly to `{}` near line {}",
         target_path,
         line
@@ -593,7 +593,7 @@ fn native_bzlmod_patch_mismatch(target_path: &str, line: usize) -> buck2_error::
 }
 
 #[cfg(unix)]
-fn get_native_bzlmod_file_mode(path: &Path) -> buck2_error::Result<Option<u32>> {
+fn get_native_bzlmod_file_mode(path: &Path) -> bz_error::Result<Option<u32>> {
     use std::os::unix::fs::PermissionsExt;
 
     let metadata = fs::metadata(path)
@@ -602,12 +602,12 @@ fn get_native_bzlmod_file_mode(path: &Path) -> buck2_error::Result<Option<u32>> 
 }
 
 #[cfg(not(unix))]
-fn get_native_bzlmod_file_mode(_path: &Path) -> buck2_error::Result<Option<u32>> {
+fn get_native_bzlmod_file_mode(_path: &Path) -> bz_error::Result<Option<u32>> {
     Ok(None)
 }
 
 #[cfg(unix)]
-fn set_native_bzlmod_file_mode(path: &Path, mode: u32) -> buck2_error::Result<()> {
+fn set_native_bzlmod_file_mode(path: &Path, mode: u32) -> bz_error::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).with_buck_error_context(|| {
@@ -619,7 +619,7 @@ fn set_native_bzlmod_file_mode(path: &Path, mode: u32) -> buck2_error::Result<()
 }
 
 #[cfg(not(unix))]
-fn set_native_bzlmod_file_mode(_path: &Path, _mode: u32) -> buck2_error::Result<()> {
+fn set_native_bzlmod_file_mode(_path: &Path, _mode: u32) -> bz_error::Result<()> {
     Ok(())
 }
 
@@ -632,7 +632,7 @@ mod tests {
     use super::apply_unified_patch;
 
     #[test]
-    fn test_native_bzlmod_patch_updates_file() -> buck2_error::Result<()> {
+    fn test_native_bzlmod_patch_updates_file() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         fs::write(
             dir.path().join("MODULE.bazel"),
@@ -661,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn test_native_bzlmod_patch_applies_hunk_with_line_offset() -> buck2_error::Result<()> {
+    fn test_native_bzlmod_patch_applies_hunk_with_line_offset() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         fs::write(
             dir.path().join("MODULE.bazel"),
@@ -690,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn test_native_bzlmod_patch_applies_hunk_with_context_fuzz() -> buck2_error::Result<()> {
+    fn test_native_bzlmod_patch_applies_hunk_with_context_fuzz() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         fs::write(
             dir.path().join("foo.cc"),
@@ -720,7 +720,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_native_bzlmod_patch_replaces_read_only_file() -> buck2_error::Result<()> {
+    fn test_native_bzlmod_patch_replaces_read_only_file() -> bz_error::Result<()> {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().unwrap();

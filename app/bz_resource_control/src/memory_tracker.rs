@@ -14,11 +14,11 @@ use std::time::Instant;
 use std::time::SystemTime;
 
 use allocative::Allocative;
-use buck2_common::init::ResourceControlConfig;
-use buck2_events::daemon_id::DaemonId;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_hash::StdBuckHashMap;
-use buck2_util::threads::thread_spawn;
+use bz_common::init::ResourceControlConfig;
+use bz_events::daemon_id::DaemonId;
+use bz_events::dispatch::EventDispatcher;
+use bz_hash::StdBuckHashMap;
+use bz_util::threads::thread_spawn;
 use dupe::Dupe;
 use futures::StreamExt as _;
 use futures::stream::FuturesUnordered;
@@ -78,7 +78,7 @@ pub fn spawn_memory_reporter(
     memory_tracker: MemoryTrackerHandle,
 ) -> MemoryReporter {
     let cancel = CancellationToken::new();
-    tokio::task::spawn(buck2_util::async_move_clone!(cancel, {
+    tokio::task::spawn(bz_util::async_move_clone!(cancel, {
         let (resource_control_event_tx, mut resource_control_event_rx) = mpsc::unbounded_channel();
         memory_tracker
             .action_cgroups
@@ -119,7 +119,7 @@ pub async fn create_memory_tracker(
     cgroup_tree: Option<BuckCgroupTree>,
     resource_control_config: &ResourceControlConfig,
     daemon_id: &DaemonId,
-) -> buck2_error::Result<Option<MemoryTrackerHandle>> {
+) -> bz_error::Result<Option<MemoryTrackerHandle>> {
     let Some(cgroup_tree) = cgroup_tree else {
         return Ok(None);
     };
@@ -134,7 +134,7 @@ pub async fn create_memory_tracker(
         resource_control_config,
         daemon_id,
         effective_resource_constraints,
-        buck2_util::system_stats::system_memory_stats(),
+        bz_util::system_stats::system_memory_stats(),
         Instant::now(),
     );
     let handle = MemoryTrackerSharedState {
@@ -159,7 +159,7 @@ struct MemoryTracker {
 }
 
 impl MemoryTracker {
-    pub(crate) async fn spawn(self, duration: Duration) -> buck2_error::Result<()> {
+    pub(crate) async fn spawn(self, duration: Duration) -> bz_error::Result<()> {
         thread_spawn("memory-tracker", move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -247,14 +247,14 @@ impl MemoryTracker {
 mod tests {
     use std::time::Duration;
 
-    use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-    use buck2_wrapper_common::invocation_id::TraceId;
+    use bz_common::legacy_configs::configs::LegacyBuckConfig;
+    use bz_wrapper_common::invocation_id::TraceId;
 
     use super::*;
     use crate::buck_cgroup_tree::PreppedBuckCgroups;
 
     #[tokio::test]
-    async fn test_current_memory_changes_tracked() -> buck2_error::Result<()> {
+    async fn test_current_memory_changes_tracked() -> bz_error::Result<()> {
         let Some(prepped) = PreppedBuckCgroups::testing_new().await else {
             return Ok(());
         };
@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(events[0].daemon_memory_current, 0);
         assert_eq!(events[0].daemon_swap_current, 0);
 
-        let assert_max_over = |f: fn(&buck2_data::ResourceControlEvent) -> u64, val, name: &str| {
+        let assert_max_over = |f: fn(&bz_data::ResourceControlEvent) -> u64, val, name: &str| {
             let max = events.iter().map(f).max().unwrap();
             assert!(max > val, "{}: {} is not greater than {}", name, max, val);
         };

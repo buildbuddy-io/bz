@@ -59,12 +59,12 @@ pub async fn read_to_string<P: AsRef<AbsPath>>(path: P) -> Result<String, IoErro
 
 pub async fn read_to_string_if_exists<P: AsRef<AbsPath>>(
     path: P,
-) -> buck2_error::Result<Option<String>> {
+) -> bz_error::Result<Option<String>> {
     let path = path.as_ref().to_owned();
     tokio::task::spawn_blocking(move || fs_util::read_to_string_if_exists(path)).await?
 }
 
-pub async fn create_dir_all<P: AsRef<AbsPath>>(dir: P) -> buck2_error::Result<()> {
+pub async fn create_dir_all<P: AsRef<AbsPath>>(dir: P) -> bz_error::Result<()> {
     let dir = dir.as_ref().to_owned();
     tokio::task::spawn_blocking(move || fs_util::create_dir_all(dir)).await?
 }

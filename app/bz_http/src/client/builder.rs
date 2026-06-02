@@ -12,11 +12,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use buck2_certs::certs::find_internal_cert;
-use buck2_certs::certs::supports_vpnless;
-use buck2_certs::certs::tls_config_with_single_cert;
-use buck2_certs::certs::tls_config_with_system_roots;
-use buck2_error::internal_error;
+use bz_certs::certs::find_internal_cert;
+use bz_certs::certs::supports_vpnless;
+use bz_certs::certs::tls_config_with_single_cert;
+use bz_certs::certs::tls_config_with_system_roots;
+use bz_error::internal_error;
 use hyper::Uri;
 use hyper_http_proxy::Proxy;
 use hyper_http_proxy::ProxyConnector;
@@ -73,7 +73,7 @@ pub struct HttpClientBuilder {
 
 impl HttpClientBuilder {
     /// Builds an http client compatible with OSS usage.
-    pub async fn oss() -> buck2_error::Result<Self> {
+    pub async fn oss() -> bz_error::Result<Self> {
         tracing::debug!("Using OSS client");
         let mut builder = Self::https_with_system_roots().await?;
         builder.with_proxy_from_env()?;
@@ -81,7 +81,7 @@ impl HttpClientBuilder {
     }
 
     /// Builds an http client compatible with internal Meta usage.
-    pub async fn internal() -> buck2_error::Result<Self> {
+    pub async fn internal() -> bz_error::Result<Self> {
         let mut builder = Self::https_with_system_roots().await?;
         if supports_vpnless() {
             tracing::debug!("Using vpnless client");
@@ -98,7 +98,7 @@ impl HttpClientBuilder {
     }
 
     /// Creates a barebones https client using system roots for TLS authentication.
-    pub async fn https_with_system_roots() -> buck2_error::Result<Self> {
+    pub async fn https_with_system_roots() -> bz_error::Result<Self> {
         let tls_config = tls_config_with_system_roots().await?;
         Ok(Self {
             tls_config,
@@ -120,7 +120,7 @@ impl HttpClientBuilder {
     pub async fn with_client_auth_cert<P: AsRef<Path>>(
         &mut self,
         path: P,
-    ) -> buck2_error::Result<&mut Self> {
+    ) -> bz_error::Result<&mut Self> {
         let tls_config = tls_config_with_single_cert(path.as_ref(), path.as_ref()).await?;
         Ok(self.with_tls_config(tls_config))
     }
@@ -135,7 +135,7 @@ impl HttpClientBuilder {
         self
     }
 
-    pub fn with_proxy_from_env(&mut self) -> buck2_error::Result<&mut Self> {
+    pub fn with_proxy_from_env(&mut self) -> bz_error::Result<&mut Self> {
         if let Some(proxy) = proxy::https_proxy_from_env()? {
             self.with_proxy(proxy);
         }
@@ -381,8 +381,8 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_default_builder() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_default_builder() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let builder = HttpClientBuilder::https_with_system_roots().await?;
 
         assert_eq!(None, builder.max_redirects);
@@ -392,8 +392,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_supports_vpnless_set_true() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_supports_vpnless_set_true() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let mut builder = HttpClientBuilder::https_with_system_roots().await?;
         builder.with_supports_vpnless();
 
@@ -402,8 +402,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_http2_option() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_http2_option() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let mut builder = HttpClientBuilder::https_with_system_roots().await?;
         assert!(builder.http2);
         builder.with_http2(false);
@@ -413,8 +413,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_with_max_redirects_overrides_default() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_with_max_redirects_overrides_default() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let mut builder = HttpClientBuilder::https_with_system_roots().await?;
         builder.with_max_redirects(5);
 
@@ -423,8 +423,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_builder_with_proxy_adds_proxy() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_builder_with_proxy_adds_proxy() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let proxy = Proxy::new(Intercept::All, "http://localhost:12345".try_into()?);
         let mut builder = HttpClientBuilder::https_with_system_roots().await?;
         builder.with_proxy(proxy);
@@ -434,8 +434,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_connect_timeout() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_set_connect_timeout() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let mut builder = HttpClientBuilder::https_with_system_roots().await?;
         builder.with_connect_timeout(Some(Duration::from_millis(1000)));
 
@@ -452,8 +452,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_connect_and_read_timeouts() -> buck2_error::Result<()> {
-        buck2_certs::certs::maybe_setup_cryptography();
+    async fn test_set_connect_and_read_timeouts() -> bz_error::Result<()> {
+        bz_certs::certs::maybe_setup_cryptography();
         let mut builder = HttpClientBuilder::https_with_system_roots().await?;
         builder
             .with_connect_timeout(Some(Duration::from_millis(1000)))

@@ -12,10 +12,10 @@
 use std::env;
 use std::sync::OnceLock;
 
-use buck2_core::ci::ci_identifiers;
-use buck2_core::facebook_only;
-use buck2_hash::StdBuckHashMap;
-use buck2_wrapper_common::BUCK2_WRAPPER_ENV_VAR;
+use bz_core::ci::ci_identifiers;
+use bz_core::facebook_only;
+use bz_hash::StdBuckHashMap;
+use bz_wrapper_common::BUCK2_WRAPPER_ENV_VAR;
 
 use crate::daemon_id::DaemonId;
 
@@ -42,16 +42,16 @@ pub fn collect(daemon: &DaemonId) -> StdBuckHashMap<String, String> {
     }
     map.insert("arch".to_owned(), info.arch);
 
-    if let Some(rev) = buck2_build_info::revision() {
-        map.insert("buck2_revision".to_owned(), rev.to_owned());
+    if let Some(rev) = bz_build_info::revision() {
+        map.insert("bz_revision".to_owned(), rev.to_owned());
     }
 
-    if let Some(time) = buck2_build_info::time_iso8601() {
-        map.insert("buck2_build_time".to_owned(), time.to_owned());
+    if let Some(time) = bz_build_info::time_iso8601() {
+        map.insert("bz_build_time".to_owned(), time.to_owned());
     }
 
-    if let Some(ts) = buck2_build_info::release_timestamp() {
-        map.insert("buck2_release_timestamp".to_owned(), ts.to_owned());
+    if let Some(ts) = bz_build_info::release_timestamp() {
+        map.insert("bz_release_timestamp".to_owned(), ts.to_owned());
     }
 
     if is_proc_translated::is_proc_translated() {
@@ -190,17 +190,17 @@ pub fn environment() -> Option<String> {
     }
 }
 
-pub fn username() -> buck2_error::Result<Option<String>> {
+pub fn username() -> bz_error::Result<Option<String>> {
     #[cfg(fbcode_build)]
     {
-        use buck2_error::conversion::from_any_with_tag;
+        use bz_error::conversion::from_any_with_tag;
         Ok(Some(user::current_username().map_err(|e| {
-            from_any_with_tag(e, buck2_error::ErrorTag::InvalidUsername)
+            from_any_with_tag(e, bz_error::ErrorTag::InvalidUsername)
         })?))
     }
     #[cfg(not(fbcode_build))]
     {
-        Ok::<Option<String>, buck2_error::Error>(None)
+        Ok::<Option<String>, bz_error::Error>(None)
     }
 }
 

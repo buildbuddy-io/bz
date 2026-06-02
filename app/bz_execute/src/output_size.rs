@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_directory::directory::walk::unordered_entry_walk;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_directory::directory::walk::unordered_entry_walk;
 
 use crate::artifact_value::ArtifactValue;
 use crate::directory::ActionDirectory;
@@ -71,16 +71,16 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use buck2_common::external_symlink::ExternalSymlink;
-    use buck2_common::file_ops::metadata::FileDigest;
-    use buck2_common::file_ops::metadata::FileDigestConfig;
-    use buck2_common::file_ops::metadata::FileMetadata;
-    use buck2_common::file_ops::metadata::Symlink;
-    use buck2_common::file_ops::metadata::TrackedFileDigest;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-    use buck2_fs::paths::abs_path::AbsPath;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_common::external_symlink::ExternalSymlink;
+    use bz_common::file_ops::metadata::FileDigest;
+    use bz_common::file_ops::metadata::FileDigestConfig;
+    use bz_common::file_ops::metadata::FileMetadata;
+    use bz_common::file_ops::metadata::Symlink;
+    use bz_common::file_ops::metadata::TrackedFileDigest;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+    use bz_fs::paths::abs_path::AbsPath;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 
     use super::*;
     use crate::digest_config::DigestConfig;
@@ -95,7 +95,7 @@ mod tests {
     }
 
     #[test]
-    fn test_directory_with_multiple_files() -> buck2_error::Result<()> {
+    fn test_directory_with_multiple_files() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
         let mut builder = ActionDirectoryBuilder::empty();
 
@@ -150,7 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nested_directory() -> buck2_error::Result<()> {
+    fn test_nested_directory() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
         let mut builder = ActionDirectoryBuilder::empty();
 
@@ -203,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn test_symlinks_not_counted() -> buck2_error::Result<()> {
+    fn test_symlinks_not_counted() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
         let mut builder = ActionDirectoryBuilder::empty();
 
@@ -238,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn test_symlinks_counted_when_included() -> buck2_error::Result<()> {
+    fn test_symlinks_counted_when_included() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
         let mut builder = ActionDirectoryBuilder::empty();
 
@@ -291,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_size_matches_physical_disk_size() -> buck2_error::Result<()> {
+    fn test_file_size_matches_physical_disk_size() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
 
         let tempdir = tempfile::tempdir()?;
@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn test_directory_size_matches_physical_disk_size() -> buck2_error::Result<()> {
+    fn test_directory_size_matches_physical_disk_size() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
 
         let tempdir = tempfile::tempdir()?;
@@ -365,7 +365,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_symlink_size_matches_physical_disk_size() -> buck2_error::Result<()> {
+    fn test_symlink_size_matches_physical_disk_size() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
         let tempdir = tempfile::tempdir()?;
 

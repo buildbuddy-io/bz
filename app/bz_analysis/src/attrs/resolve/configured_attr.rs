@@ -8,31 +8,31 @@
  * above-listed licenses.
  */
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::actions::query::CONFIGURED_ATTR_TO_VALUE;
-use buck2_build_api::actions::query::PackageLabelOption;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_core::package::source_path::SourcePath;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::opaque_metadata::OpaqueMetadata;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_node::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
-use buck2_node::attrs::attr_type::configured_dep::ExplicitConfiguredDepAttrType;
-use buck2_node::attrs::attr_type::dep::DepAttrType;
-use buck2_node::attrs::attr_type::source::SourceAttrType;
-use buck2_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
-use buck2_node::attrs::attr_type::transition_dep::TransitionDepAttrType;
-use buck2_node::attrs::configured_attr::ConfiguredAttr;
-use buck2_node::provider_id_set::ProviderIdSet;
-use buck2_node::visibility::VisibilityPatternList;
-use buck2_node::visibility::VisibilitySpecification;
-use buck2_node::visibility::WithinViewSpecification;
-use buck2_util::arc_str::ArcS;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_build_api::actions::query::CONFIGURED_ATTR_TO_VALUE;
+use bz_build_api::actions::query::PackageLabelOption;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_core::package::PackageLabel;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_core::package::source_path::SourcePath;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::opaque_metadata::OpaqueMetadata;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_node::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
+use bz_node::attrs::attr_type::configured_dep::ExplicitConfiguredDepAttrType;
+use bz_node::attrs::attr_type::dep::DepAttrType;
+use bz_node::attrs::attr_type::source::SourceAttrType;
+use bz_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
+use bz_node::attrs::attr_type::transition_dep::TransitionDepAttrType;
+use bz_node::attrs::configured_attr::ConfiguredAttr;
+use bz_node::provider_id_set::ProviderIdSet;
+use bz_node::visibility::VisibilityPatternList;
+use bz_node::visibility::VisibilitySpecification;
+use bz_node::visibility::WithinViewSpecification;
+use bz_util::arc_str::ArcS;
 use dupe::Dupe;
 use gazebo::prelude::SliceExt;
 use starlark::values::Heap;
@@ -52,7 +52,7 @@ use crate::attrs::resolve::attr_type::source::SourceAttrTypeExt;
 use crate::attrs::resolve::attr_type::split_transition_dep::SplitTransitionDepAttrTypeExt;
 use crate::attrs::resolve::ctx::AttrResolutionContext;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum ConfiguredAttrError {
     #[error("Source path `{0}` cannot be used in attributes referenced in transition")]
@@ -64,25 +64,25 @@ pub trait ConfiguredAttrExt {
         &self,
         pkg: PackageLabel,
         ctx: &mut dyn AttrResolutionContext<'v>,
-    ) -> buck2_error::Result<Vec<Value<'v>>>;
+    ) -> bz_error::Result<Vec<Value<'v>>>;
 
     fn resolve_single<'v>(
         &self,
         pkg: PackageLabel,
         ctx: &mut dyn AttrResolutionContext<'v>,
-    ) -> buck2_error::Result<Value<'v>>;
+    ) -> bz_error::Result<Value<'v>>;
 
     fn resolve_bazel<'v>(
         &self,
         pkg: PackageLabel,
         ctx: &mut dyn AttrResolutionContext<'v>,
-    ) -> buck2_error::Result<Value<'v>>;
+    ) -> bz_error::Result<Value<'v>>;
 
     fn to_value<'v>(
         &self,
         pkg: PackageLabelOption,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<Value<'v>>;
+    ) -> bz_error::Result<Value<'v>>;
 }
 
 impl ConfiguredAttrExt for ConfiguredAttr {
@@ -96,7 +96,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
         &self,
         pkg: PackageLabel,
         ctx: &mut dyn AttrResolutionContext<'v>,
-    ) -> buck2_error::Result<Vec<Value<'v>>> {
+    ) -> bz_error::Result<Vec<Value<'v>>> {
         match self {
             // SourceLabel is special since it is the only type that can be expand to many
             ConfiguredAttr::SourceLabel(src) => SourceAttrType::resolve_label(ctx, src),
@@ -112,7 +112,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
         &self,
         pkg: PackageLabel,
         ctx: &mut dyn AttrResolutionContext<'v>,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         match self {
             ConfiguredAttr::Bool(v) => Ok(Value::new_bool(v.0)),
             ConfiguredAttr::Int(v) => Ok(ctx.heap().alloc(*v)),
@@ -185,7 +185,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
         &self,
         pkg: PackageLabel,
         ctx: &mut dyn AttrResolutionContext<'v>,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         match self {
             ConfiguredAttr::SplitTransitionDep(d) => {
                 Ok(ctx
@@ -215,7 +215,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
         &self,
         pkg: PackageLabelOption,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         configured_attr_to_value(self, pkg, heap)
     }
 }
@@ -224,7 +224,7 @@ fn resolve_bazel_list_items<'v>(
     attr: &ConfiguredAttr,
     pkg: PackageLabel,
     ctx: &mut dyn AttrResolutionContext<'v>,
-) -> buck2_error::Result<Vec<Value<'v>>> {
+) -> bz_error::Result<Vec<Value<'v>>> {
     match attr {
         ConfiguredAttr::SplitTransitionDep(d) => {
             SplitTransitionDepAttrType::resolve_values(ctx, d.as_ref())
@@ -244,7 +244,7 @@ fn configured_attr_to_value<'v>(
     this: &ConfiguredAttr,
     pkg: PackageLabelOption,
     heap: Heap<'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     Ok(match this {
         ConfiguredAttr::Bool(v) => heap.alloc(v.0),
         ConfiguredAttr::Int(v) => heap.alloc(*v),

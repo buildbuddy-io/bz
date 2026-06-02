@@ -13,38 +13,38 @@
 use std::cell::Cell;
 use std::collections::BTreeSet;
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::build::BuildProviderType;
-use buck2_build_api::build::BuildTargetResult;
-use buck2_build_api::build::ConfiguredBuildTargetResult;
-use buck2_build_api::build::ProviderArtifacts;
-use buck2_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
-use buck2_certs::validate::CertState;
-use buck2_certs::validate::check_cert_state;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::pattern::pattern::Modifiers;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_hash::BuckHashMap;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::build::BuildProviderType;
+use bz_build_api::build::BuildTargetResult;
+use bz_build_api::build::ConfiguredBuildTargetResult;
+use bz_build_api::build::ProviderArtifacts;
+use bz_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
+use bz_certs::validate::CertState;
+use bz_certs::validate::check_cert_state;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::pattern::pattern::Modifiers;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_hash::BuckHashMap;
 use dupe::Dupe;
 use starlark_map::small_map::SmallMap;
 
 mod proto {
-    pub(crate) use buck2_cli_proto::BuildTarget;
-    pub(crate) use buck2_cli_proto::build_target::BuildOutput;
-    pub(crate) use buck2_cli_proto::build_target::build_output::BuildOutputProviders;
+    pub(crate) use bz_cli_proto::BuildTarget;
+    pub(crate) use bz_cli_proto::build_target::BuildOutput;
+    pub(crate) use bz_cli_proto::build_target::build_output::BuildOutputProviders;
 }
 
-/// Simple container for multiple [`buck2_error::Error`]s
+/// Simple container for multiple [`bz_error::Error`]s
 pub(crate) struct BuildErrors {
-    pub(crate) errors: Vec<buck2_error::Error>,
+    pub(crate) errors: Vec<bz_error::Error>,
 }
 
 #[derive(Copy, Clone, Dupe)]
@@ -52,7 +52,7 @@ pub(crate) struct ResultReporterOptions {
     pub(crate) return_outputs: bool,
 }
 
-/// Collects build results into a Result<Vec<proto::BuildTarget>, buck2_error::Errors>. If any targets
+/// Collects build results into a Result<Vec<proto::BuildTarget>, bz_error::Errors>. If any targets
 /// fail, then the error case will be returned, otherwise a vec of all the successful results.
 pub(crate) struct ResultReporter<'a> {
     artifact_fs: &'a ArtifactFs,
@@ -71,7 +71,7 @@ impl<'a> ResultReporter<'a> {
         cert_state: CertState,
         options: ResultReporterOptions,
         build_result: &BuildTargetResult,
-    ) -> buck2_error::Result<BuildTargetsAndErrors> {
+    ) -> bz_error::Result<BuildTargetsAndErrors> {
         let mut out = Self {
             artifact_fs,
             options,
@@ -122,7 +122,7 @@ impl<'a> ResultReporter<'a> {
         label: &ConfiguredProvidersLabel,
         result: &ConfiguredBuildTargetResult,
         pattern_modifiers: Option<&BTreeSet<Modifiers>>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let outputs = result
             .outputs
             .iter()

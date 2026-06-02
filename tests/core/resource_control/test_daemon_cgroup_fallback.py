@@ -22,7 +22,7 @@ async def test_if_available_fallback_no_user_session(buck: Buck) -> None:
     instead of failing with DAEMON_STARTUP_FAILED."""
 
     with open(buck.cwd / ".buckconfig", "a") as buckconfig:
-        buckconfig.write("[buck2_resource_control]\n")
+        buckconfig.write("[bz_resource_control]\n")
         buckconfig.write("status = if_available\n")
 
     # Strip the env vars that systemd-run --user needs to find the D-Bus

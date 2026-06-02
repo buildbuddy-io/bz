@@ -12,7 +12,7 @@ use std::fmt::Display;
 use std::fmt::Formatter;
 
 use allocative::Allocative;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
 use starlark::any::ProvidesStaticType;
 use starlark::starlark_simple_value;
 use starlark::values::NoSerialize;

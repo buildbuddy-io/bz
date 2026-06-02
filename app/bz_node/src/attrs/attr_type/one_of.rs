@@ -11,7 +11,7 @@
 use std::fmt;
 
 use allocative::Allocative;
-use buck2_error::internal_error;
+use bz_error::internal_error;
 use pagable::Pagable;
 
 use crate::attrs::attr_type::AttrType;
@@ -41,7 +41,7 @@ impl OneOfAttrType {
         self.xs.iter().any(AttrType::supports_concat)
     }
 
-    pub(crate) fn get(&self, i: u32) -> buck2_error::Result<&AttrType> {
+    pub(crate) fn get(&self, i: u32) -> bz_error::Result<&AttrType> {
         self.xs
             .get(i as usize)
             .ok_or_else(|| internal_error!("Oneof index ({i}) out of bounds (internal error)"))

@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_e2e_test")
+load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
 load("@fbcode_macros//build_defs:python_library.bzl", "python_library")
 
 oncall("tae")
@@ -11,7 +11,7 @@ python_library(
     ],
 )
 
-buck2_e2e_test(
+bz_e2e_test(
     name = "test_fdb_project",
     srcs = [
         "test_fdb_bxl_java.py",

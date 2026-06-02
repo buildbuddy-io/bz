@@ -15,7 +15,7 @@
 use std::process::Command;
 
 use anyhow::Context;
-use buck2_miniperf_proto::MiniperfOutput;
+use bz_miniperf_proto::MiniperfOutput;
 
 #[test]
 fn test_miniperf() -> anyhow::Result<()> {

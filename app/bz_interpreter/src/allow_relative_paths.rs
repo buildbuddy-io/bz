@@ -12,17 +12,17 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::file_ops::error::FileReadErrorContext;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::legacy_configs::view::LegacyBuckConfigView;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::paths::CellRelativePathBuf;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::file_ops::error::FileReadErrorContext;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::legacy_configs::view::LegacyBuckConfigView;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::paths::CellRelativePathBuf;
 use dice::DiceComputations;
 use dice::Key;
 use dice::OkPagableValueSerialize;
@@ -31,7 +31,7 @@ use dice_futures::cancellation::CancellationContext;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum RelativePathParseError {
     #[error("Relative path `{0}` could not be parsed.")]
@@ -49,7 +49,7 @@ pub trait HasAllowRelativePaths {
     async fn dirs_allowing_relative_paths(
         &mut self,
         cell_path: CellPath,
-    ) -> buck2_error::Result<Arc<CellPathWithAllowedRelativeDir>>;
+    ) -> bz_error::Result<Arc<CellPathWithAllowedRelativeDir>>;
 }
 
 #[async_trait]
@@ -57,7 +57,7 @@ impl HasAllowRelativePaths for DiceComputations<'_> {
     async fn dirs_allowing_relative_paths(
         &mut self,
         cell_path: CellPath,
-    ) -> buck2_error::Result<Arc<CellPathWithAllowedRelativeDir>> {
+    ) -> bz_error::Result<Arc<CellPathWithAllowedRelativeDir>> {
         #[derive(
             Debug,
             Eq,
@@ -76,7 +76,7 @@ impl HasAllowRelativePaths for DiceComputations<'_> {
 
         #[async_trait]
         impl Key for AllowRelativePathsKey {
-            type Value = buck2_error::Result<Arc<CellPathWithAllowedRelativeDir>>;
+            type Value = bz_error::Result<Arc<CellPathWithAllowedRelativeDir>>;
 
             async fn compute(
                 &self,
@@ -151,7 +151,7 @@ impl HasAllowRelativePaths for DiceComputations<'_> {
 fn get_cell_path_from_raw_string(
     dir: String,
     cell_alias_resolver: &CellAliasResolver,
-) -> buck2_error::Result<CellPath> {
+) -> bz_error::Result<CellPath> {
     let Some((cell_str, path_str)) = dir.trim().split_once("//") else {
         return Err(RelativePathParseError::InvalidAllowedDirForRelativePaths(dir).into());
     };
@@ -164,7 +164,7 @@ async fn validate_no_symlinks_between_current_dir_and_allowed_dir(
     ctx: &mut DiceComputations<'_>,
     current_dir: &CellPath,
     allowed_dir: &CellPath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // For all the paths between current_dir and allowed_dir, inclusive
     // check that there are no symlinks
     let mut current_dir = current_dir.as_ref();

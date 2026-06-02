@@ -11,9 +11,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
 use starlark::environment::FrozenModule;
 use starlark::eval::Evaluator;
 use starlark::eval::ProfileData;
@@ -22,7 +22,7 @@ use starlark::eval::ProfileMode;
 use crate::dice::starlark_provider::StarlarkEvalKind;
 use crate::starlark_profiler::data::StarlarkProfileDataAndStats;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum StarlarkProfilerError {
     #[error(
@@ -37,7 +37,7 @@ pub struct ProfilerData {
 
     initialized_at: Option<Instant>,
     finalized_at: Option<Instant>,
-    profile_data: Option<buck2_error::Result<ProfileData>>,
+    profile_data: Option<bz_error::Result<ProfileData>>,
 }
 
 impl ProfilerData {
@@ -51,7 +51,7 @@ impl ProfilerData {
     }
 
     /// Prepare an Evaluator to capture output relevant to this profiler.
-    pub(crate) fn initialize(&mut self, eval: &mut Evaluator) -> buck2_error::Result<bool> {
+    pub(crate) fn initialize(&mut self, eval: &mut Evaluator) -> bz_error::Result<bool> {
         self.initialized_at = Some(Instant::now());
         if let Some(mode) = &self.profile_mode {
             eval.enable_profile(mode)
@@ -79,7 +79,7 @@ impl ProfilerData {
         mut self,
         frozen_module: Option<&FrozenModule>,
         target: StarlarkEvalKind,
-    ) -> buck2_error::Result<Option<Arc<StarlarkProfileDataAndStats>>> {
+    ) -> bz_error::Result<Option<Arc<StarlarkProfileDataAndStats>>> {
         let mode = match self.profile_mode {
             None => {
                 return Ok(None);
@@ -95,7 +95,7 @@ impl ProfilerData {
                 if requires_frozen {
                     let profile = module
                         .heap_profile()
-                        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+                        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?;
                     self.profile_data = Some(Ok(profile));
                 }
 

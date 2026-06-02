@@ -9,13 +9,13 @@
  */
 
 use allocative::Allocative;
-use buck2_build_api::audit_cell::audit_cell;
-use buck2_build_api::audit_output::AuditOutputResult;
-use buck2_build_api::audit_output::audit_output;
-use buck2_core::cells::CellResolver;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::internal_error;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_build_api::audit_cell::audit_cell;
+use bz_build_api::audit_output::AuditOutputResult;
+use bz_build_api::audit_output::audit_output;
+use bz_core::cells::CellResolver;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::internal_error;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;
@@ -83,7 +83,7 @@ impl<'v> StarlarkAuditCtx<'v> {
         ctx: ValueTyped<'v, BxlContext<'v>>,
         working_dir: ProjectRelativePathBuf,
         cell_resolver: CellResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(Self {
             ctx,
             working_dir,
@@ -142,7 +142,7 @@ fn audit_methods(builder: &mut MethodsBuilder) {
                     .await?;
                     match output {
                         None => Ok(NoneOr::None),
-                        Some(result) => buck2_error::Ok(NoneOr::Other(match result {
+                        Some(result) => bz_error::Ok(NoneOr::Other(match result {
                             AuditOutputResult::Match(action) => heap.alloc(StarlarkAction(
                                 action
                                     .action()

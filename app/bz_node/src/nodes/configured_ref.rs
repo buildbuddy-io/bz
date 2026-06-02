@@ -12,12 +12,12 @@ use std::borrow::Cow;
 use std::ops::Deref;
 
 use allocative::Allocative;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::graph::node::LabeledNode;
-use buck2_query::query::graph::node::NodeKey;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::graph::node::LabeledNode;
+use bz_query::query::graph::node::NodeKey;
 use dupe::Dupe;
 use pagable::Pagable;
 use ref_cast::RefCast;
@@ -144,8 +144,8 @@ impl QueryTarget for ConfiguredGraphNodeRef {
     }
     fn attr_any_matches(
         attr: &Self::Attr<'_>,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         attr.any_matches(filter)
     }
 

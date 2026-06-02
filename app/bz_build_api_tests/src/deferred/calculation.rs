@@ -13,32 +13,32 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use allocative::Allocative;
-use buck2_analysis::analysis::calculation::AnalysisKey;
-use buck2_artifact::deferred::key::DeferredHolderKey;
-use buck2_build_api::actions::execute::dice_data::set_fallback_executor_config;
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_build_api::deferred::calculation::DeferredCalculation;
-use buck2_build_api::deferred::types::Deferred;
-use buck2_build_api::deferred::types::DeferredCtx;
-use buck2_build_api::deferred::types::DeferredInput;
-use buck2_build_api::deferred::types::DeferredInputsRef;
-use buck2_build_api::deferred::types::DeferredOutput;
-use buck2_build_api::deferred::types::DeferredRegistry;
-use buck2_build_api::deferred::types::DeferredValue;
-use buck2_common::dice::data::testing::SetTestingIoProvider;
-use buck2_configured::nodes::calculation::ConfiguredTargetNodeKey;
-use buck2_core::base_deferred_key::BaseDeferredKey;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::fs::project::ProjectRootTemp;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::digest_config::SetDigestConfig;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::StdBuckHashMap;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
+use bz_analysis::analysis::calculation::AnalysisKey;
+use bz_artifact::deferred::key::DeferredHolderKey;
+use bz_build_api::actions::execute::dice_data::set_fallback_executor_config;
+use bz_build_api::analysis::AnalysisResult;
+use bz_build_api::deferred::calculation::DeferredCalculation;
+use bz_build_api::deferred::types::Deferred;
+use bz_build_api::deferred::types::DeferredCtx;
+use bz_build_api::deferred::types::DeferredInput;
+use bz_build_api::deferred::types::DeferredInputsRef;
+use bz_build_api::deferred::types::DeferredOutput;
+use bz_build_api::deferred::types::DeferredRegistry;
+use bz_build_api::deferred::types::DeferredValue;
+use bz_common::dice::data::testing::SetTestingIoProvider;
+use bz_configured::nodes::calculation::ConfiguredTargetNodeKey;
+use bz_core::base_deferred_key::BaseDeferredKey;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::fs::project::ProjectRootTemp;
+use bz_core::target::label::label::TargetLabel;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::SetDigestConfig;
+use bz_hash::BuckIndexSet;
+use bz_hash::StdBuckHashMap;
+use bz_node::nodes::configured::ConfiguredTargetNode;
 use dice::DiceComputations;
 use dice::UserComputationData;
 use dice::testing::DiceBuilder;
@@ -70,14 +70,14 @@ impl Deferred for FakeDeferred {
         &self,
         _ctx: &mut dyn DeferredCtx,
         _dice: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<DeferredValue<Self::Output>> {
+    ) -> bz_error::Result<DeferredValue<Self::Output>> {
         self.2.store(true, Ordering::SeqCst);
         Ok(DeferredValue::Ready(UsizeOutput(self.0)))
     }
 }
 
 #[tokio::test]
-async fn lookup_deferred_from_analysis() -> buck2_error::Result<()> {
+async fn lookup_deferred_from_analysis() -> bz_error::Result<()> {
     let target =
         TargetLabel::testing_parse("cell//pkg:foo").configure(ConfigurationData::testing_new());
     let analysis_key = AnalysisKey(target.dupe());
@@ -108,7 +108,7 @@ async fn lookup_deferred_from_analysis() -> buck2_error::Result<()> {
         })
         .mock_and_return(
             analysis_key,
-            buck2_error::Ok(MaybeCompatible::Compatible(AnalysisResult::new(
+            bz_error::Ok(MaybeCompatible::Compatible(AnalysisResult::new(
                 provider_collection,
                 deferred_result,
                 analysis_values,
@@ -156,7 +156,7 @@ async fn lookup_deferred_from_analysis() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn lookup_deferred_that_has_deferreds() -> buck2_error::Result<()> {
+async fn lookup_deferred_that_has_deferreds() -> bz_error::Result<()> {
     #[derive(Debug, Allocative)]
     struct TestDeferringDeferred(usize, BuckIndexSet<DeferredInput>, Arc<AtomicBool>);
 
@@ -175,7 +175,7 @@ async fn lookup_deferred_that_has_deferreds() -> buck2_error::Result<()> {
             &self,
             ctx: &mut dyn DeferredCtx,
             _dice: &mut DiceComputations<'_>,
-        ) -> buck2_error::Result<DeferredValue<Self::Output>> {
+        ) -> bz_error::Result<DeferredValue<Self::Output>> {
             let data = ctx
                 .registry()
                 .defer(FakeDeferred(self.0, self.1.clone(), self.2.dupe()));
@@ -215,7 +215,7 @@ async fn lookup_deferred_that_has_deferreds() -> buck2_error::Result<()> {
         })
         .mock_and_return(
             analysis_key,
-            buck2_error::Ok(MaybeCompatible::Compatible(AnalysisResult::new(
+            bz_error::Ok(MaybeCompatible::Compatible(AnalysisResult::new(
                 provider_collection,
                 deferred_result,
                 analysis_values,

@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
 
 #[test]
-fn test_host_info() -> buck2_error::Result<()> {
+fn test_host_info() -> bz_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.run_starlark_test(indoc!(
         r#"
@@ -31,7 +31,7 @@ fn test_host_info() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_buck_v2() -> buck2_error::Result<()> {
+fn test_buck_v2() -> bz_error::Result<()> {
     let mut tester = Tester::new().unwrap();
     tester.run_starlark_test(indoc!(
         r#"

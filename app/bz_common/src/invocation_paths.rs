@@ -14,13 +14,13 @@
 use std::borrow::Cow;
 
 use allocative::Allocative;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 
 use crate::daemon_dir::DaemonDir;
 use crate::invocation_roots::InvocationRoots;
@@ -54,10 +54,10 @@ pub struct InvocationPaths {
 }
 
 impl InvocationPaths {
-    pub fn daemon_dir(&self) -> buck2_error::Result<DaemonDir> {
+    pub fn daemon_dir(&self) -> bz_error::Result<DaemonDir> {
         #[cfg(windows)]
         let root_relative: Cow<ForwardRelativePath> = {
-            use buck2_fs::paths::forward_rel_path::ForwardRelativePathNormalizer;
+            use bz_fs::paths::forward_rel_path::ForwardRelativePathNormalizer;
 
             // Get drive letter, network share name, etc.
             // Network share contains '\' therefore it needs to be normalized.
@@ -72,7 +72,7 @@ impl InvocationPaths {
             .roots
             .project_root
             .root()
-            .strip_prefix(buck2_fs::paths::abs_norm_path::AbsNormPath::new("/")?)?;
+            .strip_prefix(bz_fs::paths::abs_norm_path::AbsNormPath::new("/")?)?;
 
         let path = self
             .roots
@@ -228,13 +228,13 @@ impl InvocationPaths {
 mod tests {
     use std::ffi::OsStr;
 
-    use buck2_core::fs::project::ProjectRoot;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-    use buck2_fs::paths::abs_norm_path::AbsNormPath;
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    use buck2_fs::paths::file_name::FileNameBuf;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_core::fs::project::ProjectRoot;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+    use bz_fs::paths::abs_norm_path::AbsNormPath;
+    use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use bz_fs::paths::file_name::FileNameBuf;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 
     use crate::invocation_paths::InvocationPaths;
     use crate::invocation_roots::InvocationRoots;

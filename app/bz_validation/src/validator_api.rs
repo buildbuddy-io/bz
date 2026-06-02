@@ -37,7 +37,7 @@ pub(crate) struct ValidationResult {
     pub message: Option<String>,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ValidationApiError {
     #[error("Validation result should contain valid JSON.")]
@@ -54,7 +54,7 @@ enum ValidationApiError {
     },
 }
 
-pub(crate) fn parse_validation_result(content: &str) -> buck2_error::Result<ValidationResult> {
+pub(crate) fn parse_validation_result(content: &str) -> bz_error::Result<ValidationResult> {
     let result: ValidationStaticSchema = match serde_json::from_str(content) {
         Ok(x) => x,
         Err(error) => return Err((ValidationApiError::InvalidJson { error }).into()),

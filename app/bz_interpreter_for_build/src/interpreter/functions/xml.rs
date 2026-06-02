@@ -18,7 +18,7 @@ use starlark::values::Value;
 use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum XmlDecodeError {
     #[error("xml.decode: unexpected closing tag without matching open tag")]
@@ -170,7 +170,7 @@ fn xml_members(globals: &mut GlobalsBuilder) {
         #[starlark(require = pos)] x: &str,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        let root = parse_xml(x).map_err(buck2_error::Error::from)?;
+        let root = parse_xml(x).map_err(bz_error::Error::from)?;
         Ok(root.alloc(heap))
     }
 }

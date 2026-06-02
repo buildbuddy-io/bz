@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
+use bz_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -12,7 +12,7 @@ use starlark::values::ValueLifetimeless;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 
 /// Provider returned by Bazel analysis-test rules to report analysis-time test status.
 #[internal_provider(analysis_test_result_info_creator)]

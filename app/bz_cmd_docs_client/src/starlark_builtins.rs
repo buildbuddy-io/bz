@@ -8,20 +8,20 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::new_generic::DocsRequest;
-use buck2_cli_proto::new_generic::DocsStarlarkBuiltinsRequest;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::streaming::StreamingCommand;
+use bz_cli_proto::new_generic::DocsRequest;
+use bz_cli_proto::new_generic::DocsStarlarkBuiltinsRequest;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::path_arg::PathArg;
+use bz_client_ctx::streaming::StreamingCommand;
 
 /// Generate documentation for starlark builtins.
 ///
@@ -55,7 +55,7 @@ impl StreamingCommand for StarlarkBuiltinsCommand {
             .with_flushing()
             .new_generic(
                 client_context,
-                buck2_cli_proto::new_generic::NewGenericRequest::Docs(
+                bz_cli_proto::new_generic::NewGenericRequest::Docs(
                     DocsRequest::StarlarkBuiltins(DocsStarlarkBuiltinsRequest { path: p }),
                 ),
                 events_ctx,
@@ -63,7 +63,7 @@ impl StreamingCommand for StarlarkBuiltinsCommand {
             )
             .await??;
 
-        let buck2_cli_proto::new_generic::NewGenericResponse::Docs(_) = response else {
+        let bz_cli_proto::new_generic::NewGenericResponse::Docs(_) = response else {
             return ExitResult::bail("Unexpected response type from generic command");
         };
 

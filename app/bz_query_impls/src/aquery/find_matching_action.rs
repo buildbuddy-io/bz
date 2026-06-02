@@ -10,14 +10,14 @@
 
 use std::borrow::Cow;
 
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::query::ActionQueryNode;
-use buck2_build_api::actions::query::FIND_MATCHING_ACTION;
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::query::ActionQueryNode;
+use bz_build_api::actions::query::FIND_MATCHING_ACTION;
+use bz_build_api::analysis::AnalysisResult;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use dice::DiceComputations;
 use dupe::Dupe;
 use dupe::IterDupedExt;
@@ -37,7 +37,7 @@ enum ActionKeyMatch<'v> {
 fn check_output_path<'v>(
     build_artifact: &'v BuildArtifact,
     path_to_check: &ForwardRelativePathBuf,
-) -> buck2_error::Result<Option<ActionKeyMatch<'v>>> {
+) -> bz_error::Result<Option<ActionKeyMatch<'v>>> {
     let path = build_artifact.get_path().path();
 
     debug!(
@@ -62,7 +62,7 @@ async fn find_matching_action(
     global_cfg_options: &GlobalCfgOptions,
     analysis: &AnalysisResult,
     short_path: ForwardRelativePathBuf,
-) -> buck2_error::Result<Option<ActionQueryNode>> {
+) -> bz_error::Result<Option<ActionQueryNode>> {
     ctx.with_linear_recompute(|ctx| async move {
         let dice_aquery_delegate =
             get_dice_aquery_delegate(&ctx, working_dir, global_cfg_options.dupe()).await?;

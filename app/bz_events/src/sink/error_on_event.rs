@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::soft_error;
-use buck2_error::buck2_error;
+use bz_core::soft_error;
+use bz_error::bz_error;
 
 use crate::Event;
 use crate::EventSink;
@@ -28,8 +28,8 @@ impl EventSink for ErrorOnEventSink {
         // soft_error enforcement.
         let _ignored = soft_error!(
             "event_dispatched_without_dispatcher",
-            buck2_error!(
-                buck2_error::ErrorTag::InternalError,
+            bz_error!(
+                bz_error::ErrorTag::InternalError,
                 "Event dispatched through a code path that lacks a real EventDispatcher. \
                  An EventDispatcher needs to be threaded through from the caller. \
                  Event: {:?}",

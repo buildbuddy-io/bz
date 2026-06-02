@@ -10,16 +10,16 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_hash::BuckHashSet;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_sketches::ActionGraphSketch;
-use buck2_sketches::DependencyGraphSketch;
-use buck2_sketches::MemoryUsageSketch;
+use bz_artifact::actions::key::ActionKey;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_hash::BuckHashSet;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_sketches::ActionGraphSketch;
+use bz_sketches::DependencyGraphSketch;
+use bz_sketches::MemoryUsageSketch;
 use dice::CancellationContext;
 use dice::DiceComputations;
 use dice::DiceKeyDyn;
@@ -52,8 +52,8 @@ use crate::deferred::calculation::DeferredHolder;
 /// failed analysis or dynamic nodes).
 pub fn compute_action_graph_sketch<'a>(
     root_artifacts: impl IntoIterator<Item = &'a ArtifactGroup>,
-    state: &buck2_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>,
-) -> buck2_error::Result<(bool, MergeableGraphSketch<ActionKey, ActionGraphSketch>)> {
+    state: &bz_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>,
+) -> bz_error::Result<(bool, MergeableGraphSketch<ActionKey, ActionGraphSketch>)> {
     let mut sketcher = DEFAULT_SKETCH_VERSION.create_sketcher();
     let complete = compute_action_graph_sketch_impl(root_artifacts, state, &mut sketcher)?;
     Ok((complete, sketcher.into_mergeable_graph_sketch()))
@@ -62,9 +62,9 @@ pub fn compute_action_graph_sketch<'a>(
 /// Private implementation that accepts any Sketcher for testing.
 fn compute_action_graph_sketch_impl<'a>(
     root_artifacts: impl IntoIterator<Item = &'a ArtifactGroup>,
-    state: &buck2_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>,
+    state: &bz_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>,
     sketcher: &mut impl Sketcher<ActionKey>,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let (complete, actions) =
         super::implementation::traverse::traverse_partial_action_graph(root_artifacts, state)?;
 
@@ -136,7 +136,7 @@ pub(crate) struct AnalysisGraphPropertiesKey {
 
 #[async_trait]
 impl Key for AnalysisGraphPropertiesKey {
-    type Value = buck2_error::Result<
+    type Value = bz_error::Result<
         MaybeCompatible<MergeableGraphSketch<StarlarkEvalKind, MemoryUsageSketch>>,
     >;
 
@@ -212,21 +212,21 @@ mod tests {
 
     use allocative::Allocative;
     use async_trait::async_trait;
-    use buck2_artifact::actions::key::ActionIndex;
-    use buck2_artifact::actions::key::ActionKey;
-    use buck2_artifact::artifact::build_artifact::BuildArtifact;
-    use buck2_core::category::Category;
-    use buck2_core::category::CategoryRef;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::deferred::key::DeferredHolderKey;
-    use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-    use buck2_core::fs::buck_out_path::BuckOutPathKind;
-    use buck2_core::fs::buck_out_path::BuildArtifactPath;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-    use buck2_hash::BuckHashMap;
-    use buck2_hash::BuckHashSet;
-    use buck2_hash::BuckIndexSet;
+    use bz_artifact::actions::key::ActionIndex;
+    use bz_artifact::actions::key::ActionKey;
+    use bz_artifact::artifact::build_artifact::BuildArtifact;
+    use bz_core::category::Category;
+    use bz_core::category::CategoryRef;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::deferred::key::DeferredHolderKey;
+    use bz_core::execution_types::executor_config::CommandExecutorConfig;
+    use bz_core::fs::buck_out_path::BuckOutPathKind;
+    use bz_core::fs::buck_out_path::BuildArtifactPath;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_hash::BuckHashMap;
+    use bz_hash::BuckHashSet;
+    use bz_hash::BuckIndexSet;
     use dupe::Dupe;
 
     use crate::actions::Action;
@@ -290,11 +290,11 @@ mod tests {
 
     #[async_trait]
     impl Action for MockAction {
-        fn kind(&self) -> buck2_data::ActionKind {
-            buck2_data::ActionKind::NotSet
+        fn kind(&self) -> bz_data::ActionKind {
+            bz_data::ActionKind::NotSet
         }
 
-        fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+        fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
             Ok(Cow::Borrowed(self.inputs.as_slice()))
         }
 
@@ -317,7 +317,7 @@ mod tests {
         async fn execute(
             &self,
             _ctx: &mut dyn ActionExecutionCtx,
-            _waiting_data: buck2_build_signals::env::WaitingData,
+            _waiting_data: bz_build_signals::env::WaitingData,
         ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
             unimplemented!("MockAction::execute should not be called in tests")
         }
@@ -337,7 +337,7 @@ mod tests {
                 BuckOutPathKind::default(),
             ),
             action_key,
-            buck2_execute::execute::request::OutputType::File,
+            bz_execute::execute::request::OutputType::File,
         )
         .unwrap()
     }

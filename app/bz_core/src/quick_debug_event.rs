@@ -28,7 +28,7 @@ use crate::event::EVENT_DISPATCH;
 /// ```
 pub fn send(key: impl ToString, s: impl ToString) {
     EVENT_DISPATCH.get().unwrap().emit_instant_event_for_data(
-        buck2_data::QuickUnstableE2eData {
+        bz_data::QuickUnstableE2eData {
             key: key.to_string(),
             data: s.to_string(),
         }

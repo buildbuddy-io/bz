@@ -185,7 +185,7 @@ Starlark Options:
           Enables profiling for all evaluations whose evaluation identifier matches one of the
           provided patterns.
 
-          Some examples identifiers: analysis/cell//bz/app/bz_action_impl:buck2_action_impl
+          Some examples identifiers: analysis/cell//bz/app/bz_action_impl:bz_action_impl
           (cfg:linux-x86_64#27ac5723e0c99706) load/cell//build_defs/json.bzl
           load/prelude//playground/test.bxl load/cell//build_defs/json.bzl@other_cell
           load_buildfile/fbcode//third-party-buck/platform010/build/ncurses

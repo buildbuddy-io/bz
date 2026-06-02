@@ -164,7 +164,7 @@ impl Key for BazelSkyframeMarkerKey {
 pub async fn mark_bazel_skyframe_key(
     ctx: &mut DiceComputations<'_>,
     function: BazelSkyframeFunction,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     ctx.compute(&BazelSkyframeMarkerKey::new(function)).await?;
     Ok(())
 }
@@ -173,7 +173,7 @@ pub async fn mark_bazel_skyframe_key_with_detail(
     ctx: &mut DiceComputations<'_>,
     function: BazelSkyframeFunction,
     detail: impl Into<String>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     ctx.compute(&BazelSkyframeMarkerKey::with_detail(function, detail))
         .await?;
     Ok(())

@@ -9,36 +9,36 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::CounterWithExamples;
-use buck2_cli_proto::TestRequest;
-use buck2_cli_proto::TestSessionOptions;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::build::CommonBuildOptions;
-use buck2_client_ctx::common::target_cfg::TargetCfgOptions;
-use buck2_client_ctx::common::timeout::CommonTimeoutOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::NoPartialResultHandler;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::final_console::FinalConsole;
-use buck2_client_ctx::output_destination_arg::OutputDestinationArg;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::stdio::eprint_line;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_client_ctx::subscribers::superconsole::test::TestCounterColumn;
-use buck2_client_ctx::subscribers::superconsole::test::span_from_build_failure_count;
-use buck2_error::BuckErrorContext;
-use buck2_error::ExitCode;
-use buck2_error::internal_error;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::working_dir::AbsWorkingDir;
+use bz_cli_proto::CounterWithExamples;
+use bz_cli_proto::TestRequest;
+use bz_cli_proto::TestSessionOptions;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::build::CommonBuildOptions;
+use bz_client_ctx::common::target_cfg::TargetCfgOptions;
+use bz_client_ctx::common::timeout::CommonTimeoutOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::NoPartialResultHandler;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::final_console::FinalConsole;
+use bz_client_ctx::output_destination_arg::OutputDestinationArg;
+use bz_client_ctx::path_arg::PathArg;
+use bz_client_ctx::stdio::eprint_line;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_client_ctx::subscribers::superconsole::test::TestCounterColumn;
+use bz_client_ctx::subscribers::superconsole::test::span_from_build_failure_count;
+use bz_error::BuckErrorContext;
+use bz_error::ExitCode;
+use bz_error::internal_error;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::working_dir::AbsWorkingDir;
 use superconsole::Line;
 use superconsole::Span;
 
@@ -49,7 +49,7 @@ fn forward_output_to_path(
     output: &str,
     path_arg: &PathArg,
     working_dir: &AbsWorkingDir,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     fs_util::write(path_arg.resolve(working_dir), output)
         // input path from --test-executor-stderr=FILEPATH
         .categorize_input()
@@ -61,7 +61,7 @@ fn print_error_counter(
     counter: &CounterWithExamples,
     error_type: &str,
     symbol: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if counter.count > 0 {
         console.print_error(&format!("{} {}", counter.count, error_type))?;
         for test_name in &counter.example_tests {
@@ -200,7 +200,7 @@ If include patterns are present, regardless of whether exclude patterns are pres
     common_opts: CommonCommandOptions,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = TestExecutor)]
 enum ExecutorError {
     #[buck2(tag = TestRunnerInternal)]
@@ -223,7 +223,7 @@ enum ExecutorError {
     UnexpectedExitCode(i32),
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = TestExecutor)]
 enum TestStatusError {
     #[error("Test execution completed but the tests failed")]
@@ -249,7 +249,7 @@ enum TestStatusError {
 impl ExecutorError {
     fn new(
         exit_code: i32,
-        test_statuses: &buck2_cli_proto::test_response::TestStatuses,
+        test_statuses: &bz_cli_proto::test_response::TestStatuses,
     ) -> Option<Self> {
         let status_error = TestStatusError::new(test_statuses);
         // exit codes from tpx::outcome::RunVerdict
@@ -267,7 +267,7 @@ impl ExecutorError {
 }
 
 impl TestStatusError {
-    fn new(test_statuses: &buck2_cli_proto::test_response::TestStatuses) -> Self {
+    fn new(test_statuses: &bz_cli_proto::test_response::TestStatuses) -> Self {
         if let Some(fatal) = &test_statuses.fatals
             && fatal.count > 0
         {
@@ -296,8 +296,8 @@ impl TestStatusError {
 
 fn test_executor_error(
     executor_exit_code: i32,
-    test_statuses: &buck2_cli_proto::test_response::TestStatuses,
-) -> Option<buck2_error::Error> {
+    test_statuses: &bz_cli_proto::test_response::TestStatuses,
+) -> Option<bz_error::Error> {
     if let Some(error) = ExecutorError::new(executor_exit_code, test_statuses) {
         let exit_code_tag = if let ExecutorError::UnexpectedExitCode(exit_code) = error {
             Some(exit_code.to_string())
@@ -305,7 +305,7 @@ fn test_executor_error(
             None
         };
 
-        let mut error = buck2_error::Error::from(error);
+        let mut error = bz_error::Error::from(error);
         if let Some(tag) = exit_code_tag {
             error = error.string_tag(&tag);
         }
@@ -465,7 +465,7 @@ impl StreamingCommand for TestCommand {
         }
 
         if let Some(build_report) = response.serialized_build_report {
-            buck2_client_ctx::println!("{}", build_report)?;
+            bz_client_ctx::println!("{}", build_report)?;
         }
 
         let exit_result = if !response.errors.is_empty() {

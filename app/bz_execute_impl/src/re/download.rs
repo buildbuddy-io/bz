@@ -15,52 +15,52 @@ use std::ops::FromResidual;
 use std::path::Path;
 use std::sync::Arc;
 
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::Symlink;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::console_message;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest::CasDigestFromReExt;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryBuilder;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::extract_artifact_value;
-use buck2_execute::directory::re_tree_to_directory;
-use buck2_execute::execute::action_digest::TrackedActionDigest;
-use buck2_execute::execute::executor_stage_async;
-use buck2_execute::execute::kind::RemoteCommandExecutionDetails;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::manager::CommandExecutionManagerExt;
-use buck2_execute::execute::manager::CommandExecutionManagerWithClaim;
-use buck2_execute::execute::output::CommandStdStreams;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::CommandExecutionOutputRef;
-use buck2_execute::execute::request::CommandExecutionPaths;
-use buck2_execute::execute::request::CommandExecutionRequest;
-use buck2_execute::execute::result::CommandExecutionErrorType;
-use buck2_execute::execute::result::CommandExecutionMetadata;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::materialize::materializer::CasDownloadInfo;
-use buck2_execute::materialize::materializer::DeclareArtifactPayload;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::re::action_identity::ReActionIdentity;
-use buck2_execute::re::error::RemoteExecutionError;
-use buck2_execute::re::manager::ManagedRemoteExecutionClient;
-use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
-use buck2_execute::re::remote_action_result::RemoteActionResult;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_util::time_span::TimeSpan;
-use buck2_util::time_span::TimeSpanBuilder;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::Symlink;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::console_message;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest::CasDigestFromReExt;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryBuilder;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::extract_artifact_value;
+use bz_execute::directory::re_tree_to_directory;
+use bz_execute::execute::action_digest::TrackedActionDigest;
+use bz_execute::execute::executor_stage_async;
+use bz_execute::execute::kind::RemoteCommandExecutionDetails;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::manager::CommandExecutionManagerExt;
+use bz_execute::execute::manager::CommandExecutionManagerWithClaim;
+use bz_execute::execute::output::CommandStdStreams;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::CommandExecutionOutputRef;
+use bz_execute::execute::request::CommandExecutionPaths;
+use bz_execute::execute::request::CommandExecutionRequest;
+use bz_execute::execute::result::CommandExecutionErrorType;
+use bz_execute::execute::result::CommandExecutionMetadata;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::materialize::materializer::CasDownloadInfo;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::re::action_identity::ReActionIdentity;
+use bz_execute::re::error::RemoteExecutionError;
+use bz_execute::re::manager::ManagedRemoteExecutionClient;
+use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+use bz_execute::re::remote_action_result::RemoteActionResult;
+use bz_fs::paths::RelativePathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::BuckIndexMap;
+use bz_hash::StdBuckHashSet;
+use bz_util::time_span::TimeSpan;
+use bz_util::time_span::TimeSpanBuilder;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
@@ -111,7 +111,7 @@ pub async fn download_action_results<'a>(
     digest_config: DigestConfig,
     manager: CommandExecutionManager,
     identity: &ReActionIdentity<'_>,
-    stage: buck2_data::executor_stage_start::Stage,
+    stage: bz_data::executor_stage_start::Stage,
     paths: &CommandExecutionPaths,
     requested_outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
     details: RemoteCommandExecutionDetails,
@@ -185,8 +185,8 @@ pub async fn download_action_results<'a>(
         e => {
             let materialized_inputs = if materialize_failed_re_action_inputs {
                 executor_stage_async(
-                    buck2_data::ReStage {
-                        stage: Some(buck2_data::MaterializeFailedInputs {}.into()),
+                    bz_data::ReStage {
+                        stage: Some(bz_data::MaterializeFailedInputs {}.into()),
                     },
                     async move {
                         match materialize_inputs(artifact_fs, materializer, request, digest_config)
@@ -264,7 +264,7 @@ async fn materialize_failed_build_outputs(
     request: &CommandExecutionRequest,
     available_outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
     materialize_failed_re_action_outputs: bool,
-) -> buck2_error::Result<Vec<ProjectRelativePathBuf>> {
+) -> bz_error::Result<Vec<ProjectRelativePathBuf>> {
     let mut paths = vec![];
     if !materialize_failed_re_action_outputs && request.outputs_for_error_handler().is_empty() {
         // Nothing to materialize
@@ -316,7 +316,7 @@ impl CasDownloader<'_> {
         artifact_fs: &ArtifactFs,
         manager: CommandExecutionManager,
         identity: &ReActionIdentity<'_>,
-        stage: buck2_data::executor_stage_start::Stage,
+        stage: bz_data::executor_stage_start::Stage,
         paths: &CommandExecutionPaths,
         working_directory: &ProjectRelativePath,
         requested_outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
@@ -347,7 +347,7 @@ impl CasDownloader<'_> {
                 match artifacts {
                     Ok(artifacts) => artifacts,
                     Err(e) => {
-                        let error: buck2_error::Error =
+                        let error: bz_error::Error =
                             e.context(format!("action_digest={}", details.action_digest));
                         let is_storage_resource_exhausted = error
                             .find_typed_context::<RemoteExecutionError>()
@@ -423,7 +423,7 @@ impl CasDownloader<'_> {
         working_directory: &ProjectRelativePath,
         requested_outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
         output_spec: &dyn RemoteActionResult,
-    ) -> buck2_error::Result<ExtractedArtifacts> {
+    ) -> bz_error::Result<ExtractedArtifacts> {
         let now = Utc::now();
         let ttl = Duration::seconds(output_spec.ttl());
         let expires = now + ttl;
@@ -506,8 +506,8 @@ impl CasDownloader<'_> {
                     }
                 } else {
                     trees.next().ok_or_else(|| {
-                        buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Tier0,
+                        bz_error::bz_error!(
+                            bz_error::ErrorTag::Tier0,
                             "missing downloaded tree metadata for `{}`",
                             dir.path
                         )
@@ -577,7 +577,7 @@ impl CasDownloader<'_> {
         &self,
         artifacts: ExtractedArtifacts,
         info: CasDownloadInfo,
-    ) -> buck2_error::Result<BuckIndexMap<CommandExecutionOutput, ArtifactValue>> {
+    ) -> bz_error::Result<BuckIndexMap<CommandExecutionOutput, ArtifactValue>> {
         // Declare the outputs to the materializer
         self.materializer
             .declare_cas_many(Arc::new(info), artifacts.to_declare)
@@ -596,7 +596,7 @@ fn is_empty_re_tree_digest(size_in_bytes: i64) -> bool {
 /// Takes a path that came from RE and tries to convert it to
 /// a `ForwardRelativePath`. These paths are supposed to be forward relative,
 /// so if the conversion fails, RE is broken.
-fn re_forward_path(re_path: &str) -> buck2_error::Result<&ForwardRelativePath> {
+fn re_forward_path(re_path: &str) -> bz_error::Result<&ForwardRelativePath> {
     // RE sends us paths with trailing slash.
     ForwardRelativePath::new_trim_trailing_slashes(re_path)
         .buck_error_context("Path received from RE is not normalized.")
@@ -605,7 +605,7 @@ fn re_forward_path(re_path: &str) -> buck2_error::Result<&ForwardRelativePath> {
 fn re_output_path_to_project_path(
     working_directory: &ProjectRelativePath,
     re_path: &str,
-) -> buck2_error::Result<ProjectRelativePathBuf> {
+) -> bz_error::Result<ProjectRelativePathBuf> {
     Ok(working_directory.join(re_forward_path(re_path)?))
 }
 

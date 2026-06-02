@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_interpreter_for_build::interpreter::testing::Tester;
-use buck2_interpreter_for_build::interpreter::testing::expect_error;
-use buck2_interpreter_for_build::label::testing::label_creator;
+use bz_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::interpreter::testing::expect_error;
+use bz_interpreter_for_build::label::testing::label_creator;
 use indoc::indoc;
 
 #[test]
-fn labels_are_usable() -> buck2_error::Result<()> {
-    fn new_tester() -> buck2_error::Result<Tester> {
+fn labels_are_usable() -> bz_error::Result<()> {
+    fn new_tester() -> bz_error::Result<Tester> {
         let mut tester = Tester::new()?;
         tester.additional_globals(label_creator);
         Ok(tester)

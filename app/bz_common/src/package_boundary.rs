@@ -12,15 +12,15 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::StdBuckHashMap;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::StdBuckHashMap;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::Key;
@@ -49,7 +49,7 @@ struct CellPackageBoundaryExceptions {
 }
 
 impl CellPackageBoundaryExceptions {
-    fn new(s: &str) -> buck2_error::Result<Self> {
+    fn new(s: &str) -> bz_error::Result<Self> {
         let mut prefix_to_subpaths = StdBuckHashMap::default();
         let mut allow_everything = false;
         for path_str in s.split(',') {
@@ -106,7 +106,7 @@ struct CellPackageBoundaryExceptionsKey(CellName);
 
 #[async_trait]
 impl Key for CellPackageBoundaryExceptionsKey {
-    type Value = buck2_error::Result<Option<Arc<CellPackageBoundaryExceptions>>>;
+    type Value = bz_error::Result<Option<Arc<CellPackageBoundaryExceptions>>>;
 
     async fn compute(
         &self,
@@ -150,7 +150,7 @@ pub trait HasPackageBoundaryExceptions {
     async fn get_package_boundary_exception(
         &mut self,
         path: CellPathRef<'async_trait>,
-    ) -> buck2_error::Result<Option<Arc<CellPath>>>;
+    ) -> bz_error::Result<Option<Arc<CellPath>>>;
 }
 
 #[async_trait]
@@ -158,7 +158,7 @@ impl HasPackageBoundaryExceptions for DiceComputations<'_> {
     async fn get_package_boundary_exception(
         &mut self,
         path: CellPathRef<'async_trait>,
-    ) -> buck2_error::Result<Option<Arc<CellPath>>> {
+    ) -> bz_error::Result<Option<Arc<CellPath>>> {
         #[derive(
             Hash, Eq, PartialEq, Clone, Display, Debug, RefCast, Allocative, Pagable
         )]
@@ -168,7 +168,7 @@ impl HasPackageBoundaryExceptions for DiceComputations<'_> {
 
         #[async_trait]
         impl Key for PackageBoundaryExceptionKey {
-            type Value = buck2_error::Result<Option<Arc<CellPath>>>;
+            type Value = bz_error::Result<Option<Arc<CellPath>>>;
 
             async fn compute(
                 &self,

@@ -11,12 +11,12 @@
 pub mod parser;
 
 use allocative::Allocative;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::source_path::SourcePathRef;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersLabelMaybeConfigured;
-use buck2_util::arc_str::ArcStr;
+use bz_core::package::PackageLabel;
+use bz_core::package::source_path::SourcePathRef;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersLabelMaybeConfigured;
+use bz_util::arc_str::ArcStr;
 use derive_more::Display;
 use dupe::Dupe;
 use gazebo::prelude::SliceExt;
@@ -30,7 +30,7 @@ use crate::attrs::configuration_context::AttrConfigurationContext;
 use crate::attrs::configured_traversal::ConfiguredAttrTraversal;
 use crate::attrs::traversal::CoercedAttrTraversal;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum StringMacroTraversalError {
     #[error("Expected a package when traversing string macro: `{0}`.")]
@@ -78,8 +78,8 @@ assert_eq_size!(StringWithMacros<ProvidersLabel>, [usize; 3]);
 impl StringWithMacros<ConfiguredProvidersLabel> {
     pub fn concat(
         self,
-        items: impl Iterator<Item = buck2_error::Result<Self>>,
-    ) -> buck2_error::Result<Self> {
+        items: impl Iterator<Item = bz_error::Result<Self>>,
+    ) -> bz_error::Result<Self> {
         let mut parts = Vec::new();
         for x in std::iter::once(Ok(self)).chain(items) {
             match x? {
@@ -100,7 +100,7 @@ impl StringWithMacros<ConfiguredProvidersLabel> {
         &self,
         traversal: &mut dyn ConfiguredAttrTraversal,
         pkg: PackageLabel,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             Self::StringPart(..) => {}
             Self::ManyParts(parts) => {
@@ -123,7 +123,7 @@ impl StringWithMacros<ProvidersLabel> {
         &self,
         ctx: &dyn AttrConfigurationContext,
         anon_target_compatible: bool,
-    ) -> buck2_error::Result<ConfiguredStringWithMacros> {
+    ) -> bz_error::Result<ConfiguredStringWithMacros> {
         match self {
             Self::StringPart(part) => Ok(ConfiguredStringWithMacros {
                 string_with_macros: StringWithMacros::StringPart(part.clone()),
@@ -142,7 +142,7 @@ impl StringWithMacros<ProvidersLabel> {
         &'a self,
         traversal: &mut dyn CoercedAttrTraversal<'a>,
         pkg: Option<PackageLabel>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             Self::StringPart(..) => {}
             Self::ManyParts(parts) => {
@@ -207,7 +207,7 @@ impl MacroBase<ConfiguredProvidersLabel> {
         &self,
         traversal: &mut dyn ConfiguredAttrTraversal,
         pkg: PackageLabel,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // macros can't reference repo inputs (they only reference the outputs of other targets)
         match self {
             MacroBase::UserKeyedPlaceholder(box (_, l, _)) => traversal.dep(l),
@@ -247,7 +247,7 @@ impl MacroBase<ProvidersLabel> {
     pub fn configure(
         &self,
         ctx: &dyn AttrConfigurationContext,
-    ) -> buck2_error::Result<ConfiguredMacro> {
+    ) -> bz_error::Result<ConfiguredMacro> {
         Ok(match self {
             UnconfiguredMacro::Location { label, dep_kind } => ConfiguredMacro::Location {
                 label: match dep_kind {
@@ -289,7 +289,7 @@ impl MacroBase<ProvidersLabel> {
         &'a self,
         traversal: &mut dyn CoercedAttrTraversal<'a>,
         pkg: Option<PackageLabel>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             MacroBase::UserKeyedPlaceholder(box (_, l, _)) => traversal.dep(l),
             MacroBase::Location {
@@ -414,7 +414,7 @@ impl StringWithMacrosPart<ProvidersLabel> {
     pub(crate) fn configure(
         &self,
         ctx: &dyn AttrConfigurationContext,
-    ) -> buck2_error::Result<ConfiguredStringWithMacrosPart> {
+    ) -> bz_error::Result<ConfiguredStringWithMacrosPart> {
         match self {
             StringWithMacrosPart::String(val) => {
                 Ok(ConfiguredStringWithMacrosPart::String(val.clone()))

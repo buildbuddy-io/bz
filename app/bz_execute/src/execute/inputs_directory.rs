@@ -10,13 +10,13 @@
 
 use std::sync::Arc;
 
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::Symlink;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::RelativePath;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::Symlink;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::RelativePath;
 use dupe::Dupe;
 
 use crate::artifact_value::ArtifactValue;
@@ -34,7 +34,7 @@ pub fn inputs_directory(
     inputs: &[CommandExecutionInput],
     digest_config: DigestConfig,
     fs: &ArtifactFs,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     ActionDirectoryBuilder,
     Vec<ExternalSymlinkUploadPath>,
     Vec<ResolvedSymlinkUploadPath>,
@@ -118,7 +118,7 @@ fn rebase_target_file_symlink_alias(
     source_path: &ProjectRelativePath,
     path: &ProjectRelativePath,
     value: ArtifactValue,
-) -> buck2_error::Result<ArtifactValue> {
+) -> bz_error::Result<ArtifactValue> {
     let DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) = value.entry() else {
         return Ok(value);
     };
@@ -151,10 +151,10 @@ fn rebase_target_file_symlink_alias(
 mod tests {
     use std::sync::Arc;
 
-    use buck2_common::file_ops::metadata::Symlink;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_directory::directory::entry::DirectoryEntry;
-    use buck2_fs::paths::RelativePathBuf;
+    use bz_common::file_ops::metadata::Symlink;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_directory::directory::entry::DirectoryEntry;
+    use bz_fs::paths::RelativePathBuf;
 
     use crate::artifact_value::ArtifactValue;
     use crate::digest_config::DigestConfig;
@@ -171,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn target_file_symlink_alias_is_rebased_to_original_target() -> buck2_error::Result<()> {
+    fn target_file_symlink_alias_is_rebased_to_original_target() -> bz_error::Result<()> {
         let value = ArtifactValue::new(
             ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(Arc::new(Symlink::new(
                 RelativePathBuf::from("../builder"),
@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn symlink_alias_without_deps_is_left_unchanged() -> buck2_error::Result<()> {
+    fn symlink_alias_without_deps_is_left_unchanged() -> bz_error::Result<()> {
         let value = ArtifactValue::new(
             ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(Arc::new(Symlink::new(
                 RelativePathBuf::from("../builder"),

@@ -45,7 +45,7 @@ rust_library(
         "//bz/gazebo/dupe:dupe",
         "//bz/gazebo/gazebo:gazebo",
         "//bz/pagable:pagable",
-        "//bz/shed/buck2_hash:buck2_hash",
+        "//bz/shed/bz_hash:bz_hash",
         "//bz/shed/lock_free_hashtable:lock_free_hashtable",
         "//bz/shed/lock_free_vec:lock_free_vec",
         "//common/rust/shed/sorted_vector_map:sorted_vector_map",

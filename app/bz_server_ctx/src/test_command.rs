@@ -11,7 +11,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use buck2_util::late_binding::LateBinding;
+use bz_util::late_binding::LateBinding;
 
 use crate::ctx::ServerCommandContextTrait;
 use crate::partial_result_dispatcher::NoPartialResult;
@@ -21,8 +21,8 @@ pub static TEST_COMMAND: LateBinding<
     for<'a> fn(
         ctx: &'a (dyn ServerCommandContextTrait + 'a),
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::TestRequest,
+        req: bz_cli_proto::TestRequest,
     ) -> Pin<
-        Box<dyn Future<Output = buck2_error::Result<buck2_cli_proto::TestResponse>> + Send + 'a>,
+        Box<dyn Future<Output = bz_error::Result<bz_cli_proto::TestResponse>> + Send + 'a>,
     >,
 > = LateBinding::new("TEST_COMMAND");

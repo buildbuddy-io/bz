@@ -18,42 +18,42 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use buck2_common::client_utils::get_channel_uds;
-use buck2_common::client_utils::retrying;
-use buck2_common::liveliness_observer::LivelinessGuard;
-use buck2_common::liveliness_observer::LivelinessObserver;
-use buck2_error::ErrorTag;
-use buck2_error::buck2_error;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_execute::execute::kind::CommandExecutionKind;
-use buck2_execute::execute::manager::CommandExecutionManagerExt;
-use buck2_execute::execute::manager::CommandExecutionManagerWithClaim;
-use buck2_execute::execute::output::CommandStdStreams;
-use buck2_execute::execute::request::CommandExecutionRequest;
-use buck2_execute::execute::request::WorkerId;
-use buck2_execute::execute::request::WorkerProtocol;
-use buck2_execute::execute::request::WorkerSpec;
-use buck2_execute::execute::result::CommandExecutionMetadata;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute_local::CommandResult;
-use buck2_execute_local::GatherOutputStatus;
-use buck2_execute_local::StdRedirectPaths;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_hash::BuckDashMap;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::StdBuckHashMap;
-use buck2_util::time_span::TimeSpan;
-use buck2_worker_proto::ExecuteCommand;
-use buck2_worker_proto::ExecuteCommandStream;
-use buck2_worker_proto::ExecuteResponse;
-use buck2_worker_proto::ExecuteResponseStream;
-use buck2_worker_proto::execute_command::EnvironmentEntry;
-use buck2_worker_proto::worker_client;
-use buck2_worker_proto::worker_streaming_client;
+use bz_common::client_utils::get_channel_uds;
+use bz_common::client_utils::retrying;
+use bz_common::liveliness_observer::LivelinessGuard;
+use bz_common::liveliness_observer::LivelinessObserver;
+use bz_error::ErrorTag;
+use bz_error::bz_error;
+use bz_events::dispatch::EventDispatcher;
+use bz_execute::execute::kind::CommandExecutionKind;
+use bz_execute::execute::manager::CommandExecutionManagerExt;
+use bz_execute::execute::manager::CommandExecutionManagerWithClaim;
+use bz_execute::execute::output::CommandStdStreams;
+use bz_execute::execute::request::CommandExecutionRequest;
+use bz_execute::execute::request::WorkerId;
+use bz_execute::execute::request::WorkerProtocol;
+use bz_execute::execute::request::WorkerSpec;
+use bz_execute::execute::result::CommandExecutionMetadata;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute_local::CommandResult;
+use bz_execute_local::GatherOutputStatus;
+use bz_execute_local::StdRedirectPaths;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_hash::BuckDashMap;
+use bz_hash::BuckIndexMap;
+use bz_hash::StdBuckHashMap;
+use bz_util::time_span::TimeSpan;
+use bz_worker_proto::ExecuteCommand;
+use bz_worker_proto::ExecuteCommandStream;
+use bz_worker_proto::ExecuteResponse;
+use bz_worker_proto::ExecuteResponseStream;
+use bz_worker_proto::execute_command::EnvironmentEntry;
+use bz_worker_proto::worker_client;
+use bz_worker_proto::worker_streaming_client;
 use dupe::Dupe;
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -138,7 +138,7 @@ impl WorkerCacheKey {
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = WorkerInit)]
 pub enum WorkerInitError {
     #[error("Worker failed to spawn: {0}")]
@@ -153,7 +153,7 @@ pub enum WorkerInitError {
     ConnectionTimeout(f64, String),
     /// Any error not related to worker behavior
     #[error("Error initializing worker `{0}`")]
-    InternalError(buck2_error::Error),
+    InternalError(bz_error::Error),
 }
 
 #[cfg_attr(windows, allow(dead_code))]
@@ -222,7 +222,7 @@ fn spawn_via_forkserver(
     std_redirects: &StdRedirectPaths,
     socket_path: &AbsNormPathBuf,
     graceful_shutdown_timeout_s: Option<u32>,
-) -> JoinHandle<buck2_error::Result<GatherOutputStatus>> {
+) -> JoinHandle<bz_error::Result<GatherOutputStatus>> {
     use std::os::unix::ffi::OsStrExt;
 
     use crate::executors::local::apply_local_execution_environment;
@@ -235,16 +235,16 @@ fn spawn_via_forkserver(
 
     let socket_path = socket_path.clone();
     tokio::spawn(async move {
-        let mut req = buck2_forkserver_proto::CommandRequest {
+        let mut req = bz_forkserver_proto::CommandRequest {
             exe: exe.as_bytes().into(),
             argv: args.into_iter().map(|s| s.as_bytes().into()).collect(),
-            cwd: Some(buck2_forkserver_proto::WorkingDirectory {
+            cwd: Some(bz_forkserver_proto::WorkingDirectory {
                 path: working_directory.as_path().as_os_str().as_bytes().into(),
             }),
             env: vec![],
             timeout: None,
             enable_miniperf: false,
-            std_redirects: Some(buck2_forkserver_proto::command_request::StdRedirectPaths {
+            std_redirects: Some(bz_forkserver_proto::command_request::StdRedirectPaths {
                 stdout: std_redirects.stdout.to_string(),
                 stderr: std_redirects.stderr.to_string(),
             }),
@@ -282,7 +282,7 @@ fn spawn_via_forkserver(
     _std_redirects: &StdRedirectPaths,
     _socket_path: &AbsNormPathBuf,
     _graceful_shutdown_timeout_s: Option<u32>,
-) -> JoinHandle<buck2_error::Result<GatherOutputStatus>> {
+) -> JoinHandle<bz_error::Result<GatherOutputStatus>> {
     unreachable!("workers should not be initialized off unix")
 }
 
@@ -294,7 +294,7 @@ fn encode_varint(mut value: usize, out: &mut Vec<u8>) {
     out.push(value as u8);
 }
 
-async fn read_varint(reader: &mut ChildStdout) -> buck2_error::Result<Option<usize>> {
+async fn read_varint(reader: &mut ChildStdout) -> bz_error::Result<Option<usize>> {
     let mut value = 0usize;
     let mut shift = 0usize;
     for index in 0..10 {
@@ -311,7 +311,7 @@ async fn read_varint(reader: &mut ChildStdout) -> buck2_error::Result<Option<usi
         }
         shift += 7;
     }
-    Err(buck2_error!(
+    Err(bz_error!(
         ErrorTag::Input,
         "Invalid Bazel worker response length varint"
     ))
@@ -319,7 +319,7 @@ async fn read_varint(reader: &mut ChildStdout) -> buck2_error::Result<Option<usi
 
 async fn read_bazel_work_response(
     reader: &mut ChildStdout,
-) -> buck2_error::Result<Option<BazelWorkResponse>> {
+) -> bz_error::Result<Option<BazelWorkResponse>> {
     let Some(len) = read_varint(reader).await? else {
         return Ok(None);
     };
@@ -331,7 +331,7 @@ async fn read_bazel_work_response(
 async fn write_bazel_work_request(
     writer: &mut ChildStdin,
     request: BazelWorkRequest,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut body = Vec::new();
     prost::Message::encode(&request, &mut body)?;
     let mut frame = Vec::with_capacity(body.len() + 10);
@@ -357,12 +357,12 @@ async fn spawn_bazel_worker(
         worker_id,
         worker_key_hash
     );
-    let worker_dir = AbsNormPathBuf::from("/tmp/buck2_worker".to_owned())
+    let worker_dir = AbsNormPathBuf::from("/tmp/bz_worker".to_owned())
         .map_err(WorkerInitError::InternalError)?
         .join(FileName::unchecked_new(&dir_name));
     if fs_util::try_exists(&worker_dir).map_err(|e| WorkerInitError::InternalError(e.into()))? {
-        return Err(WorkerInitError::InternalError(buck2_error!(
-            buck2_error::ErrorTag::WorkerDirectoryExists,
+        return Err(WorkerInitError::InternalError(bz_error!(
+            bz_error::ErrorTag::WorkerDirectoryExists,
             "Directory for worker already exists: {:?}",
             worker_dir
         )));
@@ -399,13 +399,13 @@ async fn spawn_bazel_worker(
         .spawn()
         .map_err(|e| WorkerInitError::SpawnFailed(e.to_string()))?;
     let stdin = child.stdin.take().ok_or_else(|| {
-        WorkerInitError::InternalError(buck2_error!(
+        WorkerInitError::InternalError(bz_error!(
             ErrorTag::Tier0,
             "Bazel protocol worker stdin was not piped"
         ))
     })?;
     let mut stdout = child.stdout.take().ok_or_else(|| {
-        WorkerInitError::InternalError(buck2_error!(
+        WorkerInitError::InternalError(bz_error!(
             ErrorTag::Tier0,
             "Bazel protocol worker stdout was not piped"
         ))
@@ -504,13 +504,13 @@ async fn spawn_worker(
         worker_id,
         worker_key_hash
     );
-    let worker_dir = AbsNormPathBuf::from("/tmp/buck2_worker".to_owned())
+    let worker_dir = AbsNormPathBuf::from("/tmp/bz_worker".to_owned())
         .map_err(WorkerInitError::InternalError)?
         .join(FileName::unchecked_new(&dir_name));
     let socket_path = worker_dir.join(FileName::unchecked_new("socket"));
     if fs_util::try_exists(&worker_dir).map_err(|e| WorkerInitError::InternalError(e.into()))? {
-        return Err(WorkerInitError::InternalError(buck2_error!(
-            buck2_error::ErrorTag::WorkerDirectoryExists,
+        return Err(WorkerInitError::InternalError(bz_error!(
+            bz_error::ErrorTag::WorkerDirectoryExists,
             "Directory for worker already exists: {:?}",
             worker_dir
         )));
@@ -594,8 +594,8 @@ async fn spawn_worker(
                     }
                 }
                 Ok(GatherOutputStatus::Cancelled | GatherOutputStatus::TimedOut(_)) => {
-                    WorkerInitError::InternalError(buck2_error!(
-                        buck2_error::ErrorTag::WorkerCancelled,
+                    WorkerInitError::InternalError(bz_error!(
+                        bz_error::ErrorTag::WorkerCancelled,
                         "Worker cancelled by buck"
                     ))
                 }
@@ -852,7 +852,7 @@ impl WorkerClient {
         &mut self,
         request: ExecuteCommand,
         bazel_sandbox_dir: Option<String>,
-    ) -> buck2_error::Result<ExecuteResponse> {
+    ) -> bz_error::Result<ExecuteResponse> {
         match self {
             Self::Single(client) => Self::execute_with_retry(client, request).await,
             Self::Bazel(client) => client.execute(request, bazel_sandbox_dir).await,
@@ -873,7 +873,7 @@ impl WorkerClient {
                 tokio::select! {
                     response = rx => Ok(response.map(|response| response.response.unwrap())?),
                     _ = stream_closed_observer.while_alive() => {
-                        Err(buck2_error::buck2_error!(ErrorTag::Tier0, "Stream closed while waiting for response"))
+                        Err(bz_error::bz_error!(ErrorTag::Tier0, "Stream closed while waiting for response"))
                     },
                 }
             }
@@ -883,7 +883,7 @@ impl WorkerClient {
     async fn execute_with_retry(
         client: &mut worker_client::WorkerClient<Channel>,
         request: ExecuteCommand,
-    ) -> buck2_error::Result<ExecuteResponse> {
+    ) -> bz_error::Result<ExecuteResponse> {
         use tokio_retry::strategy::ExponentialBackoff;
 
         let retry_delays = ExponentialBackoff::from_millis(100)
@@ -916,7 +916,7 @@ impl BazelWorkerClient {
         &self,
         request: ExecuteCommand,
         sandbox_dir: Option<String>,
-    ) -> buck2_error::Result<ExecuteResponse> {
+    ) -> bz_error::Result<ExecuteResponse> {
         let ExecuteCommand {
             argv,
             env: _,
@@ -936,10 +936,10 @@ impl BazelWorkerClient {
             .into_iter()
             .map(|arg| {
                 String::from_utf8(arg).map_err(|e| {
-                    buck2_error!(ErrorTag::Input, "Bazel worker arguments must be UTF-8: {e}")
+                    bz_error!(ErrorTag::Input, "Bazel worker arguments must be UTF-8: {e}")
                 })
             })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
+            .collect::<bz_error::Result<Vec<_>>>()?;
 
         let work_request = BazelWorkRequest {
             arguments,
@@ -950,7 +950,7 @@ impl BazelWorkerClient {
         };
         let (tx, rx) = tokio::sync::oneshot::channel();
         if self.waiters.insert(request_id, tx).is_some() {
-            return Err(buck2_error!(
+            return Err(bz_error!(
                 ErrorTag::Tier0,
                 "Bazel worker request id collision: {request_id}"
             ));
@@ -967,7 +967,7 @@ impl BazelWorkerClient {
             tokio::select! {
                 response = rx => Ok(response?),
                 _ = self.stdout_closed_observer.while_alive() => {
-                    Err(buck2_error!(ErrorTag::Tier0, "Bazel worker stdout closed while waiting for response"))
+                    Err(bz_error!(ErrorTag::Tier0, "Bazel worker stdout closed while waiting for response"))
                 },
             }
         };
@@ -1130,12 +1130,12 @@ mod tests {
     use std::sync::atomic::AtomicU32;
     use std::sync::atomic::Ordering;
 
-    use buck2_worker_proto::ExecuteCommand;
-    use buck2_worker_proto::ExecuteEvent;
-    use buck2_worker_proto::ExecuteResponse;
-    use buck2_worker_proto::worker_client;
-    use buck2_worker_proto::worker_server::Worker;
-    use buck2_worker_proto::worker_server::WorkerServer;
+    use bz_worker_proto::ExecuteCommand;
+    use bz_worker_proto::ExecuteEvent;
+    use bz_worker_proto::ExecuteResponse;
+    use bz_worker_proto::worker_client;
+    use bz_worker_proto::worker_server::Worker;
+    use bz_worker_proto::worker_server::WorkerServer;
     use tonic::Request;
     use tonic::Response;
     use tonic::Status;

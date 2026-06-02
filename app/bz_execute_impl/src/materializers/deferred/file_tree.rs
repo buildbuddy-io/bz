@@ -8,15 +8,15 @@
  * above-listed licenses.
  */
 
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_execute::directory::ActionDirectory;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionDirectoryRef;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_execute::directory::ActionDirectory;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionDirectoryRef;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 
 use crate::materializers::deferred::data_tree::DataTree;
 

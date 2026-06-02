@@ -36,25 +36,25 @@ pub enum BuckProfileMode {
 }
 
 impl BuckProfileMode {
-    pub fn to_proto(&self) -> buck2_cli_proto::ProfileMode {
+    pub fn to_proto(&self) -> bz_cli_proto::ProfileMode {
         match self {
-            BuckProfileMode::TimeFlame => buck2_cli_proto::ProfileMode::TimeFlame,
-            BuckProfileMode::HeapAllocated => buck2_cli_proto::ProfileMode::HeapAllocated,
-            BuckProfileMode::HeapRetained => buck2_cli_proto::ProfileMode::HeapRetained,
-            BuckProfileMode::HeapFlameAllocated => buck2_cli_proto::ProfileMode::HeapFlameAllocated,
-            BuckProfileMode::HeapFlameRetained => buck2_cli_proto::ProfileMode::HeapFlameRetained,
+            BuckProfileMode::TimeFlame => bz_cli_proto::ProfileMode::TimeFlame,
+            BuckProfileMode::HeapAllocated => bz_cli_proto::ProfileMode::HeapAllocated,
+            BuckProfileMode::HeapRetained => bz_cli_proto::ProfileMode::HeapRetained,
+            BuckProfileMode::HeapFlameAllocated => bz_cli_proto::ProfileMode::HeapFlameAllocated,
+            BuckProfileMode::HeapFlameRetained => bz_cli_proto::ProfileMode::HeapFlameRetained,
             BuckProfileMode::HeapSummaryAllocated => {
-                buck2_cli_proto::ProfileMode::HeapSummaryAllocated
+                bz_cli_proto::ProfileMode::HeapSummaryAllocated
             }
             BuckProfileMode::HeapSummaryRetained => {
-                buck2_cli_proto::ProfileMode::HeapSummaryRetained
+                bz_cli_proto::ProfileMode::HeapSummaryRetained
             }
-            BuckProfileMode::Statement => buck2_cli_proto::ProfileMode::Statement,
-            BuckProfileMode::Bytecode => buck2_cli_proto::ProfileMode::Bytecode,
-            BuckProfileMode::BytecodePairs => buck2_cli_proto::ProfileMode::BytecodePairs,
-            BuckProfileMode::Typecheck => buck2_cli_proto::ProfileMode::Typecheck,
-            BuckProfileMode::Coverage => buck2_cli_proto::ProfileMode::Coverage,
-            BuckProfileMode::None => buck2_cli_proto::ProfileMode::None,
+            BuckProfileMode::Statement => bz_cli_proto::ProfileMode::Statement,
+            BuckProfileMode::Bytecode => bz_cli_proto::ProfileMode::Bytecode,
+            BuckProfileMode::BytecodePairs => bz_cli_proto::ProfileMode::BytecodePairs,
+            BuckProfileMode::Typecheck => bz_cli_proto::ProfileMode::Typecheck,
+            BuckProfileMode::Coverage => bz_cli_proto::ProfileMode::Coverage,
+            BuckProfileMode::None => bz_cli_proto::ProfileMode::None,
         }
     }
 }

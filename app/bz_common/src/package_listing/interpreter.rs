@@ -12,22 +12,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_core::package::package_relative_path::PackageRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_fs::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_util::arc_str::ArcS;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::package::PackageLabel;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_core::package::package_relative_path::PackageRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_fs::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_util::arc_str::ArcS;
 use compact_str::CompactString;
 use dice::DiceComputations;
 use dupe::Dupe;
@@ -55,7 +55,7 @@ use crate::legacy_configs::key::BuckconfigKeyRef;
 use crate::package_listing::listing::PackageListing;
 use crate::package_listing::resolver::PackageListingResolver;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum PackageListingError {
     #[error("Expected `{0}` to be within a package directory, but there was no buildfile in any parent directories. Expected one of `{}`", .1.join("`, `"))]
@@ -64,14 +64,14 @@ enum PackageListingError {
 
 #[async_trait]
 impl PackageListingResolver for InterpreterPackageListingResolver<'_, '_> {
-    async fn resolve(&mut self, package: PackageLabel) -> buck2_error::Result<PackageListing> {
+    async fn resolve(&mut self, package: PackageLabel) -> bz_error::Result<PackageListing> {
         Ok(self.gather_package_listing(package.dupe()).await?)
     }
 
     async fn get_enclosing_package(
         &mut self,
         path: CellPathRef<'async_trait>,
-    ) -> buck2_error::Result<PackageLabel> {
+    ) -> bz_error::Result<PackageLabel> {
         let buildfile_candidates = DiceFileComputations::buildfiles(self.ctx, path.cell()).await?;
         if let Some(path) = path.parent() {
             for path in path.ancestors() {
@@ -94,7 +94,7 @@ impl PackageListingResolver for InterpreterPackageListingResolver<'_, '_> {
         &mut self,
         path: CellPathRef<'async_trait>,
         enclosing_path: CellPathRef<'async_trait>,
-    ) -> buck2_error::Result<Vec<PackageLabel>> {
+    ) -> bz_error::Result<Vec<PackageLabel>> {
         let buildfile_candidates = DiceFileComputations::buildfiles(self.ctx, path.cell()).await?;
         if let Some(path) = path.parent() {
             let mut packages = Vec::new();
@@ -196,7 +196,7 @@ impl PackageListingStrategy {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum GatherPackageListingError {
     #[buck2(input)]
@@ -225,12 +225,12 @@ pub enum GatherPackageListingError {
     Error {
         package: CellPath,
         #[source]
-        error: buck2_error::Error,
+        error: bz_error::Error,
     },
 }
 
 impl GatherPackageListingError {
-    fn error<E: Into<buck2_error::Error>>(
+    fn error<E: Into<bz_error::Error>>(
         package_path: CellPathRef<'_>,
         err: E,
     ) -> GatherPackageListingError {
@@ -308,7 +308,7 @@ impl std::fmt::Display for GatherPackageListingError {
              missing `TARGETS` file (also missing alternatives `TARGETS.v2`, `BUCK`, `BUCK.v2`)
 
          error loading package `fbsource//foo/target/x/y/lmnop:`
-              ... # just display the buck2_error for now
+              ... # just display the bz_error for now
         */
 
         let prefix = "package `";
@@ -322,7 +322,7 @@ impl std::fmt::Display for GatherPackageListingError {
 
         let (package, submessage) = match self {
             GatherPackageListingError::Error { package, .. } => {
-                // in this case we return the buck2_error as our source and we're just displayed as context
+                // in this case we return the bz_error as our source and we're just displayed as context
                 write!(f, "gathering package listing for `{}`", &package)?;
                 return Ok(());
             }
@@ -770,8 +770,8 @@ async fn gather_bzlmod_package_listing_fast(
     let Some(root_cell) = cells.get(root_cell_path.cell()).ok() else {
         return Err(GatherPackageListingError::error(
             root_cell_path,
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Fast bzlmod package listing requires cell `{}` in the cell resolver",
                 root_cell_path.cell()
             ),
@@ -911,14 +911,14 @@ fn gather_bzlmod_package_listing_fast_blocking(
 fn read_raw_dir_entries_direct(
     project_root: &ProjectRoot,
     project_path: &ProjectRelativePath,
-) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+) -> bz_error::Result<Arc<[RawDirEntry]>> {
     read_raw_dir_entries_direct_impl(project_root, project_path, false)
 }
 
 fn read_raw_dir_entries_direct_following_symlinks(
     project_root: &ProjectRoot,
     project_path: &ProjectRelativePath,
-) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+) -> bz_error::Result<Arc<[RawDirEntry]>> {
     read_raw_dir_entries_direct_impl(project_root, project_path, true)
 }
 
@@ -926,7 +926,7 @@ fn read_raw_dir_entries_direct_impl(
     project_root: &ProjectRoot,
     project_path: &ProjectRelativePath,
     follow_symlinks: bool,
-) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+) -> bz_error::Result<Arc<[RawDirEntry]>> {
     let abs_path = project_root.resolve(project_path);
     let dir_entries = fs_util::read_dir(&abs_path).categorize_input()?;
     let mut entries = Vec::new();
@@ -935,8 +935,8 @@ fn read_raw_dir_entries_direct_impl(
         let entry = entry.buck_error_context("Error accessing directory entry")?;
         let file_name = entry.file_name();
         let file_name = file_name.to_str().ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "File name in `{}` is not valid UTF-8: {:?}",
                 abs_path,
                 file_name
@@ -994,7 +994,7 @@ async fn package_listing_strategy(
 pub async fn bazel_compat_package_listing_enabled(
     ctx: &mut DiceComputations<'_>,
     cell_name: CellName,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let cells = ctx.get_cell_resolver().await?;
     let instance = match cells.get(cell_name) {
         Ok(instance) => instance,
@@ -1023,7 +1023,7 @@ pub async fn bazel_compat_package_listing_enabled(
 fn bazel_compat_enabled(
     ctx: &mut DiceComputations<'_>,
     config: &OpaqueLegacyBuckConfigOnDice,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let enabled = config.lookup(
         ctx,
         BuckconfigKeyRef {
@@ -1039,14 +1039,14 @@ fn bazel_compat_enabled(
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
 
     use super::*;
 
     #[test]
     #[cfg(unix)]
-    fn read_raw_dir_entries_direct_does_not_follow_symlink_dirs() -> buck2_error::Result<()> {
+    fn read_raw_dir_entries_direct_does_not_follow_symlink_dirs() -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let repo = fs
             .path()
@@ -1075,7 +1075,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn read_raw_dir_entries_direct_following_symlinks_treats_linked_dir_as_dir()
-    -> buck2_error::Result<()> {
+    -> bz_error::Result<()> {
         let fs = ProjectRootTemp::new()?;
         let repo = fs
             .path()

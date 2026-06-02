@@ -11,13 +11,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_node::configured_universe::CqueryUniverse;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
-use buck2_util::late_binding::LateBinding;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_node::configured_universe::CqueryUniverse;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationResult;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 
 use crate::actions::query::ActionQueryNode;
@@ -30,7 +30,7 @@ pub trait QueryFrontend: Send + Sync + 'static {
         working_dir: &ProjectRelativePath,
         query: &str,
         query_args: &[String],
-    ) -> buck2_error::Result<QueryEvaluationResult<TargetNode>>;
+    ) -> bz_error::Result<QueryEvaluationResult<TargetNode>>;
 
     async fn eval_cquery(
         &self,
@@ -41,7 +41,7 @@ pub trait QueryFrontend: Send + Sync + 'static {
         global_cfg_options: GlobalCfgOptions,
         target_universe: Option<&[String]>,
         collect_universes: bool,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         QueryEvaluationResult<ConfiguredTargetNode>,
         Option<Vec<Arc<CqueryUniverse>>>,
     )>;
@@ -53,7 +53,7 @@ pub trait QueryFrontend: Send + Sync + 'static {
         query: &str,
         query_args: &[String],
         global_cfg_options: GlobalCfgOptions,
-    ) -> buck2_error::Result<QueryEvaluationResult<ActionQueryNode>>;
+    ) -> bz_error::Result<QueryEvaluationResult<ActionQueryNode>>;
 }
 
 pub static QUERY_FRONTEND: LateBinding<&'static dyn QueryFrontend> =

@@ -54,7 +54,7 @@ def apple_generated_platforms(name, constraint_values, deps, platform_rule, plat
     # This is not the case for all watch platforms, so provide an override.
     platform = platform if platform else name
     build_mode_constraints_map = get_build_mode_constraints_map(use_whatsapp_build_modes)
-    if is_mobile_platform(platform) or is_buck2_mac_platform(platform):
+    if is_mobile_platform(platform) or is_bz_mac_platform(platform):
         for build_mode in supported_build_modes:
             platform_rule(
                 name = _get_generated_name(name, platform, build_mode),
@@ -82,11 +82,11 @@ def is_mobile_platform(platform):
     # modes to represent dev/opt variants.
     return platform in _MOBILE_PLATFORMS
 
-def is_buck2_mac_platform(platform):
+def is_bz_mac_platform(platform):
     return platform in _MAC_PLATFORMS
 
 def _get_generated_name(name, platform, build_mode):
-    if is_mobile_platform(platform) or is_buck2_mac_platform(platform):
+    if is_mobile_platform(platform) or is_bz_mac_platform(platform):
         return "{}-{}".format(name, build_mode)
     else:
         return name

@@ -8,18 +8,18 @@
  * above-listed licenses.
  */
 
-use buck2_error::BuckErrorContext as _;
-use buck2_error::internal_error;
-use buck2_grpc::ServerHandle;
-use buck2_grpc::make_channel;
-use buck2_grpc::spawn_oneshot;
-use buck2_grpc::to_tonic;
-use buck2_test_proto::Empty;
-use buck2_test_proto::ExternalRunnerSpecRequest;
-use buck2_test_proto::UnstableHeapDumpRequest;
-use buck2_test_proto::UnstableHeapDumpResponse;
-use buck2_test_proto::test_executor_client;
-use buck2_test_proto::test_executor_server;
+use bz_error::BuckErrorContext as _;
+use bz_error::internal_error;
+use bz_grpc::ServerHandle;
+use bz_grpc::make_channel;
+use bz_grpc::spawn_oneshot;
+use bz_grpc::to_tonic;
+use bz_test_proto::Empty;
+use bz_test_proto::ExternalRunnerSpecRequest;
+use bz_test_proto::UnstableHeapDumpRequest;
+use bz_test_proto::UnstableHeapDumpResponse;
+use bz_test_proto::test_executor_client;
+use bz_test_proto::test_executor_server;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tonic::transport::Channel;
@@ -32,7 +32,7 @@ pub struct TestExecutorClient {
 }
 
 impl TestExecutorClient {
-    pub async fn new<T>(io: T) -> buck2_error::Result<Self>
+    pub async fn new<T>(io: T) -> bz_error::Result<Self>
     where
         T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
     {
@@ -48,7 +48,7 @@ impl TestExecutorClient {
 
 #[async_trait::async_trait]
 impl TestExecutor for TestExecutorClient {
-    async fn external_runner_spec(&self, s: ExternalRunnerSpec) -> buck2_error::Result<()> {
+    async fn external_runner_spec(&self, s: ExternalRunnerSpec) -> bz_error::Result<()> {
         self.client
             .clone()
             .external_runner_spec(ExternalRunnerSpecRequest {
@@ -59,12 +59,12 @@ impl TestExecutor for TestExecutorClient {
         Ok(())
     }
 
-    async fn end_of_test_requests(&self) -> buck2_error::Result<()> {
+    async fn end_of_test_requests(&self) -> bz_error::Result<()> {
         self.client.clone().end_of_test_requests(Empty {}).await?;
         Ok(())
     }
 
-    async fn unstable_heap_dump(&self, path: &str) -> buck2_error::Result<()> {
+    async fn unstable_heap_dump(&self, path: &str) -> bz_error::Result<()> {
         self.client
             .clone()
             .unstable_heap_dump(UnstableHeapDumpRequest {

@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::nodes::configured::ConfiguredTargetNodeRef;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::nodes::configured::ConfiguredTargetNodeRef;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::structs::AllocStruct;
 use starlark::values::structs::StructRef;
@@ -21,7 +21,7 @@ use crate::attrs::resolve::ctx::AttrResolutionContext;
 pub(crate) fn node_to_attrs_struct<'v>(
     node: ConfiguredTargetNodeRef,
     ctx: &mut dyn AttrResolutionContext<'v>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     let attrs_iter = node.attrs(AttrInspectOptions::All);
     let mut resolved_attrs = Vec::with_capacity(attrs_iter.size_hint().0);
     let is_bazel_rule = node.is_bazel_rule();

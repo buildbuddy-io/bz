@@ -11,17 +11,17 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
-use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
-use buck2_core::configuration::config_setting::ConfigSettingData;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::data::ConfigurationDataData;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::configuration::pair::ConfigurationWithExec;
-use buck2_core::configuration::transition::applied::TransitionApplied;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
+use bz_core::configuration::compatibility::IncompatiblePlatformReason;
+use bz_core::configuration::compatibility::IncompatiblePlatformReasonCause;
+use bz_core::configuration::config_setting::ConfigSettingData;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::data::ConfigurationDataData;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::configuration::pair::ConfigurationWithExec;
+use bz_core::configuration::transition::applied::TransitionApplied;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
 use dupe::Dupe;
 use starlark_map::ordered_map::OrderedMap;
 use starlark_map::unordered_map::UnorderedMap;
@@ -43,7 +43,7 @@ pub fn configuration_ctx() -> impl AttrConfigurationContext {
             ConfigurationNoExec::new(self.0.dupe())
         }
 
-        fn base_exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
+        fn base_exec_cfg(&self) -> bz_error::Result<ConfigurationNoExec> {
             Ok(ConfigurationNoExec::new(self.1.dupe()))
         }
 
@@ -55,13 +55,13 @@ pub fn configuration_ctx() -> impl AttrConfigurationContext {
             ConfigurationWithExec::new(self.0.dupe(), self.1.dupe())
         }
 
-        fn platform_cfg(&self, _label: &TargetLabel) -> buck2_error::Result<ConfigurationData> {
+        fn platform_cfg(&self, _label: &TargetLabel) -> bz_error::Result<ConfigurationData> {
             panic!("not used in tests")
         }
 
         fn resolved_transitions(
             &self,
-        ) -> buck2_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>> {
+        ) -> bz_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>> {
             panic!("not used in tests")
         }
 

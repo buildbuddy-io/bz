@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_wrapper_common::DOT_BUCKCONFIG_D;
+use bz_wrapper_common::DOT_BUCKCONFIG_D;
 
 pub(crate) enum ExternalConfigSource {
     // Buckconfig file in the user's home directory

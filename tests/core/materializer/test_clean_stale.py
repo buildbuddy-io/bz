@@ -37,7 +37,7 @@ def replace_in_file(old: str, new: str, file: Path, encoding: str = "utf-8") -> 
 
 
 @buck_test()
-@env("BUCK_LOG", "buck2_execute_impl::materializers=trace")
+@env("BUCK_LOG", "bz_execute_impl::materializers=trace")
 async def test_artifact_access_time(buck: Buck) -> None:
     # drop microseconds to match 1s precision from materializer
     start = datetime.utcnow().replace(microsecond=0)
@@ -86,7 +86,7 @@ async def test_artifact_access_time(buck: Buck) -> None:
 
 
 @buck_test()
-@env("BUCK_LOG", "buck2_execute_impl::materializers=trace")
+@env("BUCK_LOG", "bz_execute_impl::materializers=trace")
 @env("BUCK_ACCESS_TIME_UPDATE_MAX_BUFFER_SIZE", "0")
 async def test_clean_stale_artifacts(buck: Buck) -> None:
     target_1 = "root//:copy"
@@ -133,7 +133,7 @@ async def test_clean_stale_artifacts(buck: Buck) -> None:
 
 
 @buck_test()
-@env("BUCK_LOG", "buck2_execute_impl::materializers=trace")
+@env("BUCK_LOG", "bz_execute_impl::materializers=trace")
 async def test_clean_stale_artifact_dir(buck: Buck) -> None:
     target_1 = "root//:copy_dir"
     result_1 = await buck.build(target_1)
@@ -161,7 +161,7 @@ async def test_clean_stale_buck_out_empty(buck: Buck) -> None:
 
 
 @buck_test()
-@env("BUCK_LOG", "buck2_execute_impl::materializers=trace")
+@env("BUCK_LOG", "bz_execute_impl::materializers=trace")
 @env("BUCK_ACCESS_TIME_UPDATE_MAX_BUFFER_SIZE", "0")
 async def test_clean_stale_actions(buck: Buck) -> None:
     query_res = await buck.cquery("root//...")

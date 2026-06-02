@@ -11,7 +11,7 @@ COMMON_RUSTC_ENV = {
     "CARGO_PKG_HOMEPAGE": "",
     "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
     "CARGO_PKG_LICENSE_FILE": "",
-    "CARGO_PKG_NAME": "buck2_env",
+    "CARGO_PKG_NAME": "bz_env",
     "CARGO_PKG_README": "",
     "CARGO_PKG_REPOSITORY": "https://github.com/facebook/buck2",
     "CARGO_PKG_VERSION": "0.1.0",
@@ -22,14 +22,14 @@ COMMON_RUSTC_ENV = {
     }
 
 rust_library(
-    name = "buck2_env",
-    crate_name = "buck2_env",
+    name = "bz_env",
+    crate_name = "bz_env",
     crate_root = "src/lib.rs",
     srcs = glob(["src/**/*.rs"]),
     edition = "2024",
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
-        "//app/bz_error:buck2_error",
+        "//app/bz_error:bz_error",
         "//gazebo/dupe:dupe",
         "//starlark-rust/starlark_map:starlark_map",
     ],

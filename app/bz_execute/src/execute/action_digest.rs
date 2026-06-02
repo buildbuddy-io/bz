@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_common::cas_digest::CasDigest;
-use buck2_common::cas_digest::CasDigestConfig;
-use buck2_common::cas_digest::CasDigestKind;
-use buck2_common::cas_digest::TrackedCasDigest;
+use bz_common::cas_digest::CasDigest;
+use bz_common::cas_digest::CasDigestConfig;
+use bz_common::cas_digest::CasDigestKind;
+use bz_common::cas_digest::TrackedCasDigest;
 
 pub struct ActionDigestKind {
     _private: (),

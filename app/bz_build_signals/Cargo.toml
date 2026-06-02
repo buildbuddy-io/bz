@@ -3,19 +3,19 @@ authors = ["Meta"]
 description = "Interface for build signals"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_build_signals"
+name = "bz_build_signals"
 repository = { workspace = true }
 version = "0.1.0"
 
 [dependencies]
 allocative = { workspace = true }
 async-trait = { workspace = true }
-buck2_data = { workspace = true }
-buck2_error = { workspace = true }
-buck2_events = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_hash = { workspace = true }
-buck2_util = { workspace = true }
+bz_data = { workspace = true }
+bz_error = { workspace = true }
+bz_events = { workspace = true }
+bz_fs = { workspace = true }
+bz_hash = { workspace = true }
+bz_util = { workspace = true }
 cmp_any = { workspace = true }
 derive_more = { workspace = true }
 dice = { workspace = true }

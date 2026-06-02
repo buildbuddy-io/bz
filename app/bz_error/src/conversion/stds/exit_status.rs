@@ -27,7 +27,7 @@ impl From<ExitStatus> for crate::Error {
         use std::os::unix::process::ExitStatusExt;
 
         if let Some(code) = status.code() {
-            return crate::Error::from(crate::buck2_error!(
+            return crate::Error::from(crate::bz_error!(
                 ErrorTag::ExitStatus,
                 "process exited with code {}",
                 code
@@ -48,12 +48,12 @@ impl From<ExitStatus> for crate::Error {
                     format!("signal({})", signal),
                 )
             };
-            return crate::Error::from(crate::buck2_error!(ErrorTag::ExitStatus, "{}", message))
+            return crate::Error::from(crate::bz_error!(ErrorTag::ExitStatus, "{}", message))
                 .string_tag(&string_tag);
         }
 
         // this shouldn't happen
-        crate::Error::from(crate::buck2_error!(
+        crate::Error::from(crate::bz_error!(
             ErrorTag::ExitStatusUnknown,
             "process exited with unknown status"
         ))

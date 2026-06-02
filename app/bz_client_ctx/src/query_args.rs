@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_core::soft_error;
+use bz_core::soft_error;
 
 #[derive(Debug, clap::Parser, serde::Serialize, serde::Deserialize)]
 pub struct CommonAttributeArgs {
@@ -66,7 +66,7 @@ pub struct CommonAttributeArgs {
     output_attributes: Vec<String>,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum ArgErrors {
     #[error("`--output-attributes` is deprecated, use `--output-attribute` instead")]
@@ -78,7 +78,7 @@ enum ArgErrors {
 }
 
 impl CommonAttributeArgs {
-    pub fn get(&self) -> buck2_error::Result<Vec<String>> {
+    pub fn get(&self) -> bz_error::Result<Vec<String>> {
         if !self.output_attributes.is_empty() {
             soft_error!(
                 "output_attributes",

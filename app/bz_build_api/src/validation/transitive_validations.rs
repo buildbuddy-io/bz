@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 use dupe::Dupe;
 use starlark::values::OwnedFrozenValueTyped;
 use starlark_map::small_set::SmallSet;

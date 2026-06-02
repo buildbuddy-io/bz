@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use allocative::Allocative;
-use buck2_hash::BuckHasher;
+use bz_hash::BuckHasher;
 use derive_more::Display;
 use dupe::Dupe;
 use pagable::Pagable;
@@ -165,7 +165,7 @@ impl PluginKindSet {
     pub fn new(
         pulls: Vec<PluginKind>,
         pulls_and_pushes: Vec<PluginKind>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         if pulls.is_empty() && pulls_and_pushes.is_empty() {
             return Ok(Self::EMPTY);
         }

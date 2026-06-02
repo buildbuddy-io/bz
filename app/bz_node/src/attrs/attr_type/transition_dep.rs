@@ -13,9 +13,9 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
 use dupe::Dupe;
 use pagable::Pagable;
 
@@ -44,7 +44,7 @@ impl TransitionDepAttrType {
         &self,
         attr: &CoercedTransitionDep,
         ctx: &dyn AttrConfigurationContext,
-    ) -> buck2_error::Result<ConfiguredAttr> {
+    ) -> bz_error::Result<ConfiguredAttr> {
         Ok(ConfiguredAttr::TransitionDep(Box::new(
             ConfiguredTransitionDep {
                 dep: ctx.configure_transition_target(&attr.dep, self.get_transition(attr))?,
@@ -77,21 +77,21 @@ impl Display for ConfiguredTransitionDep {
 }
 
 impl ConfiguredTransitionDep {
-    pub(crate) fn to_json(&self) -> buck2_error::Result<serde_json::Value> {
+    pub(crate) fn to_json(&self) -> bz_error::Result<serde_json::Value> {
         Ok(serde_json::to_value(self.dep.to_string())?)
     }
 
     pub(crate) fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         filter(&self.dep.to_string())
     }
 
     pub(crate) fn traverse(
         &self,
         traversal: &mut dyn ConfiguredAttrTraversal,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         traversal.dep(&self.dep)
     }
 }
@@ -116,7 +116,7 @@ pub struct CoercedTransitionDep {
 }
 
 impl CoercedTransitionDep {
-    pub(crate) fn to_json(&self) -> buck2_error::Result<serde_json::Value> {
+    pub(crate) fn to_json(&self) -> bz_error::Result<serde_json::Value> {
         match self.get_dynamic_transition() {
             Some(tr) => Ok(serde_json::to_value([
                 self.dep.to_string(),
@@ -128,8 +128,8 @@ impl CoercedTransitionDep {
 
     pub(crate) fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         filter(&self.dep.to_string())
     }
 
@@ -137,7 +137,7 @@ impl CoercedTransitionDep {
         &'a self,
         traversal: &mut dyn CoercedAttrTraversal<'a>,
         t: &TransitionDepAttrType,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let transition = t.get_transition(self);
         match &**transition {
             TransitionId::MagicObject { .. }

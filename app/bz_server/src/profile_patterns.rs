@@ -11,17 +11,17 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use buck2_error::internal_error;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_interpreter::factory::ProfileEventListener;
-use buck2_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
-use buck2_profile::write_starlark_flamegraph;
+use bz_error::internal_error;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_interpreter::factory::ProfileEventListener;
+use bz_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
+use bz_profile::write_starlark_flamegraph;
 use dupe::Dupe;
 use itertools::Itertools;
 
@@ -32,7 +32,7 @@ pub(crate) struct FileWritingProfileEventListener {
 
 struct State {
     written: StdBuckHashMap<ForwardRelativePathBuf, usize>,
-    errors: Vec<buck2_error::Error>,
+    errors: Vec<bz_error::Error>,
     profiles: Vec<Arc<StarlarkProfileDataAndStats>>,
 }
 
@@ -51,7 +51,7 @@ impl FileWritingProfileEventListener {
 
 impl FileWritingProfileEventListener {
     /// Writes the all_keys.list file and returns an error if any occurred while writing the profile files.
-    pub fn finalize(&self) -> buck2_error::Result<()> {
+    pub fn finalize(&self) -> bz_error::Result<()> {
         let lock = self.state.lock().unwrap();
         fs_util::create_dir_all(&self.base_path)?;
         let merged_profile =
@@ -74,7 +74,7 @@ impl FileWritingProfileEventListener {
         &self,
         eval_kind: StarlarkEvalKind,
         profile_data: &Arc<StarlarkProfileDataAndStats>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let subpath = eval_kind.as_path()?;
 
         let suffix = {
@@ -112,7 +112,7 @@ impl FileWritingProfileEventListener {
 fn write_profile_data(
     profile_data: &StarlarkProfileDataAndStats,
     output_path_prefix: AbsPathBuf,
-) -> Result<(), buck2_error::Error> {
+) -> Result<(), bz_error::Error> {
     fs_util::create_dir_all(output_path_prefix.parent().unwrap())?;
     fs_util::write(
         output_path_prefix.with_added_extension("profile"),

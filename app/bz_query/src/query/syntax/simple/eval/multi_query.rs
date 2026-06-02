@@ -12,7 +12,7 @@
 
 use std::iter;
 
-use buck2_hash::BuckIndexMap;
+use bz_hash::BuckIndexMap;
 use dupe::Dupe;
 use itertools::Either;
 
@@ -22,11 +22,11 @@ use crate::query::syntax::simple::eval::values::QueryEvaluationValue;
 
 /// Used to represent the results for a "multi-query" (one that contains a "%s" and potentially is applied against multiple literals).
 pub struct MultiQueryResult<T: QueryTarget>(
-    pub BuckIndexMap<String, buck2_error::Result<QueryEvaluationValue<T>>>,
+    pub BuckIndexMap<String, bz_error::Result<QueryEvaluationValue<T>>>,
 );
 
 impl<T: QueryTarget> MultiQueryResult<T> {
-    pub fn merged(self) -> buck2_error::Result<QueryEvaluationValue<T>> {
+    pub fn merged(self) -> bz_error::Result<QueryEvaluationValue<T>> {
         let mut iter = self.0.into_iter();
         let (first_literal, mut results) = match iter.next() {
             Some((literal, value)) => (literal, value?),
@@ -53,7 +53,7 @@ impl<T: QueryTarget> MultiQueryResult<T> {
         Ok(results)
     }
 
-    pub(crate) fn targets(&self) -> impl Iterator<Item = buck2_error::Result<&T>> {
+    pub(crate) fn targets(&self) -> impl Iterator<Item = bz_error::Result<&T>> {
         self.0.values().flat_map(|r| match r {
             Ok(v) => Either::Left(v.targets()),
             Err(e) => Either::Right(iter::once(Err(e.dupe()))),

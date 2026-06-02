@@ -9,27 +9,27 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::visibility::AuditVisibilityCommand;
-use buck2_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_node::load_patterns::MissingTargetBehavior;
-use buck2_node::load_patterns::load_patterns;
-use buck2_node::nodes::lookup::TargetNodeLookup;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_node::visibility::VisibilityError;
-use buck2_query::query::environment::QueryTargetDepsSuccessors;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::traversal::async_depth_first_postorder_traversal;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::visibility::AuditVisibilityCommand;
+use bz_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_node::load_patterns::MissingTargetBehavior;
+use bz_node::load_patterns::load_patterns;
+use bz_node::nodes::lookup::TargetNodeLookup;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_node::visibility::VisibilityError;
+use bz_query::query::environment::QueryTargetDepsSuccessors;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::traversal::async_depth_first_postorder_traversal;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use dice::DiceTransaction;
 use dupe::Dupe;
 
 use crate::ServerAuditSubcommand;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum VisibilityCommandError {
     #[error(
@@ -41,7 +41,7 @@ enum VisibilityCommandError {
 async fn verify_visibility(
     mut ctx: DiceTransaction,
     targets: TargetSet<TargetNode>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut new_targets: TargetSet<TargetNode> = TargetSet::new();
 
     let visit = |target| {
@@ -76,7 +76,7 @@ async fn verify_visibility(
                     }
                 }
                 None => {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         VisibilityCommandError::DepNodeNotFound(
                             dep.to_string(),
                             target.label().name().to_string(),
@@ -88,18 +88,18 @@ async fn verify_visibility(
     }
 
     for err in &visibility_errors {
-        buck2_client_ctx::eprintln!("{}", err)?;
+        bz_client_ctx::eprintln!("{}", err)?;
     }
 
     if !visibility_errors.is_empty() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "{}",
             1
         ));
     }
 
-    buck2_client_ctx::eprintln!("audit visibility succeeded")?;
+    bz_client_ctx::eprintln!("audit visibility succeeded")?;
     Ok(())
 }
 
@@ -108,9 +108,9 @@ impl ServerAuditSubcommand for AuditVisibilityCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        _stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        _stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(server_ctx
             .with_dice_ctx(|server_ctx, mut ctx| async move {
                 let parsed_patterns = parse_patterns_from_cli_args::<TargetPatternExtra>(

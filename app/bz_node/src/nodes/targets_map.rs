@@ -13,9 +13,9 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use allocative::Allocative;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::TargetNameRef;
-use buck2_util::indent::indent;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetNameRef;
+use bz_util::indent::indent;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark_map::ordered_set;
@@ -24,7 +24,7 @@ use starlark_map::ordered_set::OrderedSet;
 use crate::nodes::unconfigured::TargetNode;
 use crate::nodes::unconfigured::TargetNodeRef;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 pub enum TargetsMapRecordError {
     #[error(

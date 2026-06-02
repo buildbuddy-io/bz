@@ -6,8 +6,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::str;
 
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use object::read::archive::ArchiveFile;
@@ -86,10 +86,10 @@ pub fn extract_archive(
     strip_prefix: &str,
     strip_components: u32,
     rename_files: &[(String, String)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if strip_components > 0 && !strip_prefix.is_empty() {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Only one of strip_prefix or strip_components can be set"
         ));
     }
@@ -197,12 +197,12 @@ fn extract_ar_archive(
     archive: &Path,
     output: &Path,
     rename_files: &[(String, String)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let data = fs::read(archive)
         .with_buck_error_context(|| format!("Error reading `{}`", archive.display()))?;
     let ar = ArchiveFile::parse(data.as_slice()).map_err(|error| {
-        buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error!(
+            bz_error::ErrorTag::Input,
             "Error reading ar archive `{}`: {}",
             archive.display(),
             error
@@ -210,16 +210,16 @@ fn extract_ar_archive(
     })?;
     for member in ar.members() {
         let member = member.map_err(|error| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error!(
+                bz_error::ErrorTag::Input,
                 "Error reading ar archive member from `{}`: {}",
                 archive.display(),
                 error
             )
         })?;
         let entry_name = str::from_utf8(member.name()).map_err(|error| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error!(
+                bz_error::ErrorTag::Input,
                 "Ar archive `{}` has a non-UTF-8 member name: {}",
                 archive.display(),
                 error
@@ -238,8 +238,8 @@ fn extract_ar_archive(
         fs::write(
             &destination,
             member.data(data.as_slice()).map_err(|error| {
-                buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Error reading ar archive member `{}` from `{}`: {}",
                     entry_name,
                     archive.display(),
@@ -271,12 +271,12 @@ fn extract_sevenz_archive(
     strip_prefix: &str,
     strip_components: u32,
     rename_files: &[(String, String)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let reader = fs::File::open(archive)
         .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
     let mut found_prefix = strip_prefix.is_empty();
     let mut available_prefixes = Vec::new();
-    let mut extraction_error: Option<buck2_error::Error> = None;
+    let mut extraction_error: Option<bz_error::Error> = None;
     let result = sevenz_rust::decompress_with_extract_fn(reader, output, |entry, reader, _dest| {
         if extraction_error.is_some() {
             return Err(sevenz_rust::Error::other(
@@ -303,8 +303,8 @@ fn extract_sevenz_archive(
         let destination = output.join(&relative_path);
         if entry.is_directory() {
             if let Err(error) = fs::create_dir_all(&destination) {
-                extraction_error = Some(buck2_error!(
-                    buck2_error::ErrorTag::IoSystem,
+                extraction_error = Some(bz_error!(
+                    bz_error::ErrorTag::IoSystem,
                     "Error creating `{}`: {}",
                     destination.display(),
                     error
@@ -318,8 +318,8 @@ fn extract_sevenz_archive(
         if let Some(parent) = destination.parent()
             && let Err(error) = fs::create_dir_all(parent)
         {
-            extraction_error = Some(buck2_error!(
-                buck2_error::ErrorTag::IoSystem,
+            extraction_error = Some(bz_error!(
+                bz_error::ErrorTag::IoSystem,
                 "Error creating `{}`: {}",
                 parent.display(),
                 error
@@ -331,8 +331,8 @@ fn extract_sevenz_archive(
         let mut file = match fs::File::create(&destination) {
             Ok(file) => file,
             Err(error) => {
-                extraction_error = Some(buck2_error!(
-                    buck2_error::ErrorTag::IoSystem,
+                extraction_error = Some(bz_error!(
+                    bz_error::ErrorTag::IoSystem,
                     "Error creating `{}`: {}",
                     destination.display(),
                     error
@@ -343,8 +343,8 @@ fn extract_sevenz_archive(
             }
         };
         if let Err(error) = io::copy(reader, &mut file) {
-            extraction_error = Some(buck2_error!(
-                buck2_error::ErrorTag::IoSystem,
+            extraction_error = Some(bz_error!(
+                bz_error::ErrorTag::IoSystem,
                 "Error writing `{}`: {}",
                 destination.display(),
                 error
@@ -361,8 +361,8 @@ fn extract_sevenz_archive(
             if let Some(error) = extraction_error {
                 return Err(error);
             }
-            Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Error reading 7z archive `{}`: {}",
                 archive.display(),
                 error
@@ -377,7 +377,7 @@ fn extract_compressed_file<R: Read>(
     output: &Path,
     extension: &str,
     rename_files: &[(String, String)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let entry_name = compressed_file_entry_name(archive, extension)?;
     let entry_name = renamed_archive_entry_name(&entry_name, rename_files);
     let components = safe_archive_components(&entry_name)?;
@@ -396,13 +396,13 @@ fn extract_compressed_file<R: Read>(
     Ok(())
 }
 
-fn compressed_file_entry_name(archive: &Path, extension: &str) -> buck2_error::Result<String> {
+fn compressed_file_entry_name(archive: &Path, extension: &str) -> bz_error::Result<String> {
     let file_name = archive
         .file_name()
         .and_then(|file_name| file_name.to_str())
         .ok_or_else(|| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error!(
+                bz_error::ErrorTag::Input,
                 "Compressed archive path `{}` has no UTF-8 file name",
                 archive.display()
             )
@@ -419,12 +419,12 @@ fn extract_zip_archive(
     strip_prefix: &str,
     strip_components: u32,
     rename_files: &[(String, String)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let reader = fs::File::open(archive)
         .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
     let mut zip = zip::ZipArchive::new(reader).map_err(|error| {
-        buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error!(
+            bz_error::ErrorTag::Input,
             "Error reading zip archive `{}`: {}",
             archive.display(),
             error
@@ -435,8 +435,8 @@ fn extract_zip_archive(
     let mut pending_links = Vec::new();
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index).map_err(|error| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error!(
+                bz_error::ErrorTag::Input,
                 "Error reading zip entry {} from `{}`: {}",
                 index,
                 archive.display(),
@@ -499,7 +499,7 @@ fn extract_tar_archive<R: Read>(
     strip_prefix: &str,
     strip_components: u32,
     rename_files: &[(String, String)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut archive = Archive::new(reader);
     archive.set_preserve_permissions(true);
     let mut found_prefix = strip_prefix.is_empty();
@@ -535,15 +535,15 @@ fn extract_tar_archive<R: Read>(
                 .link_name()
                 .with_buck_error_context(|| format!("Error reading link target from `{path:?}`"))?
                 .ok_or_else(|| {
-                    buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Archive link entry `{}` has no target",
                         entry_name
                     )
                 })?;
             if target.as_os_str().is_empty() {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Archive link entry `{}` has an empty target",
                     entry_name
                 ));
@@ -590,7 +590,7 @@ struct PendingArchiveLink {
     target: PathBuf,
 }
 
-fn create_pending_archive_links(links: &[PendingArchiveLink]) -> buck2_error::Result<()> {
+fn create_pending_archive_links(links: &[PendingArchiveLink]) -> bz_error::Result<()> {
     for link in links {
         if let Some(parent) = link.destination.parent() {
             fs::create_dir_all(parent)
@@ -613,7 +613,7 @@ fn create_pending_archive_links(links: &[PendingArchiveLink]) -> buck2_error::Re
     Ok(())
 }
 
-fn remove_existing_archive_link_destination(destination: &Path) -> buck2_error::Result<()> {
+fn remove_existing_archive_link_destination(destination: &Path) -> bz_error::Result<()> {
     let metadata = match fs::symlink_metadata(destination) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -648,7 +648,7 @@ fn prepare_archive_symlink_target(
     destination_relative_path: &Path,
     target: &Path,
     strip_prefix: &str,
-) -> buck2_error::Result<PathBuf> {
+) -> bz_error::Result<PathBuf> {
     if target.as_os_str().is_empty() {
         return Err(invalid_archive_link_target(
             destination_relative_path,
@@ -673,7 +673,7 @@ fn prepare_archive_hardlink_target(
     strip_prefix: &str,
     strip_components: u32,
     rename_files: &[(String, String)],
-) -> buck2_error::Result<PathBuf> {
+) -> bz_error::Result<PathBuf> {
     let target_name = renamed_archive_entry_name(&target.to_string_lossy(), rename_files);
     let mut found_prefix = strip_prefix.is_empty();
     let mut available_prefixes = Vec::new();
@@ -685,8 +685,8 @@ fn prepare_archive_hardlink_target(
         &mut available_prefixes,
     )?
     .ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error!(
+            bz_error::ErrorTag::Input,
             "Archive hardlink target `{}` is outside the stripped extraction root",
             target.display()
         )
@@ -707,7 +707,7 @@ fn strip_archive_link_prefix(target: &Path, strip_prefix: &str) -> Option<PathBu
 fn validate_archive_symlink_target(
     destination_relative_path: &Path,
     target: &Path,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let destination_parent = destination_relative_path.parent().unwrap_or(Path::new(""));
     let mut normalized = normalize_archive_relative_path(destination_parent)?;
     for component in target.components() {
@@ -733,7 +733,7 @@ fn validate_archive_symlink_target(
     Ok(())
 }
 
-fn normalize_archive_relative_path(path: &Path) -> buck2_error::Result<PathBuf> {
+fn normalize_archive_relative_path(path: &Path) -> bz_error::Result<PathBuf> {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
@@ -741,16 +741,16 @@ fn normalize_archive_relative_path(path: &Path) -> buck2_error::Result<PathBuf> 
             Component::Normal(component) => normalized.push(component),
             Component::ParentDir => {
                 if !normalized.pop() {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Archive path `{}` escapes the extraction directory",
                         path.display()
                     ));
                 }
             }
             Component::RootDir | Component::Prefix(_) => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Archive path `{}` escapes the extraction directory",
                     path.display()
                 ));
@@ -792,9 +792,9 @@ fn archive_normal_components(path: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn invalid_archive_link_target(destination: &Path, target: &Path) -> buck2_error::Error {
-    buck2_error!(
-        buck2_error::ErrorTag::Input,
+fn invalid_archive_link_target(destination: &Path, target: &Path) -> bz_error::Error {
+    bz_error!(
+        bz_error::ErrorTag::Input,
         "Archive link `{}` -> `{}` escapes the extraction directory",
         destination.display(),
         target.display()
@@ -814,7 +814,7 @@ fn prepare_archive_entry_path(
     strip_components: u32,
     found_prefix: &mut bool,
     available_prefixes: &mut Vec<String>,
-) -> buck2_error::Result<Option<PathBuf>> {
+) -> bz_error::Result<Option<PathBuf>> {
     let Some(entry_name) = strip_archive_prefix(entry_name, strip_prefix, found_prefix) else {
         if !strip_prefix.is_empty()
             && let Some(prefix) = first_archive_path_component(entry_name)
@@ -854,15 +854,15 @@ fn strip_archive_prefix<'a>(
     })
 }
 
-fn safe_archive_components(path: &str) -> buck2_error::Result<Vec<PathBuf>> {
+fn safe_archive_components(path: &str) -> bz_error::Result<Vec<PathBuf>> {
     let mut components = Vec::new();
     for component in Path::new(path).components() {
         match component {
             Component::Normal(component) => components.push(PathBuf::from(component)),
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Archive entry `{}` escapes the extraction directory",
                     path
                 ));
@@ -883,13 +883,13 @@ fn ensure_strip_prefix_found(
     strip_prefix: &str,
     found_prefix: bool,
     mut available_prefixes: Vec<String>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if strip_prefix.is_empty() || found_prefix {
         return Ok(());
     }
     available_prefixes.sort();
-    Err(buck2_error!(
-        buck2_error::ErrorTag::Input,
+    Err(bz_error!(
+        bz_error::ErrorTag::Input,
         "Prefix `{}` was given, but not found in the archive. Available prefixes: {}",
         strip_prefix,
         available_prefixes.join(", ")
@@ -901,7 +901,7 @@ fn is_zip_symlink(mode: Option<u32>) -> bool {
 }
 
 #[cfg(unix)]
-fn create_symlink(target: &Path, destination: &Path) -> buck2_error::Result<()> {
+fn create_symlink(target: &Path, destination: &Path) -> bz_error::Result<()> {
     std::os::unix::fs::symlink(target, destination).with_buck_error_context(|| {
         format!(
             "Error creating symlink `{}` -> `{}`",
@@ -912,7 +912,7 @@ fn create_symlink(target: &Path, destination: &Path) -> buck2_error::Result<()> 
 }
 
 #[cfg(not(unix))]
-fn create_symlink(target: &Path, destination: &Path) -> buck2_error::Result<()> {
+fn create_symlink(target: &Path, destination: &Path) -> bz_error::Result<()> {
     fs::write(destination, target.to_string_lossy().as_bytes()).with_buck_error_context(|| {
         format!(
             "Error writing symlink placeholder `{}` -> `{}`",
@@ -922,7 +922,7 @@ fn create_symlink(target: &Path, destination: &Path) -> buck2_error::Result<()> 
     })
 }
 
-fn create_hard_link(target: &Path, destination: &Path) -> buck2_error::Result<()> {
+fn create_hard_link(target: &Path, destination: &Path) -> bz_error::Result<()> {
     fs::hard_link(target, destination).with_buck_error_context(|| {
         format!(
             "Error creating hardlink `{}` -> `{}`",
@@ -933,7 +933,7 @@ fn create_hard_link(target: &Path, destination: &Path) -> buck2_error::Result<()
 }
 
 #[cfg(unix)]
-fn set_extracted_file_mode(path: &Path, mode: u32) -> buck2_error::Result<()> {
+fn set_extracted_file_mode(path: &Path, mode: u32) -> bz_error::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     fs::set_permissions(path, fs::Permissions::from_mode(mode & 0o777))
@@ -941,7 +941,7 @@ fn set_extracted_file_mode(path: &Path, mode: u32) -> buck2_error::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn set_extracted_file_mode(_path: &Path, _mode: u32) -> buck2_error::Result<()> {
+fn set_extracted_file_mode(_path: &Path, _mode: u32) -> bz_error::Result<()> {
     Ok(())
 }
 
@@ -1015,7 +1015,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_zip_strips_prefix_and_renames() -> buck2_error::Result<()> {
+    fn test_extract_zip_strips_prefix_and_renames() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("source.zip");
         let file = fs::File::create(&archive).unwrap();
@@ -1043,7 +1043,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_tar_gz_strips_components() -> buck2_error::Result<()> {
+    fn test_extract_tar_gz_strips_components() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("source.tar.gz");
         let file = fs::File::create(&archive).unwrap();
@@ -1068,7 +1068,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_tar_br_strips_components() -> buck2_error::Result<()> {
+    fn test_extract_tar_br_strips_components() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("source.tar.br");
         let file = fs::File::create(&archive).unwrap();
@@ -1094,7 +1094,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_extract_zip_deprefixes_symlink_target() -> buck2_error::Result<()> {
+    fn test_extract_zip_deprefixes_symlink_target() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("source.zip");
         let file = fs::File::create(&archive).unwrap();
@@ -1126,7 +1126,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_extract_tar_replaces_existing_symlink() -> buck2_error::Result<()> {
+    fn test_extract_tar_replaces_existing_symlink() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("source.tar.gz");
         let file = fs::File::create(&archive).unwrap();
@@ -1161,7 +1161,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_gz_writes_single_file() -> buck2_error::Result<()> {
+    fn test_extract_gz_writes_single_file() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("source.txt.gz");
         let file = fs::File::create(&archive).unwrap();
@@ -1187,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_sevenz_strips_components() -> buck2_error::Result<()> {
+    fn test_extract_sevenz_strips_components() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("input");
         fs::create_dir_all(input.join("pkg")).unwrap();
@@ -1206,7 +1206,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_br_writes_single_file() -> buck2_error::Result<()> {
+    fn test_extract_br_writes_single_file() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("source.txt.br");
         let file = fs::File::create(&archive).unwrap();
@@ -1232,7 +1232,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_ar_writes_members_and_renames() -> buck2_error::Result<()> {
+    fn test_extract_ar_writes_members_and_renames() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("source.deb");
         let mut ar = b"!<arch>\n".to_vec();
@@ -1296,7 +1296,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_tar_deprefixes_hardlink_target() -> buck2_error::Result<()> {
+    fn test_extract_tar_deprefixes_hardlink_target() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("source.tar.gz");
         let file = fs::File::create(&archive).unwrap();
@@ -1326,7 +1326,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_tar_replaces_existing_hardlink() -> buck2_error::Result<()> {
+    fn test_extract_tar_replaces_existing_hardlink() -> bz_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("source.tar.gz");
         let file = fs::File::create(&archive).unwrap();

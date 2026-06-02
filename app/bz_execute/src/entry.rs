@@ -15,21 +15,21 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_recursion::async_recursion;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileDigestConfig;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::FileType;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::RelativePath;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_util::future::try_join_all;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileDigestConfig;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::FileType;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::RelativePath;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_util::future::try_join_all;
 use derive_more::Add;
 use futures::Future;
 use futures::future::try_join;
@@ -73,7 +73,7 @@ impl HashingInfo {
 // same permissions they would as if the action had run remotely, and we'd
 // downloaded the result from CAS. Note that `std::fs:remove*` _can_ remove
 // non-writable files. It's the directories that matter for the cleanup operations.
-fn do_normalize_permissions(path: &AbsNormPathBuf) -> buck2_error::Result<Metadata> {
+fn do_normalize_permissions(path: &AbsNormPathBuf) -> bz_error::Result<Metadata> {
     // While the path ould have been populated by an action, we only get here if
     // we've walked the output tree and know the path exists already. Hence we
     // categorize this as internal, not user.
@@ -112,7 +112,7 @@ pub async fn build_entry_from_disk(
     digest_config: FileDigestConfig,
     blocking_executor: &dyn BlockingExecutor,
     project_root: &AbsNormPath,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     Option<ActionDirectoryEntry<ActionDirectoryBuilder>>,
     HashingInfo,
 )> {
@@ -170,8 +170,8 @@ pub async fn build_entry_from_disk(
             DirectoryEntry::Dir(dir)
         }
         FileType::Unknown => {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Path {:?} is of an unknown file type.",
                 path
             ));
@@ -187,7 +187,7 @@ async fn build_dir_from_disk(
     digest_config: FileDigestConfig,
     blocking_executor: &dyn BlockingExecutor,
     project_root: &AbsNormPath,
-) -> buck2_error::Result<(ActionDirectoryBuilder, HashingInfo)> {
+) -> bz_error::Result<(ActionDirectoryBuilder, HashingInfo)> {
     let mut builder = ActionDirectoryBuilder::empty();
     let mut hashing_info = HashingInfo::default();
 
@@ -270,9 +270,9 @@ async fn build_dir_from_disk(
 fn build_file_metadata(
     disk_path: AbsNormPathBuf,
     digest_config: FileDigestConfig,
-) -> impl Future<Output = buck2_error::Result<(FileMetadata, HashingInfo)>> {
+) -> impl Future<Output = bz_error::Result<(FileMetadata, HashingInfo)>> {
     static SEMAPHORE: Lazy<Semaphore> =
-        Lazy::new(|| Semaphore::new(buck2_util::threads::available_parallelism()));
+        Lazy::new(|| Semaphore::new(bz_util::threads::available_parallelism()));
     let io_task = move || {
         let metadata = do_normalize_permissions(&disk_path)?;
         let is_executable = is_executable(&disk_path, &metadata)?;
@@ -280,7 +280,7 @@ fn build_file_metadata(
         let digest = FileDigest::from_file_with_metadata(&disk_path, digest_config, &metadata);
         let hashing_info = HashingInfo::new(Instant::now() - hashing_start, 1);
 
-        buck2_error::Ok((is_executable, hashing_info, digest))
+        bz_error::Ok((is_executable, hashing_info, digest))
     };
 
     async move {
@@ -298,19 +298,19 @@ fn build_file_metadata(
 }
 
 #[cfg(unix)]
-fn is_executable(_path: &AbsNormPathBuf, metadata: &Metadata) -> buck2_error::Result<bool> {
+fn is_executable(_path: &AbsNormPathBuf, metadata: &Metadata) -> bz_error::Result<bool> {
     Ok(metadata.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(not(unix))]
-fn is_executable(path: &AbsNormPathBuf, _metadata: &Metadata) -> buck2_error::Result<bool> {
+fn is_executable(path: &AbsNormPathBuf, _metadata: &Metadata) -> bz_error::Result<bool> {
     Ok(path.executable()?)
 }
 
 fn create_symlink(
     path: &AbsNormPathBuf,
     project_root: &AbsNormPath,
-) -> buck2_error::Result<ActionDirectoryMember> {
+) -> bz_error::Result<ActionDirectoryMember> {
     let mut symlink_target = fs_util::read_link(path).categorize_internal()?;
     if cfg!(windows) && symlink_target.is_relative() {
         let directory_path = path

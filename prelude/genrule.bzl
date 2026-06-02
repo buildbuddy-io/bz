@@ -26,7 +26,7 @@ GENRULE_OUT_DIR = "out"
 # TODO: Roll out root based genrules everywhere and flip the default to get rid of this logic.
 _BUILD_ROOT_LABELS = set([
     # The buck2 test suite
-    "buck2_test_build_root",
+    "bz_test_build_root",
     "antlir_macros",
     "rust_bindgen",
     "haskell_hsc",
@@ -77,7 +77,7 @@ def _prefers_local(ctx: AnalysisContext) -> bool:
     return genrule_labels_prefer_local(ctx.attrs.labels)
 
 def _ignore_artifacts(ctx: AnalysisContext) -> bool:
-    return "buck2_ignore_artifacts" in ctx.attrs.labels
+    return "bz_ignore_artifacts" in ctx.attrs.labels
 
 def _requires_no_srcs_environment(ctx: AnalysisContext) -> bool:
     return _NO_SRCS_ENVIRONMENT_LABEL in ctx.attrs.labels

@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
+use bz_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::values::Coerce;
@@ -21,7 +21,7 @@ use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 
 /// A provider that is used to signal the targets that we want to soft error on
 /// within the `DepOnlyIncompatibleInfo` provider.

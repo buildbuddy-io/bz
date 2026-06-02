@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::attr_type::configured_dep::ExplicitConfiguredDepAttrType;
-use buck2_node::attrs::attr_type::configured_dep::UnconfiguredExplicitConfiguredDep;
-use buck2_node::attrs::attr_type::dep::DepAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::attr_type::configured_dep::ExplicitConfiguredDepAttrType;
+use bz_node::attrs::attr_type::configured_dep::UnconfiguredExplicitConfiguredDep;
+use bz_node::attrs::attr_type::dep::DepAttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use dupe::Dupe;
 use starlark::typing::Ty;
 use starlark::values::UnpackValue;
@@ -29,7 +29,7 @@ impl AttrTypeCoerce for DepAttrType {
         _configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         let label = coerce_providers_label_from_value(ctx, value)?;
 
         Ok(CoercedAttr::Dep(label))
@@ -46,7 +46,7 @@ impl AttrTypeCoerce for ExplicitConfiguredDepAttrType {
         _configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         let (label_string, platform_string): (&str, &str) = UnpackValue::unpack_value_err(value)?;
 
         let label = ctx.coerce_providers_label(label_string)?;

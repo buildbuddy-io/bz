@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use dupe::Dupe;
 use indoc::indoc;
 
@@ -25,7 +25,7 @@ fn test_artifact_tag_eq() {
 }
 
 #[test]
-fn test_artifact_tag_starlark_eq() -> buck2_error::Result<()> {
+fn test_artifact_tag_starlark_eq() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
     tester.additional_globals(artifact_tag_factory);
 

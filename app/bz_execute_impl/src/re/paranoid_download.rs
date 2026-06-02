@@ -12,21 +12,21 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::execute::blocking::IoRequest;
-use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::manager::CommandExecutionManagerExt;
-use buck2_execute::execute::manager::CommandExecutionManagerWithClaim;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::materialize::materializer::CasDownloadInfo;
-use buck2_execute::materialize::materializer::DeclareArtifactPayload;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::re::manager::ReConnectionManager;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute::execute::blocking::IoRequest;
+use bz_execute::execute::clean_output_paths::CleanOutputPaths;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::manager::CommandExecutionManagerExt;
+use bz_execute::execute::manager::CommandExecutionManagerWithClaim;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::materialize::materializer::CasDownloadInfo;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::re::manager::ReConnectionManager;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::future::BoxFuture;
@@ -114,7 +114,7 @@ impl ParanoidDownloader {
             )
             .await?;
 
-            buck2_error::Result::Ok(())
+            bz_error::Result::Ok(())
         })
         .map(|r| r.unwrap_or_else(|e| Err(e.into())))
         .boxed()
@@ -164,7 +164,7 @@ impl ParanoidDownloader {
 
                 materializer.declare_existing(artifacts).await?;
 
-                buck2_error::Ok(())
+                bz_error::Ok(())
             })
             .await;
 
@@ -184,7 +184,7 @@ struct CacheDownload {
 }
 
 impl CacheDownload {
-    async fn wait_until_materialized(&self) -> buck2_error::Result<()> {
+    async fn wait_until_materialized(&self) -> bz_error::Result<()> {
         self.inner
             .as_ref()
             .expect("wait_until_materialized called after drop")
@@ -198,7 +198,7 @@ impl CacheDownload {
 
 struct CacheDownloadInner {
     io: Arc<dyn BlockingExecutor>,
-    future: Shared<BoxFuture<'static, buck2_error::Result<()>>>,
+    future: Shared<BoxFuture<'static, bz_error::Result<()>>>,
     paths: Vec<ProjectRelativePathBuf>,
 }
 
@@ -232,7 +232,7 @@ struct MoveOutputsIntoPlace {
 }
 
 impl IoRequest for MoveOutputsIntoPlace {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         for (from, to) in &self.mapping {
             let from = project_fs.resolve(from);
             let to = project_fs.resolve(to);

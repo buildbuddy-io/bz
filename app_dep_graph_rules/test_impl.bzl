@@ -59,7 +59,7 @@ def _impl(ctx: AnalysisContext):
     _check_banned_dep_paths(ctx)
     return [DefaultInfo()]
 
-_test_buck2_dep_graph = rule(
+_test_bz_dep_graph = rule(
     impl = _impl,
     attrs = {
         "banned_dep_paths": attrs.list(attrs.query()),
@@ -77,7 +77,7 @@ _RE_CLIENT_TARGET = "//remote_execution/client_lib/wrappers/rust:re_client_lib"
 
 _CLIENT_TO_RE = "somepath({}, filter(fbcode//remote_execution/, deps({})) + {})".format(_CLIENT_BIN, _CLIENT_BIN, _RE_CLIENT_TARGET)
 
-def test_buck2_dep_graph(name):
+def test_bz_dep_graph(name):
     banned_dep_paths = []
     for a, b in BANNED_DEP_PATHS:
         if a > b:
@@ -89,7 +89,7 @@ def test_buck2_dep_graph(name):
         banned_dep_paths.append("somepath({}, {})".format(a, b))
         banned_dep_paths.append("somepath({}, {})".format(b, a))
 
-    _test_buck2_dep_graph(
+    _test_bz_dep_graph(
         name = name,
         banned_dep_paths = banned_dep_paths,
         client_to_re_path = _CLIENT_TO_RE,

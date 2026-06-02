@@ -10,12 +10,12 @@
 
 use std::sync::Arc;
 
-use buck2_common::cas_digest::CasDigestConfig;
-use buck2_common::io::IoProvider;
-use buck2_common::io::fs::FsIoProvider;
-use buck2_common::io::trace::TracingIoProvider;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_core::fs::project::ProjectRoot;
+use bz_common::cas_digest::CasDigestConfig;
+use bz_common::io::IoProvider;
+use bz_common::io::fs::FsIoProvider;
+use bz_common::io::trace::TracingIoProvider;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_core::fs::project::ProjectRoot;
 
 pub async fn create_io_provider(
     fb: fbinit::FacebookInit,
@@ -24,11 +24,11 @@ pub async fn create_io_provider(
     cas_digest_config: CasDigestConfig,
     trace_io: bool,
     _use_eden_thrift_read: bool,
-) -> buck2_error::Result<Arc<dyn IoProvider>> {
+) -> bz_error::Result<Arc<dyn IoProvider>> {
     #[cfg(fbcode_build)]
     {
-        use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-        use buck2_core::rollout_percentage::RolloutPercentage;
+        use bz_common::legacy_configs::key::BuckconfigKeyRef;
+        use bz_core::rollout_percentage::RolloutPercentage;
 
         let allow_eden_io_default =
             RolloutPercentage::from_bool(cfg!(any(target_os = "macos", target_os = "windows")));
@@ -42,7 +42,7 @@ pub async fn create_io_provider(
             .roll();
 
         if allow_eden_io {
-            if let Some(eden) = buck2_eden::io_provider::EdenIoProvider::new(
+            if let Some(eden) = bz_eden::io_provider::EdenIoProvider::new(
                 fb,
                 &project_fs,
                 cas_digest_config,

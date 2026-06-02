@@ -12,20 +12,20 @@ use std::future::Future;
 use std::pin::Pin;
 
 use async_trait::async_trait;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::syntax::simple::eval::file_set::FileSet;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::syntax::simple::eval::values::QueryValueDepth;
-use buck2_query::query::syntax::simple::functions::helpers::CapturedExpr;
-use buck2_util::late_binding::LateBinding;
+use bz_core::cells::CellResolver;
+use bz_core::cells::name::CellName;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::syntax::simple::eval::file_set::FileSet;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::syntax::simple::eval::values::QueryValueDepth;
+use bz_query::query::syntax::simple::functions::helpers::CapturedExpr;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 
 use crate::actions::query::ActionQueryNode;
@@ -38,27 +38,27 @@ pub trait BxlCqueryFunctions: Send {
         from: &TargetSet<ConfiguredTargetNode>,
         to: &TargetSet<ConfiguredTargetNode>,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>>;
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>>;
     async fn somepath(
         &self,
         dice: &mut DiceComputations<'_>,
         from: &TargetSet<ConfiguredTargetNode>,
         to: &TargetSet<ConfiguredTargetNode>,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>>;
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>>;
     async fn owner(
         &self,
         dice: &mut DiceComputations<'_>,
         file_set: &FileSet,
         target_universe: Option<&TargetSet<ConfiguredTargetNode>>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>>;
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>>;
     async fn deps(
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<ConfiguredTargetNode>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>>;
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>>;
     async fn rdeps(
         &self,
         dice: &mut DiceComputations<'_>,
@@ -66,17 +66,17 @@ pub trait BxlCqueryFunctions: Send {
         targets: &TargetSet<ConfiguredTargetNode>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>>;
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>>;
     async fn testsof(
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<ConfiguredTargetNode>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>>;
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>>;
     async fn testsof_with_default_target_platform(
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<ConfiguredTargetNode>,
-    ) -> buck2_error::Result<Vec<MaybeCompatible<ConfiguredTargetNode>>>;
+    ) -> bz_error::Result<Vec<MaybeCompatible<ConfiguredTargetNode>>>;
 }
 
 #[async_trait]
@@ -87,21 +87,21 @@ pub trait BxlUqueryFunctions: Send {
         from: &TargetSet<TargetNode>,
         to: &TargetSet<TargetNode>,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<TargetNode>>;
+    ) -> bz_error::Result<TargetSet<TargetNode>>;
     async fn somepath(
         &self,
         dice: &mut DiceComputations<'_>,
         from: &TargetSet<TargetNode>,
         to: &TargetSet<TargetNode>,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<TargetNode>>;
+    ) -> bz_error::Result<TargetSet<TargetNode>>;
     async fn deps(
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<TargetNode>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<TargetNode>>;
+    ) -> bz_error::Result<TargetSet<TargetNode>>;
     async fn rdeps(
         &self,
         dice: &mut DiceComputations<'_>,
@@ -109,22 +109,22 @@ pub trait BxlUqueryFunctions: Send {
         targets: &TargetSet<TargetNode>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<TargetNode>>;
+    ) -> bz_error::Result<TargetSet<TargetNode>>;
     async fn testsof(
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<TargetNode>,
-    ) -> buck2_error::Result<TargetSet<TargetNode>>;
+    ) -> bz_error::Result<TargetSet<TargetNode>>;
     async fn owner(
         &self,
         dice: &mut DiceComputations<'_>,
         file_set: &FileSet,
-    ) -> buck2_error::Result<TargetSet<TargetNode>>;
+    ) -> bz_error::Result<TargetSet<TargetNode>>;
     async fn targets_in_buildfile(
         &self,
         dice: &mut DiceComputations<'_>,
         file_set: &FileSet,
-    ) -> buck2_error::Result<TargetSet<TargetNode>>;
+    ) -> bz_error::Result<TargetSet<TargetNode>>;
 }
 
 #[async_trait]
@@ -135,21 +135,21 @@ pub trait BxlAqueryFunctions: Send {
         from: &TargetSet<ActionQueryNode>,
         to: &TargetSet<ActionQueryNode>,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ActionQueryNode>>;
+    ) -> bz_error::Result<TargetSet<ActionQueryNode>>;
     async fn somepath(
         &self,
         dice: &mut DiceComputations<'_>,
         from: &TargetSet<ActionQueryNode>,
         to: &TargetSet<ActionQueryNode>,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ActionQueryNode>>;
+    ) -> bz_error::Result<TargetSet<ActionQueryNode>>;
     async fn deps(
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<ActionQueryNode>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ActionQueryNode>>;
+    ) -> bz_error::Result<TargetSet<ActionQueryNode>>;
     async fn rdeps(
         &self,
         dice: &mut DiceComputations<'_>,
@@ -157,32 +157,32 @@ pub trait BxlAqueryFunctions: Send {
         targets: &TargetSet<ActionQueryNode>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr>,
-    ) -> buck2_error::Result<TargetSet<ActionQueryNode>>;
+    ) -> bz_error::Result<TargetSet<ActionQueryNode>>;
     async fn testsof(
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<ActionQueryNode>,
-    ) -> buck2_error::Result<TargetSet<ActionQueryNode>>;
+    ) -> bz_error::Result<TargetSet<ActionQueryNode>>;
     async fn owner(
         &self,
         dice: &mut DiceComputations<'_>,
         file_set: &FileSet,
-    ) -> buck2_error::Result<TargetSet<ActionQueryNode>>;
+    ) -> bz_error::Result<TargetSet<ActionQueryNode>>;
     async fn get_target_set(
         &self,
         dice: &mut DiceComputations<'_>,
         configured_labels: Vec<ConfiguredProvidersLabel>,
-    ) -> buck2_error::Result<(Vec<ConfiguredTargetLabel>, TargetSet<ActionQueryNode>)>;
+    ) -> bz_error::Result<(Vec<ConfiguredTargetLabel>, TargetSet<ActionQueryNode>)>;
     async fn all_outputs(
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<ActionQueryNode>,
-    ) -> buck2_error::Result<TargetSet<ActionQueryNode>>;
+    ) -> bz_error::Result<TargetSet<ActionQueryNode>>;
     async fn all_actions(
         &self,
         dice: &mut DiceComputations<'_>,
         targets: &TargetSet<ActionQueryNode>,
-    ) -> buck2_error::Result<TargetSet<ActionQueryNode>>;
+    ) -> bz_error::Result<TargetSet<ActionQueryNode>>;
 }
 
 pub static NEW_BXL_CQUERY_FUNCTIONS: LateBinding<
@@ -192,7 +192,7 @@ pub static NEW_BXL_CQUERY_FUNCTIONS: LateBinding<
         ProjectRoot,
         CellName,
         CellResolver,
-    ) -> Pin<Box<dyn Future<Output = buck2_error::Result<Box<dyn BxlCqueryFunctions>>>>>,
+    ) -> Pin<Box<dyn Future<Output = bz_error::Result<Box<dyn BxlCqueryFunctions>>>>>,
 > = LateBinding::new("NEW_BXL_CQUERY_FUNCTIONS");
 
 pub static NEW_BXL_UQUERY_FUNCTIONS: LateBinding<
@@ -201,7 +201,7 @@ pub static NEW_BXL_UQUERY_FUNCTIONS: LateBinding<
         CellName,
         CellResolver,
     )
-        -> Pin<Box<dyn Future<Output = buck2_error::Result<Box<dyn BxlUqueryFunctions>>> + Send>>,
+        -> Pin<Box<dyn Future<Output = bz_error::Result<Box<dyn BxlUqueryFunctions>>> + Send>>,
 > = LateBinding::new("NEW_BXL_UQUERY_FUNCTIONS");
 
 pub static NEW_BXL_AQUERY_FUNCTIONS: LateBinding<
@@ -211,5 +211,5 @@ pub static NEW_BXL_AQUERY_FUNCTIONS: LateBinding<
         ProjectRoot,
         CellName,
         CellResolver,
-    ) -> Pin<Box<dyn Future<Output = buck2_error::Result<Box<dyn BxlAqueryFunctions>>>>>,
+    ) -> Pin<Box<dyn Future<Output = bz_error::Result<Box<dyn BxlAqueryFunctions>>>>>,
 > = LateBinding::new("NEW_BXL_AQUERY_FUNCTIONS");

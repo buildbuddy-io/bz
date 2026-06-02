@@ -13,9 +13,9 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark_map::sorted_map::SortedMap;
@@ -42,7 +42,7 @@ impl SplitTransitionDepAttrType {
         &self,
         dep: &ProvidersLabel,
         ctx: &dyn AttrConfigurationContext,
-    ) -> buck2_error::Result<ConfiguredAttr> {
+    ) -> bz_error::Result<ConfiguredAttr> {
         let configured_providers = ctx.configure_split_transition_target(dep, &self.transition)?;
         Ok(ConfiguredAttr::SplitTransitionDep(Box::new(
             ConfiguredSplitTransitionDep {
@@ -74,7 +74,7 @@ impl Display for ConfiguredSplitTransitionDep {
 }
 
 impl ConfiguredSplitTransitionDep {
-    pub(crate) fn to_json(&self) -> buck2_error::Result<serde_json::Value> {
+    pub(crate) fn to_json(&self) -> bz_error::Result<serde_json::Value> {
         let mut map = serde_json::Map::with_capacity(self.deps.len());
         for (label, target) in &self.deps {
             map.insert(label.clone(), serde_json::to_value(target.to_string())?);
@@ -84,8 +84,8 @@ impl ConfiguredSplitTransitionDep {
 
     pub(crate) fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         for (label, target) in &self.deps {
             if filter(label)? || filter(&target.to_string())? {
                 return Ok(true);

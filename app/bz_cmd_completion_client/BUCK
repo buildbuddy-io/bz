@@ -4,7 +4,7 @@ load("@fbsource//tools/build_defs:rust_linkable_symbol.bzl", "rust_linkable_symb
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_cmd_completion_client",
+    name = "bz_cmd_completion_client",
     srcs = glob(["src/**/*.rs"]),
     test_deps = ["fbsource//third-party/rust:paste"],
     deps = [
@@ -19,13 +19,13 @@ rust_library(
         ":options_wrapper_bash",
         ":options_wrapper_fish",
         ":options_wrapper_zsh",
-        "//bz/app/bz_cli_proto:buck2_cli_proto",
-        "//bz/app/bz_client_ctx:buck2_client_ctx",
-        "//bz/app/bz_common:buck2_common",
-        "//bz/app/bz_core:buck2_core",
-        "//bz/app/bz_error:buck2_error",
-        "//bz/app/bz_fs:buck2_fs",
-        "//bz/shed/buck2_hash:buck2_hash",
+        "//bz/app/bz_cli_proto:bz_cli_proto",
+        "//bz/app/bz_client_ctx:bz_client_ctx",
+        "//bz/app/bz_common:bz_common",
+        "//bz/app/bz_core:bz_core",
+        "//bz/app/bz_error:bz_error",
+        "//bz/app/bz_fs:bz_fs",
+        "//bz/shed/bz_hash:bz_hash",
     ],
 )
 

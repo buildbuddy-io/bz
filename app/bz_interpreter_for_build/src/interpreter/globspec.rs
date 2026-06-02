@@ -12,14 +12,14 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fmt::Debug;
 
-use buck2_common::package_listing::file_listing::PackageFileListing;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_common::package_listing::file_listing::PackageFileListing;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use derivative::Derivative;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum GlobError {
     #[error(
@@ -51,9 +51,9 @@ impl Debug for GlobPattern {
 }
 
 impl GlobPattern {
-    fn new(pattern: &str) -> buck2_error::Result<GlobPattern> {
+    fn new(pattern: &str) -> bz_error::Result<GlobPattern> {
         let parsed_pattern = glob::Pattern::new(pattern)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Input))
             .with_buck_error_context(|| format!("Error creating globspec for `{pattern}`"))?;
         if pattern.contains("//") {
             return Err(GlobError::DoubleSlash(pattern.to_owned()).into());
@@ -120,7 +120,7 @@ impl GlobSpec {
     pub(crate) fn new<P: AsRef<str>, Q: AsRef<str>>(
         patterns: &[P],
         excludes: &[Q],
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut glob_patterns = Vec::new();
         let mut glob_excludes = Vec::new();
         let mut exact_matches = HashSet::new();
@@ -194,12 +194,12 @@ impl GlobSpec {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::package::package_relative_path::PackageRelativePathBuf;
+    use bz_core::package::package_relative_path::PackageRelativePathBuf;
 
     use super::*;
 
     #[test]
-    fn test_glob_match() -> buck2_error::Result<()> {
+    fn test_glob_match() -> bz_error::Result<()> {
         let spec = GlobSpec::new(
             &[
                 "abc*",
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn test_glob_match_case_insensitive() -> buck2_error::Result<()> {
+    fn test_glob_match_case_insensitive() -> bz_error::Result<()> {
         // NOTE: We probably should change this. But for now, let's codify the current behavior
         // since that's probably something that should require a migration.
 
@@ -243,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_glob() -> buck2_error::Result<()> {
+    fn test_resolve_glob() -> bz_error::Result<()> {
         let spec = GlobSpec::new(&["abc*", "**/*.java", "*/*/*.txt"], &["excluded/**/*"])?;
 
         let package_listing = PackageFileListing::testing_new(&[

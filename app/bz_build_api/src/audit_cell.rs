@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_hash::BuckIndexMap;
-use buck2_util::late_binding::LateBinding;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_hash::BuckIndexMap;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 use futures::future::BoxFuture;
 
@@ -23,7 +23,7 @@ pub static AUDIT_CELL: LateBinding<
         aliases: bool,
         cwd: &'v ProjectRelativePath,
         fs: &'v ProjectRoot,
-    ) -> BoxFuture<'v, buck2_error::Result<BuckIndexMap<String, AbsNormPathBuf>>>,
+    ) -> BoxFuture<'v, bz_error::Result<BuckIndexMap<String, AbsNormPathBuf>>>,
 > = LateBinding::new("AUDIT_CELL");
 
 pub fn audit_cell<'v>(
@@ -32,7 +32,7 @@ pub fn audit_cell<'v>(
     aliases: bool,
     cwd: &'v ProjectRelativePath,
     fs: &'v ProjectRoot,
-) -> buck2_error::Result<BoxFuture<'v, buck2_error::Result<BuckIndexMap<String, AbsNormPathBuf>>>> {
+) -> bz_error::Result<BoxFuture<'v, bz_error::Result<BuckIndexMap<String, AbsNormPathBuf>>>> {
     Ok((AUDIT_CELL.get()?)(
         ctx,
         aliases_to_resolve,

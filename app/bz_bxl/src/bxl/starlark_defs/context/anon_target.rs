@@ -10,34 +10,34 @@
 
 use std::sync::Arc;
 
-use buck2_analysis::analysis::calculation::get_loaded_module;
-use buck2_analysis::analysis::env::get_rule_impl;
-use buck2_analysis::analysis::env::promise_artifact_mappings;
-use buck2_analysis::analysis::env::transitive_validations;
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
-use buck2_build_api::analysis::registry::AnalysisRegistry;
-use buck2_build_api::anon_target::AnonTargetDependentAnalysisResults;
-use buck2_build_api::anon_target::AnonTargetDyn;
-use buck2_build_api::bxl::anon_target::EVAL_BXL_FOR_ANON_TARGET;
-use buck2_build_api::bxl::types::BxlFunctionLabel;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
-use buck2_build_api::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
-use buck2_common::events::HasEvents;
-use buck2_common::scope::scope_and_collect_with_dice;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_interpreter::factory::BuckStarlarkModule;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
-use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
-use buck2_interpreter_for_build::attrs::StarlarkAttribute;
-use buck2_interpreter_for_build::rule::StarlarkRuleCallable;
-use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
+use bz_analysis::analysis::calculation::get_loaded_module;
+use bz_analysis::analysis::env::get_rule_impl;
+use bz_analysis::analysis::env::promise_artifact_mappings;
+use bz_analysis::analysis::env::transitive_validations;
+use bz_build_api::analysis::AnalysisResult;
+use bz_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
+use bz_build_api::analysis::registry::AnalysisRegistry;
+use bz_build_api::anon_target::AnonTargetDependentAnalysisResults;
+use bz_build_api::anon_target::AnonTargetDyn;
+use bz_build_api::bxl::anon_target::EVAL_BXL_FOR_ANON_TARGET;
+use bz_build_api::bxl::types::BxlFunctionLabel;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
+use bz_build_api::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
+use bz_common::events::HasEvents;
+use bz_common::scope::scope_and_collect_with_dice;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_interpreter::factory::BuckStarlarkModule;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::print_handler::EventDispatcherPrintHandler;
+use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_interpreter_for_build::attrs::StarlarkAttribute;
+use bz_interpreter_for_build::rule::StarlarkRuleCallable;
+use bz_node::bzl_or_bxl_path::BzlOrBxlPath;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationObserver;
 use dupe::Dupe;
@@ -128,7 +128,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum BxlAnonTargetError {
     #[error("Anon BXL is not supported in bzl files")]
@@ -145,7 +145,7 @@ impl AnonImpl {
     async fn new(
         dice: &mut DiceComputations<'_>,
         anon_target: Arc<dyn AnonTargetDyn>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let rule_type = anon_target.rule_type();
         let module = get_loaded_module(dice, rule_type).await?;
         Ok(Self {
@@ -159,7 +159,7 @@ impl AnonImpl {
         eval: &mut Evaluator<'v, '_, '_>,
         bxl_ctx: ValueTyped<'v, BxlContext<'v>>,
         attrs: ValueOfUncheckedGeneric<Value<'v>, StructRef<'static>>,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         let anon_impl = get_rule_impl(eval, &self.module, &self.name)?;
         eval.eval_function(
             anon_impl.to_value(),
@@ -172,7 +172,7 @@ impl AnonImpl {
     fn promise_artifact_mappings<'v>(
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<SmallMap<String, Value<'v>>> {
+    ) -> bz_error::Result<SmallMap<String, Value<'v>>> {
         promise_artifact_mappings(eval, &self.module, &self.name)
     }
 }
@@ -184,7 +184,7 @@ async fn eval_bxl_for_anon_target(
     dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
     execution_platform: ExecutionPlatformResolution,
     liveness: CancellationObserver,
-) -> buck2_error::Result<AnalysisResult> {
+) -> bz_error::Result<AnalysisResult> {
     // Note: because we use `block_in_place`, that will prevent the inner future from being polled
     // and yielded. So, for cancellation observers to work properly within the dice cancellable
     // future context, we need the future that it's attached to the cancellation context can
@@ -211,7 +211,7 @@ async fn eval_bxl_for_anon_target(
                     execution_platform,
                     liveness,
                 )),
-                || Err(buck2_error!(buck2_error::ErrorTag::Tier0, "cancelled")),
+                || Err(bz_error!(bz_error::ErrorTag::Tier0, "cancelled")),
             )
         })
     }
@@ -229,7 +229,7 @@ async fn eval_bxl_for_anon_target_inner(
     dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
     execution_platform: ExecutionPlatformResolution,
     liveness: CancellationObserver,
-) -> buck2_error::Result<AnalysisResult> {
+) -> bz_error::Result<AnalysisResult> {
     let rule_type = anon_target.rule_type();
     let bxl_spec = match &rule_type.path {
         BzlOrBxlPath::Bxl(bxl_file_path) => BxlFunctionLabel {
@@ -285,7 +285,7 @@ async fn eval_bxl_for_anon_target_inner(
             )?;
             let bxl_ctx = ValueTyped::<BxlContext>::new_err(env.heap().alloc(bxl_anon_ctx))?;
 
-            let list_res = tokio::task::block_in_place(|| -> buck2_error::Result<Value<'_>> {
+            let list_res = tokio::task::block_in_place(|| -> bz_error::Result<Value<'_>> {
                 anon_impl.invoke(eval, bxl_ctx, attributes)
             })?;
 
@@ -356,8 +356,8 @@ impl<'me, 'v, 'a, 'e> RunAnonPromisesAccessor<'v, 'a, 'e>
 {
     fn with_evaluator(
         &mut self,
-        closure: &mut dyn FnMut(&mut Evaluator<'v, 'a, 'e>) -> buck2_error::Result<()>,
-    ) -> buck2_error::Result<()> {
+        closure: &mut dyn FnMut(&mut Evaluator<'v, 'a, 'e>) -> bz_error::Result<()>,
+    ) -> bz_error::Result<()> {
         closure(self.0)
     }
 
@@ -373,7 +373,7 @@ pub(crate) fn run_anon_target_promises<'v, 'a, 'e>(
     actions: ValueTyped<'v, AnalysisActions<'v>>,
     ctx: &BxlContext<'v>,
     eval: &mut Evaluator<'v, 'a, 'e>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut accessor = BxlAnonPromisesAccessor(eval, ctx);
     // TODO(cjhopman): The approach here is pretty against the general model that we want. Ideally
     // we'd like to split this into two steps:

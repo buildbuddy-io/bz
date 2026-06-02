@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_events::dispatch::get_dispatcher_opt;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_events::dispatch::get_dispatcher_opt;
 use remote_execution::ActionHistoryInfo;
 use remote_execution::BuckInfo;
 use remote_execution::RemoteExecutionMetadata;
@@ -27,7 +27,7 @@ impl RemoteExecutionMetadataExt for RemoteExecutorUseCase {
             // See the FIXME added in D54396421
             None => String::new(),
         };
-        let buck_version = buck2_build_info::revision()
+        let buck_version = bz_build_info::revision()
             .map(|revision| revision.to_owned())
             .unwrap_or_default();
         RemoteExecutionMetadata {

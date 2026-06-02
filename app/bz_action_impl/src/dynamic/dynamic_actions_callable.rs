@@ -13,10 +13,10 @@ use std::cell::RefCell;
 use std::sync::LazyLock;
 
 use allocative::Allocative;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_build_api::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_build_api::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
@@ -87,7 +87,7 @@ impl StarlarkCallableParamSpec for DynamicActionsCallbackParamSpec {
 
 pub type DynamicActionsCallbackReturnType = ListType<AbstractProvider>;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum DynamicActionCallableError {
     #[error("DynamicActionCallable can be called only if frozen")]
@@ -153,7 +153,7 @@ impl<'v> StarlarkValue<'v> for DynamicActionsCallable<'v> {
         _args: &Arguments<'v, '_>,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Err(buck2_error::Error::from(DynamicActionCallableError::NotFrozen).into())
+        Err(bz_error::Error::from(DynamicActionCallableError::NotFrozen).into())
     }
 
     fn typechecker_ty(&self) -> Option<Ty> {

@@ -1,10 +1,10 @@
 use std::fmt;
 
 use allocative::Allocative;
-use buck2_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
+use bz_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Arguments;
@@ -24,14 +24,14 @@ use starlark::values::tuple::UnpackTuple;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::module_internals::ModuleInternals;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BazelNativeError {
     #[error(
-        "Bazel native rule `{0}` requires the `buck2_bazel_native_rules` prelude backing struct"
+        "Bazel native rule `{0}` requires the `bz_bazel_native_rules` prelude backing struct"
     )]
     MissingNativeRuleBacking(&'static str),
-    #[error("`buck2_bazel_native_rules` must be a struct, got `{0}`")]
+    #[error("`bz_bazel_native_rules` must be a struct, got `{0}`")]
     InvalidNativeRuleBacking(String),
     #[error("`native.register_toolchains` expected a string target pattern, got `{0}`")]
     RegisterToolchainsNonString(String),
@@ -66,12 +66,12 @@ impl<'v> StarlarkValue<'v> for NativeRuleCallable {
     ) -> starlark::Result<Value<'v>> {
         let backing = eval
             .module()
-            .get("buck2_bazel_native_rules")
+            .get("bz_bazel_native_rules")
             .ok_or_else(|| {
-                buck2_error::Error::from(BazelNativeError::MissingNativeRuleBacking(self.name))
+                bz_error::Error::from(BazelNativeError::MissingNativeRuleBacking(self.name))
             })?;
         let backing = StructRef::from_value(backing).ok_or_else(|| {
-            buck2_error::Error::from(BazelNativeError::InvalidNativeRuleBacking(
+            bz_error::Error::from(BazelNativeError::InvalidNativeRuleBacking(
                 backing.get_type().to_owned(),
             ))
         })?;
@@ -79,7 +79,7 @@ impl<'v> StarlarkValue<'v> for NativeRuleCallable {
             .iter()
             .find_map(|(name, rule)| (name.as_str() == self.name).then_some(rule))
             .ok_or_else(|| {
-                buck2_error::Error::from(BazelNativeError::MissingNativeRule(self.name))
+                bz_error::Error::from(BazelNativeError::MissingNativeRule(self.name))
             })?;
         if self.name == "sh_binary" {
             return invoke_bazel_sh_binary(rule, args, eval);
@@ -131,7 +131,7 @@ fn invoke_bazel_sh_binary<'v>(
     eval.eval_function(rule, &positions, &kwargs)
 }
 
-fn current_bazel_repo_name(eval: &mut Evaluator) -> buck2_error::Result<String> {
+fn current_bazel_repo_name(eval: &mut Evaluator) -> bz_error::Result<String> {
     let cell_name = BuildContext::from_context(eval)?.cell_info().name().name();
     let cell_name = cell_name.as_str();
     if cell_name == "root" {
@@ -175,7 +175,7 @@ fn bazel_native_module(builder: &mut GlobalsBuilder) {
         let _build_context = BuildContext::from_context(eval)?;
         for toolchain in toolchains.items {
             if toolchain.unpack_str().is_none() {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     BazelNativeError::RegisterToolchainsNonString(toolchain.get_type().to_owned()),
                 )
                 .into());
@@ -192,7 +192,7 @@ fn bazel_native_module(builder: &mut GlobalsBuilder) {
             return Ok(input);
         }
         let Some(label) = input.unpack_str() else {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelNativeError::PackageRelativeLabelInvalidInput(input.get_type().to_owned()),
             )
             .into());
@@ -214,14 +214,14 @@ fn label_build_setting<'v>(
     let alias = eval
         .module()
         .get("alias")
-        .ok_or_else(|| buck2_error::Error::from(BazelNativeError::MissingAliasRule))?;
+        .ok_or_else(|| bz_error::Error::from(BazelNativeError::MissingAliasRule))?;
     let name = eval.heap().alloc(name);
     let mut kwargs = vec![("name", name), ("actual", build_setting_default)];
     if let Some(visibility) = visibility {
         kwargs.push(("visibility", visibility));
     }
     eval.eval_function(alias, &[], &kwargs)
-        .map_err(buck2_error::Error::from)?;
+        .map_err(bz_error::Error::from)?;
     Ok(NoneType)
 }
 

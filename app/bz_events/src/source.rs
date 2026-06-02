@@ -30,10 +30,10 @@ impl ChannelEventSource {
 mod tests {
     use std::time::SystemTime;
 
-    use buck2_data::CommandStart;
-    use buck2_data::SpanStartEvent;
-    use buck2_data::buck_event::Data::SpanStart;
-    use buck2_data::span_start_event::Data::Command;
+    use bz_data::CommandStart;
+    use bz_data::SpanStartEvent;
+    use bz_data::buck_event::Data::SpanStart;
+    use bz_data::span_start_event::Data::Command;
 
     use super::ChannelEventSource;
     use crate::BuckEvent;

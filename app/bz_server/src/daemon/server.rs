@@ -23,62 +23,62 @@ use std::time::SystemTime;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::configure_dice::configure_dice_for_buck;
-use buck2_build_api::spawner::BuckSpawner;
-use buck2_certs::validate::CertState;
-use buck2_certs::validate::check_cert_state;
-use buck2_certs::validate::validate_certs;
-use buck2_cli_proto::daemon_api_server::*;
-use buck2_cli_proto::*;
-use buck2_common::buckd_connection::BUCK_AUTH_TOKEN_HEADER;
-use buck2_common::events::HasEvents;
-use buck2_common::init::DaemonStartupConfig;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::io::IoProvider;
-use buck2_common::io::trace::TracingIoProvider;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::memory;
-use buck2_common::sqlite::sqlite_db::SqliteIdentity;
-use buck2_core::buck2_env;
-use buck2_core::error::reload_hard_error_config;
-use buck2_core::error::reload_show_soft_error_config;
-use buck2_core::error::reset_soft_error_counters;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::logging::LogConfigurationReloadHandle;
-use buck2_core::pattern::unparsed::UnparsedPatternPredicate;
-use buck2_error::BuckErrorContext;
-use buck2_events::Event;
-use buck2_events::daemon_id::DaemonId;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::source::ChannelEventSource;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute_impl::executors::local::ForkserverAccess;
-use buck2_fs::cwd::WorkingDirectory;
-use buck2_fs::fs_util;
-use buck2_fs::fs_util::DiskSpaceStats;
-use buck2_fs::fs_util::disk_space_stats;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_interpreter::starlark_profiler::config::StarlarkProfilerConfiguration;
-use buck2_profile::proto_to_profile_mode;
-use buck2_profile::starlark_profiler_configuration_from_request;
-use buck2_resource_control::buck_cgroup_tree::BuckCgroupTree;
-use buck2_resource_control::buck_cgroup_tree::PreppedBuckCgroups;
-use buck2_server_ctx::bxl::BXL_SERVER_COMMANDS;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::late_bindings::AUDIT_SERVER_COMMAND;
-use buck2_server_ctx::late_bindings::OTHER_SERVER_COMMANDS;
-use buck2_server_ctx::late_bindings::QUERY_SERVER_COMMANDS;
-use buck2_server_ctx::late_bindings::STARLARK_SERVER_COMMAND;
-use buck2_server_ctx::late_bindings::TARGETS_SERVER_COMMANDS;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::streaming_request_handler::StreamingRequestHandler;
-use buck2_server_ctx::test_command::TEST_COMMAND;
-use buck2_server_starlark_debug::run::run_dap_server_command;
-use buck2_test::executor_launcher::get_all_test_executors;
-use buck2_util::system_stats::num_cores;
-use buck2_util::system_stats::system_memory_stats;
-use buck2_util::threads::thread_spawn;
+use bz_build_api::configure_dice::configure_dice_for_buck;
+use bz_build_api::spawner::BuckSpawner;
+use bz_certs::validate::CertState;
+use bz_certs::validate::check_cert_state;
+use bz_certs::validate::validate_certs;
+use bz_cli_proto::daemon_api_server::*;
+use bz_cli_proto::*;
+use bz_common::buckd_connection::BUCK_AUTH_TOKEN_HEADER;
+use bz_common::events::HasEvents;
+use bz_common::init::DaemonStartupConfig;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_common::io::IoProvider;
+use bz_common::io::trace::TracingIoProvider;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::memory;
+use bz_common::sqlite::sqlite_db::SqliteIdentity;
+use bz_core::bz_env;
+use bz_core::error::reload_hard_error_config;
+use bz_core::error::reload_show_soft_error_config;
+use bz_core::error::reset_soft_error_counters;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::logging::LogConfigurationReloadHandle;
+use bz_core::pattern::unparsed::UnparsedPatternPredicate;
+use bz_error::BuckErrorContext;
+use bz_events::Event;
+use bz_events::daemon_id::DaemonId;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::source::ChannelEventSource;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute_impl::executors::local::ForkserverAccess;
+use bz_fs::cwd::WorkingDirectory;
+use bz_fs::fs_util;
+use bz_fs::fs_util::DiskSpaceStats;
+use bz_fs::fs_util::disk_space_stats;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_interpreter::starlark_profiler::config::StarlarkProfilerConfiguration;
+use bz_profile::proto_to_profile_mode;
+use bz_profile::starlark_profiler_configuration_from_request;
+use bz_resource_control::buck_cgroup_tree::BuckCgroupTree;
+use bz_resource_control::buck_cgroup_tree::PreppedBuckCgroups;
+use bz_server_ctx::bxl::BXL_SERVER_COMMANDS;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::late_bindings::AUDIT_SERVER_COMMAND;
+use bz_server_ctx::late_bindings::OTHER_SERVER_COMMANDS;
+use bz_server_ctx::late_bindings::QUERY_SERVER_COMMANDS;
+use bz_server_ctx::late_bindings::STARLARK_SERVER_COMMAND;
+use bz_server_ctx::late_bindings::TARGETS_SERVER_COMMANDS;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::streaming_request_handler::StreamingRequestHandler;
+use bz_server_ctx::test_command::TEST_COMMAND;
+use bz_server_starlark_debug::run::run_dap_server_command;
+use bz_test::executor_launcher::get_all_test_executors;
+use bz_util::system_stats::num_cores;
+use bz_util::system_stats::system_memory_stats;
+use bz_util::threads::thread_spawn;
 use dice::DetectCycles;
 use dice::Dice;
 use dice_futures::cancellation::CancellationContext;
@@ -154,7 +154,7 @@ impl DaemonShutdown {
     ///
     /// As we might be processing a `kill()` (or other) request, we cannot wait for the server to actually
     /// shutdown (as it will wait for current requests to finish), so this returns immediately.
-    fn start_shutdown(&self, reason: buck2_data::DaemonShutdown, timeout: Option<Duration>) {
+    fn start_shutdown(&self, reason: bz_data::DaemonShutdown, timeout: Option<Duration>) {
         // It would be better to pass reason to be logged later in a more structured way, but this can't be done via
         // the existing graceful (not forced) shutdown mechanism (serve_with_incoming_shutdown), so logging here instead.
         tracing::warn!("triggered shutdown: {}", reason.reason);
@@ -183,7 +183,7 @@ impl BuckdServerInitPreferences {
         io: Arc<dyn IoProvider>,
         digest_config: DigestConfig,
         root_config: &LegacyBuckConfig,
-    ) -> buck2_error::Result<Arc<Dice>> {
+    ) -> bz_error::Result<Arc<Dice>> {
         configure_dice_for_buck(io, digest_config, Some(root_config), self.detect_cycles).await
     }
 }
@@ -203,7 +203,7 @@ impl Interceptor for BuckCheckAuthTokenInterceptor {
             return Err(Status::unauthenticated("invalid auth token"));
         }
 
-        if buck2_env!("BUCK2_TEST_FAIL_BUCKD_AUTH", bool, applicability = testing).unwrap() {
+        if bz_env!("BUCK2_TEST_FAIL_BUCKD_AUTH", bool, applicability = testing).unwrap() {
             return Err(Status::unauthenticated("injected auth error"));
         }
 
@@ -217,7 +217,7 @@ pub(crate) struct BuckdServerData {
     stop_accepting_requests: AtomicBool,
     #[allocative(skip)]
     process_info: DaemonProcessInfo,
-    base_daemon_constraints: buck2_cli_proto::DaemonConstraints,
+    base_daemon_constraints: bz_cli_proto::DaemonConstraints,
     start_time: prost_types::Timestamp,
     start_instant: Instant,
     daemon_shutdown: DaemonShutdown,
@@ -249,11 +249,11 @@ impl BuckdServer {
         init_ctx: BuckdServerInitPreferences,
         process_info: DaemonProcessInfo,
         prepped_cgroups: Option<PreppedBuckCgroups>,
-        base_daemon_constraints: buck2_cli_proto::DaemonConstraints,
+        base_daemon_constraints: bz_cli_proto::DaemonConstraints,
         listener: Pin<Box<dyn Stream<Item = Result<tokio::net::TcpStream, io::Error>> + Send>>,
         rt: Handle,
         daemon_id: DaemonId,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let now = SystemTime::now();
         let now = now.duration_since(SystemTime::UNIX_EPOCH)?;
 
@@ -307,7 +307,7 @@ impl BuckdServer {
         {
             let root_path =
                 std::path::PathBuf::from(&daemon_state.paths.project_root().root().as_os_str());
-            if !buck2_env!("BUCK2_DISABLE_EDEN_HEALTH_CHECK", bool)?
+            if !bz_env!("BUCK2_DISABLE_EDEN_HEALTH_CHECK", bool)?
                 && detect_eden::is_eden(root_path).unwrap_or(false)
             {
                 tracing::trace!("EdenFS root detected; starting health check job");
@@ -351,7 +351,7 @@ impl BuckdServer {
             .serve_with_incoming_shutdown(listener, shutdown);
 
         tracing::info!("Starting server");
-        if let Some(sleep_secs) = buck2_env!(
+        if let Some(sleep_secs) = bz_env!(
             "BUCK2_TEST_INIT_DATA_SLEEP_SECS",
             type = u64,
             applicability = testing
@@ -381,10 +381,10 @@ impl BuckdServer {
                 PartialResultDispatcher<PartialRes>,
                 &ClientContext,
                 StreamingRequestHandler<Req>,
-            ) -> BoxFuture<'a, buck2_error::Result<Res>>
+            ) -> BoxFuture<'a, bz_error::Result<Res>>
             + Send
             + 'static,
-        Req: TryFrom<StreamingRequest, Error = buck2_error::Error> + Send + Sync + 'static,
+        Req: TryFrom<StreamingRequest, Error = bz_error::Error> + Send + Sync + 'static,
         Res: Into<command_result::Result> + Send + 'static,
         PartialRes: Into<partial_result::PartialResult> + Send + 'static,
     {
@@ -392,7 +392,7 @@ impl BuckdServer {
         let init_request = match req.message().await? {
             Some(
                 m @ StreamingRequest {
-                    request: Some(buck2_cli_proto::streaming_request::Request::Context(_)),
+                    request: Some(bz_cli_proto::streaming_request::Request::Context(_)),
                 },
             ) => Ok(m),
             _ => Err(Status::failed_precondition(
@@ -424,13 +424,13 @@ impl BuckdServer {
         req: Request<Req>,
         opts: impl StreamingCommandOptions<Req>,
         func: F,
-    ) -> buck2_error::Result<Response<ResponseStream>>
+    ) -> bz_error::Result<Response<ResponseStream>>
     where
         F: for<'a> FnOnce(
                 &'a ServerCommandContext,
                 PartialResultDispatcher<PartialRes>,
                 Req,
-            ) -> BoxFuture<'a, buck2_error::Result<Res>>
+            ) -> BoxFuture<'a, bz_error::Result<Res>>
             + Send
             + 'static,
         Req: HasClientContext + HasBuildOptions + Send + Sync + 'static,
@@ -439,9 +439,9 @@ impl BuckdServer {
     {
         let command_start = Instant::now();
 
-        if buck2_env!("BUCK2_TEST_FAIL_STREAMING", bool, applicability = testing).unwrap() {
-            Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+        if bz_env!("BUCK2_TEST_FAIL_STREAMING", bool, applicability = testing).unwrap() {
+            Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Injected client streaming error"
             ))?;
         }
@@ -452,8 +452,8 @@ impl BuckdServer {
         // This is fine.
         reset_soft_error_counters();
 
-        reload_hard_error_config(&client_ctx.buck2_hard_error)?;
-        reload_show_soft_error_config(&client_ctx.buck2_show_soft_errors);
+        reload_hard_error_config(&client_ctx.bz_hard_error)?;
+        reload_show_soft_error_config(&client_ctx.bz_show_soft_errors);
 
         OneshotCommandOptions::pre_run(&opts, self)?;
 
@@ -470,7 +470,7 @@ impl BuckdServer {
         // Fire off a system-wide event to record the memory usage of this process.
         // TODO(ezgi): add it to oneshot command too
         let system_warning_config = &data.system_warning_config;
-        dispatch.instant_event(buck2_data::SystemInfo {
+        dispatch.instant_event(bz_data::SystemInfo {
             system_total_memory_bytes: Some(system_memory_stats()),
             memory_pressure_threshold_percent: system_warning_config
                 .memory_pressure_threshold_percent,
@@ -546,7 +546,7 @@ impl BuckdServer {
 
         #[cfg(unix)]
         let memory_reporter = daemon_state.data.memory_tracker.as_ref().map(|t| {
-            buck2_resource_control::memory_tracker::spawn_memory_reporter(dispatch.dupe(), t.dupe())
+            bz_resource_control::memory_tracker::spawn_memory_reporter(dispatch.dupe(), t.dupe())
         });
 
         let resp = streaming(
@@ -557,7 +557,7 @@ impl BuckdServer {
             daemon_shutdown_channel,
             move |req, cancellations| {
                 async move {
-                    let result: buck2_error::Result<Res> = try {
+                    let result: bz_error::Result<Res> = try {
                         let base_context =
                             daemon_state.prepare_command(dispatch.dupe(), guard).await?;
 
@@ -630,7 +630,7 @@ impl BuckdServer {
                 &'a ServerCommandContext,
                 PartialResultDispatcher<PartialRes>,
                 Req,
-            ) -> BoxFuture<'a, buck2_error::Result<Res>>
+            ) -> BoxFuture<'a, bz_error::Result<Res>>
             + Send
             + 'static,
         Req: HasClientContext + HasBuildOptions + Send + Sync + 'static,
@@ -652,7 +652,7 @@ impl BuckdServer {
     async fn oneshot<
         Req,
         Res: Into<command_result::Result>,
-        Fut: Future<Output = buck2_error::Result<Res>> + Send,
+        Fut: Future<Output = bz_error::Result<Res>> + Send,
         F: FnOnce(Req) -> Fut,
     >(
         &self,
@@ -692,16 +692,16 @@ fn convert_positive_duration(proto_duration: &prost_types::Duration) -> Result<D
         + Duration::from_nanos(proto_duration.nanos as u64))
 }
 
-fn error_to_command_result(e: buck2_error::Error) -> CommandResult {
+fn error_to_command_result(e: bz_error::Error) -> CommandResult {
     CommandResult {
         result: Some(command_result::Result::Error(
-            buck2_data::ErrorReport::from(&e),
+            bz_data::ErrorReport::from(&e),
         )),
     }
 }
 
 fn result_to_command_result<R: Into<command_result::Result>>(
-    result: buck2_error::Result<R>,
+    result: bz_error::Result<R>,
 ) -> CommandResult {
     match result {
         Ok(result) => CommandResult {
@@ -711,7 +711,7 @@ fn result_to_command_result<R: Into<command_result::Result>>(
     }
 }
 
-fn error_to_command_progress(e: buck2_error::Error) -> CommandProgress {
+fn error_to_command_progress(e: bz_error::Error) -> CommandProgress {
     CommandProgress {
         progress: Some(command_progress::Progress::Result(Box::new(
             error_to_command_result(e),
@@ -719,9 +719,9 @@ fn error_to_command_progress(e: buck2_error::Error) -> CommandProgress {
     }
 }
 
-fn error_to_response_stream(e: buck2_error::Error) -> Response<ResponseStream> {
+fn error_to_response_stream(e: bz_error::Error) -> Response<ResponseStream> {
     tonic::Response::new(Box::pin(stream::once(future::ready(Ok(
-        buck2_cli_proto::MultiCommandProgress {
+        bz_cli_proto::MultiCommandProgress {
             messages: vec![error_to_command_progress(e)],
         },
     )))))
@@ -753,7 +753,7 @@ fn pump_events(
     mut events: ChannelEventSource,
     mut state: ActiveCommandStateWriter,
     output_send: tokio::sync::mpsc::UnboundedSender<
-        Result<buck2_cli_proto::CommandProgress, tonic::Status>,
+        Result<bz_cli_proto::CommandProgress, tonic::Status>,
     >,
 ) {
     // This function returns the receiving channel back to `tonic` as a streaming response.
@@ -794,7 +794,7 @@ fn streaming<Req, F>(
     events: ChannelEventSource,
     state: ActiveCommandStateWriter,
     dispatcher: EventDispatcher,
-    daemon_shutdown_channel: oneshot::Receiver<buck2_data::DaemonShutdown>,
+    daemon_shutdown_channel: oneshot::Receiver<bz_data::DaemonShutdown>,
     func: F,
     rt: &Handle,
 ) -> Response<ResponseStream>
@@ -835,7 +835,7 @@ where
     });
     if let Err(e) = merge_task {
         return error_to_response_stream(
-            buck2_error::Error::from(e).context("failed to spawn pump-events"),
+            bz_error::Error::from(e).context("failed to spawn pump-events"),
         );
     };
 
@@ -851,13 +851,13 @@ where
     let daemon_shutdown_stream = daemon_shutdown_channel
         .map_ok(move |shutdown| CommandProgress {
             progress: Some(command_progress::Progress::Event(Box::new(
-                buck2_data::BuckEvent {
+                bz_data::BuckEvent {
                     timestamp: Some(SystemTime::now().into()),
                     trace_id: trace_id.to_string(),
                     span_id: 0,
                     parent_id: 0,
                     data: Some(
-                        buck2_data::InstantEvent {
+                        bz_data::InstantEvent {
                             data: Some(shutdown.into()),
                         }
                         .into(),
@@ -884,7 +884,7 @@ where
 }
 
 struct QueryCommandOptions {
-    /// `buck2_cli_proto::ProfileMode`.
+    /// `bz_cli_proto::ProfileMode`.
     profile_mode: Option<i32>,
 }
 
@@ -898,11 +898,11 @@ impl<Req> StreamingCommandOptions<Req> for QueryCommandOptions {
     fn starlark_profiler_instrumentation_override(
         &self,
         _req: &Req,
-    ) -> buck2_error::Result<StarlarkProfilerConfiguration> {
+    ) -> bz_error::Result<StarlarkProfilerConfiguration> {
         match self.profile_mode {
             None => Ok(StarlarkProfilerConfiguration::None),
             Some(mode) => {
-                let mode = buck2_cli_proto::ProfileMode::try_from(mode)
+                let mode = bz_cli_proto::ProfileMode::try_from(mode)
                     .internal_error("invalid profile mode enum value")?;
                 Ok(StarlarkProfilerConfiguration::ProfileLoading(
                     proto_to_profile_mode(mode),
@@ -941,7 +941,7 @@ impl DaemonApi for BuckdServer {
                 .map(convert_positive_duration)
                 .transpose()?;
 
-            let reason = buck2_data::DaemonShutdown {
+            let reason = bz_data::DaemonShutdown {
                 reason: req.reason,
                 callers: req.callers,
             };
@@ -989,7 +989,7 @@ impl DaemonApi for BuckdServer {
                 None
             };
 
-            let extra_constraints = buck2_cli_proto::ExtraDaemonConstraints {
+            let extra_constraints = bz_cli_proto::ExtraDaemonConstraints {
                 trace_io_enabled: TracingIoProvider::from_io(&*daemon_state.data().io).is_some(),
                 materializer_state_identity: daemon_state
                     .data()
@@ -1068,9 +1068,9 @@ impl DaemonApi for BuckdServer {
                 retain_locally_produced_dep_files,
             } = req;
             if retain_locally_produced_dep_files {
-                buck2_file_watcher::dep_files::flush_non_local_dep_files();
+                bz_file_watcher::dep_files::flush_non_local_dep_files();
             } else {
-                buck2_file_watcher::dep_files::flush_dep_files();
+                bz_file_watcher::dep_files::flush_dep_files();
             }
             Ok(GenericResponse {})
         })
@@ -1401,10 +1401,10 @@ impl DaemonApi for BuckdServer {
 
         let inner = req.into_inner();
         let path = inner.destination_path;
-        let res: buck2_error::Result<_> = try {
+        let res: bz_error::Result<_> = try {
             let path = Path::new(&path);
             let format_proto =
-                buck2_cli_proto::unstable_dice_dump_request::DiceDumpFormat::try_from(inner.format)
+                bz_cli_proto::unstable_dice_dump_request::DiceDumpFormat::try_from(inner.format)
                     .buck_error_context("Invalid DICE dump format")?;
 
             self.0
@@ -1430,12 +1430,12 @@ impl DaemonApi for BuckdServer {
     ) -> Result<Response<ResponseStream>, Status> {
         self.check_if_accepting_requests()?;
 
-        let res: buck2_error::Result<_> = try {
+        let res: bz_error::Result<_> = try {
             let client_ctx = req.get_ref().client_context()?;
             let trace_id = client_ctx
                 .trace_id
                 .parse()
-                .map_err(buck2_error::Error::from)?;
+                .map_err(bz_error::Error::from)?;
             let (event_source, dispatcher) = self.0.daemon_state.prepare_events(trace_id).await?;
             let active_command = ActiveCommand::new(&dispatcher, client_ctx.sanitized_argv.clone());
             (event_source, dispatcher, active_command)
@@ -1495,7 +1495,7 @@ impl DaemonApi for BuckdServer {
             fn starlark_profiler_instrumentation_override(
                 &self,
                 req: &ProfileRequest,
-            ) -> buck2_error::Result<StarlarkProfilerConfiguration> {
+            ) -> bz_error::Result<StarlarkProfilerConfiguration> {
                 starlark_profiler_configuration_from_request(req, &self.project_root)
             }
         }
@@ -1508,10 +1508,10 @@ impl DaemonApi for BuckdServer {
             |ctx, partial_result_dispatcher, req| {
                 Box::pin(async {
                     match req.profile_opts.as_ref().expect("Missing profile opts") {
-                        buck2_cli_proto::profile_request::ProfileOpts::TargetProfile(_) => {
+                        bz_cli_proto::profile_request::ProfileOpts::TargetProfile(_) => {
                             profile_command(ctx, partial_result_dispatcher, req).await
                         }
-                        buck2_cli_proto::profile_request::ProfileOpts::BxlProfile(_) => {
+                        bz_cli_proto::profile_request::ProfileOpts::BxlProfile(_) => {
                             Ok(BXL_SERVER_COMMANDS
                                 .get()?
                                 .bxl_profile(ctx, partial_result_dispatcher, req)
@@ -1678,7 +1678,7 @@ trait StreamingCommandOptions<Req>: OneshotCommandOptions {
     fn starlark_profiler_instrumentation_override(
         &self,
         _req: &Req,
-    ) -> buck2_error::Result<StarlarkProfilerConfiguration> {
+    ) -> bz_error::Result<StarlarkProfilerConfiguration> {
         Ok(StarlarkProfilerConfiguration::None)
     }
 }
@@ -1687,11 +1687,11 @@ fn server_shutdown_signal(
     command_receiver: UnboundedReceiver<()>,
     mut shutdown_receiver: UnboundedReceiver<()>,
     daemon_idle_timeout_s: Option<u64>,
-) -> buck2_error::Result<impl Future<Output = ()>> {
+) -> bz_error::Result<impl Future<Output = ()>> {
     let mut duration = daemon_idle_timeout_s
         .map(Duration::from_secs)
         .unwrap_or(DEFAULT_INACTIVITY_TIMEOUT);
-    if buck2_env!(
+    if bz_env!(
         "BUCK2_TESTING_INACTIVITY_TIMEOUT",
         bool,
         applicability = testing
@@ -1737,12 +1737,12 @@ async fn certs_validation_background_job(cert_state: CertState) {
 mod eden_health {
     use std::time::Duration;
 
-    use buck2_core::fs::project::ProjectRoot;
-    use buck2_core::soft_error;
-    use buck2_eden::connection::EdenConnectionManager;
-    use buck2_eden::error::ErrorFromHangingMount;
-    use buck2_eden::semaphore;
-    use buck2_error::buck2_error;
+    use bz_core::fs::project::ProjectRoot;
+    use bz_core::soft_error;
+    use bz_eden::connection::EdenConnectionManager;
+    use bz_eden::error::ErrorFromHangingMount;
+    use bz_eden::semaphore;
+    use bz_error::bz_error;
 
     pub(crate) async fn edenfs_health_check(fb: fbinit::FacebookInit, root: ProjectRoot) {
         tokio::task::spawn(async move {
@@ -1753,7 +1753,7 @@ mod eden_health {
             );
             loop {
                 tokio::time::sleep(Duration::from_secs(HEALTH_CHECK_INTERVAL)).await;
-                match EdenConnectionManager::new(fb, &root, Some(semaphore::buck2_default())) {
+                match EdenConnectionManager::new(fb, &root, Some(semaphore::bz_default())) {
                     Ok(Some(conn)) => {
                         let info = conn
                             .with_eden(|eden| {
@@ -1769,7 +1769,7 @@ mod eden_health {
                                 );
                                 soft_error!(
                                     "eden_thrift_health_check_failed",
-                                    buck2_error!(buck2_error::ErrorTag::Input, "check failed with: {:#}", e),
+                                    bz_error!(bz_error::ErrorTag::Input, "check failed with: {:#}", e),
                                     quiet: true
                                 )
                                 .ok();
@@ -1790,7 +1790,7 @@ mod eden_health {
                         tracing::error!("check failed to create an EdenFS client: {:#}", e);
                         soft_error!(
                             "eden_thrift_client_creation_failed",
-                            buck2_error!(buck2_error::ErrorTag::Input, "client creation failed with: {:#}", e),
+                            bz_error!(bz_error::ErrorTag::Input, "client creation failed with: {:#}", e),
                             quiet: true
                         )
                         .ok();

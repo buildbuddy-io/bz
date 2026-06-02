@@ -12,8 +12,8 @@ use std::fmt;
 use std::fmt::Display;
 
 use allocative::Allocative;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_util::thin_box::ThinBoxSlice;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_util::thin_box::ThinBoxSlice;
 use static_assertions::assert_eq_size;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
@@ -61,7 +61,7 @@ impl ResolvedQueryMacro {
         builder: &mut dyn ArgBuilder,
         ctx: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             Self::Outputs(list) => {
                 let mut first = true;
@@ -106,7 +106,7 @@ impl ResolvedQueryMacro {
     pub fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             Self::Outputs(list) => {
                 for target_outputs in list.iter() {

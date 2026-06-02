@@ -9,8 +9,8 @@
  */
 
 use allocative::Allocative;
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::bzl::ImportPath;
+use bz_core::bxl::BxlFilePath;
+use bz_core::bzl::ImportPath;
 use pagable::Pagable;
 use strong_hash::StrongHash;
 

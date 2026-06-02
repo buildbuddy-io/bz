@@ -21,13 +21,13 @@ fn main() -> io::Result<()> {
         vec![".", "../bz_data", "../bz_host_sharing_proto"]
     };
 
-    let builder = buck2_protoc_dev::configure();
+    let builder = bz_protoc_dev::configure();
     unsafe { builder.setup_protoc() }
         .type_attribute(
             "buck.test.ExecuteResponse2.response",
             "#[allow(clippy::large_enum_variant)]",
         )
-        .extern_path(".buck.data", "::buck2_data")
-        .extern_path(".buck.host_sharing", "::buck2_host_sharing_proto")
+        .extern_path(".buck.data", "::bz_data")
+        .extern_path(".buck.host_sharing", "::bz_host_sharing_proto")
         .compile(proto_files, &includes)
 }

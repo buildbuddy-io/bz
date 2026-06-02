@@ -10,22 +10,22 @@
 
 use std::sync::Arc;
 
-use buck2_cli_proto::client_context::ProfilePatternOptions;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_interpreter::starlark_profiler::config::ProfileRegex;
-use buck2_interpreter::starlark_profiler::config::StarlarkProfilerConfiguration;
-use buck2_profile::proto_to_profile_mode;
+use bz_cli_proto::client_context::ProfilePatternOptions;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::EventDispatcher;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_interpreter::starlark_profiler::config::ProfileRegex;
+use bz_interpreter::starlark_profiler::config::StarlarkProfilerConfiguration;
+use bz_profile::proto_to_profile_mode;
 
 use crate::profile_patterns::FileWritingProfileEventListener;
 
-#[derive(buck2_error::Error)]
+#[derive(bz_error::Error)]
 pub enum BuckdServerError {
     #[error(
         "server received multiple profiler configurations. this is due to using both --profile-patterns and one of the command specific profiling args"
     )]
-    #[buck2(tag=buck2_error::ErrorTag::Input)]
+    #[buck2(tag=bz_error::ErrorTag::Input)]
     StarlarkProfilerConfigurationConflict,
 }
 
@@ -39,7 +39,7 @@ impl StarlarkProfilingManager {
         profile_pattern_opts: Option<&ProfilePatternOptions>,
         starlark_profile_override: StarlarkProfilerConfiguration,
         events: &EventDispatcher,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let starlark_profile_patterns_opts = match profile_pattern_opts {
             Some(ProfilePatternOptions {
                 profile_patterns,
@@ -85,7 +85,7 @@ impl StarlarkProfilingManager {
         })
     }
 
-    pub fn finalize(&self) -> buck2_error::Result<()> {
+    pub fn finalize(&self) -> bz_error::Result<()> {
         if let Some(v) = &self.profile_event_listener {
             v.finalize()?;
         }

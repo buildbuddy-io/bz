@@ -13,9 +13,9 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::plugins::PluginKind;
-use buck2_core::plugins::PluginKindSet;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::plugins::PluginKind;
+use bz_core::plugins::PluginKindSet;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
 use pagable::Pagable;
@@ -196,7 +196,7 @@ impl AttrType {
         }))
     }
 
-    pub fn enumeration(variants: Vec<String>) -> buck2_error::Result<Self> {
+    pub fn enumeration(variants: Vec<String>) -> bz_error::Result<Self> {
         Ok(Self(Arc::new(AttrTypeInner2 {
             inner: AttrTypeInner::Enum(EnumAttrType::new(variants)?),
             may_have_queries: false,

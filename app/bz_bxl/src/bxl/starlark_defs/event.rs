@@ -10,18 +10,18 @@
 
 //! Parse some inputs to a `[`StarlarkUserEvent`].
 
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_data::StarlarkUserEvent;
-use buck2_data::StarlarkUserMetadataDictValue;
-use buck2_data::StarlarkUserMetadataListValue;
-use buck2_data::StarlarkUserMetadataValue;
-use buck2_data::starlark_user_metadata_value::Value::BoolValue;
-use buck2_data::starlark_user_metadata_value::Value::DictValue;
-use buck2_data::starlark_user_metadata_value::Value::IntValue;
-use buck2_data::starlark_user_metadata_value::Value::ListValue;
-use buck2_data::starlark_user_metadata_value::Value::StringValue;
-use buck2_hash::StdBuckHashMap;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project::ProjectRoot;
+use bz_data::StarlarkUserEvent;
+use bz_data::StarlarkUserMetadataDictValue;
+use bz_data::StarlarkUserMetadataListValue;
+use bz_data::StarlarkUserMetadataValue;
+use bz_data::starlark_user_metadata_value::Value::BoolValue;
+use bz_data::starlark_user_metadata_value::Value::DictValue;
+use bz_data::starlark_user_metadata_value::Value::IntValue;
+use bz_data::starlark_user_metadata_value::Value::ListValue;
+use bz_data::starlark_user_metadata_value::Value::StringValue;
+use bz_hash::StdBuckHashMap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::dict::DictRef;
@@ -31,7 +31,7 @@ use starlark::values::list::ListRef;
 use super::artifacts::EnsuredArtifact;
 use super::context::output::get_artifact_path_display;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum StarlarkUserEventUnpack {
     #[error(
@@ -56,7 +56,7 @@ impl<'v> StarlarkUserEventParser<'v> {
         &self,
         id: &str,
         metadata: Value<'v>,
-    ) -> buck2_error::Result<StarlarkUserEvent> {
+    ) -> bz_error::Result<StarlarkUserEvent> {
         Ok(StarlarkUserEvent {
             id: id.to_owned(),
             metadata: self.unpack_metadata_map(metadata)?,
@@ -66,7 +66,7 @@ impl<'v> StarlarkUserEventParser<'v> {
     fn unpack_metadata_map(
         &self,
         metadata: Value<'v>,
-    ) -> buck2_error::Result<StdBuckHashMap<String, StarlarkUserMetadataValue>> {
+    ) -> bz_error::Result<StdBuckHashMap<String, StarlarkUserMetadataValue>> {
         let metadata = match DictRef::from_value(metadata) {
             Some(metadata) => metadata,
             None => {
@@ -92,14 +92,14 @@ impl<'v> StarlarkUserEventParser<'v> {
                 let v = self.get_metadata_value(&k, v)?;
                 Ok((k, v))
             })
-            .collect::<buck2_error::Result<StdBuckHashMap<_, _>>>()
+            .collect::<bz_error::Result<StdBuckHashMap<_, _>>>()
     }
 
     fn get_metadata_value(
         &self,
         k: &str,
         v: Value<'v>,
-    ) -> buck2_error::Result<StarlarkUserMetadataValue> {
+    ) -> bz_error::Result<StarlarkUserMetadataValue> {
         if let Some(v) = v.unpack_str() {
             Ok(StarlarkUserMetadataValue {
                 value: Some(StringValue(v.into())),
@@ -137,7 +137,7 @@ impl<'v> StarlarkUserEventParser<'v> {
             let list = v
                 .iter()
                 .map(|e| self.get_metadata_value(k, e))
-                .collect::<buck2_error::Result<Vec<_>>>()?;
+                .collect::<bz_error::Result<Vec<_>>>()?;
             let list = StarlarkUserMetadataListValue { value: list };
             Ok(StarlarkUserMetadataValue {
                 value: Some(ListValue(list)),

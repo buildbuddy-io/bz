@@ -8,32 +8,32 @@
  * above-listed licenses.
  */
 
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::alias::NonEmptyCellAlias;
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
-use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
-use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::TargetName;
-use buck2_core::target::name::TargetNameRef;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::types::bazel::label_context::StarlarkLabelResolutionContext;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::alias::NonEmptyCellAlias;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::cells::external::bzlmod_cell_aliases_for_cell;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetName;
+use bz_core::target::name::TargetNameRef;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::types::bazel::label_context::StarlarkLabelResolutionContext;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
@@ -45,7 +45,7 @@ use crate::bazel::label::parse_bazel_canonical_providers_label;
 use crate::interpreter::build_context::BazelRepositoryRecordedInput;
 use crate::interpreter::build_context::BuildContext;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum LabelCreatorError {
     #[error("Expected provider, found something else: `{0}`")]
@@ -86,7 +86,7 @@ fn default_label_parse_context(c: &BuildContext<'_>) -> LabelParseContext {
 fn bzlmod_cell_alias_resolver(
     cell_resolver: &CellResolver,
     cell_name: CellName,
-) -> buck2_error::Result<CellAliasResolver> {
+) -> bz_error::Result<CellAliasResolver> {
     let mut aliases = StdBuckHashMap::default();
     for alias in ["root", "prelude", "bazel_tools"] {
         let alias = NonEmptyCellAlias::new(alias.to_owned())?;
@@ -111,7 +111,7 @@ fn label_parse_context_from_callsite<'v>(
     default: LabelParseContext,
     cell_resolver: &CellResolver,
     eval: &Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<LabelParseContext> {
+) -> bz_error::Result<LabelParseContext> {
     let Some(location) = eval.call_stack_top_location() else {
         return Ok(default);
     };
@@ -144,7 +144,7 @@ fn label_parse_context_from_callsite<'v>(
 fn label_parse_context<'v>(
     c: &BuildContext<'_>,
     eval: &Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<LabelParseContext> {
+) -> bz_error::Result<LabelParseContext> {
     label_parse_context_from_callsite(
         default_label_parse_context(c),
         c.cell_info().cell_resolver(),
@@ -155,7 +155,7 @@ fn label_parse_context<'v>(
 fn analysis_label_parse_context<'v>(
     c: &StarlarkLabelResolutionContext,
     eval: &Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<LabelParseContext> {
+) -> bz_error::Result<LabelParseContext> {
     label_parse_context_from_callsite(
         LabelParseContext {
             root_cell: c.cell_resolver.root_cell(),
@@ -170,7 +170,7 @@ fn analysis_label_parse_context<'v>(
 
 fn label_parse_context_data<'v, 'a, 'e>(
     eval: &Evaluator<'v, 'a, 'e>,
-) -> buck2_error::Result<LabelParseContextData<'a, 'e>> {
+) -> bz_error::Result<LabelParseContextData<'a, 'e>> {
     if let Ok(c) = BuildContext::from_context(eval) {
         return Ok(LabelParseContextData {
             label_context: label_parse_context(c, eval)?,
@@ -211,7 +211,7 @@ fn parse_providers_label<'v>(
                 Some(c) => c.require_package()?,
                 None => {
                     return Err(
-                        buck2_error::Error::from(LabelCreatorError::ExpectedProvider(s.to_owned()))
+                        bz_error::Error::from(LabelCreatorError::ExpectedProvider(s.to_owned()))
                             .into(),
                     );
                 }
@@ -272,7 +272,7 @@ fn parse_providers_label<'v>(
         }
         _ => {
             return Err(
-                buck2_error::Error::from(LabelCreatorError::ExpectedProvider(s.to_owned())).into(),
+                bz_error::Error::from(LabelCreatorError::ExpectedProvider(s.to_owned())).into(),
             );
         }
     };
@@ -351,7 +351,7 @@ fn bazel_repo_only_label(value: &str) -> Option<String> {
 fn bazel_compat_label(
     value: &str,
     label_context: &LabelParseContext,
-) -> buck2_error::Result<Option<ProvidersLabel>> {
+) -> bz_error::Result<Option<ProvidersLabel>> {
     if !is_bazel_compat_cell(label_context.cell_name) {
         return Ok(None);
     }
@@ -410,7 +410,7 @@ fn bazel_compat_package_label(
     target: &str,
     original: &str,
     label_context: &LabelParseContext,
-) -> buck2_error::Result<ProvidersLabel> {
+) -> bz_error::Result<ProvidersLabel> {
     let package = label_context
         .package
         .dupe()
@@ -426,7 +426,7 @@ fn bazel_compat_absolute_label(
     cell_name: CellName,
     package_and_target: &str,
     _label_context: &LabelParseContext,
-) -> buck2_error::Result<ProvidersLabel> {
+) -> bz_error::Result<ProvidersLabel> {
     let Some((package, target)) = bazel_absolute_label_parts(package_and_target) else {
         return Err(LabelCreatorError::ExpectedProvider(package_and_target.to_owned()).into());
     };
@@ -441,7 +441,7 @@ fn bazel_compat_absolute_label(
 fn bazel_non_visible_repo_label(
     value: &str,
     label_context: &LabelParseContext,
-) -> buck2_error::Result<Option<ProvidersLabel>> {
+) -> bz_error::Result<Option<ProvidersLabel>> {
     if !is_bazel_compat_cell(label_context.cell_name) {
         return Ok(None);
     }
@@ -488,7 +488,7 @@ pub fn register_bazel_label(builder: &mut GlobalsBuilder) {
         }
         let Some(s) = s.unpack_str() else {
             return Err(
-                buck2_error::Error::from(LabelCreatorError::ExpectedStringOrLabel(
+                bz_error::Error::from(LabelCreatorError::ExpectedStringOrLabel(
                     s.get_type().to_owned(),
                 ))
                 .into(),
@@ -528,7 +528,7 @@ pub mod testing {
                     TargetLabel::new(package, target_name.as_ref())
                 }
                 _ => {
-                    return Err(buck2_error::Error::from(LabelCreatorError::ExpectedTarget(
+                    return Err(bz_error::Error::from(LabelCreatorError::ExpectedTarget(
                         s.to_owned(),
                     ))
                     .into());

@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_build_api::bxl::build_result::BxlBuildResult;
+use bz_build_api::bxl::build_result::BxlBuildResult;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::environment::MethodsStatic;

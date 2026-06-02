@@ -16,25 +16,25 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_artifact::actions::key::ActionIndex;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::artifact_type::DeclaredArtifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::fs::buck_out_path::BazelOutputPathKind;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::internal_error;
-use buck2_execute::execute::request::OutputType;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckIndexSet;
-use buck2_interpreter::testing::Buck2TestHeapName;
-use buck2_util::thin_box::ThinBoxSlice;
+use bz_artifact::actions::key::ActionIndex;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::artifact_type::DeclaredArtifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::fs::buck_out_path::BazelOutputPathKind;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_error::internal_error;
+use bz_execute::execute::request::OutputType;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckIndexSet;
+use bz_interpreter::testing::Buck2TestHeapName;
+use bz_util::thin_box::ThinBoxSlice;
 use derivative::Derivative;
 use dupe::Dupe;
 use itertools::Itertools;
@@ -117,7 +117,7 @@ struct BazelPendingSolibSymlinkAction<'v> {
     output: OutputArtifact<'v>,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum DeclaredArtifactError {
     #[error("Can't declare an artifact with an empty filename component")]
@@ -140,7 +140,7 @@ impl<'v> AnalysisRegistry<'v> {
     pub fn new_from_owner(
         owner: BaseDeferredKey,
         execution_platform: ExecutionPlatformResolution,
-    ) -> buck2_error::Result<AnalysisRegistry<'v>> {
+    ) -> bz_error::Result<AnalysisRegistry<'v>> {
         Self::new_from_owner_and_deferred(execution_platform, DeferredHolderKey::Base(owner), None)
     }
 
@@ -148,7 +148,7 @@ impl<'v> AnalysisRegistry<'v> {
         execution_platform: ExecutionPlatformResolution,
         self_key: DeferredHolderKey,
         target_rule_type_name: Option<Arc<str>>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(AnalysisRegistry {
             actions: ActionsRegistry::new(
                 self_key.dupe(),
@@ -173,7 +173,7 @@ impl<'v> AnalysisRegistry<'v> {
         &mut self,
         eval: &Evaluator<'_, '_, '_>,
         path: &ForwardRelativePath,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let declaration_location = eval.call_stack_top_location();
         self.actions.claim_output_path(path, declaration_location)
     }
@@ -182,7 +182,7 @@ impl<'v> AnalysisRegistry<'v> {
         &mut self,
         artifact: &BuildArtifact,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         self.actions.declare_dynamic_output(artifact, heap)
     }
 
@@ -194,7 +194,7 @@ impl<'v> AnalysisRegistry<'v> {
         declaration_location: Option<FileSpan>,
         path_resolution_method: BuckOutPathKind,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         self.declare_output_with_bazel_owner(
             prefix,
             filename,
@@ -215,7 +215,7 @@ impl<'v> AnalysisRegistry<'v> {
         path_resolution_method: BuckOutPathKind,
         bazel_owner: Option<ConfiguredTargetLabel>,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         self.declare_output_with_bazel_owner_and_output_root(
             prefix,
             filename,
@@ -238,7 +238,7 @@ impl<'v> AnalysisRegistry<'v> {
         bazel_owner: Option<ConfiguredTargetLabel>,
         bazel_output_root: BazelOutputRoot,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         self.declare_output_with_bazel_owner_output_root_and_path_kind(
             prefix,
             filename,
@@ -263,7 +263,7 @@ impl<'v> AnalysisRegistry<'v> {
         bazel_output_root: BazelOutputRoot,
         bazel_output_path_kind: BazelOutputPathKind,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         // We don't allow declaring `` as an output, although technically there's nothing preventing
         // that
         if filename.is_empty() {
@@ -324,7 +324,7 @@ impl<'v> AnalysisRegistry<'v> {
         path_resolution_method: BuckOutPathKind,
         bazel_output_root: BazelOutputRoot,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         let artifact = self.declare_output_with_bazel_owner_and_output_root(
             None,
             filename,
@@ -359,7 +359,7 @@ impl<'v> AnalysisRegistry<'v> {
         bazel_output_root: BazelOutputRoot,
         bazel_output_path_kind: BazelOutputPathKind,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         let path = ForwardRelativePath::new(filename)?;
         let key = Self::bazel_shareable_output_path_key(
             path.as_str(),
@@ -418,7 +418,7 @@ impl<'v> AnalysisRegistry<'v> {
         &mut self,
         output: &OutputArtifact<'v>,
         signature: String,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         let Some(key) = self
             .bazel_shareable_output_key_for_artifact(output)
             .map(str::to_owned)
@@ -446,7 +446,7 @@ impl<'v> AnalysisRegistry<'v> {
         src: DeclaredArtifact<'v>,
         output: OutputArtifact<'v>,
         signature: String,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if !self.should_register_bazel_shareable_action(&output, signature)? {
             return Ok(());
         }
@@ -458,7 +458,7 @@ impl<'v> AnalysisRegistry<'v> {
         &mut self,
         src: DeclaredArtifact<'v>,
         output: OutputArtifact<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match src.dupe().ensure_bound() {
             Ok(src) => self.register_action_no_flush(
                 BuckIndexSet::from_iter([output]),
@@ -474,7 +474,7 @@ impl<'v> AnalysisRegistry<'v> {
         }
     }
 
-    fn flush_bazel_pending_solib_symlink_actions(&mut self) -> buck2_error::Result<()> {
+    fn flush_bazel_pending_solib_symlink_actions(&mut self) -> bz_error::Result<()> {
         let pending = std::mem::take(&mut self.bazel_pending_solib_symlink_actions);
         for pending in pending {
             self.register_or_defer_bazel_solib_symlink_action(pending.src, pending.output)?;
@@ -500,7 +500,7 @@ impl<'v> AnalysisRegistry<'v> {
         value: OutputArtifactArg<'v>,
         output_type: OutputType,
         has_content_based_path: Option<bool>,
-    ) -> buck2_error::Result<(ArtifactDeclaration<'v>, OutputArtifact<'v>)> {
+    ) -> bz_error::Result<(ArtifactDeclaration<'v>, OutputArtifact<'v>)> {
         let declaration_location = eval.call_stack_top_location();
         let heap = eval.heap();
         let declared_artifact = match value {
@@ -570,7 +570,7 @@ impl<'v> AnalysisRegistry<'v> {
         action: A,
         associated_value: Option<Value<'v>>,
         error_handler: Option<StarlarkCallable<'v>>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let id = self
             .actions
             .register(&self.analysis_value_storage.self_key, outputs, action)?;
@@ -585,7 +585,7 @@ impl<'v> AnalysisRegistry<'v> {
         action: A,
         associated_value: Option<Value<'v>>,
         error_handler: Option<StarlarkCallable<'v>>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.register_action_no_flush(outputs, action, associated_value, error_handler)?;
         self.flush_bazel_pending_solib_symlink_actions()
     }
@@ -631,7 +631,7 @@ impl<'v> AnalysisRegistry<'v> {
             .insert(promise_artifact_id);
     }
 
-    pub fn assert_no_promises(&self) -> buck2_error::Result<()> {
+    pub fn assert_no_promises(&self) -> bz_error::Result<()> {
         self.anon_targets.assert_no_promises()
     }
 
@@ -648,8 +648,8 @@ impl<'v> AnalysisRegistry<'v> {
     pub fn finalize(
         mut self,
         env: &Module<'v>,
-    ) -> buck2_error::Result<
-        impl FnOnce(&FrozenModule) -> buck2_error::Result<RecordedAnalysisValues> + use<>,
+    ) -> bz_error::Result<
+        impl FnOnce(&FrozenModule) -> bz_error::Result<RecordedAnalysisValues> + use<>,
     > {
         self.flush_bazel_pending_solib_symlink_actions()?;
         if let Some(pending) = self.bazel_pending_solib_symlink_actions.first() {
@@ -827,7 +827,7 @@ impl<'v> AnalysisValueStorage<'v> {
     }
 
     /// Write self to `module` extra value.
-    fn write_to_module(self, module: &Module<'v>) -> buck2_error::Result<()> {
+    fn write_to_module(self, module: &Module<'v>) -> bz_error::Result<()> {
         let extra_v = AnalysisExtraValue::get_or_init(module)?;
         let res = extra_v.analysis_value_storage.set(
             module
@@ -841,11 +841,11 @@ impl<'v> AnalysisValueStorage<'v> {
     }
 
     pub(crate) fn register_transitive_set<
-        F: FnOnce(TransitiveSetKey) -> buck2_error::Result<ValueTyped<'v, TransitiveSet<'v>>>,
+        F: FnOnce(TransitiveSetKey) -> bz_error::Result<ValueTyped<'v, TransitiveSet<'v>>>,
     >(
         &mut self,
         func: F,
-    ) -> buck2_error::Result<ValueTyped<'v, TransitiveSet<'v>>> {
+    ) -> bz_error::Result<ValueTyped<'v, TransitiveSet<'v>>> {
         let key = TransitiveSetKey::new(
             self.self_key.dupe(),
             TransitiveSetIndex(self.transitive_sets.len().try_into()?),
@@ -859,7 +859,7 @@ impl<'v> AnalysisValueStorage<'v> {
         &mut self,
         id: ActionKey,
         action_data: (Option<Value<'v>>, Option<StarlarkCallable<'v>>),
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if &self.self_key != id.holder_key() {
             return Err(internal_error!(
                 "Wrong action owner: expecting `{}`, got `{}`",
@@ -874,7 +874,7 @@ impl<'v> AnalysisValueStorage<'v> {
     pub fn set_result_value(
         &self,
         providers: ValueTypedComplex<'v, ProviderCollection<'v>>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if self.result_value.set(providers).is_err() {
             return Err(internal_error!("result_value is already set"));
         }
@@ -885,7 +885,7 @@ impl<'v> AnalysisValueStorage<'v> {
 impl AnalysisValueFetcher {
     fn extra_value(
         &self,
-    ) -> buck2_error::Result<Option<(&FrozenAnalysisValueStorage, &FrozenHeapRef)>> {
+    ) -> bz_error::Result<Option<(&FrozenAnalysisValueStorage, &FrozenHeapRef)>> {
         match &self.frozen_module {
             None => Ok(None),
             Some(module) => {
@@ -903,7 +903,7 @@ impl AnalysisValueFetcher {
     pub fn get_action_data(
         &self,
         id: &ActionKey,
-    ) -> buck2_error::Result<(Option<OwnedFrozenValue>, Option<OwnedFrozenValue>)> {
+    ) -> bz_error::Result<(Option<OwnedFrozenValue>, Option<OwnedFrozenValue>)> {
         let Some((storage, heap_ref)) = self.extra_value()? else {
             return Ok((None, None));
         };
@@ -931,7 +931,7 @@ impl AnalysisValueFetcher {
     pub(crate) fn get_recorded_values(
         &self,
         actions: RecordedActions,
-    ) -> buck2_error::Result<RecordedAnalysisValues> {
+    ) -> bz_error::Result<RecordedAnalysisValues> {
         let analysis_storage = match &self.frozen_module {
             None => None,
             Some(module) => Some(FrozenAnalysisExtraValue::get(module)?.try_map(|v| {
@@ -1055,7 +1055,7 @@ impl RecordedAnalysisValues {
     pub(crate) fn lookup_transitive_set(
         &self,
         key: &TransitiveSetKey,
-    ) -> buck2_error::Result<OwnedFrozenValueTyped<FrozenTransitiveSet>> {
+    ) -> bz_error::Result<OwnedFrozenValueTyped<FrozenTransitiveSet>> {
         if key.holder_key() != &self.self_key {
             return Err(internal_error!(
                 "Wrong owner for transitive set: expecting `{}`, got `{}`",
@@ -1070,7 +1070,7 @@ impl RecordedAnalysisValues {
             .ok_or_else(|| internal_error!("Missing transitive set `{key}`"))
     }
 
-    pub fn lookup_action(&self, key: &ActionKey) -> buck2_error::Result<ActionLookup> {
+    pub fn lookup_action(&self, key: &ActionKey) -> bz_error::Result<ActionLookup> {
         if key.holder_key() != &self.self_key {
             return Err(internal_error!(
                 "Wrong owner for action: expecting `{}`, got `{}`",
@@ -1088,7 +1088,7 @@ impl RecordedAnalysisValues {
 
     pub fn analysis_storage(
         &self,
-    ) -> buck2_error::Result<OwnedRefFrozenRef<'_, FrozenAnalysisValueStorage>> {
+    ) -> bz_error::Result<OwnedRefFrozenRef<'_, FrozenAnalysisValueStorage>> {
         Ok(self
             .analysis_storage
             .as_ref()
@@ -1104,7 +1104,7 @@ impl RecordedAnalysisValues {
             .flat_map(|v| v.value.lambda_params.iter_dynamic_lambda_outputs())
     }
 
-    pub fn provider_collection(&self) -> buck2_error::Result<FrozenProviderCollectionValueRef<'_>> {
+    pub fn provider_collection(&self) -> bz_error::Result<FrozenProviderCollectionValueRef<'_>> {
         let analysis_storage = self
             .analysis_storage
             .as_ref()
@@ -1122,7 +1122,7 @@ impl RecordedAnalysisValues {
         }
     }
 
-    pub(crate) fn retained_memory(&self) -> buck2_error::Result<usize> {
+    pub(crate) fn retained_memory(&self) -> bz_error::Result<usize> {
         Ok(self
             .analysis_storage
             .as_ref()

@@ -16,12 +16,12 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::TargetName;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetName;
 use pagable::Pagable;
 
 use crate::oncall::Oncall;
@@ -163,7 +163,7 @@ impl Hash for Package {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::target::label::label::TargetLabel;
+    use bz_core::target::label::label::TargetLabel;
 
     use super::*;
 

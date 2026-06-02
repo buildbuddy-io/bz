@@ -16,33 +16,33 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_cli_proto::DaemonProcessInfo;
-use buck2_client_ctx::daemon_constraints::gen_daemon_constraints;
-use buck2_client_ctx::version::BuckVersion;
-use buck2_common::buckd_connection::ConnectionType;
-use buck2_common::daemon_dir::DaemonDir;
-use buck2_common::init::DaemonStartupConfig;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::memory;
-use buck2_core::buck2_env;
-use buck2_core::logging::LogConfigurationReloadHandle;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
+use bz_cli_proto::DaemonProcessInfo;
+use bz_client_ctx::daemon_constraints::gen_daemon_constraints;
+use bz_client_ctx::version::BuckVersion;
+use bz_common::buckd_connection::ConnectionType;
+use bz_common::daemon_dir::DaemonDir;
+use bz_common::init::DaemonStartupConfig;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_common::memory;
+use bz_core::bz_env;
+use bz_core::logging::LogConfigurationReloadHandle;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
 #[cfg(windows)]
-use buck2_error::buck2_error;
-use buck2_error::conversion::clap::buck_error_clap_parser;
-use buck2_events::daemon_id::DaemonId;
-use buck2_events::daemon_id::set_daemon_id_for_panics;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_resource_control::buck_cgroup_tree::PreppedBuckCgroups;
-use buck2_server::daemon::daemon_tcp::create_listener;
-use buck2_server::daemon::server::BuckdServer;
-use buck2_server::daemon::server::BuckdServerDelegate;
-use buck2_server::daemon::server::BuckdServerInitPreferences;
-use buck2_util::threads::thread_spawn;
-use buck2_util::tokio_runtime::new_tokio_runtime;
+use bz_error::bz_error;
+use bz_error::conversion::clap::buck_error_clap_parser;
+use bz_events::daemon_id::DaemonId;
+use bz_events::daemon_id::set_daemon_id_for_panics;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_resource_control::buck_cgroup_tree::PreppedBuckCgroups;
+use bz_server::daemon::daemon_tcp::create_listener;
+use bz_server::daemon::server::BuckdServer;
+use bz_server::daemon::server::BuckdServerDelegate;
+use bz_server::daemon::server::BuckdServerInitPreferences;
+use bz_util::threads::thread_spawn;
+use bz_util::tokio_runtime::new_tokio_runtime;
 use dice::DetectCycles;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -56,7 +56,7 @@ use tokio::runtime::Builder;
 use crate::daemon_lower_priority::daemon_lower_priority;
 use crate::schedule_termination::maybe_schedule_termination;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum DaemonError {
     #[error("The buckd pid file at `{}` had a mismatched pid, expected `{1}`, got `{2}`", _0.display())]
@@ -122,7 +122,7 @@ impl DaemonCommand {
     }
 }
 
-pub(crate) fn init_listener() -> buck2_error::Result<(std::net::TcpListener, ConnectionType)> {
+pub(crate) fn init_listener() -> bz_error::Result<(std::net::TcpListener, ConnectionType)> {
     let (endpoint, listener) = create_listener()?;
 
     tracing::info!("Listener created on {}", &endpoint);
@@ -133,13 +133,13 @@ pub(crate) fn init_listener() -> buck2_error::Result<(std::net::TcpListener, Con
 pub(crate) fn write_process_info(
     daemon_dir: &DaemonDir,
     process_info: &DaemonProcessInfo,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let file = File::create(daemon_dir.buckd_info())?;
     serde_json::to_writer(&file, &process_info)?;
     Ok(())
 }
 
-fn verify_current_daemon(daemon_dir: &DaemonDir) -> buck2_error::Result<()> {
+fn verify_current_daemon(daemon_dir: &DaemonDir) -> bz_error::Result<()> {
     let file = daemon_dir.buckd_pid();
     let my_pid = process::id();
 
@@ -171,7 +171,7 @@ fn terminate_on_panic() {
     }));
 }
 
-fn verify_buck_out_dir(paths: &InvocationPaths) -> buck2_error::Result<()> {
+fn verify_buck_out_dir(paths: &InvocationPaths) -> bz_error::Result<()> {
     let path = paths.buck_out_path();
 
     fs_util::create_dir_all(path.clone()).map_err(|e| {
@@ -207,7 +207,7 @@ impl DaemonCommand {
         paths: InvocationPaths,
         in_process: bool,
         listener_created: impl FnOnce() + Send,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let prepped_cgroups = if self.has_cgroup {
             // Note: It's important that we do this before daemonizing, as otherwise there may be
             // stray processes laying around in this cgroup
@@ -230,7 +230,7 @@ impl DaemonCommand {
         fs_util::set_current_dir(paths.project_root().root()).categorize_internal()?;
 
         let server_init_ctx = BuckdServerInitPreferences {
-            detect_cycles: buck2_env!("DICE_DETECT_CYCLES_UNSTABLE", type=DetectCycles)?,
+            detect_cycles: bz_env!("DICE_DETECT_CYCLES_UNSTABLE", type=DetectCycles)?,
             enable_trace_io: self.enable_trace_io,
             reject_materializer_state: self.reject_materializer_state.map(|s| s.into()),
             daemon_startup_config: self.daemon_startup_config,
@@ -239,7 +239,7 @@ impl DaemonCommand {
         let span = tracing::info_span!("daemon_listener");
         let span_guard = span.enter();
 
-        if buck2_env!(
+        if bz_env!(
             "BUCK2_TEST_DAEMON_STARTUP_SIGNAL",
             bool,
             applicability = testing
@@ -327,13 +327,13 @@ impl DaemonCommand {
         // Raise file descriptor limits. The default on modern macOS is
         // pathetically low (256!!!), and distros like Fedora Asahi have a limit
         // as low as 1024, which can easily be exceeded on any modern machine.
-        buck2_common::rlimits::raise_file_descriptor_limits()?;
+        bz_common::rlimits::raise_file_descriptor_limits()?;
 
         // Higher performance for jemalloc, recommended (but may not have any effect on Mac)
         // https://github.com/jemalloc/jemalloc/blob/dev/TUNING.md#notable-runtime-options-for-performance-tuning
         memory::enable_background_threads()?;
 
-        let fb = buck2_common::fbinit::get_or_init_fbcode_globals();
+        let fb = bz_common::fbinit::get_or_init_fbcode_globals();
 
         if cfg!(target_os = "linux") {
             #[cfg(fbcode_build)]
@@ -362,14 +362,14 @@ impl DaemonCommand {
         if let Some(num_tokio_workers) = server_init_ctx
             .daemon_startup_config
             .num_tokio_workers
-            .or(buck2_env!("BUCK2_RUNTIME_THREADS", type=usize)?)
+            .or(bz_env!("BUCK2_RUNTIME_THREADS", type=usize)?)
         {
             if num_tokio_workers > 0 {
                 builder.worker_threads(num_tokio_workers);
             }
         }
 
-        if let Some(threads) = buck2_env!("BUCK2_MAX_BLOCKING_THREADS", type=usize)? {
+        if let Some(threads) = bz_env!("BUCK2_MAX_BLOCKING_THREADS", type=usize)? {
             builder.max_blocking_threads(threads);
         }
 
@@ -498,7 +498,7 @@ impl DaemonCommand {
         let this_rt = Builder::new_current_thread().enable_all().build().unwrap();
 
         this_rt.block_on(async move {
-            let checker_interval_seconds = buck2_env!(
+            let checker_interval_seconds = bz_env!(
                 "BUCK2_TESTING_CHECKER_INTERVAL_SECONDS",
                 type = u64,
                 applicability = testing
@@ -514,7 +514,7 @@ impl DaemonCommand {
                     Err(e) => {
                         // This bit of code cannot relay errors, ignoring that we can't log
                         // a warning is reasonable.
-                        let _ignored = buck2_client_ctx::eprintln!(
+                        let _ignored = bz_client_ctx::eprintln!(
                             "daemon verification failed, forcing shutdown: {:#}",
                             e
                         );
@@ -534,7 +534,7 @@ impl DaemonCommand {
                         project_root.display(),
                         e
                     );
-                    let _ignored = buck2_client_ctx::eprintln!("{}", msg);
+                    let _ignored = bz_client_ctx::eprintln!("{}", msg);
 
                     let _ignored = hard_shutdown_sender.unbounded_send(msg);
                 }
@@ -548,7 +548,7 @@ impl DaemonCommand {
         paths: InvocationPaths,
         in_process: bool,
         listener_created: impl FnOnce() + Send,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let daemon_dir = paths.daemon_dir()?;
         if !daemon_dir.path.is_dir() {
             fs_util::create_dir_all(&daemon_dir.path)?;
@@ -558,7 +558,7 @@ impl DaemonCommand {
         if let Err(err) = res.as_ref() {
             fs_util::write(
                 daemon_dir.buckd_error_log(),
-                serde_json::to_string(&buck2_data::ErrorReport::from(err))?,
+                serde_json::to_string(&bz_data::ErrorReport::from(err))?,
             )
             .categorize_internal()?;
         }
@@ -566,21 +566,21 @@ impl DaemonCommand {
     }
 
     #[cfg(unix)]
-    fn redirect_output(stdout: File, stderr: File) -> buck2_error::Result<()> {
+    fn redirect_output(stdout: File, stderr: File) -> bz_error::Result<()> {
         nix::unistd::dup2_stdout(&stdout)?;
         nix::unistd::dup2_stderr(&stderr)?;
         Ok(())
     }
 
     #[cfg(windows)]
-    fn redirect_output(stdout: File, stderr: File) -> buck2_error::Result<()> {
+    fn redirect_output(stdout: File, stderr: File) -> bz_error::Result<()> {
         use std::os::windows::io::AsRawHandle;
 
         unsafe {
             let stdout_fd = libc::open_osfhandle(stdout.as_raw_handle() as isize, libc::O_RDWR);
             let stderr_fd = libc::open_osfhandle(stderr.as_raw_handle() as isize, libc::O_RDWR);
             if stdout_fd == -1 || stderr_fd == -1 {
-                return Err(buck2_error!(
+                return Err(bz_error!(
                     ErrorTag::DaemonRedirect,
                     "Can't get file descriptors for output files",
                 ));
@@ -589,7 +589,7 @@ impl DaemonCommand {
             let stdout_exit_code = libc::dup2(stdout_fd, 1);
             let stderr_exit_code = libc::dup2(stderr_fd, 2);
             if stdout_exit_code == -1 || stderr_exit_code == -1 {
-                return Err(buck2_error!(
+                return Err(bz_error!(
                     ErrorTag::DaemonRedirect,
                     "Failed to redirect daemon output"
                 ));
@@ -599,7 +599,7 @@ impl DaemonCommand {
     }
 
     #[cfg(unix)]
-    fn daemonize(stdout: File, stderr: File) -> buck2_error::Result<()> {
+    fn daemonize(stdout: File, stderr: File) -> bz_error::Result<()> {
         // TODO(cjhopman): Daemonize is pretty un-maintained. We may need to move
         // to something else or just do it ourselves.
         let daemonize = crate::daemonize::Daemonize::new()
@@ -611,8 +611,8 @@ impl DaemonCommand {
 
     #[cfg(windows)]
     /// Restart current process in detached mode with '--dont-daemonize' flag.
-    fn daemonize(_stdout: File, _stderr: File) -> buck2_error::Result<()> {
-        Err(buck2_error!(
+    fn daemonize(_stdout: File, _stderr: File) -> bz_error::Result<()> {
+        Err(bz_error!(
             ErrorTag::WindowsUnsupported,
             "Cannot daemonize on Windows"
         ))
@@ -625,24 +625,24 @@ mod tests {
     use std::time::Duration;
 
     use allocative::Allocative;
-    use buck2_cli_proto::DaemonProcessInfo;
-    use buck2_cli_proto::KillRequest;
-    use buck2_cli_proto::PingRequest;
-    use buck2_client_ctx::daemon::client::connect::new_daemon_api_client;
-    use buck2_client_ctx::daemon_constraints::gen_daemon_constraints;
-    use buck2_common::init::DaemonStartupConfig;
-    use buck2_common::invocation_paths::InvocationPaths;
-    use buck2_common::invocation_roots::InvocationRoots;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_core::logging::LogConfigurationReloadHandle;
-    use buck2_error::BuckErrorContext;
-    use buck2_events::daemon_id::DaemonId;
-    use buck2_fs::paths::file_name::FileNameBuf;
-    use buck2_server::daemon::daemon_tcp::create_listener;
-    use buck2_server::daemon::server::BuckdServer;
-    use buck2_server::daemon::server::BuckdServerDelegate;
-    use buck2_server::daemon::server::BuckdServerInitPreferences;
+    use bz_cli_proto::DaemonProcessInfo;
+    use bz_cli_proto::KillRequest;
+    use bz_cli_proto::PingRequest;
+    use bz_client_ctx::daemon::client::connect::new_daemon_api_client;
+    use bz_client_ctx::daemon_constraints::gen_daemon_constraints;
+    use bz_common::init::DaemonStartupConfig;
+    use bz_common::invocation_paths::InvocationPaths;
+    use bz_common::invocation_roots::InvocationRoots;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_core::logging::LogConfigurationReloadHandle;
+    use bz_error::BuckErrorContext;
+    use bz_events::daemon_id::DaemonId;
+    use bz_fs::paths::file_name::FileNameBuf;
+    use bz_server::daemon::daemon_tcp::create_listener;
+    use bz_server::daemon::server::BuckdServer;
+    use bz_server::daemon::server::BuckdServerDelegate;
+    use bz_server::daemon::server::BuckdServerInitPreferences;
     use dupe::Dupe;
     use rand::Rng as _;
     use rand::SeedableRng;
@@ -651,11 +651,11 @@ mod tests {
     // `fbinit_tokio` is not on crates, so we cannot use `#[fbinit::test]`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_daemon_smoke() {
-        buck2_certs::certs::maybe_setup_cryptography();
+        bz_certs::certs::maybe_setup_cryptography();
 
         let fbinit = unsafe { fbinit::perform_init() };
 
-        buck2_core::client_only::CLIENT_ONLY_VAL.init(false);
+        bz_core::client_only::CLIENT_ONLY_VAL.init(false);
 
         let project_root = ProjectRootTemp::new().unwrap();
 

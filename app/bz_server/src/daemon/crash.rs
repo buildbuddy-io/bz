@@ -11,14 +11,14 @@
 use std::thread;
 use std::time::Duration;
 
-use buck2_cli_proto::GenericResponse;
-use buck2_cli_proto::UnstableCrashRequest;
-use buck2_cli_proto::unstable_crash_request::CrashType;
-use buck2_error::BuckErrorContext;
+use bz_cli_proto::GenericResponse;
+use bz_cli_proto::UnstableCrashRequest;
+use bz_cli_proto::unstable_crash_request::CrashType;
+use bz_error::BuckErrorContext;
 
-pub(crate) async fn crash(req: UnstableCrashRequest) -> buck2_error::Result<GenericResponse> {
+pub(crate) async fn crash(req: UnstableCrashRequest) -> bz_error::Result<GenericResponse> {
     let crash_type = CrashType::try_from(req.crash_type).map_err(|_| {
-        buck2_error::buck2_error!(buck2_error::ErrorTag::CrashRequested, "{}", "bad request")
+        bz_error::bz_error!(bz_error::ErrorTag::CrashRequested, "{}", "bad request")
     })?;
     match crash_type {
         CrashType::Panic => {
@@ -41,16 +41,16 @@ const NUM_THREADS: usize = 4;
 const SLEEP_DURATION: Duration = Duration::from_millis(10);
 
 #[cfg(unix)]
-fn query_page_size() -> buck2_error::Result<usize> {
-    buck2_util::os::unix_like::sc_page_size::sc_page_size()
+fn query_page_size() -> bz_error::Result<usize> {
+    bz_util::os::unix_like::sc_page_size::sc_page_size()
 }
 
 #[cfg(windows)]
-fn query_page_size() -> buck2_error::Result<usize> {
-    buck2_util::os::win::page_size::page_size()
+fn query_page_size() -> bz_error::Result<usize> {
+    bz_util::os::win::page_size::page_size()
 }
 
-async fn allocate_memory(bytes: u64) -> buck2_error::Result<GenericResponse> {
+async fn allocate_memory(bytes: u64) -> bz_error::Result<GenericResponse> {
     let page_size = query_page_size()?;
 
     tokio::task::spawn_blocking(move || {

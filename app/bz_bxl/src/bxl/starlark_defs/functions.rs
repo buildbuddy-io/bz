@@ -10,17 +10,17 @@
 
 use std::time::Instant;
 
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLikeUnpack;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::parse_package::parse_package;
-use buck2_interpreter::types::package_path::StarlarkPackagePath;
-use buck2_interpreter_for_build::interpreter::package_file_calculation::EvalPackageFile;
-use buck2_interpreter_for_build::super_package::package_value::SuperPackageValuesImpl;
-use buck2_node::metadata::key::MetadataKeyRef;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::unconfigured::TargetNode;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLikeUnpack;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_core::cells::CellAliasResolver;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::parse_package::parse_package;
+use bz_interpreter::types::package_path::StarlarkPackagePath;
+use bz_interpreter_for_build::interpreter::package_file_calculation::EvalPackageFile;
+use bz_interpreter_for_build::super_package::package_value::SuperPackageValuesImpl;
+use bz_node::metadata::key::MetadataKeyRef;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::unconfigured::TargetNode;
 use dupe::Dupe;
 use futures::FutureExt;
 use starlark::environment::GlobalsBuilder;
@@ -94,7 +94,7 @@ pub(crate) fn register_target_function(builder: &mut GlobalsBuilder) {
     }
 }
 
-#[derive(Debug, buck2_error::Error, Clone)]
+#[derive(Debug, bz_error::Error, Clone)]
 #[buck2(tag = Input)]
 enum GetPathWithMaterializationError {
     #[error("Promise artifacts are not supported in `get_path_without_materialization()`")]
@@ -144,7 +144,7 @@ pub(crate) fn register_artifact_function(builder: &mut GlobalsBuilder) {
                 ctx.artifact_fs(),
             )?,
             _ => {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     GetPathWithMaterializationError::PromiseArtifactsNotSupported,
                 )
                 .into());
@@ -241,7 +241,7 @@ pub(crate) fn register_instant_function(builder: &mut GlobalsBuilder) {
 /// This is used to mark the error returned by `fail_no_stacktrace()` (via context chaining).
 /// We check if this marker is present after finishing BXL evaluation. If this marker is present,
 /// then we hide the stacktrace. Otherwise, we emit the stacktrace to users.
-#[derive(Debug, buck2_error::Error, Clone)]
+#[derive(Debug, bz_error::Error, Clone)]
 #[error("fail:{0}")]
 #[buck2(tag = Tier0)]
 pub(crate) struct BxlErrorWithoutStacktrace(String);
@@ -271,7 +271,7 @@ pub(crate) enum PackagePathArg<'v> {
 }
 
 impl<'v> PackagePathArg<'v> {
-    fn pkg(&self, cell_alias_resolver: &CellAliasResolver) -> buck2_error::Result<PackageLabel> {
+    fn pkg(&self, cell_alias_resolver: &CellAliasResolver) -> bz_error::Result<PackageLabel> {
         match self {
             PackagePathArg::PackagePath(package_path) => Ok(package_path.pkg().dupe()),
             PackagePathArg::Str(pkg_str) => {
@@ -314,7 +314,7 @@ pub(crate) fn register_read_package_value_function(builder: &mut GlobalsBuilder)
         #[starlark(require = pos)] key: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let metadata_key = MetadataKeyRef::new(key).map_err(buck2_error::Error::from)?;
+        let metadata_key = MetadataKeyRef::new(key).map_err(bz_error::Error::from)?;
 
         let bxl_eval_extra = BxlEvalExtra::from_context(eval)?;
         let package = package_path.pkg(bxl_eval_extra.core.cell_alias_resolver())?;

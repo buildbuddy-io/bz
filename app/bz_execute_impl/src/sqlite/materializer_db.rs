@@ -10,18 +10,18 @@
 
 use std::sync::Arc;
 
-use buck2_common::sqlite::sqlite_db::SqliteDb;
-use buck2_common::sqlite::sqlite_db::SqliteIdentity;
-use buck2_common::sqlite::sqlite_db::SqliteTable;
-use buck2_common::sqlite::sqlite_db::SqliteTables;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_hash::StdBuckHashMap;
+use bz_common::sqlite::sqlite_db::SqliteDb;
+use bz_common::sqlite::sqlite_db::SqliteIdentity;
+use bz_common::sqlite::sqlite_db::SqliteTable;
+use bz_common::sqlite::sqlite_db::SqliteTables;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_hash::StdBuckHashMap;
 use chrono::DateTime;
 use chrono::Utc;
 use dupe::Dupe;
@@ -47,7 +47,7 @@ pub type MaterializerState = Vec<MaterializerStateEntry>;
 
 /// Concrete implementation of SqliteTable for MaterializerStateSqliteTable
 impl SqliteTable for MaterializerStateSqliteTable {
-    fn create_table(&self) -> buck2_error::Result<()> {
+    fn create_table(&self) -> bz_error::Result<()> {
         MaterializerStateSqliteTable::create_table(self)
     }
 }
@@ -63,19 +63,19 @@ pub struct MaterializerStateSqliteDb {
 
 pub struct MaterializerStateSqliteDbDeferredLoad {
     db: MaterializerStateSqliteDb,
-    load_error: Option<buck2_error::Error>,
+    load_error: Option<bz_error::Error>,
 }
 
 impl SqliteDb for MaterializerStateSqliteDb {
     type StateType = MaterializerState;
     type TableType = MaterializerStateSqliteTable;
 
-    fn new(tables: SqliteTables<Self::TableType>) -> buck2_error::Result<Self> {
+    fn new(tables: SqliteTables<Self::TableType>) -> bz_error::Result<Self> {
         let identity = tables.get_identity()?;
         Ok(Self { tables, identity })
     }
 
-    fn open_tables(path: &AbsNormPath) -> buck2_error::Result<SqliteTables<Self::TableType>> {
+    fn open_tables(path: &AbsNormPath) -> bz_error::Result<SqliteTables<Self::TableType>> {
         let connection = SqliteTables::<Self::TableType>::create_connection(path)?;
         let materializer_state_table = MaterializerStateSqliteTable::new(connection.dupe());
         Ok(SqliteTables::new(materializer_state_table, connection))
@@ -102,7 +102,7 @@ impl MaterializerStateSqliteDb {
         io_executor: Arc<dyn BlockingExecutor>,
         digest_config: DigestConfig,
         reject_identity: Option<&SqliteIdentity>,
-    ) -> buck2_error::Result<(Self, buck2_error::Result<MaterializerState>)> {
+    ) -> bz_error::Result<(Self, bz_error::Result<MaterializerState>)> {
         io_executor
             .execute_io_inline(|| {
                 Self::defer_load(
@@ -123,7 +123,7 @@ impl MaterializerStateSqliteDb {
         current_instance_metadata: StdBuckHashMap<String, String>,
         _digest_config: DigestConfig,
         reject_identity: Option<&SqliteIdentity>,
-    ) -> buck2_error::Result<MaterializerStateSqliteDbDeferredLoad> {
+    ) -> bz_error::Result<MaterializerStateSqliteDbDeferredLoad> {
         let reject_identity = reject_identity.cloned();
 
         match Self::get_sqlite_db(
@@ -157,7 +157,7 @@ impl MaterializerStateSqliteDb {
         current_instance_metadata: StdBuckHashMap<String, String>,
         digest_config: DigestConfig,
         reject_identity: Option<&SqliteIdentity>,
-    ) -> buck2_error::Result<(Self, buck2_error::Result<MaterializerState>)> {
+    ) -> bz_error::Result<(Self, bz_error::Result<MaterializerState>)> {
         let reject_identity = reject_identity.cloned();
 
         match Self::get_sqlite_db(
@@ -206,9 +206,9 @@ impl MaterializerStateSqliteDbDeferredLoad {
 
     pub fn load(
         self,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         MaterializerStateSqliteDb,
-        buck2_error::Result<MaterializerState>,
+        bz_error::Result<MaterializerState>,
     )> {
         let Self { db, load_error } = self;
 
@@ -226,9 +226,9 @@ pub(crate) fn testing_materializer_state_sqlite_db(
     versions: StdBuckHashMap<String, String>,
     metadata: StdBuckHashMap<String, String>,
     reject_identity: Option<&SqliteIdentity>,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     MaterializerStateSqliteDb,
-    buck2_error::Result<MaterializerState>,
+    bz_error::Result<MaterializerState>,
 )> {
     MaterializerStateSqliteDb::initialize_materializer_sqlite_db(
         fs.resolve(ProjectRelativePath::unchecked_new(
@@ -245,18 +245,18 @@ pub(crate) fn testing_materializer_state_sqlite_db(
 mod tests {
 
     use assert_matches::assert_matches;
-    use buck2_common::cas_digest::TrackedCasDigest;
-    use buck2_common::file_ops::metadata::FileMetadata;
-    use buck2_common::file_ops::metadata::Symlink;
-    use buck2_common::file_ops::metadata::TrackedFileDigest;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_directory::directory::builder::DirectoryBuilder;
-    use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
-    use buck2_directory::directory::entry::DirectoryEntry;
-    use buck2_events::daemon_id::DaemonId;
-    use buck2_execute::directory::ActionDirectoryMember;
-    use buck2_execute::directory::new_symlink;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_common::cas_digest::TrackedCasDigest;
+    use bz_common::file_ops::metadata::FileMetadata;
+    use bz_common::file_ops::metadata::Symlink;
+    use bz_common::file_ops::metadata::TrackedFileDigest;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_directory::directory::builder::DirectoryBuilder;
+    use bz_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
+    use bz_directory::directory::entry::DirectoryEntry;
+    use bz_events::daemon_id::DaemonId;
+    use bz_execute::directory::ActionDirectoryMember;
+    use bz_execute::directory::new_symlink;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     use chrono::TimeZone;
     use itertools::Itertools;
     use parking_lot::Mutex;
@@ -424,9 +424,9 @@ mod tests {
     }
 
     #[test]
-    fn test_initialize_sqlite_db() -> buck2_error::Result<()> {
+    fn test_initialize_sqlite_db() -> bz_error::Result<()> {
         fn testing_metadatas() -> Vec<StdBuckHashMap<String, String>> {
-            let metadata = buck2_events::metadata::collect(&DaemonId::new());
+            let metadata = bz_events::metadata::collect(&DaemonId::new());
             let mut metadatas = vec![metadata; 5];
             for (i, metadata) in metadatas.iter_mut().enumerate() {
                 metadata.insert("version".to_owned(), i.to_string());

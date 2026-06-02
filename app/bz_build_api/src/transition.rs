@@ -12,11 +12,11 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::transition::applied::TransitionApplied;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_node::attrs::configured_attr::ConfiguredAttr;
-use buck2_util::late_binding::LateBinding;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::transition::applied::TransitionApplied;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_node::attrs::configured_attr::ConfiguredAttr;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 use dupe::Dupe;
 use pagable::Pagable;
@@ -48,7 +48,7 @@ pub trait TransitionCalculation: Send + Sync + 'static {
         attrs: &OrderedMap<&str, Arc<ConfiguredAttr>>,
         conf: &ConfigurationData,
         transition_id: &TransitionId,
-    ) -> buck2_error::Result<Arc<TransitionApplied>>;
+    ) -> bz_error::Result<Arc<TransitionApplied>>;
 }
 
 pub static TRANSITION_CALCULATION: LateBinding<&'static dyn TransitionCalculation> =
@@ -69,5 +69,5 @@ pub trait TransitionAttrProvider: Send + Sync + 'static {
         &self,
         ctx: &mut DiceComputations<'_>,
         transition_id: &TransitionId,
-    ) -> buck2_error::Result<TransitionAttrs>;
+    ) -> bz_error::Result<TransitionAttrs>;
 }

@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
 
 pub struct ExecutorFs<'a> {
     fs: &'a ArtifactFs,

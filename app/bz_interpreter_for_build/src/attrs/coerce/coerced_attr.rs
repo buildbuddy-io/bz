@@ -10,17 +10,17 @@
 
 //! Contains the internal support within the attribute framework for `select()`.
 
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_interpreter::types::select_fail::StarlarkSelectFail;
-use buck2_interpreter::types::select_incompatible::StarlarkSelectIncompatible;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coerced_attr::CoercedConcat;
-use buck2_node::attrs::coerced_attr::CoercedSelector;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
-use buck2_node::configuration::resolved::ConfigurationSettingKey;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_interpreter::types::select_fail::StarlarkSelectFail;
+use bz_interpreter::types::select_incompatible::StarlarkSelectIncompatible;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coerced_attr::CoercedConcat;
+use bz_node::attrs::coerced_attr::CoercedSelector;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::configuration::resolved::ConfigurationSettingKey;
 use starlark::values::Value;
 use starlark::values::dict::DictRef;
 
@@ -28,7 +28,7 @@ use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::interpreter::selector::StarlarkSelector;
 use crate::interpreter::selector::StarlarkSelectorGen;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum SelectError {
     #[error("select() condition was not a string, got `{0}`.")]
@@ -48,7 +48,7 @@ pub trait CoercedAttrExr: Sized {
         ctx: &dyn AttrCoercionContext,
         value: Value,
         default_attr: Option<&Self>,
-    ) -> buck2_error::Result<Self>;
+    ) -> bz_error::Result<Self>;
 }
 
 impl CoercedAttrExr for CoercedAttr {
@@ -58,7 +58,7 @@ impl CoercedAttrExr for CoercedAttr {
         ctx: &dyn AttrCoercionContext,
         value: Value,
         default_attr: Option<&Self>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         // A Selector in starlark is currently implemented as simply a Value (holding a
         // dict if valid).
         //

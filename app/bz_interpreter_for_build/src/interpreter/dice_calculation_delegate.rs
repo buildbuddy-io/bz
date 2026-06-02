@@ -14,57 +14,57 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::actions::execute::dice_data::DiceHasCommandExecutor;
-use buck2_build_api::actions::execute::dice_data::HasFallbackExecutorConfig;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::cycles::CycleGuard;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::file_ops::error::FileReadErrorContext;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::dice::OpaqueLegacyBuckConfigOnDice;
-use buck2_common::package_boundary::HasPackageBoundaryExceptions;
-use buck2_common::package_listing::PackageListingStrategy;
-use buck2_common::package_listing::bazel_compat_package_listing_enabled;
-use buck2_common::package_listing::dice::DicePackageListingResolver;
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::execution_types::executor_config::Executor;
-use buck2_core::execution_types::executor_config::RemoteEnabledExecutor;
-use buck2_core::package::PackageLabel;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::span;
-use buck2_events::dispatch::span_async_simple;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::execute::blocking::HasBlockingExecutor;
-use buck2_execute::execute::command_executor::CommandExecutor;
-use buck2_execute::materialize::materializer::HasMaterializer;
-use buck2_interpreter::allow_relative_paths::HasAllowRelativePaths;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::file_loader::LoadedModule;
-use buck2_interpreter::file_loader::ModuleDeps;
-use buck2_interpreter::from_freeze::from_freeze_error;
-use buck2_interpreter::import_paths::HasImportPaths;
-use buck2_interpreter::import_paths::ImplicitImportPaths;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::package_imports::PackageImplicitImports;
-use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_interpreter::paths::package::PackageFilePath;
-use buck2_interpreter::paths::path::OwnedStarlarkPath;
-use buck2_interpreter::paths::path::StarlarkPath;
-use buck2_node::nodes::eval_result::EvaluationResult;
-use buck2_node::super_package::SuperPackage;
-use buck2_util::time_span::TimeSpan;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::actions::execute::dice_data::DiceHasCommandExecutor;
+use bz_build_api::actions::execute::dice_data::HasFallbackExecutorConfig;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::dice::cycles::CycleGuard;
+use bz_common::dice::data::HasIoProvider;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::file_ops::error::FileReadErrorContext;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::dice::OpaqueLegacyBuckConfigOnDice;
+use bz_common::package_boundary::HasPackageBoundaryExceptions;
+use bz_common::package_listing::PackageListingStrategy;
+use bz_common::package_listing::bazel_compat_package_listing_enabled;
+use bz_common::package_listing::dice::DicePackageListingResolver;
+use bz_common::package_listing::listing::PackageListing;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::execution_types::executor_config::Executor;
+use bz_core::execution_types::executor_config::RemoteEnabledExecutor;
+use bz_core::package::PackageLabel;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::span;
+use bz_events::dispatch::span_async_simple;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::execute::blocking::HasBlockingExecutor;
+use bz_execute::execute::command_executor::CommandExecutor;
+use bz_execute::materialize::materializer::HasMaterializer;
+use bz_interpreter::allow_relative_paths::HasAllowRelativePaths;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::file_loader::LoadedModule;
+use bz_interpreter::file_loader::ModuleDeps;
+use bz_interpreter::from_freeze::from_freeze_error;
+use bz_interpreter::import_paths::HasImportPaths;
+use bz_interpreter::import_paths::ImplicitImportPaths;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::package_imports::PackageImplicitImports;
+use bz_interpreter::paths::module::OwnedStarlarkModulePath;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_interpreter::paths::package::PackageFilePath;
+use bz_interpreter::paths::path::OwnedStarlarkPath;
+use bz_interpreter::paths::path::StarlarkPath;
+use bz_node::nodes::eval_result::EvaluationResult;
+use bz_node::super_package::SuperPackage;
+use bz_util::time_span::TimeSpan;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::Key;
@@ -128,7 +128,7 @@ pub trait HasCalculationDelegate<'c, 'd> {
     async fn get_interpreter_calculator(
         &'c mut self,
         path: OwnedStarlarkPath,
-    ) -> buck2_error::Result<DiceCalculationDelegate<'c, 'd>>;
+    ) -> bz_error::Result<DiceCalculationDelegate<'c, 'd>>;
 }
 
 #[async_trait]
@@ -136,7 +136,7 @@ impl<'c, 'd> HasCalculationDelegate<'c, 'd> for DiceComputations<'d> {
     async fn get_interpreter_calculator(
         &'c mut self,
         path: OwnedStarlarkPath,
-    ) -> buck2_error::Result<DiceCalculationDelegate<'c, 'd>> {
+    ) -> bz_error::Result<DiceCalculationDelegate<'c, 'd>> {
         #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
         #[display("{}@{}", _0, _1)]
         #[pagable_typetag(dice::DiceKeyDyn)]
@@ -144,7 +144,7 @@ impl<'c, 'd> HasCalculationDelegate<'c, 'd> for DiceComputations<'d> {
 
         #[async_trait]
         impl Key for InterpreterConfigForDirKey {
-            type Value = buck2_error::Result<Arc<InterpreterForDir>>;
+            type Value = bz_error::Result<Arc<InterpreterForDir>>;
             async fn compute(
                 &self,
                 ctx: &mut DiceComputations,
@@ -243,7 +243,7 @@ pub struct DiceCalculationDelegate<'c, 'd> {
 impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     async fn get_legacy_buck_config_for_starlark(
         &mut self,
-    ) -> buck2_error::Result<OpaqueLegacyBuckConfigOnDice> {
+    ) -> bz_error::Result<OpaqueLegacyBuckConfigOnDice> {
         self.ctx
             .get_legacy_config_on_dice(self.build_file_cell.name())
             .await
@@ -251,7 +251,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
 
     async fn bazel_repository_command_executor(
         &mut self,
-    ) -> buck2_error::Result<BazelRepositoryCommandExecutor> {
+    ) -> bz_error::Result<BazelRepositoryCommandExecutor> {
         let executor_config = self.ctx.get_fallback_executor_config().dupe();
         let remote_execution_enabled = match &executor_config.executor {
             Executor::RemoteEnabled(options) => matches!(
@@ -302,7 +302,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     async fn parse_file(
         &mut self,
         starlark_path: StarlarkPath<'_>,
-    ) -> buck2_error::Result<ParseResult> {
+    ) -> bz_error::Result<ParseResult> {
         let result =
             DiceFileComputations::read_file(self.ctx, starlark_path.path().as_ref().as_ref()).await;
         let content = match starlark_path {
@@ -318,7 +318,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     async fn eval_deps(
         ctx: &mut DiceComputations<'_>,
         modules: &[(Option<FileSpan>, OwnedStarlarkModulePath)],
-    ) -> buck2_error::Result<ModuleDeps> {
+    ) -> bz_error::Result<ModuleDeps> {
         Ok(ModuleDeps(
             ctx.try_compute_join(modules, |ctx, (span, import)| {
                 async move {
@@ -344,19 +344,19 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     async fn eval_deps_with_cycle_guard(
         ctx: &mut DiceComputations<'_>,
         modules: &[(Option<FileSpan>, OwnedStarlarkModulePath)],
-    ) -> buck2_error::Result<ModuleDeps> {
+    ) -> bz_error::Result<ModuleDeps> {
         let deps = CycleGuard::<LoadCycleDescriptor>::new(ctx)?
             .guard_this(Self::eval_deps(ctx, modules))
             .await
             .into_result(ctx)
             .await?;
-        deps.map_err(buck2_error::Error::from)?
+        deps.map_err(bz_error::Error::from)?
     }
 
     pub async fn prepare_eval(
         &mut self,
         starlark_file: StarlarkPath<'_>,
-    ) -> buck2_error::Result<(AstModule, ModuleDeps)> {
+    ) -> bz_error::Result<(AstModule, ModuleDeps)> {
         let (parse_data, deps) = self.prepare_eval_with_parse_data(starlark_file).await?;
         Ok((parse_data.ast, deps))
     }
@@ -364,7 +364,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     async fn prepare_eval_with_parse_data(
         &mut self,
         starlark_file: StarlarkPath<'_>,
-    ) -> buck2_error::Result<(ParseData, ModuleDeps)> {
+    ) -> bz_error::Result<(ParseData, ModuleDeps)> {
         let parse_data = self.parse_file(starlark_file).await??;
         let deps = Self::eval_deps_with_cycle_guard(self.ctx, &parse_data.imports).await?;
         Ok((parse_data, deps))
@@ -374,7 +374,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         &self,
         starlark_file: StarlarkPath<'_>,
         content: String,
-    ) -> buck2_error::Result<ParseResult> {
+    ) -> bz_error::Result<ParseResult> {
         self.configs.parse(starlark_file, content)
     }
 
@@ -382,7 +382,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         &self,
         starlark_file: StarlarkPath<'_>,
         load_string: &str,
-    ) -> buck2_error::Result<OwnedStarlarkModulePath> {
+    ) -> bz_error::Result<OwnedStarlarkModulePath> {
         self.configs.resolve_path(starlark_file, load_string)
     }
 
@@ -390,7 +390,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         &mut self,
         starlark_file: StarlarkModulePath<'_>,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         match starlark_file {
             StarlarkModulePath::JsonFile(_) => self.eval_json_module_uncached(starlark_file).await,
             StarlarkModulePath::TomlFile(_) => self.eval_toml_file_uncached(starlark_file).await,
@@ -406,7 +406,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         starlark_file: StarlarkModulePath<'_>,
         parse_data: Arc<ParseData>,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         match starlark_file {
             StarlarkModulePath::JsonFile(_) | StarlarkModulePath::TomlFile(_) => {
                 Err(internal_error!(
@@ -430,7 +430,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     async fn eval_json_module_uncached(
         &mut self,
         starlark_file: StarlarkModulePath<'_>,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         let path = starlark_file.path();
         let contents = DiceFileComputations::read_file(self.ctx, path.as_ref())
             .await
@@ -458,7 +458,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     async fn eval_toml_file_uncached(
         &mut self,
         starlark_file: StarlarkModulePath<'_>,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         let path = starlark_file.path();
         let contents = DiceFileComputations::read_file(self.ctx, path.as_ref())
             .await
@@ -488,7 +488,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         &mut self,
         starlark_file: StarlarkModulePath<'_>,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         let (ast, deps) = self.prepare_eval(starlark_file.into()).await?;
         self.eval_starlark_module_uncached_prepared(starlark_file, ast, deps, cancellation)
             .await
@@ -500,7 +500,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         ast: AstModule,
         deps: ModuleDeps,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         let loaded_modules = deps.get_loaded_modules();
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
@@ -539,7 +539,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         module_ctx_working_dir: &str,
         repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<crate::bazel::repository::BazelModuleExtensionEvaluation> {
+    ) -> bz_error::Result<crate::bazel::repository::BazelModuleExtensionEvaluation> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
         let command_executor = self.bazel_repository_command_executor().await?;
@@ -576,7 +576,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         fallback_extension_bzl_file: &str,
         fallback_extension_name: &str,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<String> {
+    ) -> bz_error::Result<String> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
 
@@ -607,7 +607,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         repository_ctx_working_dir: &str,
         repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<BazelRepositoryRuleEvaluation> {
+    ) -> bz_error::Result<BazelRepositoryRuleEvaluation> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
         let command_executor = self.bazel_repository_command_executor().await?;
@@ -639,7 +639,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     async fn eval_parent_package_file(
         &mut self,
         file: PackageLabel,
-    ) -> buck2_error::Result<SuperPackage> {
+    ) -> bz_error::Result<SuperPackage> {
         let cell_resolver = self.ctx.get_cell_resolver().await?;
         let proj_rel_path = cell_resolver.resolve_path(file.as_cell_path())?;
         match proj_rel_path.parent() {
@@ -659,7 +659,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     pub async fn prepare_package_file_eval(
         &mut self,
         package: PackageLabel,
-    ) -> buck2_error::Result<Option<(PackageFilePath, AstModule, ModuleDeps)>> {
+    ) -> bz_error::Result<Option<(PackageFilePath, AstModule, ModuleDeps)>> {
         // Note:
         /// To avoid paying the cost of read_dir when computing if any specific file has changed (e.g. PACKAGE),
         /// we depend on directory_sublisting_matching_any_case_key to invalidate all files that match (regardless of case).
@@ -681,7 +681,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
 
         #[async_trait]
         impl Key for PackageFileLookupKey {
-            type Value = buck2_error::Result<Option<Arc<PackageFilePath>>>;
+            type Value = bz_error::Result<Option<Arc<PackageFilePath>>>;
 
             async fn compute(
                 &self,
@@ -736,7 +736,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         &mut self,
         path: PackageLabel,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<SuperPackage> {
+    ) -> bz_error::Result<SuperPackage> {
         let parent = self.eval_parent_package_file(path.dupe()).await?;
         let ast_deps = self.prepare_package_file_eval(path.dupe()).await?;
 
@@ -775,14 +775,14 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     pub(crate) async fn eval_package_file(
         &mut self,
         path: PackageLabel,
-    ) -> buck2_error::Result<SuperPackage> {
+    ) -> bz_error::Result<SuperPackage> {
         #[derive(Debug, Display, Clone, Allocative, Eq, PartialEq, Hash, Pagable)]
         #[pagable_typetag(dice::DiceKeyDyn)]
         struct PackageFileKey(PackageLabel);
 
         #[async_trait]
         impl Key for PackageFileKey {
-            type Value = buck2_error::Result<SuperPackage>;
+            type Value = bz_error::Result<SuperPackage>;
 
             async fn compute(
                 &self,
@@ -824,7 +824,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         &mut self,
         package: PackageLabel,
         package_listing: &PackageListing,
-    ) -> buck2_error::Result<SuperPackage> {
+    ) -> bz_error::Result<SuperPackage> {
         for package_file_name in PackageFilePath::package_file_names() {
             if package_listing
                 .get_file(package_file_name.as_ref())
@@ -842,13 +842,13 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     async fn resolve_package_listing(
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
-    ) -> buck2_error::Result<PackageListing> {
+    ) -> bz_error::Result<PackageListing> {
         span_async_simple(
-            buck2_data::LoadPackageStart {
+            bz_data::LoadPackageStart {
                 path: package.as_cell_path().to_string(),
             },
             DicePackageListingResolver(ctx).resolve_package_listing(package.dupe()),
-            buck2_data::LoadPackageEnd {
+            bz_data::LoadPackageEnd {
                 path: package.as_cell_path().to_string(),
             },
         )
@@ -859,14 +859,14 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
         strategy: PackageListingStrategy,
-    ) -> buck2_error::Result<PackageListing> {
+    ) -> bz_error::Result<PackageListing> {
         span_async_simple(
-            buck2_data::LoadPackageStart {
+            bz_data::LoadPackageStart {
                 path: package.as_cell_path().to_string(),
             },
             DicePackageListingResolver(ctx)
                 .resolve_package_listing_with_strategy(package.dupe(), strategy),
-            buck2_data::LoadPackageEnd {
+            bz_data::LoadPackageEnd {
                 path: package.as_cell_path().to_string(),
             },
         )
@@ -877,14 +877,14 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
         requests: BTreeSet<BazelPackageDataRequest>,
-    ) -> buck2_error::Result<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>> {
+    ) -> bz_error::Result<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>> {
         compute_bazel_package_data(ctx, package, requests).await
     }
 
     async fn resolve_bazel_build_file(
         ctx: &mut DiceComputations<'_>,
         package: PackageLabel,
-    ) -> buck2_error::Result<BuildFilePath> {
+    ) -> bz_error::Result<BuildFilePath> {
         let buildfile_candidates =
             DiceFileComputations::buildfiles(ctx, package.cell_name()).await?;
         let package_root = package.as_cell_path().to_owned();
@@ -906,8 +906,8 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             .map(|candidate| format!("`{candidate}`"))
             .collect::<Vec<_>>()
             .join(", ");
-        Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "package `{}` has no build file; expected one of {candidates}",
             package.as_cell_path()
         ))
@@ -917,10 +917,10 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         &mut self,
         package: PackageLabel,
         cancellation: &CancellationContext,
-    ) -> (TimeSpan, buck2_error::Result<Arc<EvaluationResult>>) {
+    ) -> (TimeSpan, bz_error::Result<Arc<EvaluationResult>>) {
         let mut now = None;
         let eval_kind = StarlarkEvalKind::LoadBuildFile(package.dupe());
-        let eval_result: buck2_error::Result<_> = try {
+        let eval_result: bz_error::Result<_> = try {
             let package_cell = package.cell_name();
             let ((), bazel_compat_listing) = self
                 .ctx
@@ -1033,7 +1033,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
                     buckconfig.dupe(),
                     root_buckconfig.dupe(),
                 );
-                let start_event = buck2_data::LoadBuildFileStart {
+                let start_event = bz_data::LoadBuildFileStart {
                     cell: cell_str.clone(),
                     module_id: module_id.clone(),
                 };
@@ -1081,7 +1081,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
 
                     (
                         result_with_stats,
-                        buck2_data::LoadBuildFileEnd {
+                        bz_data::LoadBuildFileEnd {
                             module_id: span_module_id,
                             cell: span_cell_str,
                             target_count,
@@ -1150,7 +1150,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
 
 mod keys {
     use allocative::Allocative;
-    use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
+    use bz_interpreter::paths::module::OwnedStarlarkModulePath;
     use derive_more::Display;
     use pagable::Pagable;
     use pagable::pagable_typetag;

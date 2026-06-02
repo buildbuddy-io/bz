@@ -13,63 +13,63 @@
 
 use std::thread;
 
-use buck2_client::commands::build::BuildCommand;
-use buck2_client::commands::bxl::BxlCommand;
-use buck2_client::commands::clean::CleanCommand;
-use buck2_client::commands::ctargets::ConfiguredTargetsCommand;
-use buck2_client::commands::expand_external_cell::ExpandExternalCellsCommand;
-use buck2_client::commands::explain::ExplainCommand;
-use buck2_client::commands::help_env::HelpEnvCommand;
-use buck2_client::commands::init::InitCommand;
-use buck2_client::commands::install::InstallCommand;
-use buck2_client::commands::kill::KillCommand;
-use buck2_client::commands::killall::KillallCommand;
-use buck2_client::commands::lsp::LspCommand;
-use buck2_client::commands::profile::ProfileCommand;
-use buck2_client::commands::query::aquery::AqueryCommand;
-use buck2_client::commands::query::cquery::CqueryCommand;
-use buck2_client::commands::query::uquery::UqueryCommand;
-use buck2_client::commands::root::RootCommand;
-use buck2_client::commands::run::RunCommand;
-use buck2_client::commands::server::ServerCommand;
-use buck2_client::commands::status::StatusCommand;
-use buck2_client::commands::subscribe::SubscribeCommand;
-use buck2_client::commands::targets::TargetsCommand;
-use buck2_client::commands::test::TestCommand;
-use buck2_client_ctx::agent_context::AgentContextEntry;
-use buck2_client_ctx::agent_context::parse_agent_context;
-use buck2_client_ctx::argfiles::expand_argv;
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::client_metadata::ClientMetadata;
-use buck2_client_ctx::client_metadata::parse_client_metadata;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::immediate_config::ImmediateConfigContext;
-use buck2_client_ctx::version::BuckVersion;
-use buck2_cmd_audit_client::AuditCommand;
-use buck2_cmd_debug_client::DebugCommand;
-use buck2_cmd_log_client::LogCommand;
-use buck2_cmd_rage_client::rage::RageCommand;
-use buck2_cmd_starlark_client::StarlarkCommand;
-use buck2_common::argv::Argv;
-use buck2_common::init::DaemonStartupConfig;
-use buck2_common::init::RemoteDefaultExecProperty;
-use buck2_common::init::RemoteDownloadOutputsMode;
-use buck2_common::init::RemoteExecutionStartupConfig;
-use buck2_common::invocation_paths_result::InvocationPathsResult;
-use buck2_common::invocation_roots::get_invocation_paths_result;
-use buck2_core::buck2_env;
-use buck2_core::buck2_env_name;
-use buck2_data::ErrorReport;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::ExitCode;
-use buck2_error::buck2_error;
-use buck2_error::conversion::clap::buck_error_clap_parser;
-use buck2_event_observer::verbosity::Verbosity;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_util::threads::thread_spawn_scoped;
+use bz_client::commands::build::BuildCommand;
+use bz_client::commands::bxl::BxlCommand;
+use bz_client::commands::clean::CleanCommand;
+use bz_client::commands::ctargets::ConfiguredTargetsCommand;
+use bz_client::commands::expand_external_cell::ExpandExternalCellsCommand;
+use bz_client::commands::explain::ExplainCommand;
+use bz_client::commands::help_env::HelpEnvCommand;
+use bz_client::commands::init::InitCommand;
+use bz_client::commands::install::InstallCommand;
+use bz_client::commands::kill::KillCommand;
+use bz_client::commands::killall::KillallCommand;
+use bz_client::commands::lsp::LspCommand;
+use bz_client::commands::profile::ProfileCommand;
+use bz_client::commands::query::aquery::AqueryCommand;
+use bz_client::commands::query::cquery::CqueryCommand;
+use bz_client::commands::query::uquery::UqueryCommand;
+use bz_client::commands::root::RootCommand;
+use bz_client::commands::run::RunCommand;
+use bz_client::commands::server::ServerCommand;
+use bz_client::commands::status::StatusCommand;
+use bz_client::commands::subscribe::SubscribeCommand;
+use bz_client::commands::targets::TargetsCommand;
+use bz_client::commands::test::TestCommand;
+use bz_client_ctx::agent_context::AgentContextEntry;
+use bz_client_ctx::agent_context::parse_agent_context;
+use bz_client_ctx::argfiles::expand_argv;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::client_metadata::ClientMetadata;
+use bz_client_ctx::client_metadata::parse_client_metadata;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::immediate_config::ImmediateConfigContext;
+use bz_client_ctx::version::BuckVersion;
+use bz_cmd_audit_client::AuditCommand;
+use bz_cmd_debug_client::DebugCommand;
+use bz_cmd_log_client::LogCommand;
+use bz_cmd_rage_client::rage::RageCommand;
+use bz_cmd_starlark_client::StarlarkCommand;
+use bz_common::argv::Argv;
+use bz_common::init::DaemonStartupConfig;
+use bz_common::init::RemoteDefaultExecProperty;
+use bz_common::init::RemoteDownloadOutputsMode;
+use bz_common::init::RemoteExecutionStartupConfig;
+use bz_common::invocation_paths_result::InvocationPathsResult;
+use bz_common::invocation_roots::get_invocation_paths_result;
+use bz_core::bz_env;
+use bz_core::bz_env_name;
+use bz_data::ErrorReport;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::ExitCode;
+use bz_error::bz_error;
+use bz_error::conversion::clap::buck_error_clap_parser;
+use bz_event_observer::verbosity::Verbosity;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_util::threads::thread_spawn_scoped;
 use clap::CommandFactory;
 use clap::FromArgMatches;
 use dupe::Dupe;
@@ -88,15 +88,15 @@ const BUILDBUDDY_DEFAULT_RBE_CONTAINER_IMAGE: &str = "docker://gcr.io/flame-publ
 
 fn parse_remote_default_exec_property(
     value: &str,
-) -> buck2_error::Result<RemoteDefaultExecProperty> {
+) -> bz_error::Result<RemoteDefaultExecProperty> {
     let (name, value) = value.split_once('=').ok_or_else(|| {
-        buck2_error!(
+        bz_error!(
             ErrorTag::Input,
             "Expected remote exec property in NAME=VALUE form"
         )
     })?;
     if name.is_empty() {
-        return Err(buck2_error!(
+        return Err(bz_error!(
             ErrorTag::Input,
             "Expected remote exec property name to be non-empty"
         ));
@@ -107,11 +107,11 @@ fn parse_remote_default_exec_property(
     })
 }
 
-fn parse_remote_download_outputs(value: &str) -> buck2_error::Result<RemoteDownloadOutputsMode> {
+fn parse_remote_download_outputs(value: &str) -> bz_error::Result<RemoteDownloadOutputsMode> {
     value.parse()
 }
 
-fn parse_isolation_dir(s: &str) -> buck2_error::Result<FileNameBuf> {
+fn parse_isolation_dir(s: &str) -> bz_error::Result<FileNameBuf> {
     FileNameBuf::try_from(s.to_owned()).buck_error_context("isolation dir must be a directory name")
 }
 
@@ -150,7 +150,7 @@ struct BeforeSubcommandOptions {
         long = "verbose",
         default_value = "1",
         global = true,
-        env = buck2_env_name!("BUCK_VERBOSE"),
+        env = bz_env_name!("BUCK_VERBOSE"),
         value_parser = buck_error_clap_parser(Verbosity::try_from_cli)
     )]
     verbosity: Verbosity,
@@ -442,7 +442,7 @@ impl Opt {
 pub fn exec(process: ProcessContext<'_>) -> ExitResult {
     let cwd = process.shared.working_dir.clone();
     let mut immediate_config = ImmediateConfigContext::new(&cwd);
-    let arg0_override = buck2_env!("BUCK2_ARG0")?;
+    let arg0_override = bz_env!("BUCK2_ARG0")?;
     let expanded_args = expand_argv(
         arg0_override,
         process.shared.args.to_vec(),
@@ -465,7 +465,7 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
             return if e.exit_code() == 0 {
                 ExitResult::success()
             } else {
-                let e = buck2_error::Error::from(e).tag([ErrorTag::ClapMatch]);
+                let e = bz_error::Error::from(e).tag([ErrorTag::ClapMatch]);
                 ExitResult::status_with_emitted_errors(
                     ExitCode::UserError,
                     vec![ErrorReport::from(&e)],
@@ -487,7 +487,7 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
     // If --client-metadata=? was not set and from_env did not find "id", then
     // if we are running in a terminal, we add id=terminal-fallback to
     // opt.opt.common_opts.client_metadata to transmit to scuba that the client
-    // is an end user: https://fburl.com/scuba/buck2_builds/n4klo51d
+    // is an end user: https://fburl.com/scuba/bz_builds/n4klo51d
     let has_client_id = opt
         .opt
         .common_opts
@@ -529,12 +529,12 @@ struct ParsedArgv {
 }
 
 impl ParsedArgv {
-    fn parse(argv: Argv, matches: clap::ArgMatches) -> buck2_error::Result<Self> {
+    fn parse(argv: Argv, matches: clap::ArgMatches) -> bz_error::Result<Self> {
         let opt: Opt = Opt::from_arg_matches(&matches)?;
 
         if opt.common_opts.help_wrapper {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "`--help-wrapper` should have been handled by the wrapper"
             ));
         }
@@ -570,7 +570,7 @@ impl ParsedArgv {
 pub(crate) enum CommandKind {
     #[cfg(not(client_only))]
     #[clap(hide = true)]
-    Daemon(buck2_daemon::daemon::DaemonCommand),
+    Daemon(bz_daemon::daemon::DaemonCommand),
     #[cfg(not(client_only))]
     #[clap(hide = true)]
     Forkserver(crate::commands::forkserver::ForkserverCommand),
@@ -609,9 +609,9 @@ pub(crate) enum CommandKind {
     #[clap(subcommand, hide = true)]
     Debug(DebugCommand),
     #[clap(hide = true)]
-    Complete(buck2_cmd_completion_client::complete::CompleteCommand),
-    Completion(buck2_cmd_completion_client::completion::CompletionCommand),
-    Docs(buck2_cmd_docs_client::DocsCommand),
+    Complete(bz_cmd_completion_client::complete::CompleteCommand),
+    Completion(bz_cmd_completion_client::completion::CompletionCommand),
+    Docs(bz_cmd_docs_client::DocsCommand),
     #[clap(subcommand)]
     Profile(ProfileCommand),
     #[clap(hide(true))] // @oss-enable
@@ -688,7 +688,7 @@ impl CommandKind {
             }
         }
 
-        let fb = buck2_common::fbinit::get_or_init_fbcode_globals();
+        let fb = bz_common::fbinit::get_or_init_fbcode_globals();
 
         let ProcessContext {
             trace_id,
@@ -714,7 +714,7 @@ impl CommandKind {
                 remote_download_outputs_override,
             );
             #[cfg(not(client_only))]
-            let v = buck2_daemon::no_buckd::start_in_process_daemon(
+            let v = bz_daemon::no_buckd::start_in_process_daemon(
                 &daemon_startup_config,
                 paths.clone().get_result()?,
                 runtime,
@@ -777,7 +777,7 @@ impl CommandKind {
             CommandKind::Clean(cmd) => cmd.exec(matches, command_ctx, events_ctx),
             CommandKind::Root(cmd) => cmd.exec(matches, command_ctx).into(),
             CommandKind::Query(cmd) => {
-                buck2_client_ctx::eprintln!(
+                bz_client_ctx::eprintln!(
                     "WARNING: \"buck2 query\" is an alias for \"buck2 uquery\". Consider using \"buck2 cquery\" or \"buck2 uquery\" explicitly."
                 )?;
                 command_ctx.exec(cmd, matches, events_ctx)

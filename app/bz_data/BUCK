@@ -5,7 +5,7 @@ load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
 oncall("build_infra")
 
 rust_protobuf_library(
-    name = "buck2_data",
+    name = "bz_data",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",
     proto_srcs = ":data_proto",
@@ -15,7 +15,7 @@ rust_protobuf_library(
         "fbsource//third-party/rust:prost-types",
         "fbsource//third-party/rust:serde",
         "//bz/allocative/allocative:allocative",
-        "//bz/app/bz_host_sharing_proto:buck2_host_sharing_proto",
+        "//bz/app/bz_host_sharing_proto:bz_host_sharing_proto",
         "//bz/gazebo/dupe:dupe",
         "//bz/gazebo/gazebo:gazebo",
         "//bz/pagable:pagable",

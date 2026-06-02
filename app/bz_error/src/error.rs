@@ -11,7 +11,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use buck2_data::ActionError;
+use bz_data::ActionError;
 use smallvec::SmallVec;
 
 use crate::ErrorTag;
@@ -70,8 +70,8 @@ impl Error {
     ) -> Self {
         let error_root = ErrorRoot::new(error_msg, error_tag, source_location, action_error);
 
-        let buck2_error = crate::Error(Arc::new(ErrorKind::Root(Box::new(error_root))));
-        buck2_error.tag([error_tag])
+        let bz_error = crate::Error(Arc::new(ErrorKind::Root(Box::new(error_root))));
+        bz_error.tag([error_tag])
     }
 
     fn iter_kinds(&self) -> impl Iterator<Item = &ErrorKind> {
@@ -93,7 +93,7 @@ impl Error {
         r
     }
 
-    pub fn action_error(&self) -> Option<&buck2_data::ActionError> {
+    pub fn action_error(&self) -> Option<&bz_data::ActionError> {
         self.root().action_error()
     }
 
@@ -335,10 +335,10 @@ impl Error {
 mod tests {
     use std::sync::Arc;
 
-    use crate as buck2_error;
+    use crate as bz_error;
     use crate::Tier;
 
-    #[derive(Debug, buck2_error_derive::Error)]
+    #[derive(Debug, bz_error_derive::Error)]
     #[error("Test")]
     #[buck2(tag = Environment)]
     struct TestError;

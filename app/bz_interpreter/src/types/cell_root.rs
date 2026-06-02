@@ -9,10 +9,10 @@
  */
 
 use allocative::Allocative;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePathBuf;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePathBuf;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;

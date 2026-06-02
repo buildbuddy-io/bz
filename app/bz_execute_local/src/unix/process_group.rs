@@ -13,17 +13,17 @@ use std::process::Command as StdCommand;
 use std::process::ExitStatus;
 use std::time::Duration;
 
-use buck2_common::kill_util::try_terminate_process_gracefully;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_resource_control::ActionFreezeEvent;
-use buck2_resource_control::ActionFreezeEventReceiver;
-use buck2_resource_control::OrphanProcessInfo;
-use buck2_resource_control::cgroup::Cgroup;
-use buck2_resource_control::cgroup::CgroupKindLeaf;
-use buck2_resource_control::cgroup::CgroupMinimal;
-use buck2_resource_control::cgroup::NoMemoryMonitoring;
-use buck2_resource_control::path::CgroupPathBuf;
+use bz_common::kill_util::try_terminate_process_gracefully;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_resource_control::ActionFreezeEvent;
+use bz_resource_control::ActionFreezeEventReceiver;
+use bz_resource_control::OrphanProcessInfo;
+use bz_resource_control::cgroup::Cgroup;
+use bz_resource_control::cgroup::CgroupKindLeaf;
+use bz_resource_control::cgroup::CgroupMinimal;
+use bz_resource_control::cgroup::NoMemoryMonitoring;
+use bz_resource_control::path::CgroupPathBuf;
 use futures::StreamExt;
 use futures::pin_mut;
 use nix::sys::signal;
@@ -46,7 +46,7 @@ impl ProcessCommandImpl {
     pub(crate) async fn new(
         mut cmd: StdCommand,
         cgroup: Option<CgroupPathBuf>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         cmd.process_group(0);
 
         let cgroup = if let Some(cgroup) = cgroup {
@@ -102,7 +102,7 @@ impl ProcessGroupImpl {
     pub(crate) async fn wait(
         &mut self,
         freeze_rx: impl ActionFreezeEventReceiver,
-    ) -> buck2_error::Result<(ExitStatus, Vec<OrphanProcessInfo>)> {
+    ) -> bz_error::Result<(ExitStatus, Vec<OrphanProcessInfo>)> {
         let child = self.inner.wait();
         pin!(child);
         pin_mut!(freeze_rx);
@@ -143,7 +143,7 @@ impl ProcessGroupImpl {
     pub(crate) async fn kill(
         &self,
         graceful_shutdown_timeout_s: Option<u32>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let pid: i32 = self
             .inner
             .id()

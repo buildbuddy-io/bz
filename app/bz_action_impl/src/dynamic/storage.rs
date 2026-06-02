@@ -9,17 +9,17 @@
  */
 
 use allocative::Allocative;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::analysis::registry::AnalysisValueStorage;
-use buck2_build_api::analysis::registry::FrozenAnalysisValueStorage;
-use buck2_build_api::dynamic::storage::DYNAMIC_LAMBDA_PARAMS_STORAGES;
-use buck2_build_api::dynamic::storage::DynamicLambdaParamStorages;
-use buck2_build_api::dynamic::storage::DynamicLambdaParamsStorage;
-use buck2_build_api::dynamic::storage::FrozenDynamicLambdaParamsStorage;
-use buck2_core::deferred::dynamic::DynamicLambdaIndex;
-use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_error::internal_error;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::analysis::registry::AnalysisValueStorage;
+use bz_build_api::analysis::registry::FrozenAnalysisValueStorage;
+use bz_build_api::dynamic::storage::DYNAMIC_LAMBDA_PARAMS_STORAGES;
+use bz_build_api::dynamic::storage::DynamicLambdaParamStorages;
+use bz_build_api::dynamic::storage::DynamicLambdaParamsStorage;
+use bz_build_api::dynamic::storage::FrozenDynamicLambdaParamsStorage;
+use bz_core::deferred::dynamic::DynamicLambdaIndex;
+use bz_core::deferred::dynamic::DynamicLambdaResultsKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_error::internal_error;
 use dupe::Dupe;
 use starlark::any::AnyLifetime;
 use starlark::any::ProvidesStaticType;
@@ -49,7 +49,7 @@ pub(crate) struct FrozenDynamicLambdaParamsStorageImpl {
 impl<'v> DynamicLambdaParamsStorageImpl<'v> {
     pub(crate) fn get<'a>(
         storage: &'a mut AnalysisValueStorage<'v>,
-    ) -> buck2_error::Result<&'a mut DynamicLambdaParamsStorageImpl<'v>> {
+    ) -> bz_error::Result<&'a mut DynamicLambdaParamsStorageImpl<'v>> {
         storage
             .lambda_params
             .as_any_mut()
@@ -57,7 +57,7 @@ impl<'v> DynamicLambdaParamsStorageImpl<'v> {
             .ok_or_else(|| internal_error!("Wrong type for lambda params storage"))
     }
 
-    pub fn next_dynamic_actions_key(&self) -> buck2_error::Result<DynamicLambdaResultsKey> {
+    pub fn next_dynamic_actions_key(&self) -> bz_error::Result<DynamicLambdaResultsKey> {
         let index = DynamicLambdaIndex::new(self.lambda_params.len().try_into()?);
         Ok(DynamicLambdaResultsKey::new(self.self_key.dupe(), index))
     }
@@ -66,7 +66,7 @@ impl<'v> DynamicLambdaParamsStorageImpl<'v> {
         &mut self,
         key: DynamicLambdaResultsKey,
         lambda_params: DynamicLambdaParams<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if &self.self_key != key.holder_key() {
             return Err(internal_error!(
                 "Wrong lambda owner: expecting `{}`, got `{}`",
@@ -83,7 +83,7 @@ impl FrozenDynamicLambdaParamsStorageImpl {
     pub(crate) fn lookup_lambda<'f>(
         storage: OwnedRefFrozenRef<'f, FrozenAnalysisValueStorage>,
         key: &DynamicLambdaResultsKey,
-    ) -> buck2_error::Result<OwnedRefFrozenRef<'f, FrozenDynamicLambdaParams>> {
+    ) -> bz_error::Result<OwnedRefFrozenRef<'f, FrozenDynamicLambdaParams>> {
         if key.holder_key() != &storage.as_ref().self_key {
             return Err(internal_error!(
                 "Wrong owner for lambda: expecting `{}`, got `{}`",

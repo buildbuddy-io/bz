@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_common::init::ResourceControlConfig;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_common::init::ResourceControlConfig;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
 
 use crate::cgroup::CgroupInternal;
 use crate::cgroup::CgroupLeaf;
@@ -24,7 +24,7 @@ use crate::cgroup_files::CgroupFile;
 use crate::cgroup_files::CgroupFileMode;
 use crate::path::CgroupPathBuf;
 
-#[derive(buck2_error::Error)]
+#[derive(bz_error::Error)]
 #[buck2(tag = Input)]
 enum CgroupConfigParsingError {
     #[error("Not a percentage: {0}")]
@@ -33,14 +33,14 @@ enum CgroupConfigParsingError {
     NotAMemoryConfig(String),
 }
 
-#[derive(buck2_error::Error)]
+#[derive(bz_error::Error)]
 #[buck2(tag = Input)]
 enum CgroupParsingError {
     #[error("Process appears to not be a part of a cgroupv2 hierarchy: {0}")]
     NoCgroupV2Membership(String),
 }
 
-fn parse_procfs_cgroup_output(out: &str) -> buck2_error::Result<CgroupPathBuf> {
+fn parse_procfs_cgroup_output(out: &str) -> bz_error::Result<CgroupPathBuf> {
     fn find_v2(out: &str) -> Option<&str> {
         // Filter out any membership in v1 hierarchies
         let mut filt = out.lines().filter_map(|l| l.strip_prefix("0::"));
@@ -58,7 +58,7 @@ fn parse_procfs_cgroup_output(out: &str) -> buck2_error::Result<CgroupPathBuf> {
 }
 
 /// Read the cgroup path of the buck2 daemon process based on its pid from the client side
-pub fn read_cgroup_path_of_buck2_daemon(daemon_pid: i64) -> buck2_error::Result<Option<String>> {
+pub fn read_cgroup_path_of_bz_daemon(daemon_pid: i64) -> bz_error::Result<Option<String>> {
     let path = format!("/proc/{}/cgroup", daemon_pid);
     let procfs_out = match std::fs::read_to_string(&path) {
         Ok(s) => s,
@@ -84,7 +84,7 @@ impl PreppedBuckCgroups {
     ///
     /// This function is the part of the cgroup prepping that must be done early on during daemon
     /// startup because it moves the daemon process.
-    pub fn prep_current_process() -> buck2_error::Result<Self> {
+    pub fn prep_current_process() -> bz_error::Result<Self> {
         let procfs_out = fs_util::read_to_string(AbsPath::new("/proc/self/cgroup").unwrap())
             .categorize_internal()?;
         let root_cgroup_path = parse_procfs_cgroup_output(&procfs_out)?;
@@ -136,7 +136,7 @@ impl PreppedBuckCgroups {
 fn resolve_memory_restriction_value(
     config: &str,
     from_ancestor: Option<u64>,
-) -> buck2_error::Result<Option<u64>> {
+) -> bz_error::Result<Option<u64>> {
     if let Some(perct) = config.strip_suffix("%") {
         let Some(perct) = perct.parse::<u64>().ok().filter(|p| *p > 0 && *p <= 100) else {
             return Err(CgroupConfigParsingError::NotAPercentage(perct.to_owned()).into());
@@ -173,7 +173,7 @@ impl BuckCgroupTree {
     pub async fn set_up(
         prepped: PreppedBuckCgroups,
         config: &ResourceControlConfig,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let enabled_controllers = prepped.allprocs.read_enabled_controllers().await?;
 
         let allprocs = prepped
@@ -259,8 +259,8 @@ impl BuckCgroupTree {
 
 #[cfg(test)]
 mod tests {
-    use buck2_common::init::ResourceControlConfig;
-    use buck2_fs::paths::file_name::FileNameBuf;
+    use bz_common::init::ResourceControlConfig;
+    use bz_fs::paths::file_name::FileNameBuf;
 
     use crate::buck_cgroup_tree::BuckCgroupTree;
     use crate::buck_cgroup_tree::PreppedBuckCgroups;

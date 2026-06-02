@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_util::arc_str::ArcSlice;
+use bz_util::arc_str::ArcSlice;
 use pagable::Pagable;
 
 use crate::attrs::attr_type::list::ListLiteral;

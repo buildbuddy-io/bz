@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 use flatbuffers::FlatBufferBuilder;
 use flatbuffers::WIPOffset;
 
@@ -22,7 +22,7 @@ mod fbs {
 
 pub(crate) fn gen_fbs<T: QueryTarget>(
     data: TargetSet<T>,
-) -> buck2_error::Result<FlatBufferBuilder<'static>> {
+) -> bz_error::Result<FlatBufferBuilder<'static>> {
     let mut builder = FlatBufferBuilder::new();
 
     let targets: Result<Vec<_>, _> = data
@@ -46,7 +46,7 @@ pub(crate) fn gen_fbs<T: QueryTarget>(
 fn target_to_fbs<'a, T: QueryTarget>(
     builder: &'_ mut FlatBufferBuilder<'static>,
     node: &'_ T,
-) -> buck2_error::Result<WIPOffset<fbs::Node<'a>>> {
+) -> bz_error::Result<WIPOffset<fbs::Node<'a>>> {
     let target_label = builder.create_shared_string(&node.node_key().to_string());
 
     let type_ = builder.create_shared_string(node.rule_type().as_ref());
@@ -71,22 +71,22 @@ fn target_to_fbs<'a, T: QueryTarget>(
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::execution_types::execution::ExecutionPlatform;
-    use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-    use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-    use buck2_core::package::package_relative_path::PackageRelativePath;
-    use buck2_core::target::label::label::TargetLabel;
-    use buck2_interpreter_for_build::call_stack::StarlarkCallStackWrapper;
-    use buck2_node::attrs::attr::Attribute;
-    use buck2_node::attrs::attr_type::AttrType;
-    use buck2_node::attrs::attr_type::list::ListLiteral;
-    use buck2_node::attrs::coerced_attr::CoercedAttr;
-    use buck2_node::attrs::coerced_path::CoercedPath;
-    use buck2_node::call_stack::StarlarkCallStack;
-    use buck2_node::nodes::configured::ConfiguredTargetNode;
-    use buck2_query::query::syntax::simple::eval::set::TargetSet;
-    use buck2_util::arc_str::ArcSlice;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::execution_types::execution::ExecutionPlatform;
+    use bz_core::execution_types::execution::ExecutionPlatformResolution;
+    use bz_core::execution_types::executor_config::CommandExecutorConfig;
+    use bz_core::package::package_relative_path::PackageRelativePath;
+    use bz_core::target::label::label::TargetLabel;
+    use bz_interpreter_for_build::call_stack::StarlarkCallStackWrapper;
+    use bz_node::attrs::attr::Attribute;
+    use bz_node::attrs::attr_type::AttrType;
+    use bz_node::attrs::attr_type::list::ListLiteral;
+    use bz_node::attrs::coerced_attr::CoercedAttr;
+    use bz_node::attrs::coerced_path::CoercedPath;
+    use bz_node::call_stack::StarlarkCallStack;
+    use bz_node::nodes::configured::ConfiguredTargetNode;
+    use bz_query::query::syntax::simple::eval::set::TargetSet;
+    use bz_util::arc_str::ArcSlice;
     use dupe::Dupe;
     use starlark::codemap::FileSpan;
     use starlark::errors::Frame;
@@ -140,8 +140,8 @@ mod tests {
     fn gen_data(
         attrs: Vec<(
             &str,
-            buck2_node::attrs::attr::Attribute,
-            buck2_node::attrs::coerced_attr::CoercedAttr,
+            bz_node::attrs::attr::Attribute,
+            bz_node::attrs::coerced_attr::CoercedAttr,
         )>,
     ) -> TargetSet<ConfiguredTargetNode> {
         // Setup data

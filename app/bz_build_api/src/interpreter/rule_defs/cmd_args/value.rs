@@ -118,7 +118,7 @@ pub struct FrozenCommandLineArg(FrozenValue);
 unsafe impl<'v> Coerce<CommandLineArg<'v>> for FrozenCommandLineArg {}
 
 impl FrozenCommandLineArg {
-    pub fn new(value: FrozenValue) -> buck2_error::Result<FrozenCommandLineArg> {
+    pub fn new(value: FrozenValue) -> bz_error::Result<FrozenCommandLineArg> {
         ValueAsCommandLineLike::unpack_value_err(value.to_value())?;
         Ok(FrozenCommandLineArg(value))
     }

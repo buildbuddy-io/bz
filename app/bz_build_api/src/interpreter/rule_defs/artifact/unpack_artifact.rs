@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::Artifact;
 use dupe::Dupe;
 use starlark::values::UnpackValue;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -24,7 +24,7 @@ pub enum UnpackNonPromiseInputArtifact<'v> {
 }
 
 impl<'v> UnpackNonPromiseInputArtifact<'v> {
-    pub fn artifact(&self) -> buck2_error::Result<Artifact> {
+    pub fn artifact(&self) -> bz_error::Result<Artifact> {
         match self {
             UnpackNonPromiseInputArtifact::Artifact(x) => Ok(x.artifact.dupe()),
             UnpackNonPromiseInputArtifact::DeclaredArtifact(x) => x.get_bound_artifact(),

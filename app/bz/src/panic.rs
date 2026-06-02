@@ -16,24 +16,24 @@
 use std::panic;
 use std::panic::PanicHookInfo;
 
-use buck2_error::BuckErrorContext;
+use bz_error::BuckErrorContext;
 use fbinit::FacebookInit;
 
 /// Initializes the panic hook.
-pub fn initialize() -> buck2_error::Result<()> {
+pub fn initialize() -> bz_error::Result<()> {
     let hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
-        let fb = buck2_common::fbinit::get_or_init_fbcode_globals();
+        let fb = bz_common::fbinit::get_or_init_fbcode_globals();
         the_panic_hook(fb, info);
         hook(info);
     }));
-    buck2_core::error::initialize(Box::new(move |category, err, loc, options| {
-        let fb = buck2_common::fbinit::get_or_init_fbcode_globals();
+    bz_core::error::initialize(Box::new(move |category, err, loc, options| {
+        let fb = bz_common::fbinit::get_or_init_fbcode_globals();
         imp::write_soft_error(
             fb,
             category,
             err,
-            buck2_data::Location {
+            bz_data::Location {
                 file: loc.0.to_owned(),
                 line: loc.1,
                 column: loc.2,
@@ -58,19 +58,19 @@ mod imp {
     use std::panic::PanicHookInfo;
 
     use backtrace::Backtrace;
-    use buck2_core::error::StructuredErrorOptions;
-    use buck2_data::Location;
-    use buck2_events::BuckEvent;
-    use buck2_events::daemon_id::get_daemon_id_for_panics;
-    use buck2_events::metadata;
-    use buck2_events::sink::remote::ScribeConfig;
-    use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
-    use buck2_hash::StdBuckHashMap;
-    use buck2_util::threads::thread_spawn;
+    use bz_core::error::StructuredErrorOptions;
+    use bz_data::Location;
+    use bz_events::BuckEvent;
+    use bz_events::daemon_id::get_daemon_id_for_panics;
+    use bz_events::metadata;
+    use bz_events::sink::remote::ScribeConfig;
+    use bz_events::sink::remote::new_remote_event_sink_if_enabled;
+    use bz_hash::StdBuckHashMap;
+    use bz_util::threads::thread_spawn;
     use fbinit::FacebookInit;
     use tokio::runtime::Builder;
 
-    fn get_stack() -> Vec<buck2_data::structured_error::StackFrame> {
+    fn get_stack() -> Vec<bz_data::structured_error::StackFrame> {
         fn ptr_to_string<T>(ptr: *mut T) -> String {
             format!("0x{:x}", ptr as usize)
         }
@@ -83,7 +83,7 @@ mod imp {
                 let symbols = frame
                     .symbols()
                     .iter()
-                    .map(|symbol| buck2_data::structured_error::Symbol {
+                    .map(|symbol| bz_data::structured_error::Symbol {
                         name: symbol
                             .name()
                             .map_or_else(|| "".to_owned(), |s| s.to_string()),
@@ -96,7 +96,7 @@ mod imp {
                     })
                     .collect::<Vec<_>>();
 
-                buck2_data::structured_error::StackFrame {
+                bz_data::structured_error::StackFrame {
                     instruction_pointer: ptr_to_string(frame.ip()),
                     symbol_address: ptr_to_string(frame.symbol_address()),
                     module_base_address: frame
@@ -130,7 +130,7 @@ mod imp {
         #[cfg_attr(client_only, allow(unused_mut))]
         let mut map = metadata::collect(&get_daemon_id_for_panics());
         #[cfg(not(client_only))]
-        if let Some(commands) = buck2_server::active_commands::try_active_commands() {
+        if let Some(commands) = bz_server::active_commands::try_active_commands() {
             let commands = commands.keys().map(|id| id.to_string()).collect::<Vec<_>>();
             map.insert("active_commands".to_owned(), commands.join(","));
         }
@@ -163,7 +163,7 @@ mod imp {
     pub(crate) fn write_soft_error(
         fb: FacebookInit,
         category: &str,
-        err: &buck2_error::Error,
+        err: &bz_error::Error,
         location: Location,
         options: StructuredErrorOptions,
     ) {
@@ -172,7 +172,7 @@ mod imp {
             format!("Soft Error: {category}: {err:#}"),
             Vec::new(),
             &options,
-            Some(buck2_data::SoftError {
+            Some(bz_data::SoftError {
                 category: category.to_owned(),
                 is_quiet: options.quiet,
             }),
@@ -181,7 +181,7 @@ mod imp {
         // If the soft error was fired in a context with an ambient dispatcher, then we only send
         // it there, but some contexts don't have one, and in that case, we notify all running
         // commands.
-        match buck2_events::dispatch::get_dispatcher_opt() {
+        match bz_events::dispatch::get_dispatcher_opt() {
             Some(dispatcher) => {
                 dispatcher.instant_event(event.clone());
             }
@@ -189,7 +189,7 @@ mod imp {
                 #[cfg(client_only)]
                 let warn = !options.quiet;
                 #[cfg(not(client_only))]
-                let warn = !buck2_server::active_commands::broadcast_instant_event(&event)
+                let warn = !bz_server::active_commands::broadcast_instant_event(&event)
                     && !options.quiet;
                 if warn {
                     tracing::warn!("Warning \"{}\": {:#}", category, err);
@@ -203,12 +203,12 @@ mod imp {
     fn panic_payload(
         location: Option<Location>,
         message: String,
-        backtrace: Vec<buck2_data::structured_error::StackFrame>,
+        backtrace: Vec<bz_data::structured_error::StackFrame>,
         options: &StructuredErrorOptions,
-        soft_error_category: Option<buck2_data::SoftError>,
-    ) -> buck2_data::StructuredError {
+        soft_error_category: Option<bz_data::SoftError>,
+    ) -> bz_data::StructuredError {
         let metadata = get_metadata_for_panic(options);
-        buck2_data::StructuredError {
+        bz_data::StructuredError {
             location,
             payload: message,
             metadata,
@@ -216,7 +216,7 @@ mod imp {
             quiet: options.quiet,
             task: Some(options.task),
             soft_error_category: soft_error_category
-                .map(|arg0: buck2_data::SoftError| ToOwned::to_owned(&arg0)),
+                .map(|arg0: bz_data::SoftError| ToOwned::to_owned(&arg0)),
             daemon_in_memory_state_is_corrupted: options.daemon_in_memory_state_is_corrupted,
             daemon_materializer_state_is_corrupted: options.daemon_materializer_state_is_corrupted,
             action_cache_is_corrupted: options.action_cache_is_corrupted,
@@ -225,13 +225,13 @@ mod imp {
     }
 
     /// Writes a representation of the given error (hard or soft) to Scribe
-    fn write_to_scribe(fb: FacebookInit, data: buck2_data::StructuredError) {
+    fn write_to_scribe(fb: FacebookInit, data: bz_data::StructuredError) {
         use std::time::SystemTime;
 
-        use buck2_core::facebook_only;
-        use buck2_data::InstantEvent;
-        use buck2_events::sink::remote;
-        use buck2_wrapper_common::invocation_id::TraceId;
+        use bz_core::facebook_only;
+        use bz_data::InstantEvent;
+        use bz_events::sink::remote;
+        use bz_wrapper_common::invocation_id::TraceId;
 
         facebook_only();
         if !remote::is_enabled() {

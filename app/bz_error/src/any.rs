@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-//! Integrations of `buck2_error::Error` with `StdError`.
+//! Integrations of `bz_error::Error` with `StdError`.
 
 use std::error::Error as StdError;
 
-use buck2_data::error::ErrorTag;
+use bz_data::error::ErrorTag;
 
 use crate::source_location::SourceLocation;
 
@@ -55,7 +55,7 @@ pub(crate) fn from_any_with_tag_and_source_location(
         let e = crate::Error::new(description, error_tag, source_location, None);
         break 'base e;
     };
-    // We've converted the base error to a `buck2_error::Error`. Next, we need to add back any
+    // We've converted the base error to a `bz_error::Error`. Next, we need to add back any
     // context that is not included in the `base` error yet.
     let mut e = base;
     for context_value in context_stack.into_iter().rev() {
@@ -66,14 +66,14 @@ pub(crate) fn from_any_with_tag_and_source_location(
 
 #[cfg(test)]
 mod tests {
-    use crate as buck2_error;
+    use crate as bz_error;
 
-    #[derive(Debug, buck2_error_derive::Error)]
+    #[derive(Debug, bz_error_derive::Error)]
     #[buck2(input)]
     #[error("unused")]
     struct UserMetadataError;
 
-    #[derive(Debug, buck2_error_derive::Error)]
+    #[derive(Debug, bz_error_derive::Error)]
     #[buck2(tier0)]
     #[error("unused")]
     struct InfraMetadataWrapperError(#[source] UserMetadataError);

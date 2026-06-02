@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
 
 /// Show buck command line arguments from selected invocation.
 ///
@@ -43,11 +43,11 @@ impl BuckSubcommand for WhatCmdCommand {
         let log_path = event_log.get(&ctx).await?;
         let (invocation, _events) = log_path.unpack_stream().await?;
 
-        buck2_client_ctx::println!("# cd {}", invocation.working_dir)?;
+        bz_client_ctx::println!("# cd {}", invocation.working_dir)?;
         if expand {
-            buck2_client_ctx::println!("{}", invocation.display_expanded_command_line())?;
+            bz_client_ctx::println!("{}", invocation.display_expanded_command_line())?;
         } else {
-            buck2_client_ctx::println!("{}", invocation.display_command_line())?;
+            bz_client_ctx::println!("{}", invocation.display_command_line())?;
         }
         ExitResult::success()
     }

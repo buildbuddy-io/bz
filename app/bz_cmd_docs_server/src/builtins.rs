@@ -10,19 +10,19 @@
 
 use std::collections::BTreeMap;
 
-use buck2_cli_proto::new_generic::DocsResponse;
-use buck2_cli_proto::new_generic::DocsStarlarkBuiltinsRequest;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_interpreter_for_build::interpreter::globals::register_analysis_natives;
-use buck2_interpreter_for_build::interpreter::globals::register_bxl_natives;
-use buck2_interpreter_for_build::interpreter::globals::register_load_natives;
-use buck2_interpreter_for_build::interpreter::globals::starlark_library_extensions_for_buck2;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
+use bz_cli_proto::new_generic::DocsResponse;
+use bz_cli_proto::new_generic::DocsStarlarkBuiltinsRequest;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_interpreter_for_build::interpreter::globals::register_analysis_natives;
+use bz_interpreter_for_build::interpreter::globals::register_bxl_natives;
+use bz_interpreter_for_build::interpreter::globals::register_load_natives;
+use bz_interpreter_for_build::interpreter::globals::starlark_library_extensions_for_buck2;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
 use dice::DiceTransaction;
 use starlark::docs::DocItem;
 use starlark::docs::multipage::DocModuleInfo;
@@ -35,7 +35,7 @@ pub(crate) fn write_docs_to_subdir(
     base_path: &str,
     linked_ty_mapper: Option<fn(&str, &str) -> String>,
     render_signature_at_bottom: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let base_path = AbsPathBuf::new(base_path)?;
     let mut docs: BTreeMap<_, _> =
         render_markdown_multipage(modules_infos, linked_ty_mapper, render_signature_at_bottom)
@@ -83,7 +83,7 @@ pub(crate) async fn docs_starlark_builtins(
     _server_ctx: &dyn ServerCommandContextTrait,
     _dice_ctx: DiceTransaction,
     request: &DocsStarlarkBuiltinsRequest,
-) -> buck2_error::Result<DocsResponse> {
+) -> bz_error::Result<DocsResponse> {
     let starlark = Globals::extended_by(starlark_library_extensions_for_buck2()).documentation();
 
     let build = GlobalsBuilder::new()

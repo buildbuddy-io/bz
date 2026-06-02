@@ -12,8 +12,8 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::package::source_path::SourcePath;
-use buck2_core::package::source_path::SourcePathRef;
+use bz_core::package::source_path::SourcePath;
+use bz_core::package::source_path::SourcePathRef;
 use derive_more::Display;
 use dupe::Dupe;
 use pagable::Pagable;

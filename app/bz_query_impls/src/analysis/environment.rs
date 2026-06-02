@@ -15,49 +15,49 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::artifact_groups::ResolvedArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
-use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::internal_error;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured_node_ref::ConfiguredTargetNodeRefNode;
-use buck2_node::nodes::configured_node_ref::ConfiguredTargetNodeRefNodeDeps;
-use buck2_node::nodes::configured_ref::ConfiguredGraphNodeRef;
-use buck2_node::query::query_functions::CONFIGURED_GRAPH_QUERY_FUNCTIONS;
-use buck2_query::query::environment::QueryEnvironment;
-use buck2_query::query::environment::TraversalFilter;
-use buck2_query::query::environment::deps;
-use buck2_query::query::graph::dfs::dfs_postorder;
-use buck2_query::query::graph::successors::AsyncChildVisitor;
-use buck2_query::query::syntax::simple::eval::error::QueryError;
-use buck2_query::query::syntax::simple::eval::file_set::FileSet;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::syntax::simple::eval::values::QueryValue;
-use buck2_query::query::syntax::simple::eval::values::QueryValueDepth;
-use buck2_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
-use buck2_query::query::syntax::simple::functions::QueryFunctions;
-use buck2_query::query::syntax::simple::functions::helpers::QueryBinaryOp;
-use buck2_query::query::syntax::simple::functions::helpers::QueryFunction;
-use buck2_query::query::traversal::NodeLookupId;
-use buck2_query::query::traversal::async_depth_limited_traversal;
-use buck2_query::query::traversal::async_fast_depth_first_postorder_traversal;
-use buck2_query::query_module;
-use buck2_query_parser::BinaryOp;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::artifact_groups::ResolvedArtifactGroup;
+use bz_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
+use bz_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_error::internal_error;
+use bz_hash::BuckIndexMap;
+use bz_hash::StdBuckHashSet;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured_node_ref::ConfiguredTargetNodeRefNode;
+use bz_node::nodes::configured_node_ref::ConfiguredTargetNodeRefNodeDeps;
+use bz_node::nodes::configured_ref::ConfiguredGraphNodeRef;
+use bz_node::query::query_functions::CONFIGURED_GRAPH_QUERY_FUNCTIONS;
+use bz_query::query::environment::QueryEnvironment;
+use bz_query::query::environment::TraversalFilter;
+use bz_query::query::environment::deps;
+use bz_query::query::graph::dfs::dfs_postorder;
+use bz_query::query::graph::successors::AsyncChildVisitor;
+use bz_query::query::syntax::simple::eval::error::QueryError;
+use bz_query::query::syntax::simple::eval::file_set::FileSet;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::syntax::simple::eval::values::QueryValue;
+use bz_query::query::syntax::simple::eval::values::QueryValueDepth;
+use bz_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
+use bz_query::query::syntax::simple::functions::QueryFunctions;
+use bz_query::query::syntax::simple::functions::helpers::QueryBinaryOp;
+use bz_query::query::syntax::simple::functions::helpers::QueryFunction;
+use bz_query::query::traversal::NodeLookupId;
+use bz_query::query::traversal::async_depth_limited_traversal;
+use bz_query::query::traversal::async_fast_depth_first_postorder_traversal;
+use bz_query::query_module;
+use bz_query_parser::BinaryOp;
 use dice::DiceComputations;
 use dupe::Dupe;
 use dupe::IterDupedExt;
@@ -65,7 +65,7 @@ use futures::FutureExt;
 use pagable::StaticStr;
 use starlark::values::UnpackValue;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum AnalysisQueryError {
     #[error("file literals aren't supported in query attributes (got `{0}`)")]
@@ -78,13 +78,13 @@ enum AnalysisQueryError {
 
 #[async_trait]
 pub(crate) trait ConfiguredGraphQueryEnvironmentDelegate: Send + Sync {
-    fn eval_literal(&self, literal: &str) -> buck2_error::Result<ConfiguredTargetNode>;
+    fn eval_literal(&self, literal: &str) -> bz_error::Result<ConfiguredTargetNode>;
 
     async fn get_targets_from_template_placeholder_info(
         &self,
         template_name: StaticStr,
         targets: TargetSet<ConfiguredGraphNodeRef>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>>;
+    ) -> bz_error::Result<TargetSet<ConfiguredGraphNodeRef>>;
 }
 
 pub(crate) struct ConfiguredGraphQueryEnvironment<'a> {
@@ -181,7 +181,7 @@ impl<'a> ConfiguredGraphQueryEnvironment<'a> {
         &self,
         template_name: StaticStr,
         targets: TargetSet<ConfiguredGraphNodeRef>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
+    ) -> bz_error::Result<TargetSet<ConfiguredGraphNodeRef>> {
         self.delegate
             .get_targets_from_template_placeholder_info(template_name, targets)
             .await
@@ -199,14 +199,14 @@ impl QueryEnvironment for ConfiguredGraphQueryEnvironment<'_> {
     async fn get_node(
         &self,
         node_ref: &ConfiguredGraphNodeRef,
-    ) -> buck2_error::Result<Self::Target> {
+    ) -> bz_error::Result<Self::Target> {
         Ok(node_ref.dupe())
     }
 
     async fn get_node_for_default_configured_target(
         &self,
         _node_ref: &ConfiguredGraphNodeRef,
-    ) -> buck2_error::Result<MaybeCompatible<Self::Target>> {
+    ) -> bz_error::Result<MaybeCompatible<Self::Target>> {
         Err(QueryError::FunctionUnimplemented(
             "get_node_for_default_configured_target() only for CqueryEnvironment",
         )
@@ -216,7 +216,7 @@ impl QueryEnvironment for ConfiguredGraphQueryEnvironment<'_> {
     async fn eval_literals(
         &self,
         literal: &[&str],
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         let mut result = TargetSet::new();
         for lit in literal {
             result.insert(ConfiguredGraphNodeRef::new(
@@ -226,7 +226,7 @@ impl QueryEnvironment for ConfiguredGraphQueryEnvironment<'_> {
         Ok(result)
     }
 
-    async fn eval_file_literal(&self, literal: &str) -> buck2_error::Result<FileSet> {
+    async fn eval_file_literal(&self, literal: &str) -> bz_error::Result<FileSet> {
         Err(AnalysisQueryError::FileLiteralsNotAllowed(literal.to_owned()).into())
     }
 
@@ -234,8 +234,8 @@ impl QueryEnvironment for ConfiguredGraphQueryEnvironment<'_> {
         &self,
         root: &TargetSet<Self::Target>,
         delegate: impl AsyncChildVisitor<Self::Target>,
-        visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
-    ) -> buck2_error::Result<()> {
+        visit: impl FnMut(Self::Target) -> bz_error::Result<()> + Send,
+    ) -> bz_error::Result<()> {
         async_fast_depth_first_postorder_traversal(
             &NodeLookupId,
             root.iter().duped(),
@@ -249,20 +249,20 @@ impl QueryEnvironment for ConfiguredGraphQueryEnvironment<'_> {
         &self,
         root: &TargetSet<Self::Target>,
         delegate: impl AsyncChildVisitor<Self::Target>,
-        visit: impl FnMut(Self::Target) -> buck2_error::Result<()> + Send,
+        visit: impl FnMut(Self::Target) -> bz_error::Result<()> + Send,
         depth: u32,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         async_depth_limited_traversal(&NodeLookupId, root.iter(), delegate, visit, depth).await
     }
 
-    async fn owner(&self, _paths: &FileSet) -> buck2_error::Result<TargetSet<Self::Target>> {
+    async fn owner(&self, _paths: &FileSet) -> bz_error::Result<TargetSet<Self::Target>> {
         Err(QueryError::FunctionUnimplemented("owner").into())
     }
 
     async fn targets_in_buildfile(
         &self,
         _paths: &FileSet,
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         Err(QueryError::FunctionUnimplemented("targets_in_buildfile").into())
     }
 
@@ -271,7 +271,7 @@ impl QueryEnvironment for ConfiguredGraphQueryEnvironment<'_> {
         targets: &TargetSet<Self::Target>,
         depth: QueryValueDepth,
         filter: Option<&dyn TraversalFilter<Self::Target>>,
-    ) -> buck2_error::Result<TargetSet<Self::Target>> {
+    ) -> bz_error::Result<TargetSet<Self::Target>> {
         if depth.is_unbounded() && filter.is_none() {
             // TODO(nga): fast lookup with depth too.
             let mut deps: TargetSet<Self::Target> = TargetSet::new();
@@ -294,7 +294,7 @@ async fn get_template_info_provider_artifacts(
     ctx: &mut DiceComputations<'_>,
     configured_label: &ConfiguredTargetLabel,
     template_name: &str,
-) -> buck2_error::Result<Vec<ArtifactGroup>> {
+) -> bz_error::Result<Vec<ArtifactGroup>> {
     let providers_label =
         ConfiguredProvidersLabel::new(configured_label.dupe(), ProvidersName::Default);
 
@@ -346,7 +346,7 @@ pub(crate) async fn get_from_template_placeholder_info(
     ctx: &mut DiceComputations<'_>,
     template_name: StaticStr,
     targets: impl IntoIterator<Item = ConfiguredTargetLabel>,
-) -> buck2_error::Result<BuckIndexMap<ConfiguredTargetLabel, Artifact>> {
+) -> bz_error::Result<BuckIndexMap<ConfiguredTargetLabel, Artifact>> {
     let mut label_to_artifact: BuckIndexMap<ConfiguredTargetLabel, Artifact> =
         BuckIndexMap::default();
 
@@ -373,7 +373,7 @@ pub(crate) async fn get_from_template_placeholder_info(
                 let artifacts =
                     get_template_info_provider_artifacts(ctx, &target, template_name.as_str())
                         .await?;
-                buck2_error::Ok(
+                bz_error::Ok(
                     artifacts
                         .into_iter()
                         .map(move |artifact| (target.dupe(), artifact)),
@@ -394,7 +394,7 @@ pub(crate) async fn get_from_template_placeholder_info(
         let handle_artifact =
             |label_to_artifact: &mut BuckIndexMap<ConfiguredTargetLabel, Artifact>,
              artifact: &Artifact|
-             -> buck2_error::Result<()> {
+             -> bz_error::Result<()> {
                 if let Some(owner) = artifact.owner() {
                     let target_label = owner.unpack_target_label().ok_or_else(|| {
                         AnalysisQueryError::NonTargetBoundArtifact(

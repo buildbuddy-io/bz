@@ -107,7 +107,7 @@ impl AbsNormPath {
     /// otherwise error.
     ///
     /// ```
-    /// # use buck2_fs::paths::abs_norm_path::AbsNormPath;
+    /// # use bz_fs::paths::abs_norm_path::AbsNormPath;
     ///
     /// assert!(AbsNormPath::new("foo/bar").is_err());
     /// if cfg!(windows) {
@@ -116,7 +116,7 @@ impl AbsNormPath {
     ///     assert!(AbsNormPath::new("/foo/bar").is_ok());
     /// }
     /// ```
-    pub fn new<P: ?Sized + AsRef<Path>>(p: &P) -> buck2_error::Result<&AbsNormPath> {
+    pub fn new<P: ?Sized + AsRef<Path>>(p: &P) -> bz_error::Result<&AbsNormPath> {
         let path = AbsPath::new(p.as_ref())?;
         verify_abs_path(path)?;
         Ok(AbsNormPath::ref_cast(path))
@@ -127,9 +127,9 @@ impl AbsNormPath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPath;
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// if cfg!(not(windows)) {
     ///     let abs_path = AbsNormPath::new("/my")?;
@@ -146,7 +146,7 @@ impl AbsNormPath {
     ///             .to_string()
     ///     );
     /// }
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[allow(clippy::collapsible_else_if)]
     pub fn join<P: AsRef<ForwardRelativePath>>(&self, path: P) -> AbsNormPathBuf {
@@ -173,7 +173,7 @@ impl AbsNormPath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPath;
     ///
     /// if cfg!(not(windows)) {
     ///     assert_eq!(
@@ -189,7 +189,7 @@ impl AbsNormPath {
     ///     assert_eq!(None, AbsNormPath::new("c:/")?.parent());
     /// }
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn parent(&self) -> Option<&AbsNormPath> {
         self.0.parent().map(AbsNormPath::ref_cast)
@@ -205,8 +205,8 @@ impl AbsNormPath {
     /// use std::borrow::Cow;
     /// use std::path::Path;
     ///
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPath;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPath;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// if cfg!(not(windows)) {
     ///     let path = AbsNormPath::new("/test/foo/bar.txt")?;
@@ -260,30 +260,30 @@ impl AbsNormPath {
     ///     );
     /// }
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn strip_prefix<P: AsRef<AbsNormPath>>(
         &self,
         base: P,
-    ) -> buck2_error::Result<Cow<'_, ForwardRelativePath>> {
+    ) -> bz_error::Result<Cow<'_, ForwardRelativePath>> {
         let stripped_path = self.strip_prefix_impl(base.as_ref())?;
         ForwardRelativePathNormalizer::normalize_path(stripped_path)
     }
 
     #[cfg(not(windows))]
-    fn strip_prefix_impl(&self, base: &AbsNormPath) -> buck2_error::Result<&Path> {
+    fn strip_prefix_impl(&self, base: &AbsNormPath) -> bz_error::Result<&Path> {
         self.0.strip_prefix(&base.0)
     }
 
     #[cfg(windows)]
-    fn strip_prefix_impl(&self, base: &AbsNormPath) -> buck2_error::Result<&Path> {
+    fn strip_prefix_impl(&self, base: &AbsNormPath) -> bz_error::Result<&Path> {
         if self.windows_prefix()? == base.windows_prefix()? {
             Ok(self
                 .strip_windows_prefix()?
                 .strip_prefix(base.strip_windows_prefix()?)?)
         } else {
-            Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::InvalidAbsPath,
+            Err(bz_error::bz_error!(
+                bz_error::ErrorTag::InvalidAbsPath,
                 "Path is not a prefix"
             ))
         }
@@ -294,7 +294,7 @@ impl AbsNormPath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPath;
     ///
     /// if cfg!(not(windows)) {
     ///     let abs_path = AbsNormPath::new("/some/foo")?;
@@ -314,7 +314,7 @@ impl AbsNormPath {
     ///     assert!(!shared_path.starts_with(AbsNormPath::new(r"\\server\share\fo")?));
     /// }
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn starts_with<P: AsRef<AbsNormPath>>(&self, base: P) -> bool {
         self.starts_with_impl(base.as_ref())
@@ -347,7 +347,7 @@ impl AbsNormPath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPath;
     ///
     /// if cfg!(not(windows)) {
     ///     let abs_path = AbsNormPath::new("/some/foo")?;
@@ -357,7 +357,7 @@ impl AbsNormPath {
     ///     assert!(abs_path.ends_with("foo"));
     /// }
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn ends_with<P: AsRef<Path>>(&self, child: P) -> bool {
         self.0.ends_with(child.as_ref())
@@ -366,8 +366,8 @@ impl AbsNormPath {
     /// Build an owned `AbsPathBuf`, joined with the given path and normalized.
     ///
     /// ```
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPath;
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
     ///
     /// if cfg!(not(windows)) {
     ///     assert_eq!(
@@ -395,12 +395,12 @@ impl AbsNormPath {
     ///     );
     /// }
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn join_normalized<P: AsRef<RelativePath>>(
         &self,
         path: P,
-    ) -> buck2_error::Result<AbsNormPathBuf> {
+    ) -> bz_error::Result<AbsNormPathBuf> {
         let mut stack = Vec::new();
         for c in self
             .0
@@ -441,7 +441,7 @@ impl AbsNormPath {
     /// Get Windows path prefix which is either disk drive letter, device or UNC name.
     ///
     /// ```
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPath;
     ///
     /// assert_eq!("D", AbsNormPath::new("d:/foo/bar")?.windows_prefix()?);
     /// assert_eq!("D", AbsNormPath::new(r"D:\foo\bar")?.windows_prefix()?);
@@ -464,14 +464,14 @@ impl AbsNormPath {
     ///     AbsNormPath::new(r"\\.\COM42\foo\bar")?.windows_prefix()?
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
-    pub fn windows_prefix(&self) -> buck2_error::Result<OsString> {
+    pub fn windows_prefix(&self) -> bz_error::Result<OsString> {
         use std::os::windows::ffi::OsStringExt;
         use std::path::Prefix;
 
         match self.0.components().next().ok_or_else(|| {
-            buck2_error::buck2_error!(buck2_error::ErrorTag::InvalidAbsPath, "AbsPath is empty.")
+            bz_error::bz_error!(bz_error::ErrorTag::InvalidAbsPath, "AbsPath is empty.")
         })? {
             std::path::Component::Prefix(prefix_component) => match prefix_component.kind() {
                 Prefix::Disk(disk) | Prefix::VerbatimDisk(disk) => {
@@ -484,14 +484,14 @@ impl AbsNormPath {
                     Ok(server)
                 }
                 Prefix::DeviceNS(device) => Ok(device.to_owned()),
-                prefix => Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::InvalidAbsPath,
+                prefix => Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::InvalidAbsPath,
                     "Unknown prefix kind: {:?}.",
                     prefix
                 )),
             },
-            _ => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::InvalidAbsPath,
+            _ => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::InvalidAbsPath,
                 "AbsPath doesn't have prefix."
             )),
         }
@@ -503,7 +503,7 @@ impl AbsNormPath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPath;
     ///
     /// assert_eq!(
     ///     Path::new(""),
@@ -538,12 +538,12 @@ impl AbsNormPath {
     ///     AbsNormPath::new(r"\\.\COM42\abc")?.strip_windows_prefix()?
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
-    pub fn strip_windows_prefix(&self) -> buck2_error::Result<&Path> {
+    pub fn strip_windows_prefix(&self) -> bz_error::Result<&Path> {
         let mut iter = self.0.iter();
         let prefix = iter.next().ok_or_else(|| {
-            buck2_error::buck2_error!(buck2_error::ErrorTag::InvalidAbsPath, "AbsPath is empty.")
+            bz_error::bz_error!(bz_error::ErrorTag::InvalidAbsPath, "AbsPath is empty.")
         })?;
         let mut prefix = prefix.to_owned();
         // Strip leading path separator as well.
@@ -568,7 +568,7 @@ impl AbsNormPath {
 }
 
 impl AbsNormPathBuf {
-    pub fn new(path: PathBuf) -> buck2_error::Result<AbsNormPathBuf> {
+    pub fn new(path: PathBuf) -> bz_error::Result<AbsNormPathBuf> {
         let path = AbsPathBuf::try_from(path)?;
         verify_abs_path(&path)?;
         Ok(AbsNormPathBuf(path))
@@ -586,7 +586,7 @@ impl AbsNormPathBuf {
         self.0
     }
 
-    pub fn from(s: String) -> buck2_error::Result<Self> {
+    pub fn from(s: String) -> bz_error::Result<Self> {
         AbsNormPathBuf::try_from(s)
     }
 
@@ -622,8 +622,8 @@ impl AbsNormPathBuf {
     /// ```
     /// use std::path::PathBuf;
     ///
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// let prefix = if cfg!(windows) { "C:" } else { "" };
     ///
@@ -653,8 +653,8 @@ impl AbsNormPathBuf {
     /// Note that this does not visit the filesystem to resolve `..`s. Instead, it cancels out the
     /// components directly, similar to `join_normalized`.
     /// ```
-    /// use buck2_fs::paths::RelativePath;
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    /// use bz_fs::paths::RelativePath;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
     ///
     /// let prefix = if cfg!(windows) { "C:" } else { "" };
     ///
@@ -698,9 +698,9 @@ impl AbsNormPathBuf {
     ///
     /// assert!(path.push_normalized(RelativePath::new("..")).is_err());
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
-    pub fn push_normalized<P: AsRef<RelativePath>>(&mut self, path: P) -> buck2_error::Result<()> {
+    pub fn push_normalized<P: AsRef<RelativePath>>(&mut self, path: P) -> bz_error::Result<()> {
         for c in path.as_ref().components() {
             match c {
                 relative_path::Component::Normal(s) => {
@@ -728,14 +728,14 @@ impl AbsNormPathBuf {
 }
 
 impl TryFrom<String> for AbsNormPathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion
     ///
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
     ///
     /// assert!(AbsNormPathBuf::try_from("relative/bar".to_owned()).is_err());
     ///
@@ -751,22 +751,22 @@ impl TryFrom<String> for AbsNormPathBuf {
     ///     assert!(AbsNormPathBuf::try_from("c:/normalize/../bar".to_owned()).is_err());
     /// }
     /// ```
-    fn try_from(s: String) -> buck2_error::Result<AbsNormPathBuf> {
+    fn try_from(s: String) -> bz_error::Result<AbsNormPathBuf> {
         AbsNormPathBuf::try_from(OsString::from(s))
     }
 }
 
 impl TryFrom<OsString> for AbsNormPathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     // no allocation
-    fn try_from(s: OsString) -> buck2_error::Result<AbsNormPathBuf> {
+    fn try_from(s: OsString) -> bz_error::Result<AbsNormPathBuf> {
         AbsNormPathBuf::try_from(PathBuf::from(s))
     }
 }
 
 impl TryFrom<PathBuf> for AbsNormPathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion
     ///
@@ -774,7 +774,7 @@ impl TryFrom<PathBuf> for AbsNormPathBuf {
     /// use std::convert::TryFrom;
     /// use std::path::PathBuf;
     ///
-    /// use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    /// use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
     ///
     /// assert!(AbsNormPathBuf::try_from(PathBuf::from("relative/bar")).is_err());
     ///
@@ -790,7 +790,7 @@ impl TryFrom<PathBuf> for AbsNormPathBuf {
     ///     assert!(AbsNormPathBuf::try_from(PathBuf::from("c:/normalize/../bar")).is_err());
     /// }
     /// ```
-    fn try_from(p: PathBuf) -> buck2_error::Result<AbsNormPathBuf> {
+    fn try_from(p: PathBuf) -> bz_error::Result<AbsNormPathBuf> {
         let p = AbsPathBuf::try_from(p)?;
         verify_abs_path(&p)?;
         Ok(AbsNormPathBuf(p))
@@ -798,9 +798,9 @@ impl TryFrom<PathBuf> for AbsNormPathBuf {
 }
 
 impl FromStr for AbsNormPathBuf {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
-    fn from_str(s: &str) -> buck2_error::Result<Self> {
+    fn from_str(s: &str) -> bz_error::Result<Self> {
         AbsNormPathBuf::try_from(s.to_owned())
     }
 }
@@ -879,7 +879,7 @@ fn verify_abs_path_windows_part(path: &str) -> bool {
 }
 
 /// Verifier for AbsPath to ensure the path is normalized
-fn verify_abs_path(path: &AbsPath) -> buck2_error::Result<()> {
+fn verify_abs_path(path: &AbsPath) -> bz_error::Result<()> {
     // `Path::components` normalizes '.'s away so we cannot iterate with it.
     // TODO maybe we actually want to allow "."s and just
     //   normalize them away entirely.
@@ -908,7 +908,7 @@ fn verify_abs_path(path: &AbsPath) -> buck2_error::Result<()> {
 }
 
 /// Errors from 'AbsPath' creation
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum AbsNormPathError {
     #[error("expected a normalized path, but found a non-normalized path instead: `{0}`")]
@@ -916,7 +916,7 @@ enum AbsNormPathError {
 }
 
 /// Errors from normalizing paths
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum PathNormalizationError {
     #[error(
@@ -932,7 +932,7 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
-    use buck2_hash::StdBuckHashMap;
+    use bz_hash::StdBuckHashMap;
 
     use crate::paths::abs_norm_path::AbsNormPath;
     use crate::paths::abs_norm_path::AbsNormPathBuf;
@@ -952,7 +952,7 @@ mod tests {
     }
 
     #[test]
-    fn abs_paths_work_in_maps() -> buck2_error::Result<()> {
+    fn abs_paths_work_in_maps() -> bz_error::Result<()> {
         let mut map = StdBuckHashMap::default();
         let foo_string = make_absolute("/foo");
         let bar_string = make_absolute("/bar");
@@ -968,7 +968,7 @@ mod tests {
     }
 
     #[test]
-    fn abs_path_is_comparable() -> buck2_error::Result<()> {
+    fn abs_path_is_comparable() -> bz_error::Result<()> {
         let foo_string = make_absolute("/foo");
         let bar_string = make_absolute("/bar");
         let path1_buf = AbsNormPathBuf::from(foo_string.clone())?;
@@ -1084,7 +1084,7 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
-    fn absolute_path_display_is_readable() -> buck2_error::Result<()> {
+    fn absolute_path_display_is_readable() -> bz_error::Result<()> {
         let buf = AbsNormPathBuf::from("/foo/bar".into())?;
         assert_eq!("/foo/bar", format!("{buf}"));
         assert_eq!("AbsNormPathBuf(\"/foo/bar\")", format!("{buf:?}"));
@@ -1097,7 +1097,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn absolute_path_display_is_readable() -> buck2_error::Result<()> {
+    fn absolute_path_display_is_readable() -> bz_error::Result<()> {
         let buf = AbsNormPathBuf::from("C:/foo/bar".into())?;
         assert_eq!("C:/foo/bar", format!("{buf}"));
         assert_eq!("AbsNormPathBuf(\"C:/foo/bar\")", format!("{buf:?}"));

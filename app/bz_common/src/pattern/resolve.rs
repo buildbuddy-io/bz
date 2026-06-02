@@ -9,18 +9,18 @@
  */
 
 use allocative::Allocative;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::PackageLabelWithModifiers;
-use buck2_core::pattern::pattern::Modifiers;
-use buck2_core::pattern::pattern::PackageSpec;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
-use buck2_core::pattern::pattern::display_precise_pattern;
-use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::PatternType;
-use buck2_core::target::name::TargetName;
-use buck2_error::BuckErrorContext;
-use buck2_hash::BuckIndexMap;
+use bz_core::package::PackageLabel;
+use bz_core::package::PackageLabelWithModifiers;
+use bz_core::pattern::pattern::Modifiers;
+use bz_core::pattern::pattern::PackageSpec;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern::ParsedPatternWithModifiers;
+use bz_core::pattern::pattern::display_precise_pattern;
+use bz_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
+use bz_core::pattern::pattern_type::PatternType;
+use bz_core::target::name::TargetName;
+use bz_error::BuckErrorContext;
+use bz_hash::BuckIndexMap;
 use dice::DiceComputations;
 use dupe::Dupe;
 use gazebo::prelude::VecExt;
@@ -77,7 +77,7 @@ where
 }
 
 impl ResolvedPattern<ConfiguredProvidersPatternExtra> {
-    pub fn convert_pattern<U: PatternType>(self) -> buck2_error::Result<ResolvedPattern<U>> {
+    pub fn convert_pattern<U: PatternType>(self) -> bz_error::Result<ResolvedPattern<U>> {
         let mut specs = BuckIndexMap::with_capacity(self.specs.len());
         for (package_with_modifiers, spec) in self.specs {
             let spec = match spec {
@@ -95,7 +95,7 @@ impl ResolvedPattern<ConfiguredProvidersPatternExtra> {
                                     ),
                                 )
                             })?;
-                        buck2_error::Ok((target_name, extra))
+                        bz_error::Ok((target_name, extra))
                     })?)
                 }
                 PackageSpec::All() => PackageSpec::All(),
@@ -113,7 +113,7 @@ impl ResolveTargetPatterns {
     pub async fn resolve<P: PatternType>(
         ctx: &mut DiceComputations<'_>,
         patterns: &[ParsedPattern<P>],
-    ) -> buck2_error::Result<ResolvedPattern<P>> {
+    ) -> bz_error::Result<ResolvedPattern<P>> {
         ctx.with_linear_recompute(|ctx| async move {
             resolve_target_patterns_impl(patterns, &DiceFileOps(&ctx)).await
         })
@@ -124,7 +124,7 @@ impl ResolveTargetPatterns {
     pub async fn resolve_with_modifiers<P: PatternType>(
         ctx: &mut DiceComputations<'_>,
         patterns: &[ParsedPatternWithModifiers<P>],
-    ) -> buck2_error::Result<ResolvedPattern<P>> {
+    ) -> bz_error::Result<ResolvedPattern<P>> {
         ctx.with_linear_recompute(|ctx| async move {
             resolve_target_patterns_with_modifiers_impl(patterns, &DiceFileOps(&ctx)).await
         })
@@ -135,7 +135,7 @@ impl ResolveTargetPatterns {
 async fn resolve_target_patterns_impl<P: PatternType>(
     patterns: &[ParsedPattern<P>],
     file_ops: &dyn FileOps,
-) -> buck2_error::Result<ResolvedPattern<P>> {
+) -> bz_error::Result<ResolvedPattern<P>> {
     let mut resolved = ResolvedPattern::new();
     for pattern in patterns {
         match pattern {
@@ -166,7 +166,7 @@ async fn resolve_target_patterns_impl<P: PatternType>(
 async fn resolve_target_patterns_with_modifiers_impl<P: PatternType>(
     patterns: &[ParsedPatternWithModifiers<P>],
     file_ops: &dyn FileOps,
-) -> buck2_error::Result<ResolvedPattern<P>> {
+) -> bz_error::Result<ResolvedPattern<P>> {
     let mut resolved = ResolvedPattern::new();
 
     for pattern in patterns {
@@ -203,23 +203,23 @@ mod tests {
     use std::marker::PhantomData;
     use std::sync::Arc;
 
-    use buck2_core::cells::CellResolver;
-    use buck2_core::cells::cell_root_path::CellRootPathBuf;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-    use buck2_core::package::PackageLabel;
-    use buck2_core::package::PackageLabelWithModifiers;
-    use buck2_core::pattern::pattern::Modifiers;
-    use buck2_core::pattern::pattern::PackageSpec;
-    use buck2_core::pattern::pattern::ParsedPattern;
-    use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
-    use buck2_core::pattern::pattern_type::PatternType;
-    use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-    use buck2_core::pattern::pattern_type::TargetPatternExtra;
-    use buck2_core::provider::label::NonDefaultProvidersName;
-    use buck2_core::provider::label::ProviderName;
-    use buck2_core::provider::label::ProvidersName;
-    use buck2_core::target::name::TargetName;
+    use bz_core::cells::CellResolver;
+    use bz_core::cells::cell_root_path::CellRootPathBuf;
+    use bz_core::cells::name::CellName;
+    use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+    use bz_core::package::PackageLabel;
+    use bz_core::package::PackageLabelWithModifiers;
+    use bz_core::pattern::pattern::Modifiers;
+    use bz_core::pattern::pattern::PackageSpec;
+    use bz_core::pattern::pattern::ParsedPattern;
+    use bz_core::pattern::pattern::ParsedPatternWithModifiers;
+    use bz_core::pattern::pattern_type::PatternType;
+    use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+    use bz_core::pattern::pattern_type::TargetPatternExtra;
+    use bz_core::provider::label::NonDefaultProvidersName;
+    use bz_core::provider::label::ProviderName;
+    use bz_core::provider::label::ProvidersName;
+    use bz_core::target::name::TargetName;
     use dupe::Dupe;
     use gazebo::prelude::*;
     use test_case::test_case;
@@ -237,7 +237,7 @@ mod tests {
     }
 
     impl TestPatternResolver {
-        fn new(cells: &[(&str, &str)], files: &[&str]) -> buck2_error::Result<Self> {
+        fn new(cells: &[(&str, &str)], files: &[&str]) -> bz_error::Result<Self> {
             let resolver = {
                 let cells: Vec<_> = cells
                     .iter()
@@ -267,7 +267,7 @@ mod tests {
             Ok(TestPatternResolver { resolver, file_ops })
         }
 
-        async fn resolve<T>(&self, patterns: &[&str]) -> buck2_error::Result<ResolvedPattern<T>>
+        async fn resolve<T>(&self, patterns: &[&str]) -> bz_error::Result<ResolvedPattern<T>>
         where
             T: PatternType,
         {
@@ -287,7 +287,7 @@ mod tests {
         async fn resolve_with_modifiers<T>(
             &self,
             patterns: &[&str],
-        ) -> buck2_error::Result<ResolvedPattern<T>>
+        ) -> bz_error::Result<ResolvedPattern<T>>
         where
             T: PatternType,
         {
@@ -340,7 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_simple_specs_targets() -> buck2_error::Result<()> {
+    async fn test_simple_specs_targets() -> bz_error::Result<()> {
         let tester = TestPatternResolver::new(&[("root", ""), ("child", "child/cell")], &[])?;
         tester
             .resolve::<TargetPatternExtra>(&[])
@@ -376,7 +376,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_simple_specs_providers() -> buck2_error::Result<()> {
+    async fn test_simple_specs_providers() -> bz_error::Result<()> {
         let tester = TestPatternResolver::new(&[("root", ""), ("child", "child/cell")], &[])?;
         tester
             .resolve::<ProvidersPatternExtra>(&[])
@@ -407,7 +407,7 @@ mod tests {
                             ProvidersPatternExtra {
                                 providers: ProvidersName::NonDefault(triomphe::Arc::new(
                                     NonDefaultProvidersName::Named(
-                                        buck2_util::arc_str::ArcSlice::new([ProviderName::new(
+                                        bz_util::arc_str::ArcSlice::new([ProviderName::new(
                                             "my-label".to_owned(),
                                         )
                                         .unwrap()]),
@@ -524,7 +524,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_simple_specs_targets_with_modifiers() -> buck2_error::Result<()> {
+    async fn test_simple_specs_targets_with_modifiers() -> bz_error::Result<()> {
         let tester = TestPatternResolver::new(&[("root", ""), ("child", "child/cell")], &[])?;
 
         tester
@@ -586,7 +586,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_simple_specs_providers_with_modifiers() -> buck2_error::Result<()> {
+    async fn test_simple_specs_providers_with_modifiers() -> bz_error::Result<()> {
         let tester = TestPatternResolver::new(&[("root", ""), ("child", "child/cell")], &[])?;
 
         tester
@@ -603,7 +603,7 @@ mod tests {
                     TargetName::testing_new("other_target"),
                     ProvidersPatternExtra {
                         providers: ProvidersName::NonDefault(triomphe::Arc::new(
-                            NonDefaultProvidersName::Named(buck2_util::arc_str::ArcSlice::new([
+                            NonDefaultProvidersName::Named(bz_util::arc_str::ArcSlice::new([
                                 ProviderName::new("my-label".to_owned()).unwrap(),
                             ])),
                         )),

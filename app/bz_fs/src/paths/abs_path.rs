@@ -23,7 +23,7 @@ use ref_cast::RefCast;
 
 use crate::cwd;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum AbsPathError {
     #[error("expected an absolute path but got a relative path instead: `{}`", _0.display())]
@@ -143,9 +143,9 @@ impl PartialEq<AbsPathBuf> for &'_ AbsPath {
 }
 
 impl AbsPath {
-    pub fn new<P: AsRef<Path> + ?Sized>(path: &P) -> buck2_error::Result<&AbsPath> {
+    pub fn new<P: AsRef<Path> + ?Sized>(path: &P) -> bz_error::Result<&AbsPath> {
         // Wrapper function to make sure the lifetimes are right
-        fn inner(path: &Path) -> buck2_error::Result<&AbsPath> {
+        fn inner(path: &Path) -> bz_error::Result<&AbsPath> {
             if path.is_absolute() {
                 // SAFETY: repr transparent.
                 Ok(unsafe { &*(path as *const Path as *const AbsPath) })
@@ -160,7 +160,7 @@ impl AbsPath {
         &self.0
     }
 
-    pub fn to_str(&self) -> buck2_error::Result<&str> {
+    pub fn to_str(&self) -> bz_error::Result<&str> {
         match self.0.to_str() {
             Some(s) => Ok(s),
             None => Err(AbsPathError::PathCannotBeConvertedToUtf8(self.0.to_owned().into()).into()),
@@ -177,7 +177,7 @@ impl AbsPath {
     }
 
     /// ```
-    /// use buck2_fs::paths::abs_path::AbsPath;
+    /// use bz_fs::paths::abs_path::AbsPath;
     ///
     /// if cfg!(not(windows)) {
     ///     assert_eq!(
@@ -207,7 +207,7 @@ impl AbsPath {
     }
 
     /// ```
-    /// use buck2_fs::paths::abs_path::AbsPath;
+    /// use bz_fs::paths::abs_path::AbsPath;
     ///
     /// if cfg!(not(windows)) {
     ///     let path = AbsPath::new("/foo.rs").unwrap();
@@ -236,7 +236,7 @@ impl AbsPath {
         AbsPathBuf::new(path).unwrap()
     }
 
-    pub fn strip_prefix<P: AsRef<AbsPath>>(&self, prefix: P) -> buck2_error::Result<&Path> {
+    pub fn strip_prefix<P: AsRef<AbsPath>>(&self, prefix: P) -> bz_error::Result<&Path> {
         Ok(self.0.strip_prefix(prefix.as_ref())?)
     }
 
@@ -249,13 +249,13 @@ impl AbsPath {
         cwd::maybe_relativize(&self.0)
     }
 
-    pub fn as_maybe_relativized_str(&self) -> buck2_error::Result<&str> {
+    pub fn as_maybe_relativized_str(&self) -> bz_error::Result<&str> {
         Ok(cwd::maybe_relativize_str(self.to_str()?))
     }
 }
 
 impl AbsPathBuf {
-    pub fn new<P: AsRef<Path>>(path: P) -> buck2_error::Result<Self> {
+    pub fn new<P: AsRef<Path>>(path: P) -> bz_error::Result<Self> {
         let p = AbsPath::new(path.as_ref())?;
         Ok(p.to_owned())
     }
@@ -269,7 +269,7 @@ impl AbsPathBuf {
     }
 
     /// Convert a path into a String. Fails if the path is not UTF8.
-    pub fn into_string(self) -> buck2_error::Result<String> {
+    pub fn into_string(self) -> bz_error::Result<String> {
         self.into_os_string()
             .into_string()
             .map_err(|x| AbsPathError::PathCannotBeConvertedToUtf8(x).into())
@@ -303,8 +303,8 @@ impl AbsPathBuf {
     }
 
     /// ```
-    /// use buck2_fs::paths::abs_path::AbsPath;
-    /// use buck2_fs::paths::abs_path::AbsPathBuf;
+    /// use bz_fs::paths::abs_path::AbsPath;
+    /// use bz_fs::paths::abs_path::AbsPathBuf;
     ///
     /// if cfg!(not(windows)) {
     ///     let mut path = AbsPathBuf::new("/foo").unwrap();
@@ -327,8 +327,8 @@ impl AbsPathBuf {
     }
 
     /// ```
-    /// use buck2_fs::paths::abs_path::AbsPath;
-    /// use buck2_fs::paths::abs_path::AbsPathBuf;
+    /// use bz_fs::paths::abs_path::AbsPath;
+    /// use bz_fs::paths::abs_path::AbsPathBuf;
     ///
     /// if cfg!(not(windows)) {
     ///     let mut path = AbsPathBuf::new("/foo.rs").unwrap();
@@ -347,7 +347,7 @@ impl AbsPathBuf {
 }
 
 impl TryFrom<PathBuf> for AbsPathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
         AbsPath::new(&path)?;
@@ -356,7 +356,7 @@ impl TryFrom<PathBuf> for AbsPathBuf {
 }
 
 impl TryFrom<String> for AbsPathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn try_from(path: String) -> Result<Self, Self::Error> {
         AbsPathBuf::try_from(PathBuf::from(path))
@@ -364,9 +364,9 @@ impl TryFrom<String> for AbsPathBuf {
 }
 
 impl FromStr for AbsPathBuf {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
-    fn from_str(s: &str) -> buck2_error::Result<AbsPathBuf> {
+    fn from_str(s: &str) -> bz_error::Result<AbsPathBuf> {
         AbsPathBuf::try_from(s.to_owned())
     }
 }

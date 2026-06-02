@@ -8,27 +8,27 @@
  * above-listed licenses.
  */
 
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_directory::directory::walk::unordered_entry_walk;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest::CasDigestToReExt;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
-use buck2_execute::execute::clean_output_paths::cleanup_path;
-use buck2_execute::materialize::materializer::CasDownloadInfo;
-use buck2_execute::materialize::materializer::WriteRequest;
-use buck2_execute::materialize::utils::dynamic_priority_handle::DynamicPriorityHandle;
-use buck2_execute::materialize::utils::priority_semaphore::Priority;
-use buck2_execute::re::manager::ReConnectionManager;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::directory_iterator::DirectoryIteratorPathStack;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_directory::directory::walk::unordered_entry_walk;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest::CasDigestToReExt;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute::execute::clean_output_paths::CleanOutputPaths;
+use bz_execute::execute::clean_output_paths::cleanup_path;
+use bz_execute::materialize::materializer::CasDownloadInfo;
+use bz_execute::materialize::materializer::WriteRequest;
+use bz_execute::materialize::utils::dynamic_priority_handle::DynamicPriorityHandle;
+use bz_execute::materialize::utils::priority_semaphore::Priority;
+use bz_execute::re::manager::ReConnectionManager;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use gazebo::prelude::*;
@@ -41,8 +41,8 @@ pub async fn write_to_disk<'a>(
     fs: &ProjectRoot,
     io_executor: &dyn BlockingExecutor,
     digest_config: DigestConfig,
-    generate: Box<dyn FnOnce() -> buck2_error::Result<Vec<WriteRequest>> + Send + 'a>,
-) -> buck2_error::Result<Vec<ArtifactValue>> {
+    generate: Box<dyn FnOnce() -> bz_error::Result<Vec<WriteRequest>> + Send + 'a>,
+) -> bz_error::Result<Vec<ArtifactValue>> {
     io_executor
         .execute_io_inline({
             move || {
@@ -82,7 +82,7 @@ pub async fn cas_download(
     info: &CasDownloadInfo,
     artifacts: Vec<(ProjectRelativePathBuf, ArtifactValue)>,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     io.execute_io(
         Box::new(CleanOutputPaths {
             paths: artifacts.map(|(p, _)| p.to_owned()),

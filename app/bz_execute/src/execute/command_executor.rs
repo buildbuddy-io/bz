@@ -12,19 +12,19 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::execution_types::executor_config::CommandGenerationOptions;
-use buck2_core::execution_types::executor_config::OutputPathsBehavior;
-use buck2_core::execution_types::executor_config::ReGangWorker;
-use buck2_core::execution_types::executor_config::RemoteExecutorCafFbpkg;
-use buck2_core::execution_types::executor_config::RemoteExecutorCustomImage;
-use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::execution_types::executor_config::CommandGenerationOptions;
+use bz_core::execution_types::executor_config::OutputPathsBehavior;
+use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RemoteExecutorCafFbpkg;
+use bz_core::execution_types::executor_config::RemoteExecutorCustomImage;
+use bz_core::execution_types::executor_config::RemoteExecutorDependency;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::fingerprinted_directory::FingerprintedDirectory;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use remote_execution as RE;
@@ -57,8 +57,8 @@ use crate::execute::request::RemoteWorkerSpec;
 use crate::execute::result::CommandExecutionMetadata;
 use crate::execute::result::CommandExecutionResult;
 use crate::re::action_identity::ReActionIdentity;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::BuckIndexSet;
+use bz_hash::BuckIndexMap;
+use bz_hash::BuckIndexSet;
 
 #[derive(Copy, Dupe, Clone, Debug, PartialEq, Eq)]
 pub struct ActionExecutionTimingData {
@@ -194,7 +194,7 @@ impl CommandExecutor {
         &self,
         local_action_cache_key: &LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.0
             .action_cache_checker
             .insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
@@ -220,7 +220,7 @@ impl CommandExecutor {
         dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
         action_digest_and_blobs: &ActionDigestAndBlobs,
         identity: Option<&ReActionIdentity<'_>>,
-    ) -> buck2_error::Result<CacheUploadResults> {
+    ) -> bz_error::Result<CacheUploadResults> {
         self.0
             .cache_uploader
             .upload(
@@ -266,8 +266,8 @@ impl CommandExecutor {
         request: &CommandExecutionRequest,
         digest_config: DigestConfig,
         re_outputs_required: bool,
-    ) -> buck2_error::Result<PreparedAction> {
-        executor_stage(buck2_data::PrepareAction {}, || {
+    ) -> bz_error::Result<PreparedAction> {
+        executor_stage(bz_data::PrepareAction {}, || {
             let input_digest = request.paths().input_directory().fingerprint();
 
             let mut platform = self.0.re_platform.clone();
@@ -285,8 +285,8 @@ impl CommandExecutor {
                         || arg.starts_with("-flagfile")
                         || arg.starts_with("--flagfile"))
                     {
-                        return Err(buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        return Err(bz_error!(
+                            bz_error::ErrorTag::Input,
                             "Remote persistent worker arguments must be passed as `@argfile`, `-flagfile=argfile`, or `--flagfile=argfile`."
                         ));
                     }
@@ -329,7 +329,7 @@ impl CommandExecutor {
                     .allow_unsandboxed_action_cache_uploads,
             )?;
 
-            buck2_error::Ok(action)
+            bz_error::Ok(action)
         })
     }
 }
@@ -354,7 +354,7 @@ fn re_create_action(
     worker: &Option<RemoteWorkerSpec>,
     re_outputs_required: bool,
     allow_unsandboxed_action_cache_uploads: bool,
-) -> buck2_error::Result<PreparedAction> {
+) -> bz_error::Result<PreparedAction> {
     let (worker_tool_init_action, command_args) = if let Some(worker) = worker {
         let mut action_and_blobs = ActionDigestAndBlobsBuilder::new(digest_config);
         let command = RE::Command {
@@ -438,8 +438,8 @@ fn re_create_action(
         OutputPathsBehavior::OutputPaths => {
             #[cfg(fbcode_build)]
             {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "output_paths is not supported in fbcode_build"
                 ));
             }

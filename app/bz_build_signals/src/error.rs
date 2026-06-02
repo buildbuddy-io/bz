@@ -15,8 +15,8 @@ use tokio::task::JoinError;
 /// so failing a build on a spurious critical path computation failure is a high cost.
 ///
 /// Because of this, we are careful about exactly what errors may be produced from the critical
-/// path build listeners rather than just propagating buck2_error::Results around.
-#[derive(buck2_error::Error, Debug)]
+/// path build listeners rather than just propagating bz_error::Results around.
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = CriticalPathError)]
 pub enum CriticalPathError {
     #[error("Overflow building critical path graph graph")]

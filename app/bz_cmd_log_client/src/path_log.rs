@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_error::BuckErrorContext;
-use buck2_event_log::file_names::retrieve_all_logs;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_error::BuckErrorContext;
+use bz_event_log::file_names::retrieve_all_logs;
 
 /// Output the path to the selected log.
 #[derive(Debug, clap::Parser)]
@@ -52,7 +52,7 @@ impl BuckSubcommand for PathLogCommand {
             vec![event_log_options.get(&ctx).await?]
         };
         for path in paths {
-            buck2_client_ctx::println!("{}", path.path().display())?;
+            bz_client_ctx::println!("{}", path.path().display())?;
         }
         ExitResult::success()
     }

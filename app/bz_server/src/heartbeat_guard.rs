@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use buck2_events::dispatch::EventDispatcher;
+use bz_events::dispatch::EventDispatcher;
 use tokio::task::JoinHandle;
 
 use crate::snapshot::SnapshotCollector;
@@ -26,7 +26,7 @@ impl HeartbeatGuard {
     pub(crate) fn new(events: EventDispatcher, collector: SnapshotCollector) -> Self {
         // NOTE: This doesn't use the ambient dispatcher wrappers because we want to control the
         // exact lifetime of the dispatcher.
-        let handle = tokio::spawn(buck2_util::async_move_clone!(events, collector, {
+        let handle = tokio::spawn(bz_util::async_move_clone!(events, collector, {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {

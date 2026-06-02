@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
-use buck2_execute::directory::ActionDirectoryMember;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
+use bz_execute::directory::ActionDirectoryMember;
 use dice::UserComputationData;
 use dupe::Dupe;
 

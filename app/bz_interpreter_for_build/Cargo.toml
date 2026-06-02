@@ -2,7 +2,7 @@
 description = "Interpreter setup to BUCK files"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_interpreter_for_build"
+name = "bz_interpreter_for_build"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -53,23 +53,23 @@ pagable = { workspace = true }
 starlark = { workspace = true }
 starlark_map = { workspace = true }
 
-buck2_common = { workspace = true }
-buck2_core = { workspace = true }
-buck2_data = { workspace = true }
-buck2_directory = { workspace = true }
-buck2_error = { workspace = true }
-buck2_event_observer = { workspace = true }
-buck2_events = { workspace = true }
-buck2_execute = { workspace = true }
-buck2_execute_local = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_hash = { workspace = true }
-buck2_http = { workspace = true }
-buck2_interpreter = { workspace = true }
-buck2_build_api = { workspace = true }
-buck2_node = { workspace = true }
-buck2_query = { workspace = true }
-buck2_query_parser = { workspace = true }
-buck2_resource_control = { workspace = true }
-buck2_util = { workspace = true }
+bz_common = { workspace = true }
+bz_core = { workspace = true }
+bz_data = { workspace = true }
+bz_directory = { workspace = true }
+bz_error = { workspace = true }
+bz_event_observer = { workspace = true }
+bz_events = { workspace = true }
+bz_execute = { workspace = true }
+bz_execute_local = { workspace = true }
+bz_fs = { workspace = true }
+bz_hash = { workspace = true }
+bz_http = { workspace = true }
+bz_interpreter = { workspace = true }
+bz_build_api = { workspace = true }
+bz_node = { workspace = true }
+bz_query = { workspace = true }
+bz_query_parser = { workspace = true }
+bz_resource_control = { workspace = true }
+bz_util = { workspace = true }
 dice_futures = { workspace = true }

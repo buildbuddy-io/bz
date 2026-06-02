@@ -13,9 +13,9 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::sync::Arc;
 
-use buck2_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
+use bz_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
 use dice::Dice;
 use dice::introspection::serialize_dense_graph;
 use dice::introspection::serialize_graph;
@@ -27,7 +27,7 @@ pub(crate) async fn dice_dump_spawn(
     dice: &Arc<Dice>,
     path: &Path,
     format: DiceDumpFormat,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let dice = dice.dupe();
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || dice_dump(&dice, &path, format))
@@ -41,7 +41,7 @@ pub(crate) fn dice_dump(
     dice: &Arc<Dice>,
     path: &Path,
     format: DiceDumpFormat,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match format {
         DiceDumpFormat::Tsv => dice_dump_tsv(dice, path),
         DiceDumpFormat::Bincode => dice_dump_bincode(dice, path),
@@ -49,7 +49,7 @@ pub(crate) fn dice_dump(
     }
 }
 
-pub(crate) fn tar_dice_dump(dice_dump_folder: &Path) -> buck2_error::Result<()> {
+pub(crate) fn tar_dice_dump(dice_dump_folder: &Path) -> bz_error::Result<()> {
     let tar_gz = File::create(format!("{}.tar.gz", dice_dump_folder.display()))?;
     let enc = GzEncoder::new(tar_gz, Compression::default());
     let mut tar = tar::Builder::new(enc);
@@ -67,7 +67,7 @@ pub(crate) fn tar_dice_dump(dice_dump_folder: &Path) -> buck2_error::Result<()> 
     Ok(())
 }
 
-fn dice_dump_tsv(dice: &Arc<Dice>, path: &Path) -> buck2_error::Result<()> {
+fn dice_dump_tsv(dice: &Arc<Dice>, path: &Path) -> bz_error::Result<()> {
     let path = path.to_path_buf();
     let nodes_path = path.join("nodes.gz");
     let edges_path = path.join("edges.gz");
@@ -103,7 +103,7 @@ fn dice_dump_tsv(dice: &Arc<Dice>, path: &Path) -> buck2_error::Result<()> {
         &mut edges,
         &mut nodes_currently_running,
     )
-    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
     .buck_error_context("Failed to serialize")?;
 
     nodes
@@ -122,7 +122,7 @@ fn dice_dump_tsv(dice: &Arc<Dice>, path: &Path) -> buck2_error::Result<()> {
     Ok(())
 }
 
-fn dice_dump_bincode(dice: &Arc<Dice>, path: &Path) -> buck2_error::Result<()> {
+fn dice_dump_bincode(dice: &Arc<Dice>, path: &Path) -> bz_error::Result<()> {
     let path = path.to_path_buf();
     std::fs::create_dir_all(path.parent().unwrap())
         .buck_error_context("Failed to create directory")?;
@@ -135,12 +135,12 @@ fn dice_dump_bincode(dice: &Arc<Dice>, path: &Path) -> buck2_error::Result<()> {
         &mut out,
         bincode::config::legacy(),
     )
-    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?;
 
     Ok(())
 }
 
-fn dice_dump_json_pretty(dice: &Arc<Dice>, path: &Path) -> buck2_error::Result<()> {
+fn dice_dump_json_pretty(dice: &Arc<Dice>, path: &Path) -> bz_error::Result<()> {
     let path = path.to_path_buf();
     std::fs::create_dir_all(path.parent().unwrap())
         .buck_error_context("Failed to create directory")?;

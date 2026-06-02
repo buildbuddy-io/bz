@@ -41,7 +41,7 @@ pub(super) fn empty_bzlmod_lockfile_data() -> BzlmodModuleLockfileData {
 pub(super) async fn bzlmod_lockfile_data(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
-) -> buck2_error::Result<BzlmodModuleLockfileData> {
+) -> bz_error::Result<BzlmodModuleLockfileData> {
     let lockfile_path = ConfigPath::Project(
         cell_path
             .as_project_relative_path()
@@ -56,7 +56,7 @@ pub(super) async fn bzlmod_lockfile_data(
 pub(super) async fn bzlmod_vendor_file_data(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
-) -> buck2_error::Result<BzlmodVendorFileValue> {
+) -> bz_error::Result<BzlmodVendorFileValue> {
     let vendor_file_path = ConfigPath::Project(
         cell_path
             .as_project_relative_path()
@@ -216,7 +216,7 @@ fn vendor_paren_delta(s: &str) -> i32 {
 
 pub(super) fn bzlmod_lockfile_data_from_str(
     contents: &str,
-) -> buck2_error::Result<BzlmodModuleLockfileData> {
+) -> bz_error::Result<BzlmodModuleLockfileData> {
     let lockfile: BzlmodModuleLockfile = serde_json::from_str(contents)
         .buck_error_context("Error parsing MODULE.bazel.lock for bzlmod generated repositories")?;
     let mut repos_by_extension = BTreeMap::new();
@@ -256,15 +256,15 @@ pub(super) fn bzlmod_hidden_lockfile_schema_matches(contents: &str) -> bool {
 pub(super) fn bzlmod_lockfile_extension_key(
     extension_id: &BzlmodExtensionId,
     canonical_repo_names_by_cell: &BTreeMap<String, String>,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let canonical_repo_name = if extension_id.bzl_cell_name == "root" {
         ""
     } else {
         canonical_repo_names_by_cell
             .get(&extension_id.bzl_cell_name)
             .ok_or_else(|| {
-                buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error!(
+                    bz_error::ErrorTag::Input,
                     "bzlmod module extension `{}//{}%{}` resolves to unknown cell `{}`",
                     extension_id.bzl_cell_name,
                     extension_id.bzl_path,

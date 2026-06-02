@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_data::ErrorReport;
+use bz_data::ErrorReport;
 
 use crate::ErrorTag;
 use crate::context_value::ContextValue;
@@ -59,7 +59,7 @@ impl From<&crate::Error> for ErrorReport {
             .action_error()
             .and_then(|e| e.error_diagnostics.as_ref())
         {
-            if let Some(buck2_data::action_error_diagnostics::Data::SubErrors(sub_errors)) =
+            if let Some(bz_data::action_error_diagnostics::Data::SubErrors(sub_errors)) =
                 &error_diagnostics.data
             {
                 sub_errors
@@ -76,14 +76,14 @@ impl From<&crate::Error> for ErrorReport {
         let string_tags = err
             .iter_context()
             .filter_map(|kind| match kind {
-                ContextValue::StringTag(val) => Some(buck2_data::error_report::StringTag {
+                ContextValue::StringTag(val) => Some(bz_data::error_report::StringTag {
                     tag: val.tag.clone(),
                 }),
                 _ => None,
             })
             .collect();
 
-        buck2_data::ErrorReport {
+        bz_data::ErrorReport {
             message,
             telemetry_message,
             source_location: Some(err.source_location().clone().into()),

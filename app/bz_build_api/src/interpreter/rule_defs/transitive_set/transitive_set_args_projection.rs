@@ -14,7 +14,7 @@ use std::iter;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_error::internal_error;
+use bz_error::internal_error;
 use display_container::display_pair;
 use display_container::fmt_container;
 use display_container::iter_display_chain;
@@ -93,7 +93,7 @@ impl<'v, V: ValueLike<'v>> Display for TransitiveSetArgsProjectionGen<V> {
 }
 
 impl<'v, V: ValueLike<'v>> TransitiveSetArgsProjectionGen<V> {
-    fn projection_name(&self) -> buck2_error::Result<&'v str> {
+    fn projection_name(&self) -> bz_error::Result<&'v str> {
         TransitiveSet::from_value(self.transitive_set.get().to_value())
             .ok_or_else(|| internal_error!("Invalid transitive_set"))?
             .projection_name(self.projection)
@@ -105,7 +105,7 @@ impl<'v, V: ValueLike<'v>> TransitiveSetArgsProjectionGen<V> {
     /// This function allows us to treat those two as the same.
     /// TODO(cjhopman): It may be better to wrap the list case in a new CommandLineArgLike impl when returned from
     /// the projection. Then we'd only have to verify the contents type once and it might be a bit simpler to use.
-    pub(super) fn as_command_line(v: V) -> buck2_error::Result<impl CommandLineArgLike<'v> + 'v> {
+    pub(super) fn as_command_line(v: V) -> bz_error::Result<impl CommandLineArgLike<'v> + 'v> {
         enum Impl<'v> {
             Item(&'v dyn CommandLineArgLike<'v>),
             List(&'v [Value<'v>]),
@@ -120,7 +120,7 @@ impl<'v, V: ValueLike<'v>> TransitiveSetArgsProjectionGen<V> {
                 cli: &mut dyn CommandLineBuilder,
                 context: &mut dyn CommandLineContext,
                 artifact_path_mapping: &dyn ArtifactPathMapper,
-            ) -> buck2_error::Result<()> {
+            ) -> bz_error::Result<()> {
                 match self {
                     Impl::Item(v) => v.add_to_command_line(cli, context, artifact_path_mapping),
                     Impl::List(items) => {
@@ -156,7 +156,7 @@ impl<'v, V: ValueLike<'v>> TransitiveSetArgsProjectionGen<V> {
                 &self,
                 visitor: &mut dyn WriteToFileMacroVisitor,
                 artifact_path_mapping: &dyn ArtifactPathMapper,
-            ) -> buck2_error::Result<()> {
+            ) -> bz_error::Result<()> {
                 match self {
                     Impl::Item(v) => v.visit_write_to_file_macros(visitor, artifact_path_mapping),
                     Impl::List(items) => {
@@ -173,7 +173,7 @@ impl<'v, V: ValueLike<'v>> TransitiveSetArgsProjectionGen<V> {
             fn visit_artifacts(
                 &self,
                 visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-            ) -> buck2_error::Result<()> {
+            ) -> bz_error::Result<()> {
                 match self {
                     Impl::Item(v) => v.visit_artifacts(visitor),
                     Impl::List(items) => {
@@ -229,7 +229,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for TransitiveSetArgsProjectio
         builder: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let set = TransitiveSet::from_value(self.transitive_set.get().to_value())
             .ok_or_else(|| internal_error!("Invalid transitive_set"))?;
 
@@ -252,7 +252,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for TransitiveSetArgsProjectio
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let set = TransitiveSet::from_value(self.transitive_set.get().to_value())
             .ok_or_else(|| internal_error!("Invalid transitive_set"))?;
 
@@ -283,7 +283,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for TransitiveSetArgsProjectio
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // TODO(cjhopman): This seems wrong, there's no verification that the projected
         // values don't have write_to_file_macros in them.
         Ok(())

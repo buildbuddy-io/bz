@@ -14,16 +14,16 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::path::Path;
 
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 // Note: Using this because we don't need to propagate async in the offline
 // archiver program
-use buck2_util::process::background_command;
+use bz_util::process::background_command;
 
 #[derive(
     Clone,
@@ -74,7 +74,7 @@ impl ExternalSymlink {
     /// ExternalSymlink "remaining_path"s can themselves contain symlinks. When
     /// assembling the final archive, we need to preserve these interior links
     /// and materialize their targets in the offline archive.
-    pub fn interior_links(&self) -> buck2_error::Result<Vec<AbsoluteSymlink>> {
+    pub fn interior_links(&self) -> bz_error::Result<Vec<AbsoluteSymlink>> {
         let mut targets = Vec::new();
         if let Some(remaining_path) = &self.remaining_path {
             for ancestor in remaining_path.as_path().ancestors() {
@@ -122,13 +122,13 @@ pub struct RepositoryMetadata {
 }
 
 impl RepositoryMetadata {
-    pub fn from_cwd() -> buck2_error::Result<Self> {
+    pub fn from_cwd() -> bz_error::Result<Self> {
         Self::from_path(
             std::env::current_dir().buck_error_context("Error getting current directory")?,
         )
     }
 
-    pub fn from_path<P: AsRef<Path>>(path: P) -> buck2_error::Result<Self> {
+    pub fn from_path<P: AsRef<Path>>(path: P) -> bz_error::Result<Self> {
         let revision = hg_in(&path, ["whereami"])?;
         let name = hg_in(path, ["config", "remotefilelog.reponame"])?;
         Ok(Self { revision, name })
@@ -141,7 +141,7 @@ impl fmt::Display for RepositoryMetadata {
     }
 }
 
-pub fn hg<I, S>(args: I) -> buck2_error::Result<String>
+pub fn hg<I, S>(args: I) -> bz_error::Result<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -149,7 +149,7 @@ where
     hg_in(std::env::current_dir()?, args)
 }
 
-fn hg_in<I, S, P>(path: P, args: I) -> buck2_error::Result<String>
+fn hg_in<I, S, P>(path: P, args: I) -> bz_error::Result<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -168,8 +168,8 @@ where
         let out = String::from_utf8(result.stdout).buck_error_context("hg stdout to string")?;
         let out = out.trim();
         if out.is_empty() {
-            Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::OfflineArchive,
+            Err(bz_error::bz_error!(
+                bz_error::ErrorTag::OfflineArchive,
                 "expected output from `{:?}`",
                 cmd
             ))
@@ -178,8 +178,8 @@ where
         }
     } else {
         let err = String::from_utf8(result.stderr).buck_error_context("hg stderr to string")?;
-        Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::OfflineArchive,
+        Err(bz_error::bz_error!(
+            bz_error::ErrorTag::OfflineArchive,
             "{}",
             err
         ))
@@ -190,8 +190,8 @@ where
 /// be used for windows for now.
 #[cfg(all(test, not(windows)))]
 mod tests {
-    use buck2_fs::paths::abs_path::AbsPath;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_fs::paths::abs_path::AbsPath;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     use tempfile::TempDir;
 
     use super::*;
@@ -210,7 +210,7 @@ mod tests {
     }
 
     /// Creates a tree of entries rooted at
-    fn create_tree(entries: Vec<Entry>) -> buck2_error::Result<TempDir> {
+    fn create_tree(entries: Vec<Entry>) -> bz_error::Result<TempDir> {
         let working_dir = TempDir::new()?;
         let abs = AbsPath::new(working_dir.path())?;
         for entry in entries {
@@ -239,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn test_full_target_no_remaining() -> buck2_error::Result<()> {
+    fn test_full_target_no_remaining() -> bz_error::Result<()> {
         let external_link = ExternalSymlink {
             link: ProjectRelativePathBuf::unchecked_new("foo/bar/baz".to_owned()),
             target: AbsPathBuf::new("/some/absolute/path")?,
@@ -253,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn test_full_target_with_remaining() -> buck2_error::Result<()> {
+    fn test_full_target_with_remaining() -> bz_error::Result<()> {
         let external_link = ExternalSymlink {
             link: ProjectRelativePathBuf::unchecked_new("foo/bar/baz".to_owned()),
             target: AbsPathBuf::new("/some/absolute/path")?,
@@ -267,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn test_interior_links_no_remaining() -> buck2_error::Result<()> {
+    fn test_interior_links_no_remaining() -> bz_error::Result<()> {
         let external_link = ExternalSymlink {
             link: ProjectRelativePathBuf::unchecked_new("foo/bar/baz".to_owned()),
             target: AbsPathBuf::new("/some/absolute/path")?,
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn test_interior_links_relative() -> buck2_error::Result<()> {
+    fn test_interior_links_relative() -> bz_error::Result<()> {
         let tree = create_tree(vec![
             Entry::Dir("foo/bar/baz"),
             Entry::File("foo/bar/stuff.txt"),
@@ -315,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn test_interior_links_absolute() -> buck2_error::Result<()> {
+    fn test_interior_links_absolute() -> bz_error::Result<()> {
         let tree = create_tree(vec![
             Entry::Dir("foo/bar/baz"),
             Entry::File("foo/bar/stuff.txt"),

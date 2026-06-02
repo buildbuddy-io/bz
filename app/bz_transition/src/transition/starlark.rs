@@ -14,18 +14,18 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 
 use allocative::Allocative;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfo;
-use buck2_core::bzl::ImportPath;
-use buck2_core::configuration::data::BazelBuildSettingValue;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_error::BuckErrorContext;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::build_context::starlark_path_from_build_context;
-use buck2_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_TRANSITION_GLOBALS;
-use buck2_interpreter::late_binding_ty::TransitionReprLate;
-use buck2_interpreter::types::transition::TransitionValue;
+use bz_build_api::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfo;
+use bz_core::bzl::ImportPath;
+use bz_core::configuration::data::BazelBuildSettingValue;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::provider::label::ProvidersLabel;
+use bz_error::BuckErrorContext;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::build_context::starlark_path_from_build_context;
+use bz_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_TRANSITION_GLOBALS;
+use bz_interpreter::late_binding_ty::TransitionReprLate;
+use bz_interpreter::types::transition::TransitionValue;
 use derive_more::Display;
 use dupe::Dupe;
 use either::Either;
@@ -65,7 +65,7 @@ use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark::values::typing::StarlarkCallableParamSpec;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum TransitionError {
     #[error("Transition must be assigned to a variable, e.g. `android_cpus = transition(...)`")]
@@ -186,7 +186,7 @@ impl Freeze for Transition<'_> {
 starlark_complex_values!(Transition);
 
 impl TransitionValue for Transition<'_> {
-    fn transition_id(&self) -> buck2_error::Result<Arc<TransitionId>> {
+    fn transition_id(&self) -> bz_error::Result<Arc<TransitionId>> {
         self.id
             .borrow()
             .as_ref()
@@ -198,17 +198,17 @@ impl TransitionValue for Transition<'_> {
         &self,
         value: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<Arc<TransitionId>> {
+    ) -> bz_error::Result<Arc<TransitionId>> {
         if let Some(id) = self.id.borrow().as_ref() {
             return Ok(id.dupe());
         }
 
         for index in 0.. {
-            let name = format!("__buck2_bazel_transition_{index}");
+            let name = format!("__bz_bazel_transition_{index}");
             if eval.module().get(&name).is_none() {
                 value
                     .export_as(&name, eval)
-                    .map_err(buck2_error::Error::from)?;
+                    .map_err(bz_error::Error::from)?;
                 eval.module().set(&name, value);
                 return self.transition_id();
             }
@@ -219,7 +219,7 @@ impl TransitionValue for Transition<'_> {
 }
 
 impl TransitionValue for FrozenTransition {
-    fn transition_id(&self) -> buck2_error::Result<Arc<TransitionId>> {
+    fn transition_id(&self) -> bz_error::Result<Arc<TransitionId>> {
         Ok(self.id.dupe())
     }
 }
@@ -315,13 +315,13 @@ impl<'v> AllocValue<'v> for AnalysisTestTransition {
 starlark_simple_value!(FrozenAnalysisTestTransition);
 
 impl TransitionValue for AnalysisTestTransition {
-    fn transition_id(&self) -> buck2_error::Result<Arc<TransitionId>> {
+    fn transition_id(&self) -> bz_error::Result<Arc<TransitionId>> {
         Ok(self.id.dupe())
     }
 }
 
 impl TransitionValue for FrozenAnalysisTestTransition {
-    fn transition_id(&self) -> buck2_error::Result<Arc<TransitionId>> {
+    fn transition_id(&self) -> bz_error::Result<Arc<TransitionId>> {
         Ok(self.id.dupe())
     }
 }
@@ -331,7 +331,7 @@ fn validate_transition_impl(
     implementation: Value,
     attrs: bool,
     split: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let expected_return_type = match split {
         false => ImplSingleReturnTy::starlark_type_repr(),
         true => ImplSplitReturnTy::starlark_type_repr(),
@@ -420,7 +420,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             (Some(r#impl), None) => (r#impl.0, false),
             (None, Some(implementation)) => (implementation.0, true),
             _ => {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     TransitionError::MissingOrConflictingImplementation,
                 )
                 .into());
@@ -436,17 +436,17 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
                     ProvidersLabelTrace((COERCE_PROVIDERS_LABEL_FOR_BZL.get()?)(eval, &r)?),
                 ))
             })
-            .collect::<buck2_error::Result<_>>()?;
+            .collect::<bz_error::Result<_>>()?;
 
         let path: ImportPath = (*starlark_path_from_build_context(eval)?
             .unpack_load_file()
-            .ok_or(buck2_error::Error::from(TransitionError::OnlyBzl))?)
+            .ok_or(bz_error::Error::from(TransitionError::OnlyBzl))?)
         .clone();
 
         if let Some(attrs) = &attrs {
             let attrs_set: StdBuckHashSet<StringValue> = attrs.items.iter().copied().collect();
             if attrs_set.len() != attrs.items.len() {
-                return Err(buck2_error::Error::from(TransitionError::NonUniqueAttrs).into());
+                return Err(bz_error::Error::from(TransitionError::NonUniqueAttrs).into());
             }
         };
 
@@ -473,7 +473,7 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
     ) -> starlark::Result<AnalysisTestTransition> {
         let path: ImportPath = (*starlark_path_from_build_context(eval)?
             .unpack_load_file()
-            .ok_or(buck2_error::Error::from(TransitionError::OnlyBzl))?)
+            .ok_or(bz_error::Error::from(TransitionError::OnlyBzl))?)
         .clone();
 
         let settings = settings

@@ -11,8 +11,8 @@
 use std::process::Command as StdCommand;
 use std::process::ExitStatus;
 
-use buck2_resource_control::ActionFreezeEventReceiver;
-use buck2_resource_control::path::CgroupPathBuf;
+use bz_resource_control::ActionFreezeEventReceiver;
+use bz_resource_control::path::CgroupPathBuf;
 use tokio::io;
 use tokio::process::ChildStderr;
 use tokio::process::ChildStdout;
@@ -22,18 +22,18 @@ use crate::unix::process_group as imp;
 #[cfg(windows)]
 use crate::win::process_group as imp;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 pub enum SpawnError {
     #[error("Failed to spawn a process")]
     IoError(io::Error),
     #[error("Failed to create a process group")]
-    GenericError(buck2_error::Error),
+    GenericError(bz_error::Error),
 }
 
-impl From<buck2_error::Error> for SpawnError {
+impl From<bz_error::Error> for SpawnError {
     #[cold]
-    fn from(e: buck2_error::Error) -> Self {
+    fn from(e: bz_error::Error) -> Self {
         SpawnError::GenericError(e)
     }
 }
@@ -53,7 +53,7 @@ impl ProcessCommand {
     pub(crate) async fn new(
         cmd: StdCommand,
         cgroup: Option<CgroupPathBuf>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(Self {
             inner: imp::ProcessCommandImpl::new(cmd, cgroup).await?,
         })
@@ -84,7 +84,7 @@ impl ProcessGroup {
     pub(crate) async fn wait(
         &mut self,
         freeze_rx: impl ActionFreezeEventReceiver,
-    ) -> buck2_error::Result<(ExitStatus, Vec<buck2_resource_control::OrphanProcessInfo>)> {
+    ) -> bz_error::Result<(ExitStatus, Vec<bz_resource_control::OrphanProcessInfo>)> {
         self.inner.wait(freeze_rx).await
     }
 
@@ -95,20 +95,20 @@ impl ProcessGroup {
     pub(crate) async fn kill(
         &self,
         graceful_shutdown_timeout_s: Option<u32>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.inner.kill(graceful_shutdown_timeout_s).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use buck2_util::process::background_command;
+    use bz_util::process::background_command;
 
     use crate::process_group::ProcessCommand;
 
     // The test check basic functionality of process implementation as it differs on Unix and Windows
     #[tokio::test]
-    async fn test_process_impl() -> buck2_error::Result<()> {
+    async fn test_process_impl() -> bz_error::Result<()> {
         let mut cmd;
 
         if cfg!(windows) {

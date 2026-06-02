@@ -29,6 +29,6 @@ pub fn init_late_bindings() {
         context::init_analysis_action_methods_actions();
         dynamic::calculation::init_dynamic_lambda_calculation();
         dynamic::storage::init_dynamic_lambda_params_storages();
-        starlark_defs::init_register_buck2_action_impl_globals();
+        starlark_defs::init_register_bz_action_impl_globals();
     });
 }

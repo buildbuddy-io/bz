@@ -9,7 +9,7 @@
  */
 
 #[cfg(target_os = "macos")]
-use buck2_error::conversion::from_any_with_tag;
+use bz_error::conversion::from_any_with_tag;
 
 /// macOS QoS (Quality of Service) class for the Buck2 daemon process.
 ///
@@ -34,13 +34,13 @@ impl MacosQosClass {
     /// Parse a QoS class from a buckconfig string value.
     ///
     /// Valid values: `utility`, `background`, `skip_lowering`.
-    fn from_config(s: &str) -> buck2_error::Result<Self> {
+    fn from_config(s: &str) -> bz_error::Result<Self> {
         match s {
             "utility" => Ok(Self::Utility),
             "background" => Ok(Self::Background),
             "skip_lowering" => Ok(Self::SkipLowering),
-            other => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            other => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid macOS QoS class `{}`. Expected one of: utility, background, skip_lowering",
                 other
             )),
@@ -51,11 +51,11 @@ impl MacosQosClass {
     ///
     /// Only valid for `Utility` and `Background`.
     #[cfg(target_os = "macos")]
-    fn to_qos_class_t(self) -> buck2_error::Result<libc::qos_class_t> {
+    fn to_qos_class_t(self) -> bz_error::Result<libc::qos_class_t> {
         match self {
             Self::Utility => Ok(libc::qos_class_t::QOS_CLASS_UTILITY),
             Self::Background => Ok(libc::qos_class_t::QOS_CLASS_BACKGROUND),
-            Self::SkipLowering => Err(buck2_error::internal_error!(
+            Self::SkipLowering => Err(bz_error::internal_error!(
                 "SkipLowering should not reach do_lower_priority"
             )),
         }
@@ -65,7 +65,7 @@ impl MacosQosClass {
 pub(crate) fn daemon_lower_priority(
     skip_macos_qos_flag: bool,
     macos_qos_class: Option<&str>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if skip_macos_qos_flag {
         // Either:
         // * we already lowered priority or
@@ -104,7 +104,7 @@ pub(crate) fn daemon_lower_priority(
 ///
 /// This function never return `Ok`.
 #[cfg(target_os = "macos")]
-fn do_lower_priority(qos_class: MacosQosClass) -> buck2_error::Result<()> {
+fn do_lower_priority(qos_class: MacosQosClass) -> bz_error::Result<()> {
     use std::env;
     use std::ffi::CString;
     use std::io;
@@ -113,7 +113,7 @@ fn do_lower_priority(qos_class: MacosQosClass) -> buck2_error::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     use std::ptr;
 
-    use buck2_error::BuckErrorContext;
+    use bz_error::BuckErrorContext;
 
     unsafe extern "C" {
         // https://github.com/rust-lang/libc/pull/3128
@@ -128,7 +128,7 @@ fn do_lower_priority(qos_class: MacosQosClass) -> buck2_error::Result<()> {
 
     let exe = env::current_exe()?;
     let exe = CString::new(exe.into_os_string().as_bytes())
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?;
 
     struct Spawnattr(libc::posix_spawnattr_t);
 
@@ -142,7 +142,7 @@ fn do_lower_priority(qos_class: MacosQosClass) -> buck2_error::Result<()> {
     }
 
     impl Spawnattr {
-        fn new() -> buck2_error::Result<Spawnattr> {
+        fn new() -> bz_error::Result<Spawnattr> {
             unsafe {
                 let mut spawnattr = MaybeUninit::zeroed();
                 let r = libc::posix_spawnattr_init(spawnattr.as_mut_ptr());
@@ -158,11 +158,11 @@ fn do_lower_priority(qos_class: MacosQosClass) -> buck2_error::Result<()> {
     let mut spawnattr = Spawnattr::new()?;
 
     let mut argv: Vec<CString> = env::args()
-        .map(|s| CString::new(s).map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0)))
+        .map(|s| CString::new(s).map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0)))
         .chain(iter::once(Ok(CString::new("--skip-macos-qos").map_err(
-            |e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0),
+            |e| from_any_with_tag(e, bz_error::ErrorTag::Tier0),
         )?)))
-        .collect::<buck2_error::Result<Vec<_>>>()?;
+        .collect::<bz_error::Result<Vec<_>>>()?;
     let argv: Vec<*mut libc::c_char> = argv
         .iter_mut()
         .map(|s| s.as_ptr() as *mut libc::c_char)
@@ -203,7 +203,7 @@ fn do_lower_priority(qos_class: MacosQosClass) -> buck2_error::Result<()> {
         }
     }
 
-    #[derive(Debug, buck2_error::Error)]
+    #[derive(Debug, bz_error::Error)]
     #[error("`posix_spawnp` with `POSIX_SPAWN_SETEXEC` flag should not return on success.")]
     #[buck2(tag = Tier0)]
     struct Unreachable;

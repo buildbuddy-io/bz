@@ -172,7 +172,7 @@ async def test_super_console_changes(buck: Buck) -> None:
 
 @buck_test(
     extra_buck_config={
-        "buck2_system_warning": {
+        "bz_system_warning": {
             "memory_pressure_threshold_percent": "1",
         },
     },

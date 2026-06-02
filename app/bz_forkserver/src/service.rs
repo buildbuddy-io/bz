@@ -19,33 +19,33 @@ use std::pin::Pin;
 use std::process::Command;
 use std::sync::Arc;
 
-use buck2_common::convert::ProstDurationExt;
-use buck2_core::logging::LogConfigurationReloadHandle;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute_local::DefaultKillProcess;
-use buck2_execute_local::GatherOutputStatus;
-use buck2_execute_local::StdRedirectPaths;
-use buck2_execute_local::maybe_absolutize_exe;
-use buck2_execute_local::spawn_command_and_stream_events;
-use buck2_execute_local::status_decoder::DefaultStatusDecoder;
-use buck2_execute_local::status_decoder::MiniperfStatusDecoder;
-use buck2_forkserver_proto::CommandRequest;
-use buck2_forkserver_proto::RequestEvent;
-use buck2_forkserver_proto::SetLogFilterRequest;
-use buck2_forkserver_proto::SetLogFilterResponse;
-use buck2_forkserver_proto::forkserver_server::Forkserver;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_grpc::to_tonic;
-use buck2_resource_control::ActionFreezeEvent;
-use buck2_resource_control::ActionFreezeEventReceiver;
-use buck2_resource_control::path::CgroupPathBuf;
-use buck2_util::process::background_command;
+use bz_common::convert::ProstDurationExt;
+use bz_core::logging::LogConfigurationReloadHandle;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute_local::DefaultKillProcess;
+use bz_execute_local::GatherOutputStatus;
+use bz_execute_local::StdRedirectPaths;
+use bz_execute_local::maybe_absolutize_exe;
+use bz_execute_local::spawn_command_and_stream_events;
+use bz_execute_local::status_decoder::DefaultStatusDecoder;
+use bz_execute_local::status_decoder::MiniperfStatusDecoder;
+use bz_forkserver_proto::CommandRequest;
+use bz_forkserver_proto::RequestEvent;
+use bz_forkserver_proto::SetLogFilterRequest;
+use bz_forkserver_proto::SetLogFilterResponse;
+use bz_forkserver_proto::forkserver_server::Forkserver;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_grpc::to_tonic;
+use bz_resource_control::ActionFreezeEvent;
+use bz_resource_control::ActionFreezeEventReceiver;
+use bz_resource_control::path::CgroupPathBuf;
+use bz_util::process::background_command;
 use futures::FutureExt;
 use futures::pin_mut;
 use futures::stream::Stream;
@@ -64,12 +64,12 @@ use crate::convert::encode_event_stream;
 
 // Not quite BoxStream: it has to be Sync (...)
 type RunStream =
-    Pin<Box<dyn Stream<Item = Result<buck2_forkserver_proto::CommandEvent, Status>> + Send>>;
+    Pin<Box<dyn Stream<Item = Result<bz_forkserver_proto::CommandEvent, Status>> + Send>>;
 
 struct ValidatedCommand {
     exe: PathBuf,
     argv: Vec<Vec<u8>>,
-    env: Vec<buck2_forkserver_proto::EnvDirective>,
+    env: Vec<bz_forkserver_proto::EnvDirective>,
     cwd: PathBuf,
     timeout: Option<std::time::Duration>,
     enable_miniperf: bool,
@@ -77,11 +77,11 @@ struct ValidatedCommand {
     graceful_shutdown_timeout_s: Option<u32>,
     command_cgroup: Option<CgroupPathBuf>,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    network_access: Option<buck2_data::NetworkAccess>,
+    network_access: Option<bz_data::NetworkAccess>,
 }
 
 impl ValidatedCommand {
-    fn try_from(cmd_request: CommandRequest) -> buck2_error::Result<Self> {
+    fn try_from(cmd_request: CommandRequest) -> bz_error::Result<Self> {
         let CommandRequest {
             exe,
             argv,
@@ -132,7 +132,7 @@ impl ValidatedCommand {
             graceful_shutdown_timeout_s,
             command_cgroup,
             network_access: network_access
-                .map(buck2_data::NetworkAccess::try_from)
+                .map(bz_data::NetworkAccess::try_from)
                 .transpose()
                 .map_err(|v| internal_error!("Invalid network_access value: {}", v))?,
         })
@@ -150,7 +150,7 @@ impl UnixForkserverService {
     pub(crate) fn new(
         log_reload_handle: Arc<dyn LogConfigurationReloadHandle>,
         state_dir: &AbsNormPath,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let miniperf = MiniperfContainer::new(state_dir)?;
         Ok(Self {
             log_reload_handle,
@@ -160,7 +160,7 @@ impl UnixForkserverService {
 
     async fn parse_command_request(
         stream: &mut Streaming<RequestEvent>,
-    ) -> buck2_error::Result<CommandRequest> {
+    ) -> bz_error::Result<CommandRequest> {
         let cmd_request = stream
             .message()
             .await?
@@ -172,9 +172,9 @@ impl UnixForkserverService {
 
     fn configure_environment(
         cmd: &mut std::process::Command,
-        env_directives: &[buck2_forkserver_proto::EnvDirective],
-    ) -> buck2_error::Result<()> {
-        use buck2_forkserver_proto::env_directive::Data;
+        env_directives: &[bz_forkserver_proto::EnvDirective],
+    ) -> bz_error::Result<()> {
+        use bz_forkserver_proto::env_directive::Data;
 
         for directive in env_directives {
             match directive
@@ -199,7 +199,7 @@ impl UnixForkserverService {
     fn setup_process_command(
         &self,
         validated_cmd: &ValidatedCommand,
-    ) -> buck2_error::Result<(Command, Option<AbsNormPathBuf>)> {
+    ) -> bz_error::Result<(Command, Option<AbsNormPathBuf>)> {
         let (mut cmd, miniperf_output) = match (validated_cmd.enable_miniperf, &self.miniperf) {
             // Wraps the user command with miniperf for performance monitoring
             (true, Some(miniperf)) => {
@@ -219,7 +219,7 @@ impl UnixForkserverService {
         Self::configure_environment(&mut cmd, &validated_cmd.env)?;
 
         #[cfg(target_os = "linux")]
-        if validated_cmd.network_access == Some(buck2_data::NetworkAccess::None)
+        if validated_cmd.network_access == Some(bz_data::NetworkAccess::None)
             && validated_cmd.command_cgroup.is_some()
         {
             #[cfg(fbcode_build)]
@@ -250,13 +250,13 @@ impl UnixForkserverService {
     async fn create_command_stream(
         cmd: Command,
         validated_cmd: ValidatedCommand,
-        cancellation: impl futures::Future<Output = buck2_error::Result<GatherOutputStatus>>
+        cancellation: impl futures::Future<Output = bz_error::Result<GatherOutputStatus>>
         + Send
         + Unpin
         + 'static,
         miniperf_output: Option<AbsNormPathBuf>,
         freeze_rx: impl ActionFreezeEventReceiver,
-    ) -> buck2_error::Result<RunStream> {
+    ) -> bz_error::Result<RunStream> {
         let timeout = validated_cmd.timeout;
         let graceful_shutdown_timeout_s = validated_cmd.graceful_shutdown_timeout_s;
         let std_redirects = validated_cmd.std_redirects;
@@ -323,18 +323,18 @@ impl Forkserver for UnixForkserverService {
                     let err = match m {
                         Ok(m) => match m.data {
                             Some(d) => match d {
-                                buck2_forkserver_proto::request_event::Data::CommandRequest(_) => {
-                                    buck2_error::internal_error!("Non-leading command request")
+                                bz_forkserver_proto::request_event::Data::CommandRequest(_) => {
+                                    bz_error::internal_error!("Non-leading command request")
                                 }
-                                buck2_forkserver_proto::request_event::Data::CancelRequest(_) => {
+                                bz_forkserver_proto::request_event::Data::CancelRequest(_) => {
                                     drop(cancel_tx.send(Ok(GatherOutputStatus::Cancelled)));
                                     break;
                                 }
-                                buck2_forkserver_proto::request_event::Data::FreezeRequest(_) => {
+                                bz_forkserver_proto::request_event::Data::FreezeRequest(_) => {
                                     drop(freeze_tx.send(ActionFreezeEvent::Freeze));
                                     continue;
                                 }
-                                buck2_forkserver_proto::request_event::Data::UnfreezeRequest(_) => {
+                                bz_forkserver_proto::request_event::Data::UnfreezeRequest(_) => {
                                     drop(freeze_tx.send(ActionFreezeEvent::Unfreeze));
                                     continue;
                                 }
@@ -391,12 +391,12 @@ struct MiniperfContainer {
 }
 
 impl MiniperfContainer {
-    fn new(forkserver_state_dir: &AbsNormPath) -> buck2_error::Result<Option<Self>> {
+    fn new(forkserver_state_dir: &AbsNormPath) -> bz_error::Result<Option<Self>> {
         let miniperf_bin: Option<&'static [u8]>;
 
         #[cfg(all(fbcode_build, target_os = "linux"))]
         {
-            miniperf_bin = Some(buck2_miniperf_data::get());
+            miniperf_bin = Some(bz_miniperf_data::get());
         }
 
         #[cfg(not(all(fbcode_build, target_os = "linux")))]

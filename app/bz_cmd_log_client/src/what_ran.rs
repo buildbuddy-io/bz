@@ -11,29 +11,29 @@
 use std::borrow::Cow;
 use std::io::Write;
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ClientIoError;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_data::SchedulingMode;
-use buck2_data::re_platform::Property;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_event_observer::fmt_duration;
-use buck2_event_observer::what_ran;
-use buck2_event_observer::what_ran::CommandReproducer;
-use buck2_event_observer::what_ran::WhatRanOptions;
-use buck2_event_observer::what_ran::WhatRanOutputCommand;
-use buck2_event_observer::what_ran::WhatRanOutputCommandExtra;
-use buck2_event_observer::what_ran::WhatRanOutputWriter;
-use buck2_event_observer::what_ran::WhatRanRelevantAction;
-use buck2_event_observer::what_ran::WhatRanState;
-use buck2_events::span::SpanId;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::StdBuckHashMap;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ClientIoError;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_data::SchedulingMode;
+use bz_data::re_platform::Property;
+use bz_error::conversion::from_any_with_tag;
+use bz_event_log::stream_value::StreamValue;
+use bz_event_observer::fmt_duration;
+use bz_event_observer::what_ran;
+use bz_event_observer::what_ran::CommandReproducer;
+use bz_event_observer::what_ran::WhatRanOptions;
+use bz_event_observer::what_ran::WhatRanOutputCommand;
+use bz_event_observer::what_ran::WhatRanOutputCommandExtra;
+use bz_event_observer::what_ran::WhatRanOutputWriter;
+use bz_event_observer::what_ran::WhatRanRelevantAction;
+use bz_event_observer::what_ran::WhatRanState;
+use bz_events::span::SpanId;
+use bz_hash::BuckIndexMap;
+use bz_hash::StdBuckHashMap;
 use futures::TryStreamExt;
 use futures::stream::Stream;
 
@@ -135,7 +135,7 @@ impl BuckSubcommand for WhatRanCommand {
             show_std_err,
             omit_empty_std_err,
         } = self;
-        buck2_client_ctx::stdio::print_with_writer::<buck2_error::Error, _>(async move |w| {
+        bz_client_ctx::stdio::print_with_writer::<bz_error::Error, _>(async move |w| {
             let mut output = OutputFormatWithWriter {
                 format: transform_format(output, w),
                 include_std_err: show_std_err,
@@ -145,7 +145,7 @@ impl BuckSubcommand for WhatRanCommand {
 
             let (invocation, events) = log_path.unpack_stream().await?;
 
-            buck2_client_ctx::eprintln!(
+            bz_client_ctx::eprintln!(
                 "Showing commands from: {}{}",
                 invocation.display_command_line(),
                 if options.filter_category.is_some() {
@@ -161,7 +161,7 @@ impl BuckSubcommand for WhatRanCommand {
                 incomplete,
             };
             WhatRanCommandState::execute(events, &mut output, &options).await?;
-            buck2_error::Ok(())
+            bz_error::Ok(())
         })
         .await?;
         ExitResult::success()
@@ -216,7 +216,7 @@ impl WhatRanState for WhatRanCommandState {
 
 impl WhatRanCommandState {
     async fn execute(
-        mut events: impl Stream<Item = buck2_error::Result<StreamValue>> + Unpin + Send,
+        mut events: impl Stream<Item = bz_error::Result<StreamValue>> + Unpin + Send,
         output: &mut impl WhatRanOutputWriter,
         options: &WhatRanCommandOptions,
     ) -> Result<(), ClientIoError> {
@@ -237,7 +237,7 @@ impl WhatRanCommandState {
         self,
         output: &mut impl WhatRanOutputWriter,
         options: &WhatRanCommandOptions,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for (_, entry) in self.known_actions.into_iter() {
             if should_emit_unfinished_action(options) {
                 entry.emit_what_ran_entry(output, options, None, None, None)?;
@@ -255,10 +255,10 @@ impl WhatRanCommandState {
     ///   unfinished. We check to emit all unfinished after all events are received
     fn event(
         &mut self,
-        event: Box<buck2_data::BuckEvent>,
+        event: Box<bz_data::BuckEvent>,
         output: &mut impl WhatRanOutputWriter,
         options: &WhatRanCommandOptions,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(data) = event.data {
             // Create WhatRanRelevantAction on SpanStart to track CommandReproducers as they come
             if let Some(action) = WhatRanRelevantAction::from_buck_data(&data) {
@@ -281,7 +281,7 @@ impl WhatRanCommandState {
                 return Ok(());
             }
             // Emit WhatRanRelevantAction when we see the corresponding SpanEnd
-            if let buck2_data::buck_event::Data::SpanEnd(span) = &data
+            if let bz_data::buck_event::Data::SpanEnd(span) = &data
                 && let Some(mut entry) =
                     self.known_actions.remove(&SpanId::from_u64(event.span_id)?)
                 && should_emit_finished_action(&span.data, options)
@@ -289,7 +289,7 @@ impl WhatRanCommandState {
                 // Get extra data out of SpanEnd event
                 let (execution_kind, std_err, duration, scheduling_mode) =
                     match &span.data {
-                        Some(buck2_data::span_end_event::Data::ActionExecution(action_exec)) => (
+                        Some(bz_data::span_end_event::Data::ActionExecution(action_exec)) => (
                             Some(action_exec.execution_kind),
                             action_exec.commands.iter().last().and_then(|cmd| {
                                 cmd.details.as_ref().map(|d| d.cmd_stderr.as_ref())
@@ -307,7 +307,7 @@ impl WhatRanCommandState {
                         _ => (None, None, None, None),
                     };
 
-                if execution_kind == Some(buck2_data::ActionExecutionKind::LocalDepFile as i32) {
+                if execution_kind == Some(bz_data::ActionExecutionKind::LocalDepFile as i32) {
                     entry
                         .reproducers
                         .push(CommandReproducer::LocalDepFileCacheHit);
@@ -322,7 +322,7 @@ impl WhatRanCommandState {
 }
 
 fn should_emit_finished_action(
-    data: &Option<buck2_data::span_end_event::Data>,
+    data: &Option<bz_data::span_end_event::Data>,
     options: &WhatRanCommandOptions,
 ) -> bool {
     if options.incomplete {
@@ -330,7 +330,7 @@ fn should_emit_finished_action(
     }
 
     match data {
-        Some(buck2_data::span_end_event::Data::ActionExecution(action)) => {
+        Some(bz_data::span_end_event::Data::ActionExecution(action)) => {
             action.failed || !options.failed
         }
         _ => !options.failed, // This is dead code (this span can only be ActionExecution End given
@@ -344,7 +344,7 @@ fn should_emit_unfinished_action(options: &WhatRanCommandOptions) -> bool {
 
 /// An output that writes to stdout in a tabulated format.
 impl WhatRanOutputWriter for OutputFormatWithWriter<'_> {
-    fn emit_command(&mut self, command: WhatRanOutputCommand<'_>) -> buck2_error::Result<()> {
+    fn emit_command(&mut self, command: WhatRanOutputCommand<'_>) -> bz_error::Result<()> {
         if self.include_std_err && self.omit_empty_std_err && command.std_err == Some("") {
             return Ok(());
         }
@@ -383,11 +383,11 @@ impl WhatRanOutputWriter for OutputFormatWithWriter<'_> {
                         digest: &cache_hit.action_digest,
                     },
                     CommandReproducer::CacheHit(cache_hit) => match cache_hit.cache_type() {
-                        buck2_data::CacheType::ActionCache => JsonReproducer::Cache {
+                        bz_data::CacheType::ActionCache => JsonReproducer::Cache {
                             digest: &cache_hit.action_digest,
                             action_key: cache_hit.action_key.as_deref(),
                         },
-                        buck2_data::CacheType::RemoteDepFileCache => {
+                        bz_data::CacheType::RemoteDepFileCache => {
                             JsonReproducer::ReDepFileCache {
                                 digest: &cache_hit.action_digest,
                                 action_key: cache_hit.action_key.as_deref(),
@@ -490,14 +490,14 @@ impl WhatRanOutputWriter for OutputFormatWithWriter<'_> {
                         reproducer: command.repro.to_string(),
                         std_err: std_err_formatted,
                     })
-                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogCmd))?;
+                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::LogCmd))?;
                 Ok(())
             }
         }
     }
 }
 
-fn into_index_map(platform: &Option<buck2_data::RePlatform>) -> BuckIndexMap<&str, &str> {
+fn into_index_map(platform: &Option<bz_data::RePlatform>) -> BuckIndexMap<&str, &str> {
     platform.as_ref().map_or_else(BuckIndexMap::new, |p| {
         p.properties
             .iter()
@@ -612,7 +612,7 @@ mod tests {
             identity: "some/target",
             reproducer: JsonReproducer::Re {
                 digest: "placeholder",
-                platform_properties: buck2_hash::buck_indexmap! {
+                platform_properties: bz_hash::buck_indexmap! {
                     "platform" => "linux-remote-execution"
                 },
                 action_key: None,
@@ -625,7 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn serialize_what_ran_command_no_extr() -> buck2_error::Result<()> {
+    fn serialize_what_ran_command_no_extr() -> bz_error::Result<()> {
         let command = make_base_command();
 
         let expected = r#"{
@@ -650,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn serialize_what_ran_command_with_extra() -> buck2_error::Result<()> {
+    fn serialize_what_ran_command_with_extra() -> bz_error::Result<()> {
         let mut command = make_base_command();
         let cases = &["case".to_owned()];
         command.extra = Some(JsonExtra::TestCases(cases));
@@ -682,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn serialize_what_ran_command_in_re() -> buck2_error::Result<()> {
+    fn serialize_what_ran_command_in_re() -> bz_error::Result<()> {
         let command = make_base_command_in_re();
 
         let expected = r#"{

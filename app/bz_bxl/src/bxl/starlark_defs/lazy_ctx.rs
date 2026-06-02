@@ -44,7 +44,7 @@ pub(crate) mod lazy_cquery_ctx;
 pub(crate) mod lazy_uquery_ctx;
 pub(crate) mod operation;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BxlBuildArtifactError {
     #[error(
@@ -293,7 +293,7 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<StarlarkLazy> {
         match artifact {
             ArtifactArg::DeclaredArtifact(_) => {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     BxlBuildArtifactError::NotSupportDeclaredArtifact(artifact.to_string()),
                 )
                 .into());

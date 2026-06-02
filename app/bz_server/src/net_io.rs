@@ -27,9 +27,9 @@ mod collector {
     use std::sync::Arc;
     use std::sync::Mutex;
 
-    use buck2_error::BuckErrorContext;
-    use buck2_error::conversion::from_any_with_tag;
-    use buck2_hash::StdBuckHashMap;
+    use bz_error::BuckErrorContext;
+    use bz_error::conversion::from_any_with_tag;
+    use bz_hash::StdBuckHashMap;
     use dupe::Dupe;
     use psutil::network::NetIoCountersCollector;
 
@@ -54,11 +54,11 @@ mod collector {
         /// * If a new NIC appears between collection periods, we'll start keeping
         ///   track of it.
         /// * If a NIC *disappears*, then we stop reporting on its stats.
-        pub fn collect(&self) -> buck2_error::Result<Option<StdBuckHashMap<String, NetworkStat>>> {
+        pub fn collect(&self) -> bz_error::Result<Option<StdBuckHashMap<String, NetworkStat>>> {
             let mut collector = self.collector.lock().expect("poisoned lock");
             let counters: StdBuckHashMap<_, _> = collector
                 .net_io_counters_pernic()
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
                 .buck_error_context("collecting old counters")?
                 .into_iter()
                 .filter(|(s, _)| {
@@ -108,8 +108,8 @@ mod collector {
 
 #[cfg(target_os = "windows")]
 mod collector {
-    use buck2_hash::StdBuckHashMap;
-    use buck2_util::os::win::network_interface_table::NetworkInterfaceTable;
+    use bz_hash::StdBuckHashMap;
+    use bz_util::os::win::network_interface_table::NetworkInterfaceTable;
     use dupe::Dupe;
 
     use super::*;
@@ -122,7 +122,7 @@ mod collector {
             Self
         }
 
-        pub fn collect(&self) -> buck2_error::Result<Option<StdBuckHashMap<String, NetworkStat>>> {
+        pub fn collect(&self) -> bz_error::Result<Option<StdBuckHashMap<String, NetworkStat>>> {
             let mut counters = StdBuckHashMap::default();
             let table = NetworkInterfaceTable::new()?;
 
@@ -137,10 +137,10 @@ mod collector {
                         bytes_sent: interface.bytes_sent(),
                         bytes_recv: interface.bytes_recv(),
                         network_kind: match interface.network_kind() {
-                            buck2_util::os::win::network_interface::NetworkKind::Ethernet => {
+                            bz_util::os::win::network_interface::NetworkKind::Ethernet => {
                                 NetworkKind::Ethernet
                             }
-                            buck2_util::os::win::network_interface::NetworkKind::WiFi => {
+                            bz_util::os::win::network_interface::NetworkKind::WiFi => {
                                 NetworkKind::WiFi
                             }
                             _ => NetworkKind::Unknown,
@@ -157,7 +157,7 @@ mod collector {
 // psutil network stats aren't implemented other unix-likes.
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 mod collector {
-    use buck2_hash::StdBuckHashMap;
+    use bz_hash::StdBuckHashMap;
     use dupe::Dupe;
 
     use super::*;
@@ -170,7 +170,7 @@ mod collector {
             Self
         }
 
-        pub fn collect(&self) -> buck2_error::Result<Option<StdBuckHashMap<String, NetworkStat>>> {
+        pub fn collect(&self) -> bz_error::Result<Option<StdBuckHashMap<String, NetworkStat>>> {
             Ok(None)
         }
     }

@@ -15,24 +15,24 @@ use std::mem;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use buck2_common::pattern::package_roots::find_package_roots_stream;
-use buck2_common::pattern::resolve::ResolvedPattern;
-use buck2_core::bzl::ImportPath;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::Modifiers;
-use buck2_core::pattern::pattern::PackageSpec;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::PatternType;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::name::TargetName;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::load_module::INTERPRETER_CALCULATION_IMPL;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::paths::package::PackageFilePath;
-use buck2_node::nodes::eval_result::EvaluationResult;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
+use bz_common::pattern::package_roots::find_package_roots_stream;
+use bz_common::pattern::resolve::ResolvedPattern;
+use bz_core::bzl::ImportPath;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::Modifiers;
+use bz_core::pattern::pattern::PackageSpec;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::PatternType;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::name::TargetName;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::load_module::INTERPRETER_CALCULATION_IMPL;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::paths::package::PackageFilePath;
+use bz_node::nodes::eval_result::EvaluationResult;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
 use dice::CancellationContext;
 use dice::DiceComputations;
 use dice::DiceTransaction;
@@ -51,7 +51,7 @@ use crate::targets::fmt::Stats;
 use crate::targets::fmt::TargetFormatter;
 use crate::targets::fmt::TargetInfo;
 
-fn write_str(outputter: &mut dyn Write, s: &mut String) -> buck2_error::Result<()> {
+fn write_str(outputter: &mut dyn Write, s: &mut String) -> bz_error::Result<()> {
     outputter.write_all(s.as_bytes())?;
     s.clear();
     Ok(())
@@ -76,7 +76,7 @@ pub(crate) async fn targets_streaming(
     imports: bool,
     fast_hash: Option<bool>, // None = no hashing
     threads: Option<usize>,
-) -> buck2_error::Result<Stats> {
+) -> bz_error::Result<Stats> {
     let imported = Arc::new(Mutex::new(SmallSet::new()));
     let threads = Arc::new(Semaphore::new(threads.unwrap_or(Semaphore::MAX_PERMITS)));
 
@@ -98,7 +98,7 @@ pub(crate) async fn targets_streaming(
                                 fast_hash, threads, imported,
                             )
                             .await;
-                            buck2_error::Ok(res)
+                            bz_error::Ok(res)
                         }
                     }
                     .boxed()
@@ -220,7 +220,7 @@ impl PreparePackageResult {
         &mut self,
         eval_result: Arc<EvaluationResult>,
         targets: Vec<TargetNode>,
-        error: Option<buck2_error::Error>,
+        error: Option<bz_error::Error>,
         formatter: &dyn TargetFormatter,
         imports_flag: bool,
         fast_hash: Option<bool>,
@@ -269,7 +269,7 @@ impl PreparePackageResult {
         }
     }
 
-    fn record_error(&mut self, error: &buck2_error::Error, formatter: &dyn TargetFormatter) {
+    fn record_error(&mut self, error: &bz_error::Error, formatter: &dyn TargetFormatter) {
         self.stats.add_error(error);
         let mut stderr = String::new();
         formatter.package_error(self.package.dupe(), error, &mut self.stdout, &mut stderr);
@@ -320,7 +320,7 @@ async fn process_package(
 fn stream_packages<T: PatternType>(
     dice: &DiceTransaction,
     patterns: Vec<ParsedPattern<T>>,
-) -> impl Stream<Item = buck2_error::Result<(PackageLabel, PackageSpec<T>)>> + '_ {
+) -> impl Stream<Item = bz_error::Result<(PackageLabel, PackageSpec<T>)>> + '_ {
     let mut spec = ResolvedPattern::<T>::new();
     let mut recursive_paths = Vec::new();
 
@@ -348,7 +348,7 @@ fn stream_packages<T: PatternType>(
     .chain(find_package_roots_stream(dice, recursive_paths).map(|x| Ok((x?, PackageSpec::All()))))
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum TargetsError {
     #[error(
@@ -365,10 +365,10 @@ async fn load_targets(
     spec: PackageSpec<TargetPatternExtra>,
     cached: bool,
     keep_going: bool,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     Arc<EvaluationResult>,
     Vec<TargetNode>,
-    Option<buck2_error::Error>,
+    Option<bz_error::Error>,
 )> {
     let result = if cached {
         dice.get_interpreter_results(package.dupe()).await?
@@ -416,7 +416,7 @@ async fn load_targets(
 async fn package_imports(
     dice: &mut DiceComputations<'_>,
     path: PackageLabel,
-) -> buck2_error::Result<Option<(PackageFilePath, Vec<ImportPath>)>> {
+) -> bz_error::Result<Option<(PackageFilePath, Vec<ImportPath>)>> {
     INTERPRETER_CALCULATION_IMPL
         .get()?
         .get_package_file_deps(dice, path)

@@ -8,29 +8,29 @@
  * above-listed licenses.
  */
 
-use buck2_artifact::actions::key::ActionIndex;
-use buck2_artifact::artifact::artifact_type::testing::ArtifactTestingExt;
-use buck2_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::ActionErrors;
-use buck2_build_api::actions::registry::ActionsRegistry;
-use buck2_build_api::analysis::registry::AnalysisValueFetcher;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_core::category::Category;
-use buck2_core::category::CategoryRef;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::execution_types::execution::ExecutionPlatform;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_execute::execute::request::OutputType;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::buck_indexset;
+use bz_artifact::actions::key::ActionIndex;
+use bz_artifact::artifact::artifact_type::testing::ArtifactTestingExt;
+use bz_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::ActionErrors;
+use bz_build_api::actions::registry::ActionsRegistry;
+use bz_build_api::analysis::registry::AnalysisValueFetcher;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_core::category::Category;
+use bz_core::category::CategoryRef;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::execution_types::execution::ExecutionPlatform;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_execute::execute::request::OutputType;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::buck_indexset;
 use dupe::Dupe;
 use itertools::Itertools;
 use starlark::values::Heap;
@@ -38,7 +38,7 @@ use starlark::values::Heap;
 use crate::actions::testings::SimpleUnregisteredAction;
 
 #[test]
-fn declaring_artifacts() -> buck2_error::Result<()> {
+fn declaring_artifacts() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let base = BaseDeferredKey::TargetLabel(ConfiguredTargetLabel::testing_parse(
             "cell//pkg:foo",
@@ -100,7 +100,7 @@ fn declaring_artifacts() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn claiming_conflicting_path() -> buck2_error::Result<()> {
+fn claiming_conflicting_path() -> bz_error::Result<()> {
     let mut actions = ActionsRegistry::new(
         DeferredHolderKey::testing_new("cell//pkg:my_target"),
         ExecutionPlatformResolution::unspecified(),
@@ -120,7 +120,7 @@ fn claiming_conflicting_path() -> buck2_error::Result<()> {
         let actual = actions
             .claim_output_path(&prefix_claimed, None)
             .unwrap_err();
-        let expected: buck2_error::Error =
+        let expected: bz_error::Error =
             ActionErrors::ConflictingOutputPaths(prefix_claimed, expected_conflicts).into();
         assert_eq!(actual.to_string(), expected.to_string());
     }
@@ -139,7 +139,7 @@ fn claiming_conflicting_path() -> buck2_error::Result<()> {
         ];
 
         let actual = actions.claim_output_path(&overwrite_dir, None).unwrap_err();
-        let expected: buck2_error::Error =
+        let expected: bz_error::Error =
             ActionErrors::ConflictingOutputPaths(overwrite_dir, expected_conflicts).into();
         assert_eq!(actual.to_string(), expected.to_string());
     }
@@ -148,7 +148,7 @@ fn claiming_conflicting_path() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn register_actions() -> buck2_error::Result<()> {
+fn register_actions() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let base = BaseDeferredKey::TargetLabel(ConfiguredTargetLabel::testing_parse(
             "cell//pkg:foo",
@@ -200,7 +200,7 @@ fn register_actions() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn finalizing_actions() -> buck2_error::Result<()> {
+fn finalizing_actions() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let base = BaseDeferredKey::TargetLabel(ConfiguredTargetLabel::testing_parse(
             "cell//pkg:foo",
@@ -291,7 +291,7 @@ fn duplicate_category_identifier() {
 
 fn category_identifier_test(
     action_names: &[(&'static str, Option<&'static str>)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let base = DeferredHolderKey::testing_new("cell//pkg:foo");
     let mut actions = ActionsRegistry::new(
         base.dupe(),

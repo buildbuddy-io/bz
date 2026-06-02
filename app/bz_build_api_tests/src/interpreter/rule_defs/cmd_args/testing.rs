@@ -8,17 +8,17 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_hash::BuckHashMap;
-use buck2_interpreter_for_build::interpreter::testing::cells;
+use bz_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuckOutPathResolver;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_hash::BuckHashMap;
+use bz_interpreter_for_build::interpreter::testing::cells;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 use starlark::values::UnpackValue;
@@ -36,7 +36,7 @@ fn artifact_fs() -> ArtifactFs {
     )
 }
 
-fn get_command_line(value: Value) -> buck2_error::Result<Vec<String>> {
+fn get_command_line(value: Value) -> bz_error::Result<Vec<String>> {
     let fs = artifact_fs();
     let executor_fs = ExecutorFs::new(&fs, PathSeparatorKind::Unix);
     let mut cli = Vec::<String>::new();

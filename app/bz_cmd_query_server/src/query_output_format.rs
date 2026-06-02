@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::QueryOutputFormat;
+use bz_cli_proto::QueryOutputFormat;
 
 #[derive(Debug, Clone)]
 pub(crate) enum QueryOutputFormatInfo {

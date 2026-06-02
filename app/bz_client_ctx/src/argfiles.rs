@@ -15,23 +15,23 @@ use std::path::Path;
 use std::process::Command;
 use std::str;
 
-use buck2_common::argv::ArgFileKind;
-use buck2_common::argv::ArgFilePath;
-use buck2_common::argv::ExpandedArgv;
-use buck2_common::argv::ExpandedArgvBuilder;
-use buck2_core::is_open_source;
-use buck2_error::BuckErrorContext;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::working_dir::AbsWorkingDir;
-use buck2_util::process::background_command;
+use bz_common::argv::ArgFileKind;
+use bz_common::argv::ArgFilePath;
+use bz_common::argv::ExpandedArgv;
+use bz_common::argv::ExpandedArgvBuilder;
+use bz_core::is_open_source;
+use bz_error::BuckErrorContext;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::working_dir::AbsWorkingDir;
+use bz_util::process::background_command;
 use termwiz::istty::IsTty;
 
 use crate::immediate_config::ImmediateConfigContext;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum ArgExpansionError {
     #[error("Missing flag file path after --flagfile argument")]
@@ -40,12 +40,12 @@ enum ArgExpansionError {
     MissingFlagFileOnDisk { path: String },
     #[error("Unable to read flag file at `{path}`")]
     MissingFlagFileOnDiskWithSource {
-        source: buck2_error::Error,
+        source: bz_error::Error,
         path: String,
     },
     #[error("Unable to read line in flag file `{path}`")]
     FlagFileReadError {
-        source: buck2_error::Error,
+        source: bz_error::Error,
         path: String,
     },
     #[error("Python mode file `{path}` output is not UTF-8")]
@@ -57,14 +57,14 @@ enum ArgExpansionError {
     #[error("Python argfile command ({cmd:?}) execution failed")]
     PythonExecutionFailed { source: io::Error, cmd: Command },
     #[error("Unable to read line from stdin")]
-    StdinReadError { source: buck2_error::Error },
+    StdinReadError { source: bz_error::Error },
 }
 
 /// Log that a relative flag file was not found in CWD, but was found, and used, from the cell root
 ///
 /// This prints directly to stderr (sometimes in color). This should be safe, because flagfile
 /// expansion runs *very* early in the CLI process lifetime.
-pub fn log_relative_path_from_cell_root(requested_path: &str) -> buck2_error::Result<()> {
+pub fn log_relative_path_from_cell_root(requested_path: &str) -> bz_error::Result<()> {
     let (prefix, reset) = if io::stderr().is_tty() {
         ("\x1b[33m", "\x1b[0m")
     } else {
@@ -97,7 +97,7 @@ pub fn expand_argv(
     args: Vec<String>,
     context: &mut ImmediateConfigContext,
     cwd: &AbsWorkingDir,
-) -> buck2_error::Result<ExpandedArgv> {
+) -> bz_error::Result<ExpandedArgv> {
     let mut expanded_args = ExpandedArgvBuilder::new();
     expand_argfiles_with_context(&mut expanded_args, args, context, cwd)?;
 
@@ -114,7 +114,7 @@ fn expand_argfiles_with_context(
     args: Vec<String>,
     context: &mut ImmediateConfigContext,
     cwd: &AbsWorkingDir,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut arg_iterator = args.into_iter();
 
     while let Some(next_arg) = arg_iterator.next() {
@@ -163,7 +163,7 @@ fn resolve_and_expand_argfile(
     path: &str,
     context: &mut ImmediateConfigContext,
     cwd: &AbsWorkingDir,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let flagfile = resolve_flagfile(path, context, cwd)
         .with_buck_error_context(|| format!("Error resolving flagfile `{path}`"))?;
     let flagfile_lines = expand_argfile_contents(context, &flagfile)?;
@@ -175,7 +175,7 @@ fn resolve_and_expand_argfile(
 fn argfile_abs_path(
     context: &ImmediateConfigContext,
     path: &ArgFilePath,
-) -> buck2_error::Result<AbsNormPathBuf> {
+) -> bz_error::Result<AbsNormPathBuf> {
     match path {
         ArgFilePath::Project(path) => context.resolve_project_path(path.as_ref()),
         ArgFilePath::External(path) => Ok(path.clone()),
@@ -185,7 +185,7 @@ fn argfile_abs_path(
 fn expand_argfile_contents(
     context: &ImmediateConfigContext,
     flagfile: &ArgFileKind,
-) -> buck2_error::Result<Vec<String>> {
+) -> bz_error::Result<Vec<String>> {
     match flagfile {
         ArgFileKind::Path(path) => {
             let mut lines = Vec::new();
@@ -259,7 +259,7 @@ fn resolve_flagfile(
     path: &str,
     context: &mut ImmediateConfigContext,
     cwd: &AbsWorkingDir,
-) -> buck2_error::Result<ArgFileKind> {
+) -> bz_error::Result<ArgFileKind> {
     if path == "-" {
         return Ok(ArgFileKind::Stdin);
     }
@@ -320,18 +320,18 @@ fn resolve_flagfile(
 
 #[cfg(test)]
 mod tests {
-    use buck2_common::argv::ExpandedArgSource;
-    use buck2_common::argv::FlagfileArgSource;
-    use buck2_fs::fs_util::uncategorized as fs_util;
-    use buck2_fs::paths::abs_path::AbsPath;
-    use buck2_fs::paths::abs_path::AbsPathBuf;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_common::argv::ExpandedArgSource;
+    use bz_common::argv::FlagfileArgSource;
+    use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::paths::abs_path::AbsPath;
+    use bz_fs::paths::abs_path::AbsPathBuf;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     use indoc::indoc;
 
     use super::*;
 
     #[test]
-    fn test_resolve_argfile_kind_with_project() -> buck2_error::Result<()> {
+    fn test_resolve_argfile_kind_with_project() -> bz_error::Result<()> {
         let tempdir = tempfile::tempdir()?;
         let root = AbsPath::new(tempdir.path())?;
         let root = AbsPathBuf::new(fs_util::canonicalize(root)?)?;
@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_argfile_content() -> buck2_error::Result<()> {
+    fn test_expand_argfile_content() -> bz_error::Result<()> {
         let tempdir = tempfile::tempdir()?;
         let root = AbsPath::new(tempdir.path())?;
         let cwd =
@@ -403,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bazel_external_label_not_argfile() -> buck2_error::Result<()> {
+    fn test_bazel_external_label_not_argfile() -> bz_error::Result<()> {
         let tempdir = tempfile::tempdir()?;
         let root = AbsPath::new(tempdir.path())?;
         let cwd = AbsWorkingDir::unchecked_new(AbsNormPathBuf::new(root.to_path_buf())?);
@@ -435,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn test_comment() -> buck2_error::Result<()> {
+    fn test_comment() -> bz_error::Result<()> {
         let content = indoc! {"
             --# Usage: buck2 build @mode/mrustc ...
             --#

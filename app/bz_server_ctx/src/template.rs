@@ -9,10 +9,10 @@
  */
 
 use async_trait::async_trait;
-use buck2_core::logging::log_file::TracingLogFile;
-use buck2_data::BuildResult;
-use buck2_events::dispatch::span_async;
-use buck2_execute::materialize::materializer::HasMaterializer;
+use bz_core::logging::log_file::TracingLogFile;
+use bz_data::BuildResult;
+use bz_events::dispatch::span_async;
+use bz_execute::materialize::materializer::HasMaterializer;
 use dice::DiceTransaction;
 
 use crate::commands::command_end_ext;
@@ -24,9 +24,9 @@ use crate::partial_result_dispatcher::PartialResultDispatcher;
 #[async_trait]
 pub trait ServerCommandTemplate: Send + Sync {
     /// Event to send in the beginning of command.
-    type StartEvent: Into<buck2_data::command_start::Data> + Default;
+    type StartEvent: Into<bz_data::command_start::Data> + Default;
     /// Event to send in the end of command.
-    type EndEvent: Into<buck2_data::command_end::Data> + Default;
+    type EndEvent: Into<bz_data::command_end::Data> + Default;
     /// Command return type.
     /// TODO: This is called `Result` everywhere, we should probably be consistent.
     type Response: Send;
@@ -39,7 +39,7 @@ pub trait ServerCommandTemplate: Send + Sync {
     }
 
     /// Create end event. Called after command is invoked.
-    fn end_event(&self, _response: &buck2_error::Result<Self::Response>) -> Self::EndEvent {
+    fn end_event(&self, _response: &bz_error::Result<Self::Response>) -> Self::EndEvent {
         Self::EndEvent::default()
     }
 
@@ -61,7 +61,7 @@ pub trait ServerCommandTemplate: Send + Sync {
         server_ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response>;
+    ) -> bz_error::Result<Self::Response>;
 }
 
 /// Call this function to run the command template implementation.
@@ -69,7 +69,7 @@ pub async fn run_server_command<T: ServerCommandTemplate>(
     command: T,
     server_ctx: &dyn ServerCommandContextTrait,
     partial_result_dispatcher: PartialResultDispatcher<<T as ServerCommandTemplate>::PartialResult>,
-) -> buck2_error::Result<T::Response> {
+) -> bz_error::Result<T::Response> {
     let start_event = server_ctx
         .command_start_event(command.start_event().into())
         .await?;

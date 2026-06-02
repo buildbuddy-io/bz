@@ -15,75 +15,75 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_analysis::analysis::calculation::AnalysisKeyActivationData;
-use buck2_analysis::analysis::calculation::AnalysisSplitInstants;
-use buck2_analysis::analysis::calculation::AnalysisWithExtraData;
-use buck2_analysis::analysis::calculation::AnonTargetSplitData;
-use buck2_analysis::analysis::calculation::get_rule_spec;
-use buck2_analysis::analysis::env::RuleSpec;
-use buck2_analysis::analysis::env::transitive_validations;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_build_api::analysis::anon_promises_dyn::AnonPromisesDyn;
-use buck2_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessorPair;
-use buck2_build_api::analysis::anon_targets_registry::ANON_TARGET_REGISTRY_NEW;
-use buck2_build_api::analysis::anon_targets_registry::AnonTargetsRegistryDyn;
-use buck2_build_api::analysis::registry::AnalysisRegistry;
-use buck2_build_api::anon_target::AnonTargetDependentAnalysisResults;
-use buck2_build_api::anon_target::AnonTargetDyn;
-use buck2_build_api::artifact_groups::promise::PromiseArtifact;
-use buck2_build_api::artifact_groups::promise::PromiseArtifactId;
-use buck2_build_api::artifact_groups::promise::PromiseArtifactResolveError;
-use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
-use buck2_build_api::deferred::calculation::DeferredHolder;
-use buck2_build_api::deferred::calculation::EVAL_ANON_TARGET;
-use buck2_build_api::deferred::calculation::GET_PROMISED_ARTIFACT;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
-use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
-use buck2_build_api::interpreter::rule_defs::plugins::AnalysisPlugins;
-use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
-use buck2_build_signals::env::WaitingData;
-use buck2_build_signals::node_key::BuildSignalsNodeKey;
-use buck2_build_signals::node_key::BuildSignalsNodeKeyImpl;
-use buck2_configured::execution::find_execution_platform_by_configuration;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::PatternData;
-use buck2_core::pattern::pattern::lex_target_pattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::TargetNameRef;
-use buck2_core::unsafe_send_future::UnsafeSendFuture;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::async_record_root_spans;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_events::dispatch::span_async;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_interpreter::factory::BuckStarlarkModule;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
-use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
-use buck2_interpreter::starlark_promise::StarlarkPromise;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter_for_build::attrs::coerce::arc_str_interner::ArcStrInterner;
-use buck2_interpreter_for_build::rule::FrozenStarlarkRuleCallable;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::spec::internal::is_internal_attr;
-use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
-use buck2_node::rule_type::StarlarkRuleType;
-use buck2_util::arc_str::ArcStr;
-use buck2_util::time_span::TimeSpan;
+use bz_analysis::analysis::calculation::AnalysisKeyActivationData;
+use bz_analysis::analysis::calculation::AnalysisSplitInstants;
+use bz_analysis::analysis::calculation::AnalysisWithExtraData;
+use bz_analysis::analysis::calculation::AnonTargetSplitData;
+use bz_analysis::analysis::calculation::get_rule_spec;
+use bz_analysis::analysis::env::RuleSpec;
+use bz_analysis::analysis::env::transitive_validations;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::analysis::AnalysisResult;
+use bz_build_api::analysis::anon_promises_dyn::AnonPromisesDyn;
+use bz_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessorPair;
+use bz_build_api::analysis::anon_targets_registry::ANON_TARGET_REGISTRY_NEW;
+use bz_build_api::analysis::anon_targets_registry::AnonTargetsRegistryDyn;
+use bz_build_api::analysis::registry::AnalysisRegistry;
+use bz_build_api::anon_target::AnonTargetDependentAnalysisResults;
+use bz_build_api::anon_target::AnonTargetDyn;
+use bz_build_api::artifact_groups::promise::PromiseArtifact;
+use bz_build_api::artifact_groups::promise::PromiseArtifactId;
+use bz_build_api::artifact_groups::promise::PromiseArtifactResolveError;
+use bz_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
+use bz_build_api::deferred::calculation::DeferredHolder;
+use bz_build_api::deferred::calculation::EVAL_ANON_TARGET;
+use bz_build_api::deferred::calculation::GET_PROMISED_ARTIFACT;
+use bz_build_api::interpreter::rule_defs::context::AnalysisContext;
+use bz_build_api::interpreter::rule_defs::context::BazelCppOptions;
+use bz_build_api::interpreter::rule_defs::plugins::AnalysisPlugins;
+use bz_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
+use bz_build_signals::env::WaitingData;
+use bz_build_signals::node_key::BuildSignalsNodeKey;
+use bz_build_signals::node_key::BuildSignalsNodeKeyImpl;
+use bz_configured::execution::find_execution_platform_by_configuration;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::execution_types::execution::ExecutionPlatformResolutionPartial;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::PatternData;
+use bz_core::pattern::pattern::lex_target_pattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetNameRef;
+use bz_core::unsafe_send_future::UnsafeSendFuture;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::async_record_root_spans;
+use bz_events::dispatch::get_dispatcher;
+use bz_events::dispatch::span_async;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_interpreter::factory::BuckStarlarkModule;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::print_handler::EventDispatcherPrintHandler;
+use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_interpreter::starlark_promise::StarlarkPromise;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter_for_build::attrs::coerce::arc_str_interner::ArcStrInterner;
+use bz_interpreter_for_build::rule::FrozenStarlarkRuleCallable;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::spec::internal::is_internal_attr;
+use bz_node::bzl_or_bxl_path::BzlOrBxlPath;
+use bz_node::rule_type::StarlarkRuleType;
+use bz_util::arc_str::ArcStr;
+use bz_util::time_span::TimeSpan;
 use derive_more::Display;
 use dice::Demand;
 use dice::DiceComputations;
@@ -125,7 +125,7 @@ pub struct AnonTargetsRegistry<'v> {
     promise_artifact_registry: PromiseArtifactRegistry,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum AnonTargetsError {
     #[error("Not allowed to call `anon_targets` in this context")]
@@ -154,7 +154,7 @@ pub(crate) struct AnonTargetKey(pub(crate) Arc<AnonTarget>);
 
 #[async_trait]
 impl Key for AnonTargetKey {
-    type Value = buck2_error::Result<AnalysisResult>;
+    type Value = bz_error::Result<AnalysisResult>;
 
     async fn compute(
         &self,
@@ -210,9 +210,9 @@ impl Key for AnonTargetKey {
 }
 
 impl BuildSignalsNodeKeyImpl for AnonTargetKey {
-    fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry> {
+    fn critical_path_entry_proto(&self) -> Option<bz_data::critical_path_entry2::Entry> {
         Some(
-            buck2_data::critical_path_entry2::AnonAnalysis {
+            bz_data::critical_path_entry2::AnonAnalysis {
                 anon_target: Some(self.0.as_proto()),
                 part: None,
             }
@@ -226,7 +226,7 @@ impl BuildSignalsNodeKeyImpl for AnonTargetKey {
 }
 
 impl AnonTargetKey {
-    fn downcast(key: Arc<dyn BaseDeferredKeyDyn>) -> buck2_error::Result<Self> {
+    fn downcast(key: Arc<dyn BaseDeferredKeyDyn>) -> bz_error::Result<Self> {
         Ok(AnonTargetKey(
             key.into_any()
                 .downcast()
@@ -239,7 +239,7 @@ impl AnonTargetKey {
         execution_platform: &ExecutionPlatformResolution,
         rule: ValueTyped<'v, FrozenStarlarkRuleCallable>,
         attributes: UnpackDictEntries<&'v str, Value<'v>>,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         Arc<StarlarkRuleType>,
         TargetLabel,
         SortedMap<String, AnonTargetAttr>,
@@ -301,7 +301,7 @@ impl AnonTargetKey {
         rule: ValueTyped<'v, FrozenStarlarkRuleCallable>,
         attributes: UnpackDictEntries<&'v str, Value<'v>>,
         owner_key: &BaseDeferredKey,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let (rule_type, name, attrs, exec_cfg) =
             Self::prepare_anon_target_data(execution_platform, rule, attributes)?;
 
@@ -335,7 +335,7 @@ impl AnonTargetKey {
     /// We need to parse a TargetLabel from a String, but it doesn't matter if the pieces aren't
     /// valid targets in the context of this build (e.g. if the package really exists),
     /// just that it is syntactically valid.
-    fn parse_target_label(x: &str) -> buck2_error::Result<TargetLabel> {
+    fn parse_target_label(x: &str) -> bz_error::Result<TargetLabel> {
         let err = || {
             format!(
                 "`name` attribute must be a valid target label, got `{}`",
@@ -365,14 +365,14 @@ impl AnonTargetKey {
         }
     }
 
-    fn create_name(rule_name: &str) -> buck2_error::Result<TargetLabel> {
+    fn create_name(rule_name: &str) -> bz_error::Result<TargetLabel> {
         // TODO(nga): this creates non-existing cell reference.
         let cell_name = CellName::unchecked_new("anon")?;
         let pkg = PackageLabel::new(cell_name, CellRelativePath::empty())?;
         Ok(TargetLabel::new(pkg, TargetNameRef::new(rule_name)?))
     }
 
-    fn coerce_name(x: Value) -> buck2_error::Result<TargetLabel> {
+    fn coerce_name(x: Value) -> bz_error::Result<TargetLabel> {
         if let Some(x) = StarlarkConfiguredProvidersLabel::from_value(x) {
             Ok(x.label().target().unconfigured().dupe())
         } else if let Some(x) = x.unpack_str() {
@@ -390,7 +390,7 @@ impl AnonTargetKey {
         attr: &AttrType,
         x: Value,
         ctx: &AnonAttrCtx,
-    ) -> buck2_error::Result<AnonTargetAttr> {
+    ) -> bz_error::Result<AnonTargetAttr> {
         attr.coerce_item(ctx, x)
     }
 
@@ -398,14 +398,14 @@ impl AnonTargetKey {
         attr_name: &str,
         x: &CoercedAttr,
         ty: &AttrType,
-    ) -> buck2_error::Result<AnonTargetAttr> {
+    ) -> bz_error::Result<AnonTargetAttr> {
         AnonTargetAttr::from_coerced_attr(attr_name, x, ty)
     }
 
     pub(crate) async fn resolve(
         &self,
         dice: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<AnalysisResult> {
+    ) -> bz_error::Result<AnalysisResult> {
         dice.compute(self).await?
     }
 
@@ -413,7 +413,7 @@ impl AnonTargetKey {
         &'a self,
         dice: &'a mut DiceComputations<'_>,
         cancellation: &'a CancellationContext,
-    ) -> BoxFuture<'a, buck2_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)>> {
+    ) -> BoxFuture<'a, bz_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)>> {
         let fut = async move { self.run_analysis_impl(dice, cancellation).await };
         Box::pin(unsafe { UnsafeSendFuture::new_encapsulates_starlark(fut) })
     }
@@ -422,7 +422,7 @@ impl AnonTargetKey {
         &self,
         dice: &mut DiceComputations<'_>,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
+    ) -> bz_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
         let dependents = AnonTargetDependents::get_dependents(self)?;
         let dependents_analyses = dependents.get_analysis_results(dice).await?;
 
@@ -441,7 +441,7 @@ impl AnonTargetKey {
         .finalize(OrderedMap::new());
 
         span_async(
-            buck2_data::AnalysisStart {
+            bz_data::AnalysisStart {
                 target: Some(self.0.as_proto().into()),
                 rule: self.0.rule_type().to_string(),
             },
@@ -480,7 +480,7 @@ impl AnonTargetKey {
                         ))
                     }
                 };
-                let end = buck2_data::AnalysisEnd {
+                let end = bz_data::AnalysisEnd {
                     target: Some(self.0.as_proto().into()),
                     rule: self.0.rule_type().to_string(),
                     profile: None, // Not implemented for anon targets
@@ -499,7 +499,7 @@ impl AnonTargetKey {
         dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
         exec_resolution: ExecutionPlatformResolution,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
+    ) -> bz_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
         let validations_from_deps = dependents_analyses.validations();
         let rule_impl = get_rule_spec(dice, self.0.rule_type()).await?;
 
@@ -654,7 +654,7 @@ pub(crate) fn init_get_promised_artifact() {
 pub(crate) async fn get_artifact_from_anon_target_analysis(
     promise_id: &PromiseArtifactId,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<Artifact> {
+) -> bz_error::Result<Artifact> {
     let owner = promise_id.owner();
     let analysis_result = match owner {
         BaseDeferredKey::AnonTarget(anon_target) => {
@@ -691,7 +691,7 @@ pub(crate) fn init_anon_target_registry_new() {
 impl<'v> AnonTargetsRegistry<'v> {
     pub(crate) fn downcast_mut(
         registry: &mut dyn AnonTargetsRegistryDyn<'v>,
-    ) -> buck2_error::Result<&'v mut AnonTargetsRegistry<'v>> {
+    ) -> bz_error::Result<&'v mut AnonTargetsRegistry<'v>> {
         let registry: &mut AnonTargetsRegistry = registry
             .as_any_mut()
             .downcast_mut::<AnonTargetsRegistry>()
@@ -713,7 +713,7 @@ impl<'v> AnonTargetsRegistry<'v> {
         rule: ValueTyped<'v, FrozenStarlarkRuleCallable>,
         attributes: UnpackDictEntries<&'v str, Value<'v>>,
         owner_key: &BaseDeferredKey,
-    ) -> buck2_error::Result<AnonTargetKey> {
+    ) -> bz_error::Result<AnonTargetKey> {
         AnonTargetKey::new(&self.execution_platform, rule, attributes, owner_key)
     }
 
@@ -721,7 +721,7 @@ impl<'v> AnonTargetsRegistry<'v> {
         &mut self,
         promise: ValueTyped<'v, StarlarkPromise<'v>>,
         key: AnonTargetKey,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.promises.push_one(promise, key);
 
         Ok(())
@@ -732,7 +732,7 @@ impl<'v> AnonTargetsRegistry<'v> {
         location: Option<FileSpan>,
         anon_target_key: AnonTargetKey,
         id: usize,
-    ) -> buck2_error::Result<PromiseArtifact> {
+    ) -> bz_error::Result<PromiseArtifact> {
         let anon_target_key = BaseDeferredKey::AnonTarget(anon_target_key.0.dupe());
         let id = PromiseArtifactId::new(anon_target_key, id);
         self.promise_artifact_registry.register(location, id)
@@ -768,7 +768,7 @@ impl<'v> AnonTargetsRegistryDyn<'v> for AnonTargetsRegistry<'v> {
     }
     */
 
-    fn assert_no_promises(&self) -> buck2_error::Result<()> {
+    fn assert_no_promises(&self) -> bz_error::Result<()> {
         if self.promises.is_empty() {
             Ok(())
         } else {

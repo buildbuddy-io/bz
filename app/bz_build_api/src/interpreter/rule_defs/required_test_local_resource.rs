@@ -63,8 +63,8 @@ pub fn register_required_test_local_resource(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = true)] execution: bool,
     ) -> starlark::Result<StarlarkRequiredTestLocalResource> {
         if !(listing || execution) {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::StarlarkError,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::StarlarkError,
                 "`RequiredTestLocalResource` should not be disabled for both listing and execution stages",
             ).into());
         }

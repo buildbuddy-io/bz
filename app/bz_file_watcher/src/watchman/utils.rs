@@ -10,7 +10,7 @@
 
 use std::path::Path;
 
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
 
 pub(crate) fn find_first_valid_parent(mut path: &Path) -> Option<&ProjectRelativePath> {
     loop {

@@ -13,7 +13,7 @@
 use std::iter;
 
 use allocative::Allocative;
-use buck2_query_parser::spanned::Spanned;
+use bz_query_parser::spanned::Spanned;
 use gazebo::variants::VariantName;
 use itertools::Either;
 
@@ -30,7 +30,7 @@ pub enum QueryEvaluationResult<T: QueryTarget> {
 
 impl<T: QueryTarget> QueryEvaluationResult<T> {
     /// All the targets from all query results.
-    pub fn targets(&self) -> impl Iterator<Item = buck2_error::Result<&T>> {
+    pub fn targets(&self) -> impl Iterator<Item = bz_error::Result<&T>> {
         match self {
             QueryEvaluationResult::Single(v) => Either::Left(v.targets()),
             QueryEvaluationResult::Multiple(v) => Either::Right(v.targets()),
@@ -125,7 +125,7 @@ pub enum QueryEvaluationValue<T: QueryTarget> {
 }
 
 impl<T: QueryTarget> QueryEvaluationValue<T> {
-    pub fn try_into_targets(self) -> buck2_error::Result<TargetSet<T>> {
+    pub fn try_into_targets(self) -> bz_error::Result<TargetSet<T>> {
         match self {
             QueryEvaluationValue::TargetSet(targets) => Ok(targets),
             v => Err(QueryError::InvalidType {
@@ -136,7 +136,7 @@ impl<T: QueryTarget> QueryEvaluationValue<T> {
         }
     }
 
-    pub(crate) fn targets(&self) -> impl Iterator<Item = buck2_error::Result<&T>> {
+    pub(crate) fn targets(&self) -> impl Iterator<Item = bz_error::Result<&T>> {
         match self {
             QueryEvaluationValue::TargetSet(targets) => Either::Left(targets.iter().map(Ok)),
             v => Either::Right(iter::once(Err(QueryError::InvalidType {
@@ -151,11 +151,11 @@ impl<T: QueryTarget> QueryEvaluationValue<T> {
 pub type QueryResult<T> = Result<Spanned<T>, Spanned<QueryError>>;
 
 pub trait QueryResultExt<T> {
-    fn into_buck2_error(self, query: &str) -> buck2_error::Result<T>;
+    fn into_bz_error(self, query: &str) -> bz_error::Result<T>;
 }
 
 impl<T> QueryResultExt<T> for QueryResult<T> {
-    fn into_buck2_error(self, query: &str) -> buck2_error::Result<T> {
+    fn into_bz_error(self, query: &str) -> bz_error::Result<T> {
         match self {
             Ok(v) => Ok(v.value),
             Err(err) => Err(QueryError::convert_error(err, query)),

@@ -11,8 +11,8 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use buck2_core::cells::name::CellName;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_core::cells::name::CellName;
+use bz_fs::paths::file_name::FileNameBuf;
 use dice::CancellationContext;
 use dice::DiceComputations;
 use dice::Key;
@@ -32,7 +32,7 @@ const DEFAULT_BUILDFILES: &[&str] = &["BUCK.v2", "BUCK"];
 /// Deal with the `buildfile.name` key (and `name_v2`)
 pub fn parse_buildfile_name(
     mut config: impl LegacyBuckConfigView,
-) -> buck2_error::Result<Vec<FileNameBuf>> {
+) -> bz_error::Result<Vec<FileNameBuf>> {
     // For buck2, we support a slightly different mechanism for setting the buildfile to
     // assist with easier migration from v1 to v2.
     // First, we check the key `buildfile.name_v2`, if this is provided, we use it.
@@ -75,7 +75,7 @@ pub trait HasBuildfiles {
     fn get_buildfiles(
         &mut self,
         cell: CellName,
-    ) -> impl Future<Output = buck2_error::Result<Arc<[FileNameBuf]>>>;
+    ) -> impl Future<Output = bz_error::Result<Arc<[FileNameBuf]>>>;
 }
 
 #[derive(
@@ -94,7 +94,7 @@ struct BuildfilesKey(CellName);
 
 #[async_trait::async_trait]
 impl Key for BuildfilesKey {
-    type Value = buck2_error::Result<Arc<[FileNameBuf]>>;
+    type Value = bz_error::Result<Arc<[FileNameBuf]>>;
 
     async fn compute(
         &self,
@@ -118,14 +118,14 @@ impl Key for BuildfilesKey {
 }
 
 impl HasBuildfiles for DiceComputations<'_> {
-    async fn get_buildfiles(&mut self, cell: CellName) -> buck2_error::Result<Arc<[FileNameBuf]>> {
+    async fn get_buildfiles(&mut self, cell: CellName) -> bz_error::Result<Arc<[FileNameBuf]>> {
         self.compute(&BuildfilesKey(cell)).await?
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::cells::name::CellName;
+    use bz_core::cells::name::CellName;
     use gazebo::prelude::SliceExt;
     use indoc::indoc;
 
@@ -134,7 +134,7 @@ mod tests {
     use crate::legacy_configs::configs::testing::TestConfigParserFileOps;
 
     #[tokio::test]
-    async fn test_buildfiles() -> buck2_error::Result<()> {
+    async fn test_buildfiles() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
                 ".buckconfig",

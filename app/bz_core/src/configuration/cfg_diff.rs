@@ -37,7 +37,7 @@ pub fn cfg_diff(a: &ConfigurationData, b: &ConfigurationData) -> Result<(), Stri
             self.print_diff_line(sign, &format!("label: {label}"));
         }
 
-        fn print_label_result_line(&mut self, sign: char, label: buck2_error::Result<&str>) {
+        fn print_label_result_line(&mut self, sign: char, label: bz_error::Result<&str>) {
             match label {
                 Ok(label) => self.print_label_line(sign, label),
                 Err(e) => self.print_diff_line(sign, &format!("label error: {e}")),
@@ -47,7 +47,7 @@ pub fn cfg_diff(a: &ConfigurationData, b: &ConfigurationData) -> Result<(), Stri
         fn print_cfg_data_result_line(
             &mut self,
             sign: char,
-            data: buck2_error::Result<&ConfigurationDataData>,
+            data: bz_error::Result<&ConfigurationDataData>,
         ) {
             match data {
                 Ok(_) => self.print_diff_line(sign, "data"),
@@ -57,8 +57,8 @@ pub fn cfg_diff(a: &ConfigurationData, b: &ConfigurationData) -> Result<(), Stri
 
         fn diff_label_result(
             &mut self,
-            a: buck2_error::Result<&str>,
-            b: buck2_error::Result<&str>,
+            a: bz_error::Result<&str>,
+            b: bz_error::Result<&str>,
         ) {
             match (a, b) {
                 (Ok(a), Ok(b)) => {
@@ -130,8 +130,8 @@ pub fn cfg_diff(a: &ConfigurationData, b: &ConfigurationData) -> Result<(), Stri
 
         fn diff_cfg_data_result(
             &mut self,
-            a: buck2_error::Result<&ConfigurationDataData>,
-            b: buck2_error::Result<&ConfigurationDataData>,
+            a: bz_error::Result<&ConfigurationDataData>,
+            b: bz_error::Result<&ConfigurationDataData>,
         ) {
             match (a, b) {
                 (Ok(a), Ok(b)) => self.diff_cfg_data(a, b),

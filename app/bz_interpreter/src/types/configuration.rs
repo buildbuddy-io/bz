@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_core::configuration::data::ConfigurationData;
+use bz_core::configuration::data::ConfigurationData;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;

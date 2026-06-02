@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::callable::register_provider;
-use buck2_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_build_api::interpreter::rule_defs::provider::callable::register_provider;
+use bz_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 
 #[test]
 fn test_provider_symbol_pass() {

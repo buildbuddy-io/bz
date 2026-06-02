@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
 
 #[test]
 fn test_select_funcs() {
-    let _guard = buck2_util::threads::ignore_stack_overflow_checks_for_current_thread();
+    let _guard = bz_util::threads::ignore_stack_overflow_checks_for_current_thread();
     let mut tester = Tester::new().unwrap();
     tester
         .run_starlark_test(indoc!(

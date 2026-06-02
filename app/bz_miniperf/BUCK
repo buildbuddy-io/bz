@@ -4,7 +4,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_binary(
-    name = "buck2_miniperf",
+    name = "bz_miniperf",
     srcs = glob(
         ["src/**/*.rs"],
     ),
@@ -26,14 +26,14 @@ rust_binary(
             "fbsource//third-party/rust:perf-event",
             "fbsource//third-party/rust:smallvec",
             "fbsource//third-party/rust:thiserror",
-            "//bz/app/bz_miniperf_proto:buck2_miniperf_proto",
+            "//bz/app/bz_miniperf_proto:bz_miniperf_proto",
         ],
     }),
 )
 
 # TODO
 rust_library(
-    name = "buck2_miniperf_test",
+    name = "bz_miniperf_test",
     srcs = glob(
         ["test/**/*.rs"],
     ),
@@ -44,11 +44,11 @@ rust_library(
             "fbsource//third-party/rust:anyhow",
             "fbsource//third-party/rust:bincode",
             "fbsource//third-party/rust:tempfile",
-            "//bz/app/bz_miniperf_proto:buck2_miniperf_proto",
+            "//bz/app/bz_miniperf_proto:bz_miniperf_proto",
         ],
     }),
     test_env = {
-        "MINIPERF": "$(exe_target :buck2_miniperf)",
+        "MINIPERF": "$(exe_target :bz_miniperf)",
         "THREE_BILLION_INSTRUCTIONS": "$(exe_target //bz/shed/three_billion_instructions:three_billion_instructions-bin)",
     },
 )

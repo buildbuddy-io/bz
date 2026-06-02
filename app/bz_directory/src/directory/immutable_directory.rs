@@ -9,8 +9,8 @@
  */
 
 use allocative::Allocative;
-use buck2_core::directory_digest::DirectoryDigest;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_core::directory_digest::DirectoryDigest;
+use bz_fs::paths::file_name::FileNameBuf;
 use derivative::Derivative;
 use derive_more::Display;
 use either::Either;

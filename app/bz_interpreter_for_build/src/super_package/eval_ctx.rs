@@ -11,11 +11,11 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use buck2_interpreter::paths::package::PackageFilePath;
-use buck2_node::cfg_constructor::CfgConstructorImpl;
-use buck2_node::super_package::SuperPackage;
-use buck2_node::visibility::VisibilitySpecification;
-use buck2_node::visibility::WithinViewSpecification;
+use bz_interpreter::paths::package::PackageFilePath;
+use bz_node::cfg_constructor::CfgConstructorImpl;
+use bz_node::super_package::SuperPackage;
+use bz_node::visibility::VisibilitySpecification;
+use bz_node::visibility::WithinViewSpecification;
 use dupe::Dupe;
 use starlark::values::OwnedFrozenValue;
 use starlark_map::small_map::SmallMap;
@@ -45,7 +45,7 @@ pub struct PackageFileEvalCtx {
 impl PackageFileEvalCtx {
     fn cfg_constructor(
         extra: Option<&OwnedFrozenPackageFileExtra>,
-    ) -> buck2_error::Result<Option<Arc<dyn CfgConstructorImpl>>> {
+    ) -> bz_error::Result<Option<Arc<dyn CfgConstructorImpl>>> {
         let Some(extra) = extra else {
             return Ok(None);
         };
@@ -64,7 +64,7 @@ impl PackageFileEvalCtx {
     pub(crate) fn build_super_package(
         self,
         extra: Option<OwnedFrozenPackageFileExtra>,
-    ) -> buck2_error::Result<SuperPackage> {
+    ) -> bz_error::Result<SuperPackage> {
         let cfg_constructor = Self::cfg_constructor(extra.as_ref())?;
 
         let package_values = match &extra {

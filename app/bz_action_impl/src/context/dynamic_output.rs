@@ -10,21 +10,21 @@
 
 use std::sync::Arc;
 
-use buck2_artifact::actions::key::ActionIndex;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::artifact_type::BoundBuildArtifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_build_api::dynamic_value::DynamicValue;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
+use bz_artifact::actions::key::ActionIndex;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::artifact_type::BoundBuildArtifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_build_api::dynamic_value::DynamicValue;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_core::deferred::dynamic::DynamicLambdaResultsKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
 use dupe::Dupe;
 use starlark::environment::MethodsBuilder;
 use starlark::starlark_module;
@@ -43,7 +43,7 @@ use crate::dynamic::params::DynamicLambdaParams;
 use crate::dynamic::params::DynamicLambdaStaticFields;
 use crate::dynamic::storage::DynamicLambdaParamsStorageImpl;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum DynamicOutputError {
     #[error("Output list may not be empty")]
@@ -66,7 +66,7 @@ impl DynamicActionsOutputArtifactBinder {
     pub(crate) fn bind(
         &mut self,
         output: OutputArtifact,
-    ) -> buck2_error::Result<BoundBuildArtifact> {
+    ) -> bz_error::Result<BoundBuildArtifact> {
         // We create ActionKeys that point directly to the dynamic_lambda's
         // output rather than our own. This saves the resolution of the key from
         // needing to first lookup our result just to get forwarded to the lambda's result.
@@ -87,7 +87,7 @@ impl DynamicActionsOutputArtifactBinder {
 fn output_artifacts_to_lambda_build_artifacts<'v>(
     dynamic_key: &DynamicLambdaResultsKey,
     outputs: Vec<ValueTyped<'v, StarlarkOutputArtifact<'v>>>,
-) -> buck2_error::Result<Box<[ValueTyped<'v, StarlarkOutputArtifact<'v>>]>> {
+) -> bz_error::Result<Box<[ValueTyped<'v, StarlarkOutputArtifact<'v>>]>> {
     let outputs = dedupe_output_artifacts(outputs);
     let mut bind = DynamicActionsOutputArtifactBinder::new(dynamic_key);
 
@@ -160,7 +160,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
 
         // Parameter validation
         if outputs.items.is_empty() {
-            return Err(buck2_error::Error::from(DynamicOutputError::EmptyOutput).into());
+            return Err(bz_error::Error::from(DynamicOutputError::EmptyOutput).into());
         }
 
         // Conversion
@@ -168,7 +168,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
             .items
             .iter()
             .map(|x| x.artifact())
-            .collect::<buck2_error::Result<_>>()?;
+            .collect::<bz_error::Result<_>>()?;
 
         let attributes = this.attributes.borrow().as_ref().copied();
         let plugins = this.plugins;
@@ -269,7 +269,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
         let dynamic_actions = dynamic_actions
             .data
             .try_borrow_mut()
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?
             .take()
             .ok_or_else(|| {
                 internal_error!(

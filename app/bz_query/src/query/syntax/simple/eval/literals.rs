@@ -10,8 +10,8 @@
 
 //! Implementation of the cli and query_* attr query language.
 
-use buck2_query_parser::parse_expr;
-use buck2_query_parser::placeholder::QUERY_PERCENT_S_PLACEHOLDER;
+use bz_query_parser::parse_expr;
+use bz_query_parser::placeholder::QUERY_PERCENT_S_PLACEHOLDER;
 use starlark_map::small_set::SmallSet;
 
 use crate::query::syntax::simple::eval::values::QueryResultExt;
@@ -24,13 +24,13 @@ use crate::query::syntax::simple::functions::QueryLiteralVisitor;
 pub fn extract_target_literals<F: QueryFunctions>(
     functions: &F,
     query: &str,
-) -> buck2_error::Result<Vec<String>> {
+) -> bz_error::Result<Vec<String>> {
     let parsed = parse_expr(query)?;
     struct LiteralExtractor {
         literals: SmallSet<String>,
     }
     impl<'q> QueryLiteralVisitor<'q> for LiteralExtractor {
-        fn target_pattern(&mut self, pattern: &'q str) -> buck2_error::Result<()> {
+        fn target_pattern(&mut self, pattern: &'q str) -> bz_error::Result<()> {
             if pattern != QUERY_PERCENT_S_PLACEHOLDER {
                 self.literals.get_or_insert_owned(pattern);
             }
@@ -42,6 +42,6 @@ pub fn extract_target_literals<F: QueryFunctions>(
     };
     functions
         .visit_literals(&mut visitor, &parsed)
-        .into_buck2_error(query)?;
+        .into_bz_error(query)?;
     Ok(Vec::from_iter(visitor.literals))
 }

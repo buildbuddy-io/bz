@@ -10,7 +10,7 @@
 
 //! Server-side implementation of `buck2 targets --resolve-alias` command.
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum ResolveAliasError {
     #[error("`--stat` format is not supported by `--resolve-alias`")]
@@ -19,18 +19,18 @@ enum ResolveAliasError {
 
 use std::fmt::Write;
 
-use buck2_cli_proto::TargetsRequest;
-use buck2_cli_proto::TargetsResponse;
-use buck2_cli_proto::targets_request::OutputFormat;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_node::nodes::attributes::PACKAGE;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
+use bz_cli_proto::TargetsRequest;
+use bz_cli_proto::TargetsResponse;
+use bz_cli_proto::targets_request::OutputFormat;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_node::nodes::attributes::PACKAGE;
+use bz_node::nodes::frontend::TargetGraphCalculation;
 use dice::DiceTransaction;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -106,7 +106,7 @@ pub(crate) async fn targets_resolve_aliases(
     mut dice: DiceTransaction,
     request: &TargetsRequest,
     parsed_target_patterns: Vec<ParsedPattern<TargetPatternExtra>>,
-) -> buck2_error::Result<TargetsResponse> {
+) -> bz_error::Result<TargetsResponse> {
     // If we are only asked to resolve aliases, then don't expand any of the patterns, and just
     // print them out. This expects the aliases to resolve to individual targets.
     let parsed_target_patterns = std::iter::zip(&request.target_patterns, parsed_target_patterns)
@@ -114,8 +114,8 @@ pub(crate) async fn targets_resolve_aliases(
             ParsedPattern::Target(package, target_name, TargetPatternExtra) => {
                 Ok((package, target_name))
             }
-            _ => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            _ => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid alias (does not expand to a single target): `{}`",
                 alias
             )),
@@ -174,8 +174,8 @@ pub(crate) async fn targets_resolve_aliases(
         let node = packages
             .get(package)
             .ok_or_else(|| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Package does not exist: `{}`",
                     package
                 )

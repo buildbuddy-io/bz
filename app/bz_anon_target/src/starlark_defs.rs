@@ -13,15 +13,15 @@ use std::fmt::Debug;
 use std::fmt::Display;
 
 use allocative::Allocative;
-use buck2_build_api::artifact_groups::promise::PromiseArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
-use buck2_build_api::interpreter::rule_defs::context::ANALYSIS_ACTIONS_METHODS_ANON_TARGET;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_ANON_TARGETS_GLOBALS;
-use buck2_interpreter::starlark_promise::StarlarkPromise;
-use buck2_interpreter_for_build::rule::FrozenArtifactPromiseMappings;
-use buck2_interpreter_for_build::rule::FrozenStarlarkRuleCallable;
+use bz_build_api::artifact_groups::promise::PromiseArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
+use bz_build_api::interpreter::rule_defs::context::ANALYSIS_ACTIONS_METHODS_ANON_TARGET;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_interpreter::downstream_crate_starlark_defs::REGISTER_BUCK2_ANON_TARGETS_GLOBALS;
+use bz_interpreter::starlark_promise::StarlarkPromise;
+use bz_interpreter_for_build::rule::FrozenArtifactPromiseMappings;
+use bz_interpreter_for_build::rule::FrozenStarlarkRuleCallable;
 use dupe::Dupe;
 use gazebo::prelude::VecExt;
 use starlark::any::ProvidesStaticType;
@@ -50,7 +50,7 @@ use starlark_map::small_map::SmallMap;
 use crate::anon_targets::AnonTargetKey;
 use crate::anon_targets::AnonTargetsRegistry;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum AnonTargetsError {
     #[error("artifact with name `{0}` was not found")]
@@ -74,7 +74,7 @@ impl<'v> StarlarkAnonTarget<'v> {
         frozen_artifact_mappings: &Option<FrozenArtifactPromiseMappings>,
         key: AnonTargetKey,
         registry: &mut AnonTargetsRegistry<'v>,
-    ) -> buck2_error::Result<StarlarkAnonTarget<'v>> {
+    ) -> bz_error::Result<StarlarkAnonTarget<'v>> {
         let mut artifacts_map = SmallMap::new();
         if let Some(artifacts) = frozen_artifact_mappings {
             for (id, name) in artifacts.mappings.keys().enumerate() {
@@ -162,9 +162,9 @@ fn anon_target_methods(builder: &mut MethodsBuilder) {
                 false,
             ))),
             None => {
-                let buck2_error: buck2_error::Error =
+                let bz_error: bz_error::Error =
                     AnonTargetsError::ArtifactNotFound(name.to_owned()).into();
-                Err(buck2_error.into())
+                Err(bz_error.into())
             }
         }
     }
@@ -308,7 +308,7 @@ fn analysis_actions_methods_anon_target(builder: &mut MethodsBuilder) {
 
             anon_targets.push(anon_target);
 
-            buck2_error::Ok(key)
+            bz_error::Ok(key)
         })?;
 
         Ok(StarlarkAnonTargets {

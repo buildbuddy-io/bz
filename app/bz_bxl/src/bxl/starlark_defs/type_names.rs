@@ -10,8 +10,8 @@
 
 #![allow(non_upper_case_globals)]
 
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::unconfigured::TargetNode;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::unconfigured::TargetNode;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 

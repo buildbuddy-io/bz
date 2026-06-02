@@ -1,5 +1,5 @@
 [package]
-name = "buck2_host_sharing_proto"
+name = "bz_host_sharing_proto"
 
 edition = "2024"
 license = { workspace = true }
@@ -15,4 +15,4 @@ tonic = { workspace = true }
 tonic-prost = { workspace = true }
 
 [build-dependencies]
-buck2_protoc_dev = { workspace = true }
+bz_protoc_dev = { workspace = true }

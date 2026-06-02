@@ -121,12 +121,12 @@ BUCK2_WELL_KNOWN_PROTO_PATHS = [
 ]
 
 filegroup(
-    name = "buck2_protoc",
+    name = "bz_protoc",
     srcs = select(BUCK2_PROTOC_BINARIES),
 )
 
 filegroup(
-    name = "buck2_protoc_descriptor_proto",
+    name = "bz_protoc_descriptor_proto",
     srcs = select({
         condition: [repo + ":include/google/protobuf/descriptor.proto"]
         for condition, repo in BUCK2_PROTOC_REPOS.items()
@@ -134,7 +134,7 @@ filegroup(
 )
 
 filegroup(
-    name = "buck2_protoc_well_known_protos",
+    name = "bz_protoc_well_known_protos",
     srcs = select({
         condition: [repo + ":" + path for path in BUCK2_WELL_KNOWN_PROTO_PATHS]
         for condition, repo in BUCK2_PROTOC_REPOS.items()

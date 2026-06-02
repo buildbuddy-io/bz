@@ -9,16 +9,16 @@
  */
 
 #[cfg(windows)]
-pub(crate) fn check_user_allowed() -> buck2_error::Result<()> {
+pub(crate) fn check_user_allowed() -> bz_error::Result<()> {
     use core::ffi::c_void;
     use std::io;
     use std::mem;
     use std::mem::MaybeUninit;
     use std::ptr;
 
-    use buck2_core::ci::is_ci;
-    use buck2_error::BuckErrorContext;
-    use buck2_wrapper_common::win::winapi_handle::WinapiHandle;
+    use bz_core::ci::is_ci;
+    use bz_error::BuckErrorContext;
+    use bz_wrapper_common::win::winapi_handle::WinapiHandle;
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Security::GetTokenInformation;
     use windows_sys::Win32::Security::TOKEN_ELEVATION;
@@ -68,16 +68,16 @@ pub(crate) fn check_user_allowed() -> buck2_error::Result<()> {
 }
 
 #[cfg(not(windows))]
-pub(crate) fn check_user_allowed() -> buck2_error::Result<()> {
+pub(crate) fn check_user_allowed() -> bz_error::Result<()> {
     use std::os::unix::fs::MetadataExt;
 
-    use buck2_core::soft_error;
-    use buck2_error::internal_error;
-    use buck2_fs::error::IoResultExt;
-    use buck2_fs::fs_util;
-    use buck2_fs::paths::abs_path::AbsPath;
+    use bz_core::soft_error;
+    use bz_error::internal_error;
+    use bz_fs::error::IoResultExt;
+    use bz_fs::fs_util;
+    use bz_fs::paths::abs_path::AbsPath;
 
-    #[derive(Debug, buck2_error::Error)]
+    #[derive(Debug, bz_error::Error)]
     #[error("buck2 is not allowed to run as root (unless home dir is owned by root)")]
     #[buck2(tag = Input)]
     struct RootError;

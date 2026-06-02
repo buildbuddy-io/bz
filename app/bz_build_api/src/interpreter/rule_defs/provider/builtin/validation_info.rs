@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
+use bz_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -27,11 +27,11 @@ use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::validation_spec::FrozenStarlarkValidationSpec;
 use crate::interpreter::rule_defs::validation_spec::StarlarkValidationSpec;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum ValidationInfoError {
     #[error("Expected `ValidationSpec` value, got `{0}`")]
@@ -93,12 +93,12 @@ pub struct ValidationInfoGen<V: ValueLifetimeless> {
     validations: ValueOfUncheckedGeneric<V, Vec<FrozenStarlarkValidationSpec>>,
 }
 
-fn validate_validation_info<'v, V>(info: &ValidationInfoGen<V>) -> buck2_error::Result<()>
+fn validate_validation_info<'v, V>(info: &ValidationInfoGen<V>) -> bz_error::Result<()>
 where
     V: ValueLike<'v>,
 {
     let values = ListRef::from_value(info.validations.get().to_value())
-        .ok_or(buck2_error::Error::from(
+        .ok_or(bz_error::Error::from(
             ValidationInfoError::ValidationsAreNotListOfSpecs,
         ))?
         .iter();

@@ -13,7 +13,7 @@ use std::fmt::Arguments;
 #[doc(hidden)]
 #[cold]
 #[track_caller]
-pub fn buck2_error_impl(tag: crate::ErrorTag, args: Arguments) -> crate::Error {
+pub fn bz_error_impl(tag: crate::ErrorTag, args: Arguments) -> crate::Error {
     let caller = std::panic::Location::caller();
     let source_location = crate::source_location::SourceLocation::new(caller.file(), caller.line());
     crate::Error::new(format!("{args}"), tag, source_location, None)
@@ -23,19 +23,19 @@ pub fn buck2_error_impl(tag: crate::ErrorTag, args: Arguments) -> crate::Error {
 #[cold]
 #[track_caller]
 pub fn internal_error_impl(args: Arguments) -> crate::Error {
-    buck2_error_impl(
+    bz_error_impl(
         crate::ErrorTag::InternalError,
         format_args!("{args} (internal error)"),
     )
 }
 
 #[macro_export]
-macro_rules! buck2_error {
+macro_rules! bz_error {
     ($tags:expr, $format:expr) => {
-        $crate::buck2_error!($tags, $format,)
+        $crate::bz_error!($tags, $format,)
     };
     ($tags:expr, $format:expr, $($arg:tt)*) => {
-        $crate::macros::buck2_error_impl($tags, format_args!($format, $($arg)*))
+        $crate::macros::bz_error_impl($tags, format_args!($format, $($arg)*))
     };
 }
 

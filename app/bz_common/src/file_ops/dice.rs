@@ -17,16 +17,16 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::external::external_cell_origin_for_cell;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_error::internal_error;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::external_cell_origin_for_cell;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_error::internal_error;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::DiceTransactionUpdater;
@@ -85,7 +85,7 @@ impl DiceFileComputations {
     pub async fn read_dir(
         ctx: &mut DiceComputations<'_>,
         path: CellPathRef<'_>,
-    ) -> buck2_error::Result<ReadDirOutput> {
+    ) -> bz_error::Result<ReadDirOutput> {
         ctx.compute(&ReadDirKey {
             path: path.to_owned(),
             check_ignores: CheckIgnores::Yes,
@@ -101,7 +101,7 @@ impl DiceFileComputations {
     pub async fn exists_matching_exact_case(
         ctx: &mut DiceComputations<'_>,
         path: CellPathRef<'_>,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         ctx.compute(&ExistsMatchingExactCaseKey(path.to_owned()))
             .await?
     }
@@ -109,7 +109,7 @@ impl DiceFileComputations {
     pub async fn read_dir_include_ignores(
         ctx: &mut DiceComputations<'_>,
         path: CellPathRef<'_>,
-    ) -> buck2_error::Result<ReadDirOutput> {
+    ) -> bz_error::Result<ReadDirOutput> {
         ctx.compute(&ReadDirKey {
             path: path.to_owned(),
             check_ignores: CheckIgnores::No,
@@ -131,7 +131,7 @@ impl DiceFileComputations {
     pub async fn read_file_if_exists(
         ctx: &mut DiceComputations<'_>,
         path: CellPathRef<'_>,
-    ) -> buck2_error::Result<Option<String>> {
+    ) -> bz_error::Result<Option<String>> {
         (ctx.compute(&ReadFileKey(Arc::new(path.to_owned())))
             .await??
             .proxy
@@ -154,7 +154,7 @@ impl DiceFileComputations {
     pub async fn read_path_metadata_if_exists(
         ctx: &mut DiceComputations<'_>,
         path: CellPathRef<'_>,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         ctx.compute(&PathMetadataKey(path.to_owned())).await?
     }
 
@@ -166,7 +166,7 @@ impl DiceFileComputations {
     pub async fn read_path_metadata_for_no_watchfs_if_exists(
         ctx: &mut DiceComputations<'_>,
         path: CellPathRef<'_>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         ctx.compute(&PathMetadataForNoWatchFsKey(path.to_owned()))
             .await?
     }
@@ -197,7 +197,7 @@ impl DiceFileComputations {
     pub async fn followed_path_type_if_exists(
         ctx: &mut DiceComputations<'_>,
         path: CellPathRef<'_>,
-    ) -> buck2_error::Result<Option<FollowedPathType>> {
+    ) -> bz_error::Result<Option<FollowedPathType>> {
         let mut metadata = ctx
             .compute(&PathMetadataForNoWatchFsKey(path.to_owned()))
             .await??;
@@ -246,7 +246,7 @@ impl DiceFileComputations {
     pub async fn is_ignored(
         ctx: &mut DiceComputations<'_>,
         path: CellPathRef<'_>,
-    ) -> buck2_error::Result<FileIgnoreResult> {
+    ) -> bz_error::Result<FileIgnoreResult> {
         get_delegated_file_ops(ctx, path.cell(), CheckIgnores::Yes)
             .await?
             .is_ignored(path.path())
@@ -256,7 +256,7 @@ impl DiceFileComputations {
     pub async fn buildfiles(
         ctx: &mut DiceComputations<'_>,
         cell: CellName,
-    ) -> buck2_error::Result<Arc<[FileNameBuf]>> {
+    ) -> bz_error::Result<Arc<[FileNameBuf]>> {
         ctx.get_buildfiles(cell).await
     }
 }
@@ -283,7 +283,7 @@ pub struct KnownFileStateInvalidationStats {
     pub read_dirs: usize,
     pub paths: usize,
     pub exists_matching_exact_case: usize,
-    pub events: Vec<buck2_data::FileWatcherEvent>,
+    pub events: Vec<bz_data::FileWatcherEvent>,
     pub timings: KnownFileStateInvalidationTimings,
 }
 
@@ -318,7 +318,7 @@ impl FileChangeTracker {
         }
     }
 
-    pub fn write_to_dice(mut self, ctx: &mut DiceTransactionUpdater) -> buck2_error::Result<()> {
+    pub fn write_to_dice(mut self, ctx: &mut DiceTransactionUpdater) -> bz_error::Result<()> {
         // See comment on `dir_entries_changed_for_watchman_bug`
         for p in self.raw_paths_to_dirty.clone() {
             if let Some(dir) = p.0.parent() {
@@ -389,7 +389,7 @@ impl FileChangeTracker {
 
 pub async fn invalidate_changed_file_state(
     ctx: &mut DiceTransactionUpdater,
-) -> buck2_error::Result<KnownFileStateInvalidationStats> {
+) -> bz_error::Result<KnownFileStateInvalidationStats> {
     let total_start = Instant::now();
     let (read_dirs, path_metadata_for_no_watchfs) =
         ctx.existing_key_values_of_two_types_for_introspection::<
@@ -419,7 +419,7 @@ pub async fn invalidate_changed_file_state(
     let file_ops_by_cell = dice
         .compute_join(no_watchfs_cells, |ctx, (cell, check_ignores)| {
             async move {
-                buck2_error::Ok((
+                bz_error::Ok((
                     (cell, check_ignores),
                     get_delegated_file_ops(ctx, cell, check_ignores).await?,
                 ))
@@ -428,7 +428,7 @@ pub async fn invalidate_changed_file_state(
         })
         .await
         .into_iter()
-        .collect::<buck2_error::Result<StdBuckHashMap<_, _>>>()?;
+        .collect::<bz_error::Result<StdBuckHashMap<_, _>>>()?;
     let file_ops_by_cell = Arc::new(file_ops_by_cell);
     let io_provider = dice.global_data().get_io_provider();
     let file_ops_us = total_start.elapsed().as_micros() as u64 - introspection_us;
@@ -532,14 +532,14 @@ fn no_watchfs_file_change_events(
     changed_read_dirs: &[ReadDirForNoWatchFsKey],
     changed_read_dirs_to_value: &[(
         ReadDirForNoWatchFsKey,
-        buck2_error::Result<Arc<[RawDirEntry]>>,
+        bz_error::Result<Arc<[RawDirEntry]>>,
     )],
     changed_path_metadata_for_no_watchfs: &[PathMetadataForNoWatchFsKey],
     changed_path_metadata_for_no_watchfs_to_value: &[(
         PathMetadataForNoWatchFsKey,
-        buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>,
+        bz_error::Result<Option<RawPathMetadataForNoWatchFs>>,
     )],
-) -> Vec<buck2_data::FileWatcherEvent> {
+) -> Vec<bz_data::FileWatcherEvent> {
     let total = changed_read_dirs.len()
         + changed_read_dirs_to_value.len()
         + changed_path_metadata_for_no_watchfs.len()
@@ -550,18 +550,18 @@ fn no_watchfs_file_change_events(
         push_no_watchfs_file_change_event(
             &mut events,
             &key.0,
-            buck2_data::FileWatcherKind::Directory,
+            bz_data::FileWatcherKind::Directory,
         );
     }
     for (key, _) in changed_read_dirs_to_value {
         push_no_watchfs_file_change_event(
             &mut events,
             &key.0,
-            buck2_data::FileWatcherKind::Directory,
+            bz_data::FileWatcherKind::Directory,
         );
     }
     for key in changed_path_metadata_for_no_watchfs {
-        push_no_watchfs_file_change_event(&mut events, &key.0, buck2_data::FileWatcherKind::File);
+        push_no_watchfs_file_change_event(&mut events, &key.0, bz_data::FileWatcherKind::File);
     }
     for (key, value) in changed_path_metadata_for_no_watchfs_to_value {
         push_no_watchfs_file_change_event(&mut events, &key.0, no_watchfs_file_watcher_kind(value));
@@ -571,16 +571,16 @@ fn no_watchfs_file_change_events(
 }
 
 fn push_no_watchfs_file_change_event(
-    events: &mut Vec<buck2_data::FileWatcherEvent>,
+    events: &mut Vec<bz_data::FileWatcherEvent>,
     path: &CellPath,
-    kind: buck2_data::FileWatcherKind,
+    kind: bz_data::FileWatcherKind,
 ) {
     if is_bazel_output_or_external_file_state_path(path) {
         return;
     }
     if events.len() < MAX_NO_WATCHFS_FILE_CHANGE_RECORDS {
-        events.push(buck2_data::FileWatcherEvent {
-            event: buck2_data::FileWatcherEventType::Modify as i32,
+        events.push(bz_data::FileWatcherEvent {
+            event: bz_data::FileWatcherEventType::Modify as i32,
             kind: kind as i32,
             path: path.to_string(),
         });
@@ -597,22 +597,22 @@ fn is_bazel_output_or_external_file_state_path(path: &CellPath) -> bool {
 }
 
 fn no_watchfs_file_watcher_kind(
-    value: &buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>,
-) -> buck2_data::FileWatcherKind {
+    value: &bz_error::Result<Option<RawPathMetadataForNoWatchFs>>,
+) -> bz_data::FileWatcherKind {
     match value {
-        Ok(Some(RawPathMetadataForNoWatchFs::Directory)) => buck2_data::FileWatcherKind::Directory,
+        Ok(Some(RawPathMetadataForNoWatchFs::Directory)) => bz_data::FileWatcherKind::Directory,
         Ok(Some(RawPathMetadataForNoWatchFs::Symlink { .. })) => {
-            buck2_data::FileWatcherKind::Symlink
+            bz_data::FileWatcherKind::Symlink
         }
         Ok(Some(RawPathMetadataForNoWatchFs::File(_))) | Ok(None) | Err(_) => {
-            buck2_data::FileWatcherKind::File
+            bz_data::FileWatcherKind::File
         }
     }
 }
 
 pub async fn invalidate_changed_external_file_state(
     ctx: &mut DiceTransactionUpdater,
-) -> buck2_error::Result<KnownExternalFileStateInvalidationStats> {
+) -> bz_error::Result<KnownExternalFileStateInvalidationStats> {
     if !EXTERNAL_FILE_STATE_SEEN.load(Ordering::Relaxed) {
         return Ok(KnownExternalFileStateInvalidationStats::default());
     }
@@ -659,7 +659,7 @@ pub async fn invalidate_changed_external_file_state(
 enum DirtyPathMetadataForNoWatchFs {
     WithValue(
         PathMetadataForNoWatchFsKey,
-        buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>,
+        bz_error::Result<Option<RawPathMetadataForNoWatchFs>>,
     ),
     WithoutValue(PathMetadataForNoWatchFsKey),
     Unchanged,
@@ -668,7 +668,7 @@ enum DirtyPathMetadataForNoWatchFs {
 enum DirtyReadDirForNoWatchFs {
     WithValue(
         ReadDirForNoWatchFsKey,
-        buck2_error::Result<Arc<[RawDirEntry]>>,
+        bz_error::Result<Arc<[RawDirEntry]>>,
     ),
     WithoutValue(ReadDirForNoWatchFsKey),
     Unchanged,
@@ -677,7 +677,7 @@ enum DirtyReadDirForNoWatchFs {
 enum DirtyExternalPathMetadata {
     WithValue(
         ExternalPathMetadataKey,
-        buck2_error::Result<ExternalPathMetadata>,
+        bz_error::Result<ExternalPathMetadata>,
     ),
     WithoutValue(ExternalPathMetadataKey),
     Unchanged,
@@ -688,7 +688,7 @@ async fn read_path_metadata_for_no_watchfs_direct(
     file_ops_by_cell: &StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>,
     io_provider: Arc<dyn IoProvider>,
     no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
-) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
     let file_ops = file_ops_by_cell
         .get(&(path.cell(), CheckIgnores::No))
         .ok_or_else(|| internal_error!("missing file ops for no-watchfs cell `{}`", path.cell()))?;
@@ -703,7 +703,7 @@ async fn read_path_metadata_for_no_watchfs_direct(
 
 async fn check_path_metadata_for_no_watchfs_direct(
     key: PathMetadataForNoWatchFsKey,
-    old: Option<buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>>,
+    old: Option<bz_error::Result<Option<RawPathMetadataForNoWatchFs>>>,
     file_ops_by_cell: Arc<StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>>,
     io_provider: Arc<dyn IoProvider>,
     no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
@@ -737,7 +737,7 @@ async fn read_dir_for_no_watchfs_direct(
     file_ops_by_cell: &StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>,
     io_provider: Arc<dyn IoProvider>,
     no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
-) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+) -> bz_error::Result<Arc<[RawDirEntry]>> {
     let file_ops = file_ops_by_cell
         .get(&(key.0.cell(), CheckIgnores::No))
         .ok_or_else(|| {
@@ -754,7 +754,7 @@ async fn read_dir_for_no_watchfs_direct(
 
 async fn check_read_dir_for_no_watchfs_direct(
     key: ReadDirForNoWatchFsKey,
-    old: Option<buck2_error::Result<Arc<[RawDirEntry]>>>,
+    old: Option<bz_error::Result<Arc<[RawDirEntry]>>>,
     file_ops_by_cell: Arc<StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>>,
     io_provider: Arc<dyn IoProvider>,
     no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
@@ -787,7 +787,7 @@ async fn fresh_path_metadata_for_no_watchfs(
     ctx: &mut DiceComputations<'_>,
     path: CellPathRef<'_>,
     no_watchfs_metadata_cache: Option<Arc<NoWatchFsMetadataCache>>,
-) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
     let file_ops = get_delegated_file_ops(ctx, path.cell(), CheckIgnores::No).await?;
     file_ops
         .read_path_metadata_for_no_watchfs_if_exists_with_cache(
@@ -800,7 +800,7 @@ async fn fresh_path_metadata_for_no_watchfs(
 
 async fn check_external_path_metadata_direct(
     key: ExternalPathMetadataKey,
-    old: Option<buck2_error::Result<ExternalPathMetadata>>,
+    old: Option<bz_error::Result<ExternalPathMetadata>>,
 ) -> DirtyExternalPathMetadata {
     let fresh = read_external_path_metadata(key.0.dupe()).await;
 
@@ -850,7 +850,7 @@ impl ExternalPathMetadata {
 
 async fn read_external_path_metadata(
     path: Arc<ExternalSymlink>,
-) -> buck2_error::Result<ExternalPathMetadata> {
+) -> bz_error::Result<ExternalPathMetadata> {
     EXTERNAL_FILE_STATE_SEEN.store(true, Ordering::Relaxed);
 
     let mut path = path.with_full_target()?;
@@ -913,7 +913,7 @@ async fn read_external_path_metadata(
 #[derive(Clone, Dupe, Allocative)]
 pub struct ReadFileProxy(
     #[allocative(skip)]
-    Arc<dyn Fn() -> BoxFuture<'static, buck2_error::Result<Option<String>>> + Send + Sync>,
+    Arc<dyn Fn() -> BoxFuture<'static, bz_error::Result<Option<String>>> + Send + Sync>,
 );
 
 impl ReadFileProxy {
@@ -922,7 +922,7 @@ impl ReadFileProxy {
     pub fn new_with_captures<D, F>(data: D, c: impl Fn(D) -> F + Send + Sync + 'static) -> Self
     where
         D: Clone + Send + Sync + 'static,
-        F: Future<Output = buck2_error::Result<Option<String>>> + Send + 'static,
+        F: Future<Output = bz_error::Result<Option<String>>> + Send + 'static,
     {
         Self(Arc::new(move || {
             let data = data.clone();
@@ -951,7 +951,7 @@ struct ReadFileKey(Arc<CellPath>);
 
 #[async_trait]
 impl Key for ReadFileKey {
-    type Value = buck2_error::Result<ReadFileValue>;
+    type Value = bz_error::Result<ReadFileValue>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -993,7 +993,7 @@ impl Key for ReadFileKey {
 async fn resolve_read_file_metadata(
     ctx: &mut DiceComputations<'_>,
     metadata: Option<RawPathMetadata>,
-) -> buck2_error::Result<ReadFileResolvedMetadata> {
+) -> bz_error::Result<ReadFileResolvedMetadata> {
     let mut resolved_metadata = metadata;
     let mut seen = StdBuckHashSet::default();
     loop {
@@ -1044,10 +1044,10 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use buck2_core::cells::external::BzlmodCellSetup;
-    use buck2_core::cells::external::register_external_cell_origin;
-    use buck2_core::cells::paths::CellRelativePathBuf;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_core::cells::external::BzlmodCellSetup;
+    use bz_core::cells::external::register_external_cell_origin;
+    use bz_core::cells::paths::CellRelativePathBuf;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     use dice::UserComputationData;
     use dice::testing::DiceBuilder;
     use tempfile::TempDir;
@@ -1096,7 +1096,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_file_key_tracks_relative_symlink_target_metadata() -> buck2_error::Result<()> {
+    async fn read_file_key_tracks_relative_symlink_target_metadata() -> bz_error::Result<()> {
         let cell = CellName::testing_new("cell");
         let link = cell_path(cell, "link");
         let target = cell_path(cell, "target");
@@ -1134,7 +1134,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn followed_path_type_resolves_relative_symlink() -> buck2_error::Result<()> {
+    async fn followed_path_type_resolves_relative_symlink() -> bz_error::Result<()> {
         let cell = CellName::testing_new("cell");
         let link = cell_path(cell, "link");
         let target = cell_path(cell, "target");
@@ -1159,7 +1159,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_file_key_tracks_external_symlink_target_metadata() -> buck2_error::Result<()> {
+    async fn read_file_key_tracks_external_symlink_target_metadata() -> bz_error::Result<()> {
         let cell = CellName::testing_new("cell");
         let link = cell_path(cell, "link");
         let tempdir = TempDir::new()?;
@@ -1198,7 +1198,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn followed_path_type_resolves_external_symlink() -> buck2_error::Result<()> {
+    async fn followed_path_type_resolves_external_symlink() -> bz_error::Result<()> {
         let cell = CellName::testing_new("cell");
         let link = cell_path(cell, "link");
         let tempdir = TempDir::new()?;
@@ -1241,7 +1241,7 @@ struct ExternalPathMetadataKey(Arc<ExternalSymlink>);
 
 #[async_trait]
 impl Key for ExternalPathMetadataKey {
-    type Value = buck2_error::Result<ExternalPathMetadata>;
+    type Value = bz_error::Result<ExternalPathMetadata>;
 
     async fn compute(
         &self,
@@ -1278,7 +1278,7 @@ struct PathMetadataForNoWatchFsKey(CellPath);
 
 #[async_trait]
 impl Key for PathMetadataForNoWatchFsKey {
-    type Value = buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>;
+    type Value = bz_error::Result<Option<RawPathMetadataForNoWatchFs>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -1320,7 +1320,7 @@ struct ReadDirForNoWatchFsKey(CellPath);
 
 #[async_trait]
 impl Key for ReadDirForNoWatchFsKey {
-    type Value = buck2_error::Result<Arc<[RawDirEntry]>>;
+    type Value = bz_error::Result<Arc<[RawDirEntry]>>;
 
     async fn compute(
         &self,
@@ -1371,7 +1371,7 @@ impl Key for ReadDirForNoWatchFsKey {
 
 #[async_trait]
 impl Key for ReadDirKey {
-    type Value = buck2_error::Result<ReadDirOutput>;
+    type Value = bz_error::Result<ReadDirOutput>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -1407,7 +1407,7 @@ struct ExistsMatchingExactCaseKey(CellPath);
 
 #[async_trait]
 impl Key for ExistsMatchingExactCaseKey {
-    type Value = buck2_error::Result<bool>;
+    type Value = bz_error::Result<bool>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -1446,7 +1446,7 @@ struct PathMetadataKey(CellPath);
 
 #[async_trait]
 impl Key for PathMetadataKey {
-    type Value = buck2_error::Result<Option<RawPathMetadata>>;
+    type Value = bz_error::Result<Option<RawPathMetadata>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -1510,13 +1510,13 @@ mod tests {
 
         assert_eq!(events.len(), 2);
         assert_eq!(
-            buck2_data::FileWatcherKind::try_from(events[0].kind).unwrap(),
-            buck2_data::FileWatcherKind::Directory
+            bz_data::FileWatcherKind::try_from(events[0].kind).unwrap(),
+            bz_data::FileWatcherKind::Directory
         );
         assert_eq!(events[0].path, "root//pkg");
         assert_eq!(
-            buck2_data::FileWatcherKind::try_from(events[1].kind).unwrap(),
-            buck2_data::FileWatcherKind::File
+            bz_data::FileWatcherKind::try_from(events[1].kind).unwrap(),
+            bz_data::FileWatcherKind::File
         );
         assert_eq!(events[1].path, "root//pkg/file.txt");
     }

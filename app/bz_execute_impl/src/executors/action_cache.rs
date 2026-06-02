@@ -12,28 +12,28 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_action_metadata_proto::REMOTE_DEP_FILE_KEY;
-use buck2_action_metadata_proto::RemoteDepFile;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_execute::execute::action_digest::ActionDigest;
-use buck2_execute::execute::action_digest::ActionDigestKind;
-use buck2_execute::execute::dep_file_digest::DepFileDigest;
-use buck2_execute::execute::executor_stage_async;
-use buck2_execute::execute::kind::CommandExecutionKind;
-use buck2_execute::execute::kind::RemoteCommandExecutionDetails;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::manager::CommandExecutionManagerExt;
-use buck2_execute::execute::prepared::PreparedCommand;
-use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::knobs::ExecutorGlobalKnobs;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::re::action_identity::ReActionIdentity;
-use buck2_execute::re::manager::ManagedRemoteExecutionClient;
-use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
-use buck2_execute::re::remote_action_result::ActionCacheResult;
-use buck2_util::time_span::TimeSpan;
+use bz_action_metadata_proto::REMOTE_DEP_FILE_KEY;
+use bz_action_metadata_proto::RemoteDepFile;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_execute::execute::action_digest::ActionDigest;
+use bz_execute::execute::action_digest::ActionDigestKind;
+use bz_execute::execute::dep_file_digest::DepFileDigest;
+use bz_execute::execute::executor_stage_async;
+use bz_execute::execute::kind::CommandExecutionKind;
+use bz_execute::execute::kind::RemoteCommandExecutionDetails;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::manager::CommandExecutionManagerExt;
+use bz_execute::execute::prepared::PreparedCommand;
+use bz_execute::execute::prepared::PreparedCommandOptionalExecutor;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::knobs::ExecutorGlobalKnobs;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::re::action_identity::ReActionIdentity;
+use bz_execute::re::manager::ManagedRemoteExecutionClient;
+use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+use bz_execute::re::remote_action_result::ActionCacheResult;
+use bz_util::time_span::TimeSpan;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use prost::Message;
@@ -66,10 +66,10 @@ enum CacheType {
 }
 
 impl CacheType {
-    fn to_proto(&self) -> buck2_data::CacheType {
+    fn to_proto(&self) -> bz_data::CacheType {
         match self {
-            CacheType::ActionCache => buck2_data::CacheType::ActionCache,
-            CacheType::RemoteDepFileCache(_) => buck2_data::CacheType::RemoteDepFileCache,
+            CacheType::ActionCache => bz_data::CacheType::ActionCache,
+            CacheType::RemoteDepFileCache(_) => bz_data::CacheType::RemoteDepFileCache,
         }
     }
 }
@@ -109,14 +109,14 @@ async fn query_action_cache_and_download_result(
     );
 
     let action_cache_response = executor_stage_async(
-        buck2_data::CacheQuery {
+        bz_data::CacheQuery {
             action_digest: digest.to_string(),
             cache_type: cache_type.to_proto().into(),
         },
         async {
             let _permit = remote_metadata_semaphore.acquire().await.map_err(|_| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::InternalError,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::InternalError,
                     "remote metadata semaphore was closed"
                 )
             })?;
@@ -212,7 +212,7 @@ async fn query_action_cache_and_download_result(
         digest_config,
         manager,
         &identity,
-        buck2_data::CacheHit {
+        bz_data::CacheHit {
             action_digest: digest.to_string(),
             action_key: if log_action_keys {
                 Some(identity.action_key.clone())

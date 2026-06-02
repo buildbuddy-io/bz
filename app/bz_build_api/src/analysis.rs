@@ -11,18 +11,18 @@
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
 use pagable::PagablePanic;
 
 use crate::analysis::registry::RecordedAnalysisValues;
 use crate::artifact_groups::promise::PromiseArtifactId;
 
-// TODO(@wendyy) move into `buck2_node`
+// TODO(@wendyy) move into `bz_node`
 pub mod anon_promises_dyn;
-// TODO(@wendyy) move into `buck2_interpreter_for_build`
+// TODO(@wendyy) move into `bz_interpreter_for_build`
 pub mod anon_targets_registry;
 pub mod calculation;
 pub mod extra_v;
@@ -69,7 +69,7 @@ impl AnalysisResult {
         }
     }
 
-    pub fn providers(&self) -> buck2_error::Result<FrozenProviderCollectionValueRef<'_>> {
+    pub fn providers(&self) -> bz_error::Result<FrozenProviderCollectionValueRef<'_>> {
         self.analysis_values.provider_collection()
     }
 
@@ -81,7 +81,7 @@ impl AnalysisResult {
     pub fn lookup_inner(
         &self,
         label: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<FrozenProviderCollectionValue> {
+    ) -> bz_error::Result<FrozenProviderCollectionValue> {
         Ok(self.providers()?.lookup_inner(label)?.to_owned())
     }
 

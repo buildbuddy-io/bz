@@ -13,9 +13,9 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
 use pagable::Pagable;
@@ -60,7 +60,7 @@ use crate::target::name::TargetName;
 use crate::target::name::TargetNameRef;
 use crate::target_aliases::TargetAliasResolver;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum TargetPatternParseError {
     #[error("Expected pattern to contain `:`, trailing `/...` or literal `...`.")]
@@ -85,7 +85,7 @@ enum TargetPatternParseError {
     ConfigurationPartMustBeEnclosedInParentheses,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum ModifiersError {
     #[error("Cannot use ?modifier syntax in target pattern expression with --target-universe flag")]
@@ -116,7 +116,7 @@ pub fn display_precise_pattern<'a, T: PatternType>(
 }
 
 /// Extract provider name from a target pattern.
-pub(crate) fn split_providers_name(s: &str) -> buck2_error::Result<(&str, ProvidersName)> {
+pub(crate) fn split_providers_name(s: &str) -> bz_error::Result<(&str, ProvidersName)> {
     if let Some((t, flavors)) = split1_opt_ascii(s, AsciiChar::new('#')) {
         let name = map_flavors(flavors, s)?;
         Ok((t, name))
@@ -127,8 +127,8 @@ pub(crate) fn split_providers_name(s: &str) -> buck2_error::Result<(&str, Provid
             names.push(ProviderName::new(p.to_owned())?);
             r
         } else {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "target pattern with `[` must end with `]` to mark end of providers set label"
             ));
         };
@@ -141,8 +141,8 @@ pub(crate) fn split_providers_name(s: &str) -> buck2_error::Result<(&str, Provid
                     continue;
                 }
             }
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "target pattern with `[` must end with `]` to mark end of providers set label"
             ));
         }
@@ -150,7 +150,7 @@ pub(crate) fn split_providers_name(s: &str) -> buck2_error::Result<(&str, Provid
         Ok((
             t,
             ProvidersName::NonDefault(triomphe::Arc::new(NonDefaultProvidersName::Named(
-                buck2_util::arc_str::ArcSlice::from_iter(names),
+                bz_util::arc_str::ArcSlice::from_iter(names),
             ))),
         ))
     } else {
@@ -255,7 +255,7 @@ pub enum ParsedPattern<T: PatternType> {
 
 impl ParsedPattern<TargetPatternExtra> {
     /// Extract [`TargetLabel`] from a [`ParsedPattern`].
-    pub fn as_target_label(self, original: &str) -> buck2_error::Result<TargetLabel> {
+    pub fn as_target_label(self, original: &str) -> bz_error::Result<TargetLabel> {
         let (target_label, TargetPatternExtra) = self.as_literal(original)?;
         Ok(target_label)
     }
@@ -277,7 +277,7 @@ impl ParsedPattern<TargetPatternExtra> {
 
 impl ParsedPattern<ProvidersPatternExtra> {
     /// Extract [`ProvidersLabel`] from a [`ParsedPattern`].
-    pub fn as_providers_label(self, original: &str) -> buck2_error::Result<ProvidersLabel> {
+    pub fn as_providers_label(self, original: &str) -> bz_error::Result<ProvidersLabel> {
         let (target_label, ProvidersPatternExtra { providers }) = self.as_literal(original)?;
         Ok(ProvidersLabel::new(target_label, providers))
     }
@@ -286,8 +286,8 @@ impl ParsedPattern<ProvidersPatternExtra> {
 impl<T: PatternType> ParsedPattern<T> {
     pub fn try_map<U: PatternType>(
         self,
-        f: impl FnOnce(T) -> buck2_error::Result<U>,
-    ) -> buck2_error::Result<ParsedPattern<U>> {
+        f: impl FnOnce(T) -> bz_error::Result<U>,
+    ) -> bz_error::Result<ParsedPattern<U>> {
         match self {
             ParsedPattern::Target(package, target_name, val) => {
                 Ok(ParsedPattern::Target(package, target_name, f(val)?))
@@ -315,7 +315,7 @@ impl<T: PatternType> ParsedPattern<T> {
     }
 
     /// Extract a literal from a [ParsedPattern], or `Err` if it is not a literal.
-    pub fn as_literal(self, original: &str) -> buck2_error::Result<(TargetLabel, T)> {
+    pub fn as_literal(self, original: &str) -> bz_error::Result<(TargetLabel, T)> {
         // FIXME: Would be better if we had a Display on self, so we could produce a nice error message.
         //        For now, just require the original string to be passed in for good errors.
         match self {
@@ -332,7 +332,7 @@ impl<T: PatternType> ParsedPattern<T> {
         cell: CellName,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let pattern_with_modifiers = parse_target_pattern(
             cell_resolver,
             cell_alias_resolver,
@@ -363,7 +363,7 @@ impl<T: PatternType> ParsedPattern<T> {
         pattern: &str,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let pattern_with_modifiers = parse_target_pattern(
             cell_resolver,
             cell_alias_resolver,
@@ -389,7 +389,7 @@ impl<T: PatternType> ParsedPattern<T> {
         relative: TargetParsingRel<'_>,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let pattern_with_modifiers = parse_target_pattern(
             cell_resolver,
             cell_alias_resolver,
@@ -407,7 +407,7 @@ impl<T: PatternType> ParsedPattern<T> {
 
     fn from_parsed_pattern_with_modifiers(
         pattern_with_modifiers: ParsedPatternWithModifiers<T>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let ParsedPatternWithModifiers {
             parsed_pattern,
             modifiers,
@@ -415,8 +415,8 @@ impl<T: PatternType> ParsedPattern<T> {
 
         match modifiers.as_slice() {
             None => Ok(parsed_pattern),
-            Some(_) => Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            Some(_) => Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "The ?modifier syntax is unsupported for this command"
             )),
         }
@@ -473,7 +473,7 @@ impl<T: PatternType> ParsedPatternWithModifiers<T> {
         cell: CellName,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         parse_target_pattern(
             cell_resolver,
             cell_alias_resolver,
@@ -495,7 +495,7 @@ impl<T: PatternType> ParsedPatternWithModifiers<T> {
         pattern: &str,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         parse_target_pattern(
             cell_resolver,
             cell_alias_resolver,
@@ -519,7 +519,7 @@ impl<T: PatternType> ParsedPatternWithModifiers<T> {
         relative: TargetParsingRel<'_>,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         parse_target_pattern(
             cell_resolver,
             cell_alias_resolver,
@@ -559,10 +559,10 @@ pub struct PatternParts<'a, T: PatternType> {
 }
 
 impl<'a, T: PatternType> PatternParts<'a, T> {
-    fn try_map<U: PatternType, F: FnOnce(T) -> buck2_error::Result<U>>(
+    fn try_map<U: PatternType, F: FnOnce(T) -> bz_error::Result<U>>(
         self,
         f: F,
-    ) -> buck2_error::Result<PatternParts<'a, U>> {
+    ) -> bz_error::Result<PatternParts<'a, U>> {
         let PatternParts {
             cell_alias,
             pattern,
@@ -595,8 +595,8 @@ pub enum PatternDataOrAmbiguous<'a, T: PatternType> {
 impl<'a, T: PatternType> PatternDataOrAmbiguous<'a, T> {
     fn try_map<U: PatternType>(
         self,
-        f: impl FnOnce(T) -> buck2_error::Result<U>,
-    ) -> buck2_error::Result<PatternDataOrAmbiguous<'a, U>> {
+        f: impl FnOnce(T) -> bz_error::Result<U>,
+    ) -> bz_error::Result<PatternDataOrAmbiguous<'a, U>> {
         match self {
             PatternDataOrAmbiguous::PatternData(d) => {
                 Ok(PatternDataOrAmbiguous::PatternData(d.try_map(f)?))
@@ -629,7 +629,7 @@ where
 {
     /// If the pattern is ambiguous, try to infer a target. This would convert `foo/bar` into
     /// `foo/bar:bar`.
-    pub fn infer_target(self) -> buck2_error::Result<PatternData<'a, T>> {
+    pub fn infer_target(self) -> bz_error::Result<PatternData<'a, T>> {
         match self {
             Self::PatternData(d) => Ok(d),
             Self::Ambiguous {
@@ -657,7 +657,7 @@ where
     }
 
     /// If the pattern is ambiguous, error out.
-    pub fn reject_ambiguity(self) -> buck2_error::Result<PatternData<'a, T>> {
+    pub fn reject_ambiguity(self) -> bz_error::Result<PatternData<'a, T>> {
         match self {
             Self::PatternData(d) => Ok(d),
             Self::Ambiguous { pattern, .. } => {
@@ -702,8 +702,8 @@ pub enum PatternData<'a, T: PatternType> {
 impl<'a, T: PatternType> PatternData<'a, T> {
     fn try_map<U: PatternType>(
         self,
-        f: impl FnOnce(T) -> buck2_error::Result<U>,
-    ) -> buck2_error::Result<PatternData<'a, U>> {
+        f: impl FnOnce(T) -> bz_error::Result<U>,
+    ) -> bz_error::Result<PatternData<'a, U>> {
         match self {
             PatternData::Recursive { package, modifiers } => {
                 Ok(PatternData::Recursive { package, modifiers })
@@ -760,7 +760,7 @@ impl<'a, T: PatternType> PatternData<'a, T> {
 // Splits a pattern into cell alias and forward relative path if "//" is present, otherwise returns None,
 pub fn maybe_split_cell_alias_and_relative_path(
     pattern: &str,
-) -> buck2_error::Result<Option<(CellAlias, &ForwardRelativePath)>> {
+) -> bz_error::Result<Option<(CellAlias, &ForwardRelativePath)>> {
     Ok(match split1_opt_ascii(pattern, AsciiStr2::new("//")) {
         Some((a, p)) => Some((
             CellAlias::new(trim_prefix_ascii(a, AsciiChar::new('@')).to_owned()),
@@ -773,15 +773,15 @@ pub fn maybe_split_cell_alias_and_relative_path(
 fn lex_provider_pattern(
     pattern: &str,
     strip_package_trailing_slash: bool,
-) -> buck2_error::Result<PatternParts<'_, ProvidersPatternExtra>> {
+) -> bz_error::Result<PatternParts<'_, ProvidersPatternExtra>> {
     let (cell_alias, pattern) = match split1_opt_ascii(pattern, AsciiStr2::new("//")) {
         Some((a, p)) => (Some(trim_prefix_ascii(a, AsciiChar::new('@'))), p),
         None => (None, pattern),
     };
 
     if pattern.chars().filter(|&c| c == '?').count() > 1 {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Expected at most one ? in pattern, question marks in file, target, modifier, or cell names are not supported",
         ));
     }
@@ -842,7 +842,7 @@ fn lex_provider_pattern(
     })
 }
 
-fn lex_configuration_predicate(pattern: &str) -> buck2_error::Result<ConfigurationPredicate> {
+fn lex_configuration_predicate(pattern: &str) -> bz_error::Result<ConfigurationPredicate> {
     let pattern = pattern
         .strip_prefix('(')
         .ok_or(TargetPatternParseError::ConfigurationPartMustBeEnclosedInParentheses)?;
@@ -917,7 +917,7 @@ fn split_cfg(s: &str) -> Option<(&str, &str, Option<&str>)> {
 pub fn lex_configured_providers_pattern(
     pattern: &str,
     strip_package_trailing_slash: bool,
-) -> buck2_error::Result<PatternParts<'_, ConfiguredProvidersPatternExtra>> {
+) -> bz_error::Result<PatternParts<'_, ConfiguredProvidersPatternExtra>> {
     let (provider_pattern, cfg, exec_cfg) = match split_cfg(pattern) {
         Some((providers, cfg, exec_cfg)) => {
             let provider_pattern = lex_provider_pattern(providers, strip_package_trailing_slash)?;
@@ -943,8 +943,8 @@ pub fn lex_configured_providers_pattern(
     if has_modifiers {
         match &cfg {
             ConfigurationPredicate::Bound(_, _) => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Modifiers incompatible with explicit configuration",
                 ));
             }
@@ -967,7 +967,7 @@ pub fn lex_configured_providers_pattern(
 pub fn lex_target_pattern<T: PatternType>(
     pattern: &str,
     strip_package_trailing_slash: bool,
-) -> buck2_error::Result<PatternParts<'_, T>> {
+) -> bz_error::Result<PatternParts<'_, T>> {
     let provider_pattern = lex_configured_providers_pattern(pattern, strip_package_trailing_slash)?;
     provider_pattern
         .try_map(|extra| T::from_configured_providers(extra))
@@ -984,13 +984,13 @@ pub fn lex_target_pattern<T: PatternType>(
 fn normalize_package(
     package: &str,
     strip_package_trailing_slash: bool,
-) -> buck2_error::Result<&RelativePath> {
+) -> bz_error::Result<&RelativePath> {
     // Strip or reject trailing `/`, such as in `foo/:bar`.
     if let Some(stripped) = strip_suffix_ascii(package, AsciiChar::new('/')) {
         if strip_package_trailing_slash {
             return Ok(RelativePath::new(stripped));
         } else {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 TargetPatternParseError::PackageTrailingSlash,
             ));
         }
@@ -1047,13 +1047,13 @@ impl<'a> TargetParsingRel<'a> {
         }
     }
 
-    fn join_relative(&self, path: &RelativePath) -> buck2_error::Result<CellPath> {
+    fn join_relative(&self, path: &RelativePath) -> bz_error::Result<CellPath> {
         match self {
             TargetParsingRel::AllowRelative(dir, _) => Ok(dir.join_normalized(path)?),
             TargetParsingRel::AllowLimitedRelative(dir) => {
                 Ok(dir.join(<&ForwardRelativePath>::try_from(path)?))
             }
-            TargetParsingRel::RequireAbsolute(_) => Err(buck2_error::Error::from(
+            TargetParsingRel::RequireAbsolute(_) => Err(bz_error::Error::from(
                 TargetPatternParseError::AbsoluteRequired,
             )),
         }
@@ -1078,12 +1078,12 @@ fn parse_target_pattern<T>(
     cell_alias_resolver: &CellAliasResolver,
     opts: TargetParsingOptions,
     pattern: &str,
-) -> buck2_error::Result<ParsedPatternWithModifiers<T>>
+) -> bz_error::Result<ParsedPatternWithModifiers<T>>
 where
     T: PatternType,
 {
     parse_target_pattern_no_validate::<T>(cell_resolver, cell_alias_resolver, opts, pattern)
-        .tag(buck2_error::ErrorTag::Input)
+        .tag(bz_error::ErrorTag::Input)
 }
 
 fn parse_target_pattern_no_validate<T>(
@@ -1091,7 +1091,7 @@ fn parse_target_pattern_no_validate<T>(
     cell_alias_resolver: &CellAliasResolver,
     opts: TargetParsingOptions,
     pattern: &str,
-) -> buck2_error::Result<ParsedPatternWithModifiers<T>>
+) -> bz_error::Result<ParsedPatternWithModifiers<T>>
 where
     T: PatternType,
 {
@@ -1201,7 +1201,7 @@ where
 fn bazel_canonical_label_pattern(
     pattern: &str,
     cell_resolver: &CellResolver,
-) -> buck2_error::Result<Option<(CellName, String)>> {
+) -> bz_error::Result<Option<(CellName, String)>> {
     let Some(rest) = pattern.strip_prefix("@@") else {
         return Ok(None);
     };
@@ -1225,7 +1225,7 @@ fn bazel_canonical_label_pattern(
     )))
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tier0)]
 enum ResolveTargetAliasError {
     #[error("Invalid alias: `{}`", alias)]
@@ -1241,7 +1241,7 @@ fn resolve_target_alias<T>(
     cell_alias_resolver: &CellAliasResolver,
     target_alias_resolver: &dyn TargetAliasResolver,
     lex: &PatternParts<T>,
-) -> buck2_error::Result<Option<ParsedPatternWithModifiers<T>>>
+) -> bz_error::Result<Option<ParsedPatternWithModifiers<T>>>
 where
     T: PatternType,
 {
@@ -1328,7 +1328,7 @@ mod tests {
     use std::marker::PhantomData;
 
     use assert_matches::assert_matches;
-    use buck2_hash::StdBuckHashMap;
+    use bz_hash::StdBuckHashMap;
     use dupe::Dupe;
     use gazebo::prelude::*;
     use test_case::test_case;
@@ -1397,7 +1397,7 @@ mod tests {
             ProvidersPatternExtra {
                 providers: providers.map_or(ProvidersName::Default, |n| {
                     ProvidersName::NonDefault(triomphe::Arc::new(NonDefaultProvidersName::Named(
-                        buck2_util::arc_str::ArcSlice::from_iter(
+                        bz_util::arc_str::ArcSlice::from_iter(
                             n.map(|s| ProviderName::new((*s).to_owned()).unwrap()),
                         ),
                     )))
@@ -1424,7 +1424,7 @@ mod tests {
             .unwrap()
     }
 
-    fn fails<R>(x: buck2_error::Result<R>, msgs: &[&str]) {
+    fn fails<R>(x: bz_error::Result<R>, msgs: &[&str]) {
         match x {
             Err(e) => {
                 let s = format!("{e:#}");
@@ -1441,7 +1441,7 @@ mod tests {
     struct NoAliases;
 
     impl TargetAliasResolver for NoAliases {
-        fn get<'a>(&'a self, _name: &str) -> buck2_error::Result<Option<&'a str>> {
+        fn get<'a>(&'a self, _name: &str) -> bz_error::Result<Option<&'a str>> {
             Ok(None)
         }
     }
@@ -1450,7 +1450,7 @@ mod tests {
         struct Aliases(Vec<(String, String)>);
 
         impl TargetAliasResolver for Aliases {
-            fn get<'a>(&'a self, name: &str) -> buck2_error::Result<Option<&'a str>> {
+            fn get<'a>(&'a self, name: &str) -> bz_error::Result<Option<&'a str>> {
                 Ok(self
                     .0
                     .iter()
@@ -1620,7 +1620,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_relative_pattern() -> buck2_error::Result<()> {
+    fn parse_relative_pattern() -> bz_error::Result<()> {
         let package = CellPath::new(
             CellName::testing_new("root"),
             CellRelativePath::unchecked_new("package/path").to_owned(),
@@ -1651,7 +1651,7 @@ mod tests {
     }
 
     #[test]
-    fn test_relaxed() -> buck2_error::Result<()> {
+    fn test_relaxed() -> bz_error::Result<()> {
         let package = CellPath::new(
             CellName::testing_new("root"),
             CellRelativePath::unchecked_new("package").to_owned(),
@@ -1782,7 +1782,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parsed_opt_absolute() -> buck2_error::Result<()> {
+    fn test_parsed_opt_absolute() -> bz_error::Result<()> {
         let package = CellPath::new(
             CellName::testing_new("root"),
             CellRelativePath::unchecked_new("package/path").to_owned(),
@@ -1875,7 +1875,7 @@ mod tests {
     }
 
     #[test]
-    fn test_aliases() -> buck2_error::Result<()> {
+    fn test_aliases() -> bz_error::Result<()> {
         let package = CellPath::new(
             CellName::testing_new("root"),
             CellRelativePath::unchecked_new("package").to_owned(),
@@ -1932,7 +1932,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_providers_pattern() -> buck2_error::Result<()> {
+    fn parse_providers_pattern() -> bz_error::Result<()> {
         assert_eq!(
             mk_providers("root", "package/path", "target", None),
             ParsedPattern::parse_precise(
@@ -1986,7 +1986,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_providers_pattern_with_alias() -> buck2_error::Result<()> {
+    fn parse_providers_pattern_with_alias() -> bz_error::Result<()> {
         let package = CellPath::new(
             CellName::testing_new("root"),
             CellRelativePath::unchecked_new("package").to_owned(),
@@ -2009,7 +2009,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_configured_providers_pattern() -> buck2_error::Result<()> {
+    fn test_parse_configured_providers_pattern() -> bz_error::Result<()> {
         assert_eq!(
             mk_configured_providers(
                 "root",
@@ -2263,7 +2263,7 @@ mod tests {
     }
 
     #[test]
-    fn parsed_pattern_contains() -> buck2_error::Result<()> {
+    fn parsed_pattern_contains() -> bz_error::Result<()> {
         let pkg1 = PackageLabel::new(
             CellName::testing_new("root"),
             CellRelativePath::unchecked_new("package/path"),
@@ -2410,7 +2410,7 @@ mod tests {
     }
 
     #[test]
-    fn test_relative_pattern_with_parent() -> buck2_error::Result<()> {
+    fn test_relative_pattern_with_parent() -> bz_error::Result<()> {
         let package = CellPath::new(
             CellName::testing_new("root"),
             CellRelativePath::unchecked_new("package/path").to_owned(),
@@ -2467,7 +2467,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parsed_pattern_with_modifiers_relaxed() -> buck2_error::Result<()> {
+    fn test_parsed_pattern_with_modifiers_relaxed() -> bz_error::Result<()> {
         let resolver = resolver();
         let alias_resolver = alias_resolver();
         let package = CellPath::new(
@@ -2662,7 +2662,7 @@ mod tests {
     }
 
     #[test]
-    fn test_configured_parsed_pattern_with_modifiers() -> buck2_error::Result<()> {
+    fn test_configured_parsed_pattern_with_modifiers() -> bz_error::Result<()> {
         let resolver = resolver();
         let alias_resolver = alias_resolver();
         let package = CellPath::new(

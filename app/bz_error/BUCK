@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("buck2")
 
 rust_library(
-    name = "buck2_error",
+    name = "bz_error",
     srcs = glob(
         ["src/**/*.rs"],
     ),
@@ -37,8 +37,8 @@ rust_library(
         "fbsource//third-party/rust:tonic",
         "fbsource//third-party/rust:uuid",
         "//bz/allocative/allocative:allocative",
-        "//bz/app/bz_data:buck2_data",
-        "//bz/app/bz_error_derive:buck2_error_derive",
+        "//bz/app/bz_data:bz_data",
+        "//bz/app/bz_error_derive:bz_error_derive",
         "//bz/dice/dice_error:dice_error",
         "//bz/gazebo/dupe:dupe",
         "//bz/starlark-rust/starlark_syntax:starlark_syntax",

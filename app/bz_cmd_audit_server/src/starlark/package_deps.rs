@@ -10,26 +10,26 @@
 
 use std::io::Write;
 
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::starlark::package_deps::StarlarkPackageDepsCommand;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::bzl::ImportPath;
-use buck2_core::pattern::parse_package::parse_package;
-use buck2_error::buck2_error;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::file_loader::LoadedModule;
-use buck2_interpreter::load_module::INTERPRETER_CALCULATION_IMPL;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::starlark::package_deps::StarlarkPackageDepsCommand;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::bzl::ImportPath;
+use bz_core::pattern::parse_package::parse_package;
+use bz_error::bz_error;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::file_loader::LoadedModule;
+use bz_interpreter::load_module::INTERPRETER_CALCULATION_IMPL;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 pub(crate) async fn server_execute(
     command: &StarlarkPackageDepsCommand,
     server_ctx: &dyn ServerCommandContextTrait,
-    mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+    mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
     _client_ctx: ClientContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     server_ctx
         .with_dice_ctx(|server_ctx, mut dice_ctx| async move {
             let cell_resolver = dice_ctx.get_cell_resolver().await?;
@@ -58,13 +58,13 @@ pub(crate) async fn server_execute(
                     &mut self,
                     module: &LoadedModule,
                     stdout: &mut dyn Write,
-                ) -> buck2_error::Result<()> {
+                ) -> bz_error::Result<()> {
                     let path = match module.path() {
                         StarlarkModulePath::LoadFile(path)
                         | StarlarkModulePath::JsonFile(path)
                         | StarlarkModulePath::TomlFile(path) => path,
                         StarlarkModulePath::BxlFile(_) => {
-                            return Err(buck2_error!(buck2_error::ErrorTag::Tier0, "bxl be here"));
+                            return Err(bz_error!(bz_error::ErrorTag::Tier0, "bxl be here"));
                         }
                     };
 

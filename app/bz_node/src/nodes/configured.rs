@@ -16,26 +16,26 @@ use std::iter;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::configuration::transition::applied::TransitionApplied;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::execution_types::execution::ExecutionPlatform;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::source_path::SourcePathRef;
-use buck2_core::plugins::PluginKind;
-use buck2_core::plugins::PluginKindSet;
-use buck2_core::plugins::PluginLists;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_util::arc_str::ArcStr;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::configuration::transition::applied::TransitionApplied;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::execution_types::execution::ExecutionPlatform;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::package::PackageLabel;
+use bz_core::package::source_path::SourcePathRef;
+use bz_core::plugins::PluginKind;
+use bz_core::plugins::PluginKindSet;
+use bz_core::plugins::PluginLists;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 use either::Either;
 use once_cell::sync::Lazy;
@@ -147,14 +147,14 @@ impl TargetNodeOrForward {
         }
     }
 
-    fn is_visible_to(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
+    fn is_visible_to(&self, target: &TargetLabel) -> bz_error::Result<bool> {
         match self {
             TargetNodeOrForward::TargetNode(node) => node.is_visible_to(target),
             TargetNodeOrForward::Forward(_, forward) => forward.is_visible_to(target),
         }
     }
 
-    fn is_visible_to_package(&self, package: &PackageLabel) -> buck2_error::Result<bool> {
+    fn is_visible_to_package(&self, package: &PackageLabel) -> bz_error::Result<bool> {
         match self {
             TargetNodeOrForward::TargetNode(node) => node.is_visible_to_package(package),
             TargetNodeOrForward::Forward(_, forward) => forward.is_visible_to_package(package),
@@ -284,7 +284,7 @@ impl ConfiguredTargetNode {
         name: ConfiguredTargetLabel,
         // The transitioned target node.
         transitioned_node: ConfiguredTargetNode,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         assert_eq!(
             name.unconfigured(),
             transitioned_node.label().unconfigured(),
@@ -345,7 +345,7 @@ impl ConfiguredTargetNode {
 
     pub fn attr_as_target_compatible_with(
         attr: ConfiguredAttr,
-    ) -> impl Iterator<Item = buck2_error::Result<ConfigurationSettingKey>> {
+    ) -> impl Iterator<Item = bz_error::Result<ConfigurationSettingKey>> {
         let list = match attr.try_into_list() {
             Ok(list) => list,
             Err(e) => return Either::Left(iter::once(Err(e))),
@@ -421,12 +421,12 @@ impl ConfiguredTargetNode {
         }
 
         impl ConfiguredAttrTraversal for TestCollector {
-            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
                 // ignored.
                 Ok(())
             }
 
-            fn label(&mut self, label: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+            fn label(&mut self, label: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
                 self.labels.push(label.dupe());
                 Ok(())
             }
@@ -471,11 +471,11 @@ impl ConfiguredTargetNode {
         self.0.target_node.buildfile_path()
     }
 
-    pub fn is_visible_to(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
+    pub fn is_visible_to(&self, target: &TargetLabel) -> bz_error::Result<bool> {
         self.0.target_node.is_visible_to(target)
     }
 
-    pub fn is_visible_to_package(&self, package: &PackageLabel) -> buck2_error::Result<bool> {
+    pub fn is_visible_to_package(&self, package: &PackageLabel) -> bz_error::Result<bool> {
         self.0.target_node.is_visible_to_package(package)
     }
 
@@ -559,7 +559,7 @@ impl ConfiguredTargetNode {
     }
 
     #[inline]
-    pub fn execution_platform(&self) -> buck2_error::Result<&ExecutionPlatform> {
+    pub fn execution_platform(&self) -> bz_error::Result<&ExecutionPlatform> {
         self.as_ref().execution_platform_resolution().platform()
     }
 
@@ -810,11 +810,11 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
             inputs: Vec<CellPath>,
         }
         impl ConfiguredAttrTraversal for InputsCollector {
-            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
                 Ok(())
             }
 
-            fn input(&mut self, path: SourcePathRef) -> buck2_error::Result<()> {
+            fn input(&mut self, path: SourcePathRef) -> bz_error::Result<()> {
                 self.inputs.push(path.to_cell_path());
                 Ok(())
             }
@@ -838,7 +838,7 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
             queries: Vec::new(),
         };
         impl ConfiguredAttrTraversal for Traversal {
-            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
                 // ignored.
                 Ok(())
             }
@@ -847,7 +847,7 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
                 &mut self,
                 query: &str,
                 resolved_literals: &ResolvedQueryLiterals<ConfiguredProvidersLabel>,
-            ) -> buck2_error::Result<()> {
+            ) -> bz_error::Result<()> {
                 self.queries
                     .push((query.to_owned(), resolved_literals.clone()));
                 Ok(())

@@ -8,11 +8,11 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::common::target_cfg::TargetCfgWithUniverseOptions;
-use buck2_core::pattern::pattern_type::ConfiguredTargetPatternExtra;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::pattern_parse_and_resolve::parse_and_resolve_patterns_to_targets_from_cli_args;
+use bz_client_ctx::common::target_cfg::TargetCfgWithUniverseOptions;
+use bz_core::pattern::pattern_type::ConfiguredTargetPatternExtra;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::pattern_parse_and_resolve::parse_and_resolve_patterns_to_targets_from_cli_args;
 use dice::DiceComputations;
 
 use crate::common::target_resolution_config::audit_command_target_resolution_config;
@@ -22,7 +22,7 @@ pub(crate) async fn audit_command_configured_target_labels(
     patterns: &[String],
     target_cfg: &TargetCfgWithUniverseOptions,
     server_ctx: &dyn ServerCommandContextTrait,
-) -> buck2_error::Result<Vec<ConfiguredTargetLabel>> {
+) -> bz_error::Result<Vec<ConfiguredTargetLabel>> {
     let targets =
         parse_and_resolve_patterns_to_targets_from_cli_args::<ConfiguredTargetPatternExtra>(
             ctx,

@@ -117,8 +117,8 @@ impl TargetModifiersValue {
 impl AnyMatches for TargetModifiersValue {
     fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         self.0.any_matches(filter)
     }
 }

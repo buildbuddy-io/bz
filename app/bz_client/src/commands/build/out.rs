@@ -12,22 +12,22 @@ use std::borrow::Cow;
 use std::io;
 use std::path::Path;
 
-use buck2_cli_proto::BuildTarget;
-use buck2_cli_proto::build_target::BuildOutput;
-use buck2_client_ctx::exit_result::ClientIoError;
-use buck2_client_ctx::output_destination_arg::OutputDestinationArg;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_fs::async_fs_util;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::working_dir::AbsWorkingDir;
+use bz_cli_proto::BuildTarget;
+use bz_cli_proto::build_target::BuildOutput;
+use bz_client_ctx::exit_result::ClientIoError;
+use bz_client_ctx::output_destination_arg::OutputDestinationArg;
+use bz_core::fs::project::ProjectRoot;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_fs::async_fs_util;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::working_dir::AbsWorkingDir;
 use futures::TryStreamExt;
 
 #[derive(Clone)]
@@ -60,7 +60,7 @@ pub(super) async fn copy_to_out(
     root_path: &ProjectRoot,
     working_dir: &AbsWorkingDir,
     out: &OutputDestinationArg,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     struct OutputToBeCopied {
         from_path: AbsNormPathBuf,
         is_dir: bool,
@@ -81,16 +81,16 @@ pub(super) async fn copy_to_out(
 
         let single_default_output = match default_outputs.len() {
             0 => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::CopyOutputs,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::CopyOutputs,
                     "target {} produced zero default outputs",
                     target.target
                 ));
             }
             1 => &default_outputs[0],
             n => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::CopyOutputs,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::CopyOutputs,
                     "target {} produced {} outputs, choice of output is ambiguous",
                     target.target,
                     n
@@ -117,8 +117,8 @@ pub(super) async fn copy_to_out(
             // Check no output is a directory. We allow outputting any number of
             // files (including 0) to stdout.
             if let Some(dir_i) = outputs_to_be_copied.iter().position(|o| o.is_dir) {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::CopyOutputs,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::CopyOutputs,
                     "target {} produces a default output that is a directory, and cannot be sent to stdout",
                     targets[dir_i].target,
                 ));
@@ -127,8 +127,8 @@ pub(super) async fn copy_to_out(
         OutputDestinationArg::Path(..) => {
             // Check we are outputting exactly 1 target. Okay if directory.
             if outputs_to_be_copied.len() != 1 {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::CopyOutputs,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::CopyOutputs,
                     "build command built multiple top-level targets, choice of output is ambiguous"
                 ));
             }
@@ -167,7 +167,7 @@ fn copy_symlink<P: AsRef<AbsPath>, Q: AsRef<AbsPath>>(
     src_path: P,
     dst_path: Q,
     context: &CopyContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // Make symlinks overwrite items which were already present at destination path
     fs_util::remove_all(&dst_path)
         .categorize_internal()
@@ -210,7 +210,7 @@ fn copy_symlink<P: AsRef<AbsPath>, Q: AsRef<AbsPath>>(
 
 /// Recursively copies a directory to the output path, rooted at `dst`.
 #[async_recursion::async_recursion]
-async fn copy_directory<P, Q>(src: P, dst: Q, context: &CopyContext) -> buck2_error::Result<()>
+async fn copy_directory<P, Q>(src: P, dst: Q, context: &CopyContext) -> bz_error::Result<()>
 where
     P: AsRef<AbsPath> + std::marker::Send,
     Q: AsRef<AbsPath> + std::marker::Send + std::marker::Copy + std::marker::Sync,
@@ -221,7 +221,7 @@ where
             .await
             .buck_error_context(format!("reading directory {:?}", src.as_ref()))?,
     )
-    .err_into::<buck2_error::Error>();
+    .err_into::<bz_error::Error>();
 
     stream
         .try_for_each(|entry| async move {
@@ -251,7 +251,7 @@ where
     Ok(())
 }
 
-async fn copy_file(src: &Path, dst: &Path) -> buck2_error::Result<()> {
+async fn copy_file(src: &Path, dst: &Path) -> bz_error::Result<()> {
     if let Some(parent) = dst.parent() {
         if !parent.exists() {
             tokio::fs::create_dir_all(parent).await?;
@@ -289,8 +289,8 @@ async fn copy_file(src: &Path, dst: &Path) -> buck2_error::Result<()> {
     }
 }
 
-fn convert_broken_pipe_error(e: io::Error) -> buck2_error::Error {
-    buck2_error::Error::from(ClientIoError::from(e))
+fn convert_broken_pipe_error(e: io::Error) -> bz_error::Error {
+    bz_error::Error::from(ClientIoError::from(e))
         .context("Error writing build artifact to --out")
 }
 
@@ -299,13 +299,13 @@ mod tests {
     #[cfg(unix)]
     use std::path::PathBuf;
 
-    use buck2_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::fs_util::uncategorized as fs_util;
     use tempfile::TempDir;
 
     use super::*;
 
     #[tokio::test]
-    async fn test_copy_directory() -> buck2_error::Result<()> {
+    async fn test_copy_directory() -> bz_error::Result<()> {
         let src_dir = tempfile::tempdir()?;
         // <tmp>
         // ├── bar
@@ -418,7 +418,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy_directory_with_symlink_pointing_externally() -> buck2_error::Result<()> {
+    async fn test_copy_directory_with_symlink_pointing_externally() -> bz_error::Result<()> {
         let src_dir = tempfile::tempdir()?;
         let src_path = fs_util::canonicalize(AbsPath::new(src_dir.path())?)?;
         // <tmp>
@@ -463,7 +463,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy_symlink() -> buck2_error::Result<()> {
+    async fn test_copy_symlink() -> bz_error::Result<()> {
         test_copy_symlink_parametrized(&|_| Ok(()), false)?;
         test_copy_symlink_parametrized(&|_| Ok(()), true)?;
         // Check that symlink overwrites regular file in output directory
@@ -485,9 +485,9 @@ mod tests {
     }
 
     fn test_copy_symlink_parametrized(
-        prepare_dst_dir: &dyn Fn(&TempDir) -> buck2_error::Result<()>,
+        prepare_dst_dir: &dyn Fn(&TempDir) -> bz_error::Result<()>,
         is_directory_symlink: bool,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let src_dir = tempfile::tempdir()?;
         let src_symlink_target_path = src_dir.path().join("bar");
         let src_symlink_path = src_dir.path().join("foo");
@@ -546,11 +546,11 @@ mod tests {
         use super::super::*;
 
         #[tokio::test]
-        async fn test_copy_file() -> buck2_error::Result<()> {
+        async fn test_copy_file() -> bz_error::Result<()> {
             let dir = tempfile::tempdir()?;
             let out = dir.path().join("sleep");
 
-            let res = buck2_util::process::async_background_command("cp")
+            let res = bz_util::process::async_background_command("cp")
                 .arg(Path::new("/bin/sleep"))
                 .arg(&out)
                 .spawn()?
@@ -559,7 +559,7 @@ mod tests {
 
             assert!(res.success());
 
-            let mut proc = buck2_util::process::async_background_command(&out)
+            let mut proc = bz_util::process::async_background_command(&out)
                 .arg("10000")
                 .kill_on_drop(true)
                 .spawn()

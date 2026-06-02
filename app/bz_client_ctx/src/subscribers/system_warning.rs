@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::is_open_source;
-use buck2_event_observer::humanized::HumanizedBytes;
+use bz_core::is_open_source;
+use bz_event_observer::humanized::HumanizedBytes;
 
 use crate::subscribers::recorder::process_memory;
 
@@ -25,8 +25,8 @@ pub(crate) struct LowDiskSpace {
     pub(crate) used_disk_space: u64,
 }
 
-pub const SYSTEM_MEMORY_REMEDIATION_LINK: &str = ": https://fburl.com/buck2_mem_remediation";
-pub const DISK_REMEDIATION_LINK: &str = ": https://fburl.com/buck2_disk_remediation";
+pub const SYSTEM_MEMORY_REMEDIATION_LINK: &str = ": https://fburl.com/bz_mem_remediation";
+pub const DISK_REMEDIATION_LINK: &str = ": https://fburl.com/bz_disk_remediation";
 
 pub(crate) fn system_memory_exceeded_msg(memory_pressure: &MemoryPressureHigh) -> String {
     format!(
@@ -60,7 +60,7 @@ pub(crate) fn low_disk_space_msg(low_disk_space: &LowDiskSpace) -> String {
 
 pub(crate) fn check_memory_pressure(
     process_memory: u64,
-    system_info: &buck2_data::SystemInfo,
+    system_info: &bz_data::SystemInfo,
 ) -> Option<MemoryPressureHigh> {
     let system_total_memory = system_info.system_total_memory_bytes?;
     let memory_pressure_threshold_percent = system_info.memory_pressure_threshold_percent?;
@@ -79,8 +79,8 @@ pub(crate) fn check_memory_pressure(
 }
 
 pub(crate) fn check_memory_pressure_snapshot(
-    last_snapshot: Option<&buck2_data::Snapshot>,
-    system_info: &buck2_data::SystemInfo,
+    last_snapshot: Option<&bz_data::Snapshot>,
+    system_info: &bz_data::SystemInfo,
 ) -> Option<MemoryPressureHigh> {
     let process_memory = process_memory(last_snapshot?)?;
     check_memory_pressure(process_memory, system_info)
@@ -88,7 +88,7 @@ pub(crate) fn check_memory_pressure_snapshot(
 
 pub(crate) fn check_remaining_disk_space(
     used_disk_space: u64,
-    system_info: &buck2_data::SystemInfo,
+    system_info: &bz_data::SystemInfo,
 ) -> Option<LowDiskSpace> {
     let total_disk_space = system_info.total_disk_space_bytes?;
     let remaining_disk_space_threshold =
@@ -105,8 +105,8 @@ pub(crate) fn check_remaining_disk_space(
 }
 
 pub(crate) fn check_remaining_disk_space_snapshot(
-    last_snapshot: Option<&buck2_data::Snapshot>,
-    system_info: &buck2_data::SystemInfo,
+    last_snapshot: Option<&bz_data::Snapshot>,
+    system_info: &bz_data::SystemInfo,
 ) -> Option<LowDiskSpace> {
     let used_disk_space = last_snapshot?.used_disk_space_bytes?;
     check_remaining_disk_space(used_disk_space, system_info)
@@ -116,9 +116,9 @@ pub(crate) fn check_remaining_disk_space_snapshot(
 // This speed calculation is not precisely correct as we don't know how much time we've been downloading between two snapshots.
 // TODO(yurysamkevich): compute average download speed in RE/HTTP client
 pub(crate) fn check_download_speed(
-    first_snapshot: &Option<buck2_data::Snapshot>,
-    last_snapshot: Option<&buck2_data::Snapshot>,
-    system_info: &buck2_data::SystemInfo,
+    first_snapshot: &Option<bz_data::Snapshot>,
+    last_snapshot: Option<&bz_data::Snapshot>,
+    system_info: &bz_data::SystemInfo,
     avg_re_download_speed: Option<u64>,
     concurrent_commands: bool,
 ) -> bool {
@@ -138,9 +138,9 @@ pub(crate) fn check_download_speed(
 }
 
 fn inner_check_download_speed(
-    first_snapshot: &Option<buck2_data::Snapshot>,
-    last_snapshot: Option<&buck2_data::Snapshot>,
-    system_info: &buck2_data::SystemInfo,
+    first_snapshot: &Option<bz_data::Snapshot>,
+    last_snapshot: Option<&bz_data::Snapshot>,
+    system_info: &bz_data::SystemInfo,
     avg_re_download_speed: Option<u64>,
 ) -> Option<()> {
     let re_download_bytes =

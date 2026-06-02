@@ -8,17 +8,17 @@
  * above-listed licenses.
  */
 
-use buck2_core::package::PackageLabel;
-use buck2_core::package::source_path::SourcePathRef;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::attr_type::configuration_dep::ConfigurationDepKind;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::traversal::CoercedAttrTraversal;
-use buck2_node::visibility::VisibilityPattern;
-use buck2_node::visibility::VisibilityPatternList;
-use buck2_node::visibility::WithinViewSpecification;
+use bz_core::package::PackageLabel;
+use bz_core::package::source_path::SourcePathRef;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::attr_type::configuration_dep::ConfigurationDepKind;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::traversal::CoercedAttrTraversal;
+use bz_node::visibility::VisibilityPattern;
+use bz_node::visibility::VisibilityPatternList;
+use bz_node::visibility::WithinViewSpecification;
 use dupe::Dupe;
 use starlark::collections::SmallSet;
 
@@ -35,7 +35,7 @@ fn indented_within_view(spec: &WithinViewSpecification) -> String {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum CheckWithinViewError {
     #[error(
@@ -54,7 +54,7 @@ pub(crate) fn check_within_view(
     attr_type: &AttrType,
     within_view: &WithinViewSpecification,
     default_deps: Option<&SmallSet<TargetLabel>>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if within_view == &WithinViewSpecification::PUBLIC {
         // Shortcut.
         return Ok(());
@@ -67,7 +67,7 @@ pub(crate) fn check_within_view(
     }
 
     impl<'x> WithinViewCheckTraversal<'x> {
-        fn check_dep_within_view(&self, dep: &TargetLabel) -> buck2_error::Result<()> {
+        fn check_dep_within_view(&self, dep: &TargetLabel) -> bz_error::Result<()> {
             if self.pkg == dep.pkg()
                 || self.default_deps.contains(dep)
                 || self.within_view.0.matches_target(dep)
@@ -83,7 +83,7 @@ pub(crate) fn check_within_view(
     }
 
     impl<'a, 'x> CoercedAttrTraversal<'a> for WithinViewCheckTraversal<'x> {
-        fn dep(&mut self, dep: &ProvidersLabel) -> buck2_error::Result<()> {
+        fn dep(&mut self, dep: &ProvidersLabel) -> bz_error::Result<()> {
             self.check_dep_within_view(dep.target())
         }
 
@@ -91,7 +91,7 @@ pub(crate) fn check_within_view(
             &mut self,
             dep: &ProvidersLabel,
             t: ConfigurationDepKind,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             match t {
                 // Skip some configuration deps
                 ConfigurationDepKind::CompatibilityAttribute => (),
@@ -104,7 +104,7 @@ pub(crate) fn check_within_view(
             Ok(())
         }
 
-        fn input(&mut self, _input: SourcePathRef) -> buck2_error::Result<()> {
+        fn input(&mut self, _input: SourcePathRef) -> bz_error::Result<()> {
             Ok(())
         }
     }

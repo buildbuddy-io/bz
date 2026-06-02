@@ -6,5 +6,5 @@ execution_platforms(
 
 execution_platforms(
     name = "platforms_with_dependencies",
-    remote_execution_dependencies = [{"id": "dep_a", "smc_tier": "buck2_smoke_test_tier"}],
+    remote_execution_dependencies = [{"id": "dep_a", "smc_tier": "bz_smoke_test_tier"}],
 )

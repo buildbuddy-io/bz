@@ -17,7 +17,7 @@ use std::env;
 use std::fmt::Write;
 use std::fs;
 
-use buck2_error::BuckErrorContext;
+use bz_error::BuckErrorContext;
 
 const REGENERATE_VAR_NAME: &str = "BUCK2_RUST_REGENERATE_GOLDEN_TESTS";
 

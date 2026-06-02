@@ -12,10 +12,10 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_core::buck2_env;
-use buck2_error::BuckErrorContext;
+use bz_core::bz_env;
+use bz_error::BuckErrorContext;
 #[cfg(unix)]
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -64,20 +64,20 @@ impl RemoteDownloadOutputsMode {
         matches!(self, Self::All)
     }
 
-    fn from_legacy_materializations(value: &str) -> buck2_error::Result<Self> {
+    fn from_legacy_materializations(value: &str) -> bz_error::Result<Self> {
         match value {
             "" | "deferred" => Ok(Self::Toplevel),
             "deferred_skip_final_artifacts" => Ok(Self::Minimal),
             "all" => Ok(Self::All),
-            value => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            value => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid value for buckconfig `[buck2] materializations`. Got `{}`. Expected one of `all`, `deferred`, or `deferred_skip_final_artifacts`.",
                 value
             )),
         }
     }
 
-    fn from_config(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+    fn from_config(config: &LegacyBuckConfig) -> bz_error::Result<Self> {
         if let Some(value) = config.get(BuckconfigKeyRef {
             section: "buck2",
             property: "remote_download_outputs",
@@ -95,15 +95,15 @@ impl RemoteDownloadOutputsMode {
 }
 
 impl FromStr for RemoteDownloadOutputsMode {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "" | "minimal" => Ok(Self::Minimal),
             "toplevel" => Ok(Self::Toplevel),
             "all" => Ok(Self::All),
-            value => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            value => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid remote download output mode: `{}`. Expected one of `minimal`, `toplevel`, or `all`.",
                 value
             )),
@@ -230,7 +230,7 @@ pub struct HttpConfig {
 }
 
 impl HttpConfig {
-    pub fn from_config(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+    pub fn from_config(config: &LegacyBuckConfig) -> bz_error::Result<Self> {
         let connect_timeout_ms = config.parse(BuckconfigKeyRef {
             section: "http",
             property: "connect_timeout_ms",
@@ -306,22 +306,22 @@ impl HttpConfig {
 pub struct SystemWarningConfig {
     /// A threshold that is used to determine the percent of memory buck2 uses to display memory pressure warnings.
     /// If None, we don't warn the user.
-    /// The corresponding buckconfig is `buck2_system_warning.memory_pressure_threshold_percent`.
+    /// The corresponding buckconfig is `bz_system_warning.memory_pressure_threshold_percent`.
     pub memory_pressure_threshold_percent: Option<u64>,
     /// A threshold that is used to determine remaining disk space buck2 uses to display disk space warnings.
     /// If None, we don't warn the user.
-    /// The corresponding buckconfig is `buck2_system_warning.remaining_disk_space_threshold`.
+    /// The corresponding buckconfig is `bz_system_warning.remaining_disk_space_threshold`.
     pub remaining_disk_space_threshold_gb: Option<u64>,
     /// Minimum number of bytes downloaded to measure average download speed.
     /// If None, we don't warn the user.
-    /// The corresponding buckconfig is `buck2_system_warning.min_re_download_bytes_threshold`.
+    /// The corresponding buckconfig is `bz_system_warning.min_re_download_bytes_threshold`.
     pub min_re_download_bytes_threshold: Option<u64>,
     /// A threshold that is used to determine if download speed is too low and display a warning.
     /// If None, we don't warn the user.
-    /// The corresponding buckconfig is `buck2_system_warning.avg_re_download_bytes_per_sec_threshold`.
+    /// The corresponding buckconfig is `bz_system_warning.avg_re_download_bytes_per_sec_threshold`.
     pub avg_re_download_bytes_per_sec_threshold: Option<u64>,
     /// A regex that controls which targets are opted into the vpn check.
-    /// The corresponding buckconfig is `buck2_health_check.optin_vpn_check_targets_regex`.
+    /// The corresponding buckconfig is `bz_health_check.optin_vpn_check_targets_regex`.
     pub optin_vpn_check_targets_regex: Option<String>,
     /// Whether to enable the stable revision check.
     pub enable_stable_revision_check: Option<bool>,
@@ -330,33 +330,33 @@ pub struct SystemWarningConfig {
 }
 
 impl SystemWarningConfig {
-    pub fn from_config(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+    pub fn from_config(config: &LegacyBuckConfig) -> bz_error::Result<Self> {
         let memory_pressure_threshold_percent = config.parse(BuckconfigKeyRef {
-            section: "buck2_system_warning",
+            section: "bz_system_warning",
             property: "memory_pressure_threshold_percent",
         })?;
         let remaining_disk_space_threshold_gb = config.parse(BuckconfigKeyRef {
-            section: "buck2_system_warning",
+            section: "bz_system_warning",
             property: "remaining_disk_space_threshold_gb",
         })?;
         let min_re_download_bytes_threshold = config.parse(BuckconfigKeyRef {
-            section: "buck2_system_warning",
+            section: "bz_system_warning",
             property: "min_re_download_bytes_threshold",
         })?;
         let avg_re_download_bytes_per_sec_threshold = config.parse(BuckconfigKeyRef {
-            section: "buck2_system_warning",
+            section: "bz_system_warning",
             property: "avg_re_download_bytes_per_sec_threshold",
         })?;
         let optin_vpn_check_targets_regex = config.parse(BuckconfigKeyRef {
-            section: "buck2_health_check",
+            section: "bz_health_check",
             property: "optin_vpn_check_targets_regex",
         })?;
         let enable_stable_revision_check = config.parse(BuckconfigKeyRef {
-            section: "buck2_health_check",
+            section: "bz_health_check",
             property: "enable_stable_revision_check",
         })?;
         let enable_health_check_process_isolation = config.parse(BuckconfigKeyRef {
-            section: "buck2_health_check",
+            section: "bz_health_check",
             property: "enable_health_check_process_isolation",
         })?;
         Ok(Self {
@@ -370,11 +370,11 @@ impl SystemWarningConfig {
         })
     }
 
-    pub fn serialize(&self) -> buck2_error::Result<String> {
+    pub fn serialize(&self) -> bz_error::Result<String> {
         serde_json::to_string(&self).buck_error_context("Error serializing SystemWarningConfig")
     }
 
-    pub fn deserialize(s: &str) -> buck2_error::Result<Self> {
+    pub fn deserialize(s: &str) -> bz_error::Result<Self> {
         serde_json::from_str::<Self>(s)
             .buck_error_context("Error deserializing SystemWarningConfig")
     }
@@ -383,7 +383,7 @@ impl SystemWarningConfig {
 #[derive(Allocative, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ResourceControlConfig {
     /// A config to determine if the resource control should be activated or not.
-    /// The corresponding buckconfig is `buck2_resource_control.status` that can take
+    /// The corresponding buckconfig is `bz_resource_control.status` that can take
     /// one of `{off | if_available | required}`.
     pub status: ResourceControlStatus,
     /// If resource control is enabled, buck needs to get a cgroup to run in from somewhere - this is
@@ -393,11 +393,11 @@ pub struct ResourceControlConfig {
     ///
     /// Accepts either a number of bytes or a percentage of the available resources.
     ///
-    /// The corresponding buckconfig is `buck2_resource_control.memory_max`.
+    /// The corresponding buckconfig is `bz_resource_control.memory_max`.
     pub memory_max: Option<String>,
     /// Like `memory_max`, but controls cgroupv2's `memory.high`
     ///
-    /// The corresponding buckconfig is `buck2_resource_control.memory_high`.
+    /// The corresponding buckconfig is `bz_resource_control.memory_high`.
     pub memory_high: Option<String>,
     /// A memory threshold that any action is allowed to allocate.
     pub memory_max_per_action: Option<String>,
@@ -430,13 +430,13 @@ pub enum ActionSuspendStrategy {
 }
 
 impl FromStr for ActionSuspendStrategy {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "kill_and_retry" => Ok(Self::KillAndRetry),
             "cgroup_freeze" => Ok(Self::CgroupFreeze),
-            _ => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            _ => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid suspend strategy: `{}`",
                 s
             )),
@@ -467,14 +467,14 @@ pub enum ResourceControlStatus {
 }
 
 impl FromStr for ResourceControlStatus {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "off" => Ok(Self::Off),
             "if_available" => Ok(Self::IfAvailable),
             "required" => Ok(Self::Required),
-            _ => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            _ => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid resource control status: `{}`",
                 s
             )),
@@ -490,7 +490,7 @@ pub enum ResourceControlInit {
 }
 
 impl FromStr for ResourceControlInit {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "systemd" {
@@ -502,8 +502,8 @@ impl FromStr for ResourceControlInit {
                 p.to_owned(),
             )?));
         }
-        Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Unknown resource control initializer: `{}`",
             s
         ))
@@ -512,19 +512,19 @@ impl FromStr for ResourceControlInit {
 
 /// The current version of the resource control algorithm. Say you have some important change to the
 /// algo that fixes a bug. Incrementing this to `N + 1` and setting the
-/// `buck2_resource_control.enable_suspension_if_min_algo_version` buckconfig to `N + 1` enables
+/// `bz_resource_control.enable_suspension_if_min_algo_version` buckconfig to `N + 1` enables
 /// suspension only if your bug fix is actually included in the version of buck in use
 const RESOURCE_CONTROL_ALGO_VERSION: u32 = 6;
 
 /// The current version of the daemon cgroup wrapping logic. Incrementing this to `N + 1` and
-/// setting `buck2_resource_control.status_if_min_daemon_cgroup_version` buckconfig to `N + 1`
+/// setting `bz_resource_control.status_if_min_daemon_cgroup_version` buckconfig to `N + 1`
 /// enables daemon cgroup wrapping (status = if_available) only if the bug fix is included in the
 /// version of buck in use.
 const DAEMON_CGROUP_VERSION: u32 = 1;
 
 impl ResourceControlConfig {
-    pub fn from_config(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
-        if let Some(env_conf) = buck2_env!(
+    pub fn from_config(config: &LegacyBuckConfig) -> bz_error::Result<Self> {
+        if let Some(env_conf) = bz_env!(
             "BUCK2_TEST_RESOURCE_CONTROL_CONFIG",
             applicability = testing,
         )? {
@@ -532,13 +532,13 @@ impl ResourceControlConfig {
         } else {
             let status = config
                 .parse(BuckconfigKeyRef {
-                    section: "buck2_resource_control",
+                    section: "bz_resource_control",
                     property: "status",
                 })?
                 .unwrap_or(ResourceControlStatus::Off);
             let status_if_min_daemon_cgroup_version: Option<u32> =
                 config.parse(BuckconfigKeyRef {
-                    section: "buck2_resource_control",
+                    section: "bz_resource_control",
                     property: "status_if_min_daemon_cgroup_version",
                 })?;
             let status = if status_if_min_daemon_cgroup_version
@@ -550,53 +550,53 @@ impl ResourceControlConfig {
             };
             let init = config
                 .parse(BuckconfigKeyRef {
-                    section: "buck2_resource_control",
+                    section: "bz_resource_control",
                     property: "init",
                 })?
                 .unwrap_or(ResourceControlInit::Systemd);
             let memory_max = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
+                section: "bz_resource_control",
                 property: "memory_max",
             })?;
             let memory_high = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
+                section: "bz_resource_control",
                 property: "memory_high",
             })?;
             let memory_max_per_action = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
+                section: "bz_resource_control",
                 property: "memory_max_per_action",
             })?;
             let memory_high_per_action = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
+                section: "bz_resource_control",
                 property: "memory_high_per_action",
             })?;
             let memory_high_actions = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
+                section: "bz_resource_control",
                 property: "memory_high_actions",
             })?;
             let memory_max_actions = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
+                section: "bz_resource_control",
                 property: "memory_max_actions",
             })?;
             let enable_suspension = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
+                section: "bz_resource_control",
                 property: "enable_suspension",
             })?;
             let enable_suspension_if_min_algo_version: Option<u32> =
                 config.parse(BuckconfigKeyRef {
-                    section: "buck2_resource_control",
+                    section: "bz_resource_control",
                     property: "enable_suspension_if_min_algo_version",
                 })?;
             let enable_suspension = enable_suspension.unwrap_or(false)
                 || enable_suspension_if_min_algo_version
                     .is_some_and(|min_version| RESOURCE_CONTROL_ALGO_VERSION >= min_version);
             let experimental_suspension_algo_variant = config.parse(BuckconfigKeyRef {
-                section: "buck2_resource_control",
+                section: "bz_resource_control",
                 property: "experimental_suspension_algo_variant",
             })?;
             let preferred_action_suspend_strategy = config
                 .parse(BuckconfigKeyRef {
-                    section: "buck2_resource_control",
+                    section: "bz_resource_control",
                     property: "preferred_action_suspend_strategy",
                 })?
                 .unwrap_or(ActionSuspendStrategy::KillAndRetry);
@@ -616,11 +616,11 @@ impl ResourceControlConfig {
         }
     }
 
-    pub fn serialize(&self) -> buck2_error::Result<String> {
+    pub fn serialize(&self) -> bz_error::Result<String> {
         serde_json::to_string(&self).buck_error_context("Error serializing ResourceControlConfig")
     }
 
-    pub fn deserialize(s: &str) -> buck2_error::Result<Self> {
+    pub fn deserialize(s: &str) -> bz_error::Result<Self> {
         serde_json::from_str::<Self>(s)
             .buck_error_context("Error deserializing ResourceControlConfig")
     }
@@ -649,13 +649,13 @@ pub struct HealthCheckConfig {
 }
 
 impl HealthCheckConfig {
-    pub fn from_config(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+    pub fn from_config(config: &LegacyBuckConfig) -> bz_error::Result<Self> {
         let enable_health_checks = config.parse(BuckconfigKeyRef {
-            section: "buck2_health_check",
+            section: "bz_health_check",
             property: "enable_health_checks",
         })?;
         let disabled_health_check_names = config.parse(BuckconfigKeyRef {
-            section: "buck2_health_check",
+            section: "bz_health_check",
             property: "disabled_health_check_names",
         })?;
 
@@ -699,7 +699,7 @@ pub struct DaemonStartupConfig {
 }
 
 impl DaemonStartupConfig {
-    pub fn new(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+    pub fn new(config: &LegacyBuckConfig) -> bz_error::Result<Self> {
         // Intepreted client side because we need the value here.
 
         let log_download_method = {
@@ -722,8 +722,8 @@ impl DaemonStartupConfig {
                 });
                 if let Some(log_url) = log_url {
                     if log_url.is_empty() {
-                        Err(buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        Err(bz_error::bz_error!(
+                            bz_error::ErrorTag::Input,
                             "log_url is empty, but log_use_manifold is false"
                         ))
                     } else {
@@ -786,11 +786,11 @@ impl DaemonStartupConfig {
                         property: "macos_qos_class",
                     })
                     .map(ToOwned::to_owned);
-                if buck2_env!("BUCK2_DISABLE_MACOS_QOS", bool)? {
-                    buck2_core::soft_error!(
+                if bz_env!("BUCK2_DISABLE_MACOS_QOS", bool)? {
+                    bz_core::soft_error!(
                         "disable_macos_qos_env_var",
-                        buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        bz_error::bz_error!(
+                            bz_error::ErrorTag::Input,
                             "BUCK2_DISABLE_MACOS_QOS is deprecated. \
                              Use `[buck2] macos_qos_class = skip_lowering` in buckconfig instead. \
                              This will be the default very soon."
@@ -812,11 +812,11 @@ impl DaemonStartupConfig {
         })
     }
 
-    pub fn serialize(&self) -> buck2_error::Result<String> {
+    pub fn serialize(&self) -> bz_error::Result<String> {
         serde_json::to_string(&self).buck_error_context("Error serializing DaemonStartupConfig")
     }
 
-    pub fn deserialize(s: &str) -> buck2_error::Result<Self> {
+    pub fn deserialize(s: &str) -> bz_error::Result<Self> {
         serde_json::from_str::<Self>(s)
             .buck_error_context("Error deserializing DaemonStartupConfig")
     }
@@ -865,7 +865,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_download_outputs_defaults_to_minimal() -> buck2_error::Result<()> {
+    fn remote_download_outputs_defaults_to_minimal() -> bz_error::Result<()> {
         let startup_config = DaemonStartupConfig::new(&LegacyBuckConfig::empty())?;
         assert_eq!(
             startup_config.remote_download_outputs,
@@ -875,7 +875,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_download_outputs_reads_bazel_style_config() -> buck2_error::Result<()> {
+    fn remote_download_outputs_reads_bazel_style_config() -> bz_error::Result<()> {
         let config = parse(indoc!(
             r#"
             [buck2]
@@ -891,7 +891,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_download_outputs_translates_legacy_materializations() -> buck2_error::Result<()> {
+    fn remote_download_outputs_translates_legacy_materializations() -> bz_error::Result<()> {
         let config = parse(indoc!(
             r#"
             [buck2]
@@ -931,7 +931,7 @@ mod tests {
     }
 
     #[test]
-    fn test_daemon_idle_timeout_s_default() -> buck2_error::Result<()> {
+    fn test_daemon_idle_timeout_s_default() -> bz_error::Result<()> {
         let config = parse(&[("config", indoc!(r#""#))], "config")?;
         let startup_config = DaemonStartupConfig::new(&config)?;
         assert_eq!(startup_config.daemon_idle_timeout_s, None);
@@ -939,7 +939,7 @@ mod tests {
     }
 
     #[test]
-    fn test_daemon_idle_timeout_s_configured() -> buck2_error::Result<()> {
+    fn test_daemon_idle_timeout_s_configured() -> bz_error::Result<()> {
         let config = parse(
             &[(
                 "config",
@@ -958,7 +958,7 @@ mod tests {
     }
 
     #[test]
-    fn test_watchfs_configured() -> buck2_error::Result<()> {
+    fn test_watchfs_configured() -> bz_error::Result<()> {
         let config = parse(
             &[(
                 "config",

@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::path_arg::PathArg;
+use bz_client_ctx::path_arg::PathArg;
 
 use crate::StarlarkClientSubcommand;
 use crate::StarlarkCommandCommonOptions;

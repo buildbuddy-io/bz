@@ -10,10 +10,10 @@
 
 use std::sync::Arc;
 
-use buck2_client_ctx::command_outcome::CommandOutcome;
-use buck2_common::invocation_roots::InvocationRoots;
-use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
-use buck2_fs::working_dir::AbsWorkingDir;
+use bz_client_ctx::command_outcome::CommandOutcome;
+use bz_common::invocation_roots::InvocationRoots;
+use bz_common::legacy_configs::cells::BuckConfigBasedCells;
+use bz_fs::working_dir::AbsWorkingDir;
 
 use super::path_completer::PathCompleter;
 use super::path_sanitizer::PathSanitizer;
@@ -87,7 +87,7 @@ impl<'a> PackageCompleter<'a> {
         CommandOutcome::Success(self.results.into())
     }
 
-    async fn complete_partial_cells(&mut self, given_path: &str) -> buck2_error::Result<()> {
+    async fn complete_partial_cells(&mut self, given_path: &str) -> bz_error::Result<()> {
         let cell_resolver = &self.cell_configs.cell_resolver;
         let alias_resolver = self
             .cell_configs
@@ -130,9 +130,9 @@ impl<'a> PackageCompleter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use buck2_client_ctx::exit_result::ExitResult;
-    use buck2_common::invocation_roots::find_invocation_roots;
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use bz_client_ctx::exit_result::ExitResult;
+    use bz_common::invocation_roots::find_invocation_roots;
+    use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 
     use super::*;
 

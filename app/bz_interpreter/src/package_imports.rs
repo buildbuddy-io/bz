@@ -11,21 +11,21 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::package::PackageLabel;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::package::PackageLabel;
 use pagable::Pagable;
 use starlark_map::ordered_map::OrderedMap;
 
 use crate::parse_import::RelativeImports;
 use crate::parse_import::parse_import;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum PackageImportsError {
     #[error("Expected value to contain `=>`. Got `{0}`.")]
@@ -74,7 +74,7 @@ impl PackageImplicitImports {
         cell_name: BuildFileCell,
         cell_alias_resolver: CellAliasResolver,
         encoded_mappings: Option<&str>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut mappings = OrderedMap::new();
         if let Some(value) = encoded_mappings {
             let root_path = CellPath::new(
@@ -138,14 +138,14 @@ impl PackageImplicitImports {
 #[cfg(test)]
 mod tests {
 
-    use buck2_core::cells::alias::NonEmptyCellAlias;
-    use buck2_core::cells::name::CellName;
+    use bz_core::cells::alias::NonEmptyCellAlias;
+    use bz_core::cells::name::CellName;
     use dupe::Dupe;
 
     use super::*;
 
     #[test]
-    fn test() -> buck2_error::Result<()> {
+    fn test() -> bz_error::Result<()> {
         let cell_alias_resolver = CellAliasResolver::new(
             CellName::testing_new("root"),
             vec![("root", "root"), ("cell1", "cell1")]

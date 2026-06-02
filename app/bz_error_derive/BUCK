@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("buck2")
 
 rust_library(
-    name = "buck2_error_derive",
+    name = "bz_error_derive",
     srcs = glob(
         ["src/**/*.rs"],
     ),

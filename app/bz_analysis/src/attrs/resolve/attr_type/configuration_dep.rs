@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_node::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
+use bz_core::provider::label::ProvidersLabel;
+use bz_node::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
 use starlark::values::Value;
 
 use crate::attrs::resolve::ctx::AttrResolutionContext;
@@ -18,7 +18,7 @@ pub(crate) trait ConfigurationDepAttrTypeExt {
     fn resolve_single<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         label: &ProvidersLabel,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         Ok(ctx.heap().alloc(label.to_string()))
     }
 }

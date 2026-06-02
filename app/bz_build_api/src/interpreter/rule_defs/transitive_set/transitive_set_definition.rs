@@ -13,10 +13,10 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::bzl::ImportPath;
-use buck2_error::internal_error;
-use buck2_interpreter::build_context::starlark_path_from_build_context;
-use buck2_interpreter::paths::path::StarlarkPath;
+use bz_core::bzl::ImportPath;
+use bz_error::internal_error;
+use bz_interpreter::build_context::starlark_path_from_build_context;
+use bz_interpreter::paths::path::StarlarkPath;
 use derive_more::Display;
 use dupe::Dupe;
 use serde::Serialize;
@@ -55,7 +55,7 @@ use crate::interpreter::rule_defs::transitive_set::TransitiveSet;
 use crate::interpreter::rule_defs::transitive_set::TransitiveSetError;
 use crate::interpreter::rule_defs::transitive_set::transitive_set::TransitiveSetMatcher;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum TransitiveSetDefinitionError {
     #[error("`transitive_set()` can only be used in `bzl` files")]
@@ -159,7 +159,7 @@ impl<V: ValueLifetimeless> TransitiveSetOperationsGen<V> {
         &self,
         kind: TransitiveSetProjectionKind,
         proj: &str,
-    ) -> buck2_error::Result<usize> {
+    ) -> bz_error::Result<usize> {
         let index = match self.projections.get_index_of(proj) {
             Some(index) => index,
             None => {
@@ -253,7 +253,7 @@ impl<'v> StarlarkValue<'v> for TransitiveSetDefinition<'v> {
                     ..TyUserParams::default()
                 },
             )?);
-            buck2_error::Ok(TransitiveSetDefinitionExported {
+            bz_error::Ok(TransitiveSetDefinitionExported {
                 id,
                 set_ty,
                 set_type_instance_id,
@@ -479,7 +479,7 @@ pub fn register_transitive_set(builder: &mut GlobalsBuilder) {
             match starlark_path {
                 StarlarkPath::LoadFile(import_path) => import_path.clone(),
                 _ => {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         TransitiveSetDefinitionError::TransitiveSetOnlyInBzl,
                     )
                     .into());

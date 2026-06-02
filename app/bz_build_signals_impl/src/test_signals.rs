@@ -10,9 +10,9 @@
 
 use std::sync::Arc;
 
-use buck2_artifact::actions::key::ActionKey;
-use buck2_build_signals::env::NodeDuration;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_artifact::actions::key::ActionKey;
+use bz_build_signals::env::NodeDuration;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 use dupe::Dupe;
 
 #[derive(Hash, Eq, PartialEq, Clone, Dupe, Debug)]

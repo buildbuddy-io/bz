@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_interpreter::types::regex::StarlarkBuckRegex;
+use bz_interpreter::types::regex::StarlarkBuckRegex;
 use dupe::Dupe;
 use regex::Regex;
 use serde::Serialize;
@@ -45,7 +45,7 @@ pub(crate) enum CmdArgsRegex<'v> {
 }
 
 impl<'v> CmdArgsRegex<'v> {
-    pub(crate) fn validate(&self) -> buck2_error::Result<()> {
+    pub(crate) fn validate(&self) -> bz_error::Result<()> {
         match self {
             CmdArgsRegex::Str(pattern) => {
                 // Validate that regex is valid

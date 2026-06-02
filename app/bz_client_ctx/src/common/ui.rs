@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_core::buck2_env;
-use buck2_core::buck2_env_name;
-use buck2_core::soft_error;
-use buck2_event_observer::event_observer::NoopEventObserverExtra;
-use buck2_event_observer::verbosity::Verbosity;
-use buck2_health_check::report::DisplayReport;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_core::bz_env;
+use bz_core::bz_env_name;
+use bz_core::soft_error;
+use bz_event_observer::event_observer::NoopEventObserverExtra;
+use bz_event_observer::verbosity::Verbosity;
+use bz_health_check::report::DisplayReport;
+use bz_wrapper_common::invocation_id::TraceId;
 use clap::builder::FalseyValueParser;
 use dupe::Dupe;
 use termwiz::istty::IsTty;
@@ -77,7 +77,7 @@ pub fn get_console_with_root(
     config: SuperConsoleConfig,
     health_check_display_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
 ) -> (Box<dyn EventSubscriber>, bool) {
-    let result: buck2_error::Result<(Box<dyn EventSubscriber>, bool)> = match console_type {
+    let result: bz_error::Result<(Box<dyn EventSubscriber>, bool)> = match console_type {
         ConsoleType::Simple => Ok((
             Box::new(SimpleConsole::<NoopEventObserverExtra>::autodetect(
                 trace_id.dupe(),
@@ -193,7 +193,7 @@ pub struct CommonConsoleOptions {
         help = "Which console to use for this command",
         default_value = "auto",
         ignore_case = true,
-        env = buck2_env_name!("BUCK_CONSOLE"),
+        env = bz_env_name!("BUCK_CONSOLE"),
         value_name = "super|simple|...",
         value_enum
     )]
@@ -219,7 +219,7 @@ pub struct CommonConsoleOptions {
     #[clap(
         long,
         help = "Disable console interactions",
-        env = buck2_env_name!(BUCK_NO_INTERACTIVE_CONSOLE),
+        env = bz_env_name!(BUCK_NO_INTERACTIVE_CONSOLE),
         value_parser = FalseyValueParser::new(),
     )]
     pub no_interactive_console: bool,
@@ -280,7 +280,7 @@ impl CommonConsoleOptions {
 
     pub fn superconsole_config(&self) -> SuperConsoleConfig {
         let mut config = SuperConsoleConfig {
-            expanded_progress: !buck2_env!("BUCK_DISABLE_EXPANDED_PROGRESS", bool).unwrap_or(false),
+            expanded_progress: !bz_env!("BUCK_DISABLE_EXPANDED_PROGRESS", bool).unwrap_or(false),
             ..SuperConsoleConfig::default()
         };
 

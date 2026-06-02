@@ -350,7 +350,7 @@ def rust_protobuf_library(
         name,
         srcs,
         build_script,
-        "buck2_protoc_dev",
+        "bz_protoc_dev",
         "0.14",
         protos,
         [
@@ -374,7 +374,7 @@ def _rust_protobuf_library(
         name,
         srcs,
         build_script,
-        buck2_protoc_dev,
+        bz_protoc_dev,
         prost_version,
         protos,  # Pass a list of files. They'll be placed in the cwd. Prefer using proto_srcs.
         deps,
@@ -394,7 +394,7 @@ def _rust_protobuf_library(
         srcs = [build_script],
         crate_root = build_script,
         deps = [
-            "//bz/app/bz_protoc_dev:" + buck2_protoc_dev,
+            "//bz/app/bz_protoc_dev:" + bz_protoc_dev,
         ],
     )
 

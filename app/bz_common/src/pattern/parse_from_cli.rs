@@ -8,24 +8,24 @@
  * above-listed licenses.
  */
 
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::Modifiers;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
-use buck2_core::pattern::pattern::PatternDataOrAmbiguous;
-use buck2_core::pattern::pattern::PatternParts;
-use buck2_core::pattern::pattern::lex_target_pattern;
-use buck2_core::pattern::pattern_type::PatternType;
-use buck2_core::pattern::unparsed::UnparsedPatterns;
-use buck2_core::target::name::TargetName;
-use buck2_core::target_aliases::TargetAliasResolver;
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::RelativePath;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::Modifiers;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern::ParsedPatternWithModifiers;
+use bz_core::pattern::pattern::PatternDataOrAmbiguous;
+use bz_core::pattern::pattern::PatternParts;
+use bz_core::pattern::pattern::lex_target_pattern;
+use bz_core::pattern::pattern_type::PatternType;
+use bz_core::pattern::unparsed::UnparsedPatterns;
+use bz_core::target::name::TargetName;
+use bz_core::target_aliases::TargetAliasResolver;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::RelativePath;
 use dice::DiceComputations;
 
 use crate::dice::cells::HasCellResolver;
@@ -37,7 +37,7 @@ use crate::pattern::resolve::ResolvedPattern;
 use crate::target_aliases::BuckConfigTargetAliasResolver;
 use crate::target_aliases::HasTargetAliasResolver;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum PathAsTargetError {
     #[error("couldn't determine target from filename '{0}'")]
@@ -55,7 +55,7 @@ impl PatternParser {
     async fn new(
         ctx: &mut DiceComputations<'_>,
         cwd: &ProjectRelativePath,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let cell_resolver = ctx.get_cell_resolver().await?;
 
         let cwd = cell_resolver.get_cell_path(&cwd);
@@ -76,7 +76,7 @@ impl PatternParser {
         &self,
         file_ops: &dyn FileOps,
         pattern: &str,
-    ) -> buck2_error::Result<ParsedPattern<T>> {
+    ) -> bz_error::Result<ParsedPattern<T>> {
         let pattern_with_modifiers = self.parse_pattern_with_modifiers(file_ops, pattern).await?;
         let ParsedPatternWithModifiers {
             parsed_pattern,
@@ -85,8 +85,8 @@ impl PatternParser {
 
         match modifiers.as_slice() {
             None => Ok(parsed_pattern),
-            Some(_) => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            Some(_) => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "The ?modifier syntax is unsupported for this command"
             )),
         }
@@ -96,7 +96,7 @@ impl PatternParser {
         &self,
         file_ops: &dyn FileOps,
         pattern: &str,
-    ) -> buck2_error::Result<ParsedPatternWithModifiers<T>> {
+    ) -> bz_error::Result<ParsedPatternWithModifiers<T>> {
         if let Some(pattern) = self
             .parse_path_as_target_pattern(file_ops, pattern)
             .await
@@ -118,7 +118,7 @@ impl PatternParser {
         &self,
         file_ops: &dyn FileOps,
         pattern: &str,
-    ) -> buck2_error::Result<Option<ParsedPatternWithModifiers<T>>> {
+    ) -> bz_error::Result<Option<ParsedPatternWithModifiers<T>>> {
         let lex = lex_target_pattern(pattern, true)?;
         let PatternParts {
             cell_alias,
@@ -161,7 +161,7 @@ async fn resolve_path_as_target<T: PatternType>(
     path: CellPath,
     extra: T,
     modifiers: Modifiers,
-) -> buck2_error::Result<ParsedPatternWithModifiers<T>> {
+) -> bz_error::Result<ParsedPatternWithModifiers<T>> {
     let (package, target_name) = if is_package(file_ops, path.as_ref()).await? {
         let target_name = path.path().file_name().ok_or_else(|| {
             PathAsTargetError::CannotDetermineTargetFromFilename(path.to_string())
@@ -196,7 +196,7 @@ async fn resolve_path_as_target<T: PatternType>(
     })
 }
 
-async fn is_package(file_ops: &dyn FileOps, path: CellPathRef<'_>) -> buck2_error::Result<bool> {
+async fn is_package(file_ops: &dyn FileOps, path: CellPathRef<'_>) -> bz_error::Result<bool> {
     let listing = match file_ops.read_dir(path).await {
         Ok(listing) => listing.included,
         Err(_) => return Ok(false),
@@ -215,7 +215,7 @@ pub async fn parse_patterns_from_cli_args<T: PatternType>(
     ctx: &mut DiceComputations<'_>,
     target_patterns: &[String],
     cwd: &ProjectRelativePath,
-) -> buck2_error::Result<Vec<ParsedPattern<T>>> {
+) -> bz_error::Result<Vec<ParsedPattern<T>>> {
     let parser = PatternParser::new(ctx, cwd).await?;
 
     ctx.with_linear_recompute(|ctx| async move {
@@ -224,7 +224,7 @@ pub async fn parse_patterns_from_cli_args<T: PatternType>(
         for value in target_patterns {
             parsed.push(parser.parse_pattern(&file_ops, value).await?);
         }
-        buck2_error::Ok(parsed)
+        bz_error::Ok(parsed)
     })
     .await
 }
@@ -233,7 +233,7 @@ pub async fn parse_patterns_with_modifiers_from_cli_args<T: PatternType>(
     ctx: &mut DiceComputations<'_>,
     target_patterns: &[String],
     cwd: &ProjectRelativePath,
-) -> buck2_error::Result<Vec<ParsedPatternWithModifiers<T>>> {
+) -> bz_error::Result<Vec<ParsedPatternWithModifiers<T>>> {
     let parser = PatternParser::new(ctx, cwd).await?;
 
     ctx.with_linear_recompute(|ctx| async move {
@@ -246,7 +246,7 @@ pub async fn parse_patterns_with_modifiers_from_cli_args<T: PatternType>(
                     .await?,
             );
         }
-        buck2_error::Ok(parsed)
+        bz_error::Ok(parsed)
     })
     .await
 }
@@ -254,7 +254,7 @@ pub async fn parse_patterns_with_modifiers_from_cli_args<T: PatternType>(
 pub async fn parse_patterns_from_cli_args_typed<T: PatternType>(
     ctx: &mut DiceComputations<'_>,
     patterns: &UnparsedPatterns<T>,
-) -> buck2_error::Result<Vec<ParsedPattern<T>>> {
+) -> bz_error::Result<Vec<ParsedPattern<T>>> {
     parse_patterns_from_cli_args(ctx, patterns.patterns(), patterns.working_dir()).await
 }
 
@@ -262,7 +262,7 @@ pub async fn parse_and_resolve_patterns_from_cli_args<T: PatternType>(
     ctx: &mut DiceComputations<'_>,
     target_patterns: &[String],
     cwd: &ProjectRelativePath,
-) -> buck2_error::Result<ResolvedPattern<T>> {
+) -> bz_error::Result<ResolvedPattern<T>> {
     let patterns = parse_patterns_from_cli_args(ctx, target_patterns, cwd).await?;
     ResolveTargetPatterns::resolve(ctx, &patterns).await
 }
@@ -271,7 +271,7 @@ pub async fn parse_and_resolve_patterns_with_modifiers_from_cli_args<T: PatternT
     ctx: &mut DiceComputations<'_>,
     target_patterns: &[String],
     cwd: &ProjectRelativePath,
-) -> buck2_error::Result<ResolvedPattern<T>> {
+) -> bz_error::Result<ResolvedPattern<T>> {
     let patterns = parse_patterns_with_modifiers_from_cli_args(ctx, target_patterns, cwd).await?;
     ResolveTargetPatterns::resolve_with_modifiers(ctx, &patterns).await
 }

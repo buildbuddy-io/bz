@@ -25,17 +25,17 @@
 //! for `cell//bar/foo/...` has no effect because buck will pick the first matching spec).
 
 use allocative::Allocative;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::name::CellName;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::BuckErrorContext;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::name::CellName;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::BuckErrorContext;
 use pagable::Pagable;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum DetectorSpecParseError {
     #[error(
@@ -68,7 +68,7 @@ impl TargetPlatformDetector {
         cell_name: CellName,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut detectors = Vec::new();
         for value in spec.split_whitespace() {
             match value.split_once(':') {
@@ -81,7 +81,7 @@ impl TargetPlatformDetector {
                                 cell_resolver,
                                 cell_alias_resolver,
                             )? {
-                                buck2_core::pattern::pattern::ParsedPattern::Recursive(root) => {
+                                bz_core::pattern::pattern::ParsedPattern::Recursive(root) => {
                                     root
                                 }
                                 _ => {
@@ -134,14 +134,14 @@ impl TargetPlatformDetector {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::cells::alias::NonEmptyCellAlias;
-    use buck2_core::cells::cell_root_path::CellRootPathBuf;
-    use buck2_hash::StdBuckHashMap;
+    use bz_core::cells::alias::NonEmptyCellAlias;
+    use bz_core::cells::cell_root_path::CellRootPathBuf;
+    use bz_hash::StdBuckHashMap;
 
     use super::*;
 
     #[test]
-    fn test_parse_errors() -> buck2_error::Result<()> {
+    fn test_parse_errors() -> bz_error::Result<()> {
         let cell_resolver = CellResolver::testing_with_names_and_paths_with_alias(
             &[
                 (
@@ -205,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect() -> buck2_error::Result<()> {
+    fn test_detect() -> bz_error::Result<()> {
         let cell_resolver = CellResolver::testing_with_names_and_paths_with_alias(
             &[
                 (

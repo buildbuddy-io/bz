@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_interpreter::types::cell_path::StarlarkCellPath;
+use bz_interpreter::types::cell_path::StarlarkCellPath;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
@@ -27,7 +27,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkCellPath {
         cli: &mut dyn CommandLineBuilder,
         ctx: &mut dyn CommandLineContext,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         cli.push_location(ctx.resolve_cell_path(self.0.as_ref())?);
         Ok(())
     }
@@ -40,7 +40,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkCellPath {
         &self,
         _visitor: &mut dyn crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }

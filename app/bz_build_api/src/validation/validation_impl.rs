@@ -9,8 +9,8 @@
  */
 
 use async_trait::async_trait;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_util::late_binding::LateBinding;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 
 #[async_trait]
@@ -20,7 +20,7 @@ pub trait ValidationImpl: Send + Sync + 'static {
         &self,
         ctx: &mut DiceComputations<'_>,
         target: ConfiguredTargetLabel,
-    ) -> Result<(), buck2_error::Error>;
+    ) -> Result<(), bz_error::Error>;
 }
 
 pub static VALIDATION_IMPL: LateBinding<&'static dyn ValidationImpl> =

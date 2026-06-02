@@ -31,7 +31,7 @@ use crate::provider::label::ProvidersName;
 use crate::target::label::label::TargetLabel;
 use crate::target::name::TargetNameRef;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum PatternTypeError {
     #[error("Expecting target pattern, without providers")]
@@ -69,7 +69,7 @@ pub trait PatternType:
     /// that are not allowed for this pattern type.
     fn from_configured_providers(
         providers: ConfiguredProvidersPatternExtra,
-    ) -> buck2_error::Result<Self>;
+    ) -> bz_error::Result<Self>;
 
     /// This pattern matches the configuration.
     ///
@@ -106,7 +106,7 @@ impl PatternType for TargetPatternExtra {
 
     fn from_configured_providers(
         providers: ConfiguredProvidersPatternExtra,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let ConfiguredProvidersPatternExtra {
             providers,
             cfg,
@@ -180,7 +180,7 @@ impl PatternType for ProvidersPatternExtra {
 
     fn from_configured_providers(
         providers: ConfiguredProvidersPatternExtra,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let ConfiguredProvidersPatternExtra {
             providers,
             cfg,
@@ -308,7 +308,7 @@ impl PatternType for ConfiguredTargetPatternExtra {
 
     fn from_configured_providers(
         providers: ConfiguredProvidersPatternExtra,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let ConfiguredProvidersPatternExtra {
             providers,
             cfg,
@@ -355,7 +355,7 @@ impl PatternType for ConfiguredProvidersPatternExtra {
 
     fn from_configured_providers(
         extra: ConfiguredProvidersPatternExtra,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(extra)
     }
 

@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_hash::BuckIndexSet;
+use bz_hash::BuckIndexSet;
 
 use crate::analysis::registry::RecordedAnalysisValues;
 use crate::artifact_groups::ArtifactGroup;

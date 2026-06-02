@@ -10,16 +10,16 @@
 
 use std::sync::Arc;
 
-use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
-use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_common::cas_digest::CasDigest;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_error::BuckErrorContext;
-use buck2_execute::execute::request::OutputType;
-use buck2_execute::materialize::http::Checksum;
-use buck2_hash::buck_indexset;
+use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use bz_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_common::cas_digest::CasDigest;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_error::BuckErrorContext;
+use bz_execute::execute::request::OutputType;
+use bz_execute::materialize::http::Checksum;
+use bz_hash::buck_indexset;
 use chrono::TimeZone;
 use chrono::Utc;
 use starlark::environment::MethodsBuilder;
@@ -33,7 +33,7 @@ use crate::actions::impls::cas_artifact::DirectoryKind;
 use crate::actions::impls::cas_artifact::UnregisteredCasArtifactAction;
 use crate::actions::impls::download_file::UnregisteredDownloadFileAction;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum CasArtifactError {
     #[error("is_tree and is_directory are mutually exclusive")]
@@ -124,7 +124,7 @@ pub(crate) fn analysis_actions_methods_download(methods: &mut MethodsBuilder) {
 
         let kind = match (is_tree, is_directory) {
             (true, true) => {
-                return Err(buck2_error::Error::from(CasArtifactError::TreeAndDirectory).into());
+                return Err(bz_error::Error::from(CasArtifactError::TreeAndDirectory).into());
             }
             (false, true) => ArtifactKind::Directory(DirectoryKind::Directory),
             (true, false) => ArtifactKind::Directory(DirectoryKind::Tree),

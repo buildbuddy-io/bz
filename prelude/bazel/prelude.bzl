@@ -59,12 +59,12 @@ for _rule_name in ("cc_proto_library", "proto_library", "sh_library"):
     if _rule_name in _rules:
         _bazel_native_rule_backings[_rule_name] = _rules[_rule_name]
 
-buck2_bazel_native_rules = struct(**_bazel_native_rule_backings)
+bz_bazel_native_rules = struct(**_bazel_native_rule_backings)
 
 def exports_files(srcs, visibility = None, **_kwargs):
     visibility = visibility or ["//visibility:public"]
     for src in srcs:
-        buck2_bazel_native_rules.export_file(
+        bz_bazel_native_rules.export_file(
             name = src,
             mode = "reference",
             src = src,
@@ -73,6 +73,6 @@ def exports_files(srcs, visibility = None, **_kwargs):
 
 _native = _struct_to_dict(__buck2_builtins__)
 _native.update(_struct_to_dict(__buck2_builtins__.native))
-_native["buck2_bazel_native_rules"] = buck2_bazel_native_rules
+_native["bz_bazel_native_rules"] = bz_bazel_native_rules
 _native["exports_files"] = exports_files
 native = struct(**_native)

@@ -14,19 +14,19 @@ use std::fmt::Formatter;
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_build_api::actions::query::ActionQueryNode;
-use buck2_build_api::actions::query::PRINT_ACTION_NODE;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
-use buck2_core::cells::CellResolver;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_query::query::environment::AttrFmtOptions;
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::environment::QueryTargets;
-use buck2_query::query::syntax::simple::eval::file_set::FileSet;
-use buck2_query::query::syntax::simple::eval::multi_query::MultiQueryResult;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationValue;
-use buck2_util::indent::indent;
+use bz_build_api::actions::query::ActionQueryNode;
+use bz_build_api::actions::query::PRINT_ACTION_NODE;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
+use bz_core::cells::CellResolver;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_query::query::environment::AttrFmtOptions;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::environment::QueryTargets;
+use bz_query::query::syntax::simple::eval::file_set::FileSet;
+use bz_query::query::syntax::simple::eval::multi_query::MultiQueryResult;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationValue;
+use bz_util::indent::indent;
 use dupe::Clone_;
 use dupe::Copy_;
 use dupe::Dupe_;
@@ -58,7 +58,7 @@ pub(crate) trait ProviderLookUp<T: QueryTarget>: Send + Sync {
     async fn lookup(
         &self,
         t: &T,
-    ) -> buck2_error::Result<MaybeCompatible<FrozenProviderCollectionValue>>;
+    ) -> bz_error::Result<MaybeCompatible<FrozenProviderCollectionValue>>;
 }
 
 #[derive(Debug)]
@@ -79,7 +79,7 @@ impl<'a, T: QueryTarget> TargetSetJsonPrinter<'a, T> {
         print_providers: ShouldPrintProviders<'a, T>,
         attributes: &'a Option<RegexSet>,
         targets: &'a TargetSet<T>,
-    ) -> buck2_error::Result<TargetSetJsonPrinter<'a, T>> {
+    ) -> bz_error::Result<TargetSetJsonPrinter<'a, T>> {
         Ok(TargetSetJsonPrinter {
             value: printable_targets(targets, print_providers, attributes, target_call_stacks)
                 .await?,
@@ -227,7 +227,7 @@ impl<'a> QueryResultPrinter<'a> {
         attributes: &[String],
         output_format: i32,
         trace_id: String,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Self::from_options(
             resolver,
             attributes,
@@ -240,7 +240,7 @@ impl<'a> QueryResultPrinter<'a> {
         resolver: &'a CellResolver,
         attributes: &[String],
         output_format: QueryOutputFormatInfo,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let output_format = match (output_format, attributes.is_empty()) {
             // following buck1's behavior, if any attributes are requested we use json output instead of list output
             (QueryOutputFormatInfo::Default, false) => QueryOutputFormatInfo::Json,
@@ -266,7 +266,7 @@ impl<'a> QueryResultPrinter<'a> {
         multi_result: MultiQueryResult<T>,
         target_call_stacks: bool,
         print_providers: ShouldPrintProviders<'b, T>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match (&self.output_format, &self.attributes) {
             // A multi-query only has interesting output with --json output. For non-json output it gets merged together.
             // TODO(cjhopman): buck1 does this really odd thing that a multi-query that requests any attributes
@@ -333,7 +333,7 @@ impl<'a> QueryResultPrinter<'a> {
         result: QueryEvaluationValue<T>,
         call_stack: bool,
         print_providers: ShouldPrintProviders<'b, T>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match result {
             QueryEvaluationValue::TargetSet(targets) => match &self.output_format {
                 QueryOutputFormatInfo::Default => {
@@ -369,7 +369,7 @@ impl<'a> QueryResultPrinter<'a> {
                                 k.to_owned(),
                                 format!("{:#}", target.attr_display(v, AttrFmtOptions::default())),
                             );
-                            buck2_error::Ok(())
+                            bz_error::Ok(())
                         })?;
                         if let Some(name) = attrs.remove("name") {
                             writeln!(&mut inner_out, "name = {name},")?;
@@ -444,20 +444,20 @@ impl<'a> QueryResultPrinter<'a> {
                         writeln!(&mut output)?;
                     }
                     QueryOutputFormatInfo::Dot => {
-                        return Err(buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Unimplemented,
+                        return Err(bz_error::bz_error!(
+                            bz_error::ErrorTag::Unimplemented,
                             "dot output for files not implemented yet"
                         ));
                     }
                     QueryOutputFormatInfo::DotCompact => {
-                        return Err(buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Unimplemented,
+                        return Err(bz_error::bz_error!(
+                            bz_error::ErrorTag::Unimplemented,
                             "dot_compact output for files not implemented yet"
                         ));
                     }
                     QueryOutputFormatInfo::Html(..) => {
-                        return Err(buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Unimplemented,
+                        return Err(bz_error::bz_error!(
+                            bz_error::ErrorTag::Unimplemented,
                             "html output for files not implemented yet"
                         ));
                     }
@@ -474,7 +474,7 @@ async fn printable_targets<'a, T: QueryTarget>(
     print_providers: ShouldPrintProviders<'a, T>,
     attributes: &'a Option<RegexSet>,
     target_call_stacks: bool,
-) -> buck2_error::Result<Vec<PrintableQueryTarget<'a, T>>> {
+) -> bz_error::Result<Vec<PrintableQueryTarget<'a, T>>> {
     futures::future::join_all(targets.iter().map(|t| async move {
         Ok(PrintableQueryTarget {
             value: t,
@@ -490,7 +490,7 @@ async fn printable_targets<'a, T: QueryTarget>(
     }))
     .await
     .into_iter()
-    .collect::<buck2_error::Result<_>>()
+    .collect::<bz_error::Result<_>>()
 }
 
 async fn print_action_node(
@@ -499,7 +499,7 @@ async fn print_action_node(
     json: bool,
     output_attributes: &[String],
     cell_resolver: &CellResolver,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // Dot/DotCompact output format don't make sense here.
     let output_format = if json {
         QueryOutputFormatInfo::Json

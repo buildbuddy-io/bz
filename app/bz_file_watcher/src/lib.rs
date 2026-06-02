@@ -11,11 +11,11 @@
 #![feature(error_generic_member_access)]
 #![feature(used_with_arg)]
 
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::external::external_cell_origin_for_cell;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::external_cell_origin_for_cell;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
 
 pub mod dep_files;
 #[cfg(fbcode_build)]
@@ -63,11 +63,11 @@ pub(crate) fn is_bzlmod_external_cell_path(cells: &CellResolver, cell_path: &Cel
 mod tests {
     use std::sync::Arc;
 
-    use buck2_core::cells::cell_root_path::CellRootPathBuf;
-    use buck2_core::cells::external::BzlmodCellSetup;
-    use buck2_core::cells::external::register_external_cell_origin;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::cells::paths::CellRelativePathBuf;
+    use bz_core::cells::cell_root_path::CellRootPathBuf;
+    use bz_core::cells::external::BzlmodCellSetup;
+    use bz_core::cells::external::register_external_cell_origin;
+    use bz_core::cells::name::CellName;
+    use bz_core::cells::paths::CellRelativePathBuf;
 
     use super::*;
 

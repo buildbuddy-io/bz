@@ -12,18 +12,18 @@ use std::borrow::Cow;
 use std::convert::Infallible;
 use std::path::Path;
 
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::instance::CellInstance;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::pattern::pattern::maybe_split_cell_alias_and_relative_path;
-use buck2_fs::paths::abs_path::AbsPath;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::dice::data::HasIoProvider;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::instance::CellInstance;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::pattern::pattern::maybe_split_cell_alias_and_relative_path;
+use bz_fs::paths::abs_path::AbsPath;
 use derive_more::Display;
 use dice::DiceComputations;
 use dupe::Dupe;
@@ -78,7 +78,7 @@ pub(crate) enum FileExpr<'v> {
 fn parse_cell_path_as_file_expr_literal(
     val: &str,
     cell_alias_resolver: &CellAliasResolver,
-) -> buck2_error::Result<Option<CellPath>> {
+) -> bz_error::Result<Option<CellPath>> {
     Ok(match maybe_split_cell_alias_and_relative_path(val)? {
         Some((alias, path)) => {
             let cell_name = cell_alias_resolver.resolve(alias.as_str())?;
@@ -96,7 +96,7 @@ impl<'a> FileExpr<'a> {
         self,
         dice: &mut DiceComputations<'_>,
         cell_instance: &CellInstance,
-    ) -> buck2_error::Result<CellPath> {
+    ) -> bz_error::Result<CellPath> {
         match self {
             FileExpr::Literal(val) => {
                 let cell_alias_resolver =
@@ -124,14 +124,14 @@ impl<'a> FileExpr<'a> {
 #[cfg(test)]
 mod tests {
 
-    use buck2_core::cells::alias::NonEmptyCellAlias;
-    use buck2_core::cells::name::CellName;
+    use bz_core::cells::alias::NonEmptyCellAlias;
+    use bz_core::cells::name::CellName;
     use maplit::hashmap;
 
     use super::*;
 
     #[test]
-    fn test_parse_cell_path_as_file_expr_literal() -> buck2_error::Result<()> {
+    fn test_parse_cell_path_as_file_expr_literal() -> bz_error::Result<()> {
         let cell1 = CellName::testing_new("cell1");
 
         let map = hashmap![

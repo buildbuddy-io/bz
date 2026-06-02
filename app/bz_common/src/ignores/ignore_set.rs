@@ -9,8 +9,8 @@
  */
 
 use allocative::Allocative;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_error::internal_error;
+use bz_core::cells::paths::CellRelativePath;
+use bz_error::internal_error;
 use globset::Candidate;
 use globset::GlobSetBuilder;
 use once_cell::sync::Lazy;
@@ -70,7 +70,7 @@ impl IgnoreSet {
     /// a '/**'.
     ///
     /// Always ignores build output directories if it is a `root_cell`.
-    pub fn from_ignore_spec(spec: &str, root_cell: bool) -> buck2_error::Result<Self> {
+    pub fn from_ignore_spec(spec: &str, root_cell: bool) -> bz_error::Result<Self> {
         // TODO(cjhopman): There's opportunity to greatly improve the performance of IgnoreSet by
         // constructing special cases for a couple of common patterns we see in ignore specs. We
         // know that these can get large wins in some places where we've done this same ignore (watchman, buck1's ignores).
@@ -134,7 +134,7 @@ impl IgnoreSet {
     }
 }
 
-pub fn bazelignore_to_ignore_spec(contents: &str) -> buck2_error::Result<String> {
+pub fn bazelignore_to_ignore_spec(contents: &str) -> bz_error::Result<String> {
     let mut patterns = Vec::new();
     for (index, line) in contents.lines().enumerate() {
         let line = line.trim();
@@ -142,8 +142,8 @@ pub fn bazelignore_to_ignore_spec(contents: &str) -> buck2_error::Result<String>
             continue;
         }
         if line.starts_with('/') {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 ".bazelignore line {} must be relative, got `{}`",
                 index + 1,
                 line

@@ -16,27 +16,27 @@ use std::fmt::Formatter;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
-use buck2_core::cells::external::bazel_canonical_label_key;
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
-use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
-use buck2_core::configuration::data::BazelBuildSettingValue;
-use buck2_core::fs::buck_out_path::BazelOutputPathKind;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::execute::request::OutputType;
-use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_util::late_binding::LateBinding;
+use bz_core::cells::external::bazel_canonical_label_key;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::cells::external::bzlmod_cell_aliases_for_cell;
+use bz_core::configuration::data::BazelBuildSettingValue;
+use bz_core::fs::buck_out_path::BazelOutputPathKind;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::execute::request::OutputType;
+use bz_interpreter::late_binding_ty::AnalysisContextReprLate;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_util::late_binding::LateBinding;
 use derive_more::Display;
 use dice::DiceComputations;
 use dupe::Dupe;
@@ -96,9 +96,9 @@ use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfile
 use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_from_files;
 use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_from_runfiles;
 use crate::interpreter::rule_defs::provider::dependency::Dependency;
-use buck2_hash::BuckIndexSet;
+use bz_hash::BuckIndexSet;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum AnalysisContextError {
     #[error("attempting to access `build_setting_value` of non-build setting {0}")]
@@ -115,13 +115,13 @@ pub static DECLARE_OUTPUT_HAS_CONTENT_BASED_PATH_DEFAULT: OnceLock<bool> = OnceL
 
 pub fn init_declare_output_has_content_based_path_default(
     value: Option<bool>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let value = value.unwrap_or(false);
     DECLARE_OUTPUT_HAS_CONTENT_BASED_PATH_DEFAULT
         .set(value)
         .map_err(|_| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "DECLARE_OUTPUT_HAS_CONTENT_BASED_PATH_DEFAULT is already initialized"
             )
         })?;
@@ -134,13 +134,13 @@ pub fn init_declare_output_has_content_based_path_default(
 /// Controlled by `[buck2] action_has_content_based_path_default` buckconfig.
 pub static ACTION_HAS_CONTENT_BASED_PATH_DEFAULT: OnceLock<bool> = OnceLock::new();
 
-pub fn init_action_has_content_based_path_default(value: Option<bool>) -> buck2_error::Result<()> {
+pub fn init_action_has_content_based_path_default(value: Option<bool>) -> bz_error::Result<()> {
     let value = value.unwrap_or(false);
     ACTION_HAS_CONTENT_BASED_PATH_DEFAULT
         .set(value)
         .map_err(|_| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "ACTION_HAS_CONTENT_BASED_PATH_DEFAULT is already initialized"
             )
         })?;
@@ -350,11 +350,11 @@ impl<'v> StarlarkValue<'v> for AnalysisToolchains<'v> {
 }
 
 impl<'v> AnalysisActions<'v> {
-    pub fn state(&self) -> buck2_error::Result<RefMut<'_, AnalysisRegistry<'v>>> {
+    pub fn state(&self) -> bz_error::Result<RefMut<'_, AnalysisRegistry<'v>>> {
         let state = self
             .state
             .try_borrow_mut()
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
             .buck_error_context("AnalysisActions.state is already borrowed")?;
         RefMut::filter_map(state, |x| x.as_mut())
             .ok()
@@ -364,7 +364,7 @@ impl<'v> AnalysisActions<'v> {
     pub async fn run_promises<'a, 'e: 'a>(
         &self,
         accessor: &mut dyn RunAnonPromisesAccessor<'v, 'a, 'e>,
-    ) -> buck2_error::Result<bool>
+    ) -> bz_error::Result<bool>
     where
         'v: 'a,
     {
@@ -392,7 +392,7 @@ impl<'v> AnalysisActions<'v> {
     pub async fn assert_short_paths_and_resolve(
         &self,
         dice: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let (short_path_assertions, content_based_path_assertions, consumer_analysis_artifacts) = {
             let state = self.state()?;
             (
@@ -803,7 +803,7 @@ impl<'v> AnalysisContext<'v> {
         heap.alloc_typed(analysis_context)
     }
 
-    pub fn assert_no_promises(&self) -> buck2_error::Result<()> {
+    pub fn assert_no_promises(&self) -> bz_error::Result<()> {
         self.actions.state()?.assert_no_promises()
     }
 
@@ -858,7 +858,7 @@ fn struct_field<'v>(
 
 fn analysis_context_attrs<'v>(
     ctx: &AnalysisContext<'v>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     ctx.attrs
         .borrow()
         .as_ref()
@@ -868,14 +868,14 @@ fn analysis_context_attrs<'v>(
 
 fn analysis_context_split_attrs<'v>(
     ctx: &AnalysisContext<'v>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     ctx.split_attrs
         .ok_or_else(|| internal_error!("`split_attr` is not available for `dynamic_output` or BXL"))
 }
 
 fn analysis_context_outputs<'v>(
     ctx: &AnalysisContext<'v>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     ctx.outputs
         .ok_or_else(|| internal_error!("`outputs` is not available for `dynamic_output` or BXL"))
 }
@@ -883,7 +883,7 @@ fn analysis_context_outputs<'v>(
 fn analysis_context_rule<'v>(
     ctx: &AnalysisContext<'v>,
     heap: Heap<'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     let attrs = analysis_context_attrs(ctx)?.get();
     let kind = ctx.rule_kind_name.as_deref().unwrap_or("");
     Ok(heap.alloc(AllocStruct([
@@ -988,15 +988,15 @@ impl<'v> StarlarkValue<'v> for BazelTokenizeFunction {
         args.no_named_args()?;
         let positions = args.positions(eval.heap())?.collect::<Vec<_>>();
         let [option] = positions.as_slice() else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "ctx.tokenize() expects exactly one positional argument"
             )
             .into());
         };
         let Some(option) = option.unpack_str() else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "ctx.tokenize() expected str, got `{}`",
                 option.get_type()
             )
@@ -1033,8 +1033,8 @@ impl<'v> StarlarkValue<'v> for BazelCoverageInstrumentedFunction {
         args.no_named_args()?;
         let positions = args.positions(eval.heap())?.collect::<Vec<_>>();
         if positions.len() > 1 {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "ctx.coverage_instrumented() expects at most one positional argument"
             )
             .into());
@@ -1139,7 +1139,7 @@ fn bazel_string_list<'v>(heap: Heap<'v>, values: &[String]) -> Value<'v> {
     ))
 }
 
-pub(crate) fn bazel_shell_tokenize(option_string: &str) -> buck2_error::Result<Vec<String>> {
+pub(crate) fn bazel_shell_tokenize(option_string: &str) -> bz_error::Result<Vec<String>> {
     if !option_string.is_empty()
         && !option_string
             .as_bytes()
@@ -1161,7 +1161,7 @@ pub(crate) fn bazel_shell_tokenize(option_string: &str) -> buck2_error::Result<V
                 quotation = None;
             } else if c == '\\' && quote == '"' {
                 let Some(next) = chars.next() else {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         AnalysisContextError::Tokenization {
                             message: "backslash at end of string".to_owned(),
                             option: option_string.to_owned(),
@@ -1185,7 +1185,7 @@ pub(crate) fn bazel_shell_tokenize(option_string: &str) -> buck2_error::Result<V
             }
         } else if c == '\\' {
             let Some(next) = chars.next() else {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     AnalysisContextError::Tokenization {
                         message: "backslash at end of string".to_owned(),
                         option: option_string.to_owned(),
@@ -1199,7 +1199,7 @@ pub(crate) fn bazel_shell_tokenize(option_string: &str) -> buck2_error::Result<V
     }
 
     if quotation.is_some() {
-        return Err(buck2_error::Error::from(
+        return Err(bz_error::Error::from(
             AnalysisContextError::Tokenization {
                 message: "unterminated quotation".to_owned(),
                 option: option_string.to_owned(),
@@ -2043,7 +2043,7 @@ pub fn analysis_actions_to_bazel_ctx_with_overrides<'v>(
 fn collect_bazel_files_from_value<'v>(
     value: Value<'v>,
     files: &mut Vec<Value<'v>>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if value.is_none() {
         return Ok(());
     }
@@ -2063,7 +2063,7 @@ fn collect_bazel_files_from_value<'v>(
     Ok(())
 }
 
-fn bazel_files_from_attr_value<'v>(value: Value<'v>) -> buck2_error::Result<Vec<Value<'v>>> {
+fn bazel_files_from_attr_value<'v>(value: Value<'v>) -> bz_error::Result<Vec<Value<'v>>> {
     let mut files = Vec::new();
     collect_bazel_files_from_value(value, &mut files)?;
     Ok(files)
@@ -2071,7 +2071,7 @@ fn bazel_files_from_attr_value<'v>(value: Value<'v>) -> buck2_error::Result<Vec<
 
 fn bazel_executable_from_attr_value<'v>(
     value: Value<'v>,
-) -> buck2_error::Result<Option<Value<'v>>> {
+) -> bz_error::Result<Option<Value<'v>>> {
     if value.is_none() {
         return Ok(None);
     }
@@ -2087,7 +2087,7 @@ fn bazel_executable_from_attr_value<'v>(
 fn analysis_context_bazel_file_structs_from_attrs<'v>(
     heap: Heap<'v>,
     attrs: ValueOfUnchecked<'v, StructRef<'static>>,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     ValueOfUnchecked<'v, StructRef<'static>>,
     ValueOfUnchecked<'v, StructRef<'static>>,
     ValueOfUnchecked<'v, StructRef<'static>>,
@@ -2125,7 +2125,7 @@ fn analysis_context_bazel_file_structs_from_attrs<'v>(
 fn analysis_context_bazel_file_structs<'v>(
     ctx: &AnalysisContext<'v>,
     heap: Heap<'v>,
-) -> buck2_error::Result<BazelFileStructs<'v>> {
+) -> bz_error::Result<BazelFileStructs<'v>> {
     if let Some(structs) = ctx.bazel_file_structs.borrow().as_ref() {
         return Ok(structs.clone());
     }
@@ -2303,7 +2303,7 @@ fn bazel_rlocation_path_for_artifact<'v>(
     artifact: &'v dyn StarlarkArtifactLike<'v>,
     short_paths: bool,
     heap: Heap<'v>,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     if short_paths {
         return Ok(artifact
             .with_bazel_short_path(&|path| heap.alloc_str(path))?
@@ -2325,7 +2325,7 @@ fn bazel_location_target_for_artifact<'v>(
     artifact: &'v dyn StarlarkArtifactLike<'v>,
     short_paths: bool,
     heap: Heap<'v>,
-) -> buck2_error::Result<BazelLocationTarget> {
+) -> bz_error::Result<BazelLocationTarget> {
     let exec_path = if short_paths {
         artifact
             .with_bazel_short_path(&|path| heap.alloc_str(path))?
@@ -2546,15 +2546,15 @@ fn bazel_expand_location_macro(
     };
     let label = parts.next().map(str::trim).unwrap_or("");
     if label.is_empty() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "`$({function})` requires a label"
         )
         .into());
     }
     let Some(target) = targets.get(label) else {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "label `{label}` in `$({function})` was not listed in ctx.expand_location targets"
         )
         .into());
@@ -2569,8 +2569,8 @@ fn bazel_expand_location_macro(
     }
     match paths.as_slice() {
         [path] => Ok(Some(path.clone())),
-        _ => Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        _ => Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "`$({function} {label})` expected exactly one file, got {}",
             paths.len()
         )
@@ -2767,8 +2767,8 @@ const BAZEL_DEFAULT_MAKE_VARIABLE_ATTRIBUTES: &[&str] = &[
     "$cc_toolchain",
 ];
 
-fn make_variable_expansion_error(message: impl Into<String>) -> buck2_error::Error {
-    buck2_error::Error::from(AnalysisContextError::MakeVariableExpansion(message.into()))
+fn make_variable_expansion_error(message: impl Into<String>) -> bz_error::Error {
+    bz_error::Error::from(AnalysisContextError::MakeVariableExpansion(message.into()))
 }
 
 fn bazel_target_cpu(this: &AnalysisContext<'_>) -> Option<String> {
@@ -2820,16 +2820,16 @@ fn bazel_global_make_variables(this: &AnalysisContext<'_>) -> Vec<(String, Strin
 fn collect_template_variables_from_info(
     info: &FrozenTemplateVariableInfo,
     variables: &mut Vec<(String, String)>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let dict = FrozenDictRef::from_frozen_value(info.variables_raw()).ok_or_else(|| {
-        buck2_error::internal_error!("TemplateVariableInfo.variables is not a dict")
+        bz_error::internal_error!("TemplateVariableInfo.variables is not a dict")
     })?;
     for (key, value) in dict.iter() {
         let key = key.to_value().unpack_str().ok_or_else(|| {
-            buck2_error::internal_error!("TemplateVariableInfo variable key is not a string")
+            bz_error::internal_error!("TemplateVariableInfo variable key is not a string")
         })?;
         let value = value.to_value().unpack_str().ok_or_else(|| {
-            buck2_error::internal_error!("TemplateVariableInfo variable value is not a string")
+            bz_error::internal_error!("TemplateVariableInfo variable value is not a string")
         })?;
         variables.push((key.to_owned(), value.to_owned()));
     }
@@ -2839,7 +2839,7 @@ fn collect_template_variables_from_info(
 fn collect_template_variables_from_value<'v>(
     value: Value<'v>,
     variables: &mut Vec<(String, String)>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if value.is_none() {
         return Ok(());
     }
@@ -2869,7 +2869,7 @@ fn collect_template_variables_from_value<'v>(
 
 fn analysis_context_template_make_variables<'v>(
     this: &AnalysisContext<'v>,
-) -> buck2_error::Result<Vec<(String, String)>> {
+) -> bz_error::Result<Vec<(String, String)>> {
     let mut variables = Vec::new();
     let Some(attrs) = this.attrs.borrow().as_ref().copied() else {
         return Ok(variables);
@@ -2893,7 +2893,7 @@ fn analysis_context_template_make_variables<'v>(
 
 fn analysis_context_make_variable_entries<'v>(
     this: &AnalysisContext<'v>,
-) -> buck2_error::Result<Vec<(String, String)>> {
+) -> bz_error::Result<Vec<(String, String)>> {
     let mut variables = bazel_global_make_variables(this);
     variables.extend(analysis_context_template_make_variables(this)?);
     Ok(variables)
@@ -2903,7 +2903,7 @@ fn is_java_identifier_part(c: char) -> bool {
     c == '_' || c == '$' || c.is_alphanumeric()
 }
 
-fn scan_bazel_make_variable(chars: &[char], offset: &mut usize) -> buck2_error::Result<String> {
+fn scan_bazel_make_variable(chars: &[char], offset: &mut usize) -> bz_error::Result<String> {
     let c = chars[*offset];
     match c {
         '(' => {
@@ -2961,7 +2961,7 @@ fn expand_bazel_make_variables_with_lookup<F>(
     expression: &str,
     lookup: &F,
     depth: usize,
-) -> buck2_error::Result<String>
+) -> bz_error::Result<String>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -3016,7 +3016,7 @@ fn expand_bazel_make_variables<'v>(
     command: &str,
     additional_substitutions: &UnpackDictEntries<&'v str, &'v str>,
     variables: &[(String, String)],
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     expand_bazel_make_variables_with_lookup(
         command,
         &|name| {
@@ -3074,15 +3074,15 @@ pub fn bazel_analysis_context_declare_file_with_path_kind<'v>(
         ctx.actions.as_ref()
     } else {
         let actions = ctx.get_attr("actions", heap)?.ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected AnalysisContext or Bazel context with actions, got `{}`",
                 ctx.to_string_for_type_error()
             )
         })?;
         actions.downcast_ref::<AnalysisActions>().ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected ctx.actions to be AnalysisActions, got `{}`",
                 actions.to_string_for_type_error()
             )
@@ -3434,7 +3434,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         };
         if !this.0.is_bazel_build_setting {
             return Err(
-                buck2_error::Error::from(AnalysisContextError::NonBuildSetting(label.to_string()))
+                bz_error::Error::from(AnalysisContextError::NonBuildSetting(label.to_string()))
                     .into(),
             );
         }

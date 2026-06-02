@@ -154,10 +154,10 @@ message ClientContext {
   repeated buck.data.ClientMetadata client_metadata = 18;
 
   /// Contents of `BUCK2_HARD_ERROR` environment variable.
-  string buck2_hard_error = 20;
+  string bz_hard_error = 20;
 
   /// Contents of `BUCK2_SHOW_SOFT_ERRORS` environment variable.
-  string buck2_show_soft_errors = 26;
+  string bz_show_soft_errors = 26;
 
   enum PreemptibleWhen {
     /// Default

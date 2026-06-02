@@ -11,32 +11,32 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use buck2_cli_proto::BxlProfile;
-use buck2_cli_proto::ProfileRequest;
-use buck2_cli_proto::ProfileResponse;
-use buck2_cli_proto::TargetProfile;
-use buck2_cli_proto::profile_request::ProfileOpts;
-use buck2_cli_proto::target_profile;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::profiling::BuckProfileMode;
-use buck2_client_ctx::common::target_cfg::TargetCfgWithUniverseOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::NoPartialResultHandler;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_common::argv::Argv;
-use buck2_common::argv::SanitizedArgv;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
+use bz_cli_proto::BxlProfile;
+use bz_cli_proto::ProfileRequest;
+use bz_cli_proto::ProfileResponse;
+use bz_cli_proto::TargetProfile;
+use bz_cli_proto::profile_request::ProfileOpts;
+use bz_cli_proto::target_profile;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::profiling::BuckProfileMode;
+use bz_client_ctx::common::target_cfg::TargetCfgWithUniverseOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::NoPartialResultHandler;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::path_arg::PathArg;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_common::argv::Argv;
+use bz_common::argv::SanitizedArgv;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::internal_error;
 
 use super::bxl::BxlCommandOptions;
 
@@ -218,8 +218,8 @@ impl StreamingCommand for ProfileSubcommand {
                     .target_universe
                     .is_empty()
                 {
-                    return Err::<(), _>(buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err::<(), _>(bz_error!(
+                        bz_error::ErrorTag::Input,
                         "BXL profile does not support target universe"
                     ))
                     .into();
@@ -258,18 +258,18 @@ impl StreamingCommand for ProfileSubcommand {
             .ok_or_else(|| internal_error!("Missing duration"))
             .and_then(|d| {
                 Duration::try_from(d).map_err(|_| {
-                    buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "Duration is negative")
+                    bz_error::bz_error!(bz_error::ErrorTag::Input, "Duration is negative")
                 })
             })
             .buck_error_context("Elapsed is invalid")?;
 
-        buck2_client_ctx::println!(
+        bz_client_ctx::println!(
             "Starlark {:?} profile has been written to {}",
             profile_mode,
             self.common_opts().output.display(),
         )?;
-        buck2_client_ctx::println!("Elapsed: {:.3}s", elapsed.as_secs_f64())?;
-        buck2_client_ctx::println!("Total retained bytes: {}", total_retained_bytes)?;
+        bz_client_ctx::println!("Elapsed: {:.3}s", elapsed.as_secs_f64())?;
+        bz_client_ctx::println!("Total retained bytes: {}", total_retained_bytes)?;
 
         ExitResult::success()
     }

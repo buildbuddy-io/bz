@@ -12,19 +12,19 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
-use buck2_build_api::deferred::calculation::DeferredHolder;
-use buck2_build_api::deferred::calculation::lookup_deferred_holder;
-use buck2_build_api::dynamic::calculation::DYNAMIC_LAMBDA_CALCULATION_IMPL;
-use buck2_build_api::dynamic::calculation::DynamicLambdaCalculation;
-use buck2_build_api::dynamic::calculation::DynamicLambdaResult;
-use buck2_build_signals::node_key::BuildSignalsNodeKey;
-use buck2_build_signals::node_key::BuildSignalsNodeKeyImpl;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_data::ToProtoMessage;
-use buck2_error::BuckErrorContext;
+use bz_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
+use bz_build_api::deferred::calculation::DeferredHolder;
+use bz_build_api::deferred::calculation::lookup_deferred_holder;
+use bz_build_api::dynamic::calculation::DYNAMIC_LAMBDA_CALCULATION_IMPL;
+use bz_build_api::dynamic::calculation::DynamicLambdaCalculation;
+use bz_build_api::dynamic::calculation::DynamicLambdaResult;
+use bz_build_signals::node_key::BuildSignalsNodeKey;
+use bz_build_signals::node_key::BuildSignalsNodeKeyImpl;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::dynamic::DynamicLambdaResultsKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_data::ToProtoMessage;
+use bz_error::BuckErrorContext;
 use dice::CancellationContext;
 use dice::Demand;
 use dice::DiceComputations;
@@ -46,7 +46,7 @@ impl DynamicLambdaCalculation for DynamicLambdaCalculationImpl {
         &self,
         dice: &mut DiceComputations<'_>,
         key: &DynamicLambdaResultsKey,
-    ) -> buck2_error::Result<Arc<DynamicLambdaResult>> {
+    ) -> bz_error::Result<Arc<DynamicLambdaResult>> {
         Ok(dice.compute(&DynamicLambdaDiceKey(key.dupe())).await??)
     }
 }
@@ -72,7 +72,7 @@ pub struct DynamicLambdaDiceKey(DynamicLambdaResultsKey);
 
 #[async_trait]
 impl Key for DynamicLambdaDiceKey {
-    type Value = buck2_error::Result<Arc<DynamicLambdaResult>>;
+    type Value = bz_error::Result<Arc<DynamicLambdaResult>>;
 
     async fn compute(
         &self,
@@ -119,12 +119,12 @@ impl Key for DynamicLambdaDiceKey {
 }
 
 impl BuildSignalsNodeKeyImpl for DynamicLambdaDiceKey {
-    fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry> {
-        let entry = buck2_data::critical_path_entry2::Entry::DynamicAnalysis(
-            buck2_data::critical_path_entry2::DynamicAnalysis {
+    fn critical_path_entry_proto(&self) -> Option<bz_data::critical_path_entry2::Entry> {
+        let entry = bz_data::critical_path_entry2::Entry::DynamicAnalysis(
+            bz_data::critical_path_entry2::DynamicAnalysis {
                 target: match self.0.holder_key() {
                     DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(target)) => Some(
-                        buck2_data::critical_path_entry2::dynamic_analysis::Target::StandardTarget(
+                        bz_data::critical_path_entry2::dynamic_analysis::Target::StandardTarget(
                             target.as_proto(),
                         ),
                     ),

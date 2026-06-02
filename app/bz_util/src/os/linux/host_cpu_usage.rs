@@ -12,13 +12,13 @@
 
 use std::fs;
 
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
+use bz_error::bz_error;
+use bz_error::internal_error;
 
 use crate::os::host_cpu_usage::HostCpuUsage;
 
 /// Reads CPU ticks from /proc/stat.
-pub fn host_cpu_usage() -> buck2_error::Result<HostCpuUsage> {
+pub fn host_cpu_usage() -> bz_error::Result<HostCpuUsage> {
     // https://www.linuxhowtos.org/manpages/5/proc.htm describes the format of /proc/stat.
     // The first line is "cpu ..." which is the aggregated view for all cores.
     let contents = fs::read_to_string("/proc/stat")?;
@@ -43,8 +43,8 @@ pub fn host_cpu_usage() -> buck2_error::Result<HostCpuUsage> {
             system_millis: system_millis_str.parse::<u64>()?,
         });
     }
-    Err(buck2_error!(
-        buck2_error::ErrorTag::CpuStats,
+    Err(bz_error!(
+        bz_error::ErrorTag::CpuStats,
         "Failed to get CPU stats from /proc/stat"
     ))
 }

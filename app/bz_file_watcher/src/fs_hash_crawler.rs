@@ -15,25 +15,25 @@ use std::time::UNIX_EPOCH;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::file_ops::dice::FileChangeTracker;
-use buck2_common::file_ops::metadata::FileType;
-use buck2_common::ignores::ignore_set::IgnoreSet;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::name::CellName;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_data::FileWatcherEventType;
-use buck2_data::FileWatcherKind;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::span_async;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_hash::StdBuckHashMap;
+use bz_common::file_ops::dice::FileChangeTracker;
+use bz_common::file_ops::metadata::FileType;
+use bz_common::ignores::ignore_set::IgnoreSet;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::name::CellName;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_data::FileWatcherEventType;
+use bz_data::FileWatcherKind;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::span_async;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_hash::StdBuckHashMap;
 use compact_str::CompactString;
 use dice::DiceTransactionUpdater;
 use dupe::Dupe;
@@ -58,7 +58,7 @@ impl FsHashCrawler {
         root: &ProjectRoot,
         cells: CellResolver,
         ignore_specs: StdBuckHashMap<CellName, IgnoreSet>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let snapshot = Arc::new(Mutex::new(FsSnapshot::build(root, &cells, &ignore_specs)?));
         Ok(Self {
             root: root.dupe(),
@@ -71,7 +71,7 @@ impl FsHashCrawler {
     async fn update(
         &self,
         mut dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(buck2_data::FileWatcherStats, DiceTransactionUpdater)> {
+    ) -> bz_error::Result<(bz_data::FileWatcherStats, DiceTransactionUpdater)> {
         let root = self.root.dupe();
         let cells = self.cells.dupe();
         let ignore_specs = self.ignore_specs.clone();
@@ -92,10 +92,10 @@ impl FileWatcher for FsHashCrawler {
     async fn sync(
         &self,
         dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(DiceTransactionUpdater, Mergebase)> {
+    ) -> bz_error::Result<(DiceTransactionUpdater, Mergebase)> {
         span_async(
-            buck2_data::FileWatcherStart {
-                provider: buck2_data::FileWatcherProvider::FsHashCrawler as i32,
+            bz_data::FileWatcherStart {
+                provider: bz_data::FileWatcherProvider::FsHashCrawler as i32,
             },
             async {
                 let (stats, res) = match self.update(dice).await {
@@ -105,7 +105,7 @@ impl FileWatcher for FsHashCrawler {
                     }
                     Err(e) => (None, Err(e)),
                 };
-                (res, buck2_data::FileWatcherEnd { stats })
+                (res, bz_data::FileWatcherEnd { stats })
             },
         )
         .await
@@ -167,7 +167,7 @@ impl FsSnapshot {
         root: &ProjectRoot,
         cells: &CellResolver,
         ignore_specs: &StdBuckHashMap<CellName, IgnoreSet>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut snapshot = FsSnapshot(StdBuckHashMap::default());
         snapshot.build_fs_snapshot(root, cells, ignore_specs, root.root())?;
         Ok(snapshot)
@@ -177,7 +177,7 @@ impl FsSnapshot {
         self.0.insert(cell, info);
     }
 
-    fn get_updates(&self, new_snapshot: &FsSnapshot) -> buck2_error::Result<Vec<FsEvent>> {
+    fn get_updates(&self, new_snapshot: &FsSnapshot) -> bz_error::Result<Vec<FsEvent>> {
         let mut events = Vec::new();
         for (cell_path, prev_info) in self.0.iter() {
             if let Some(current_info) = new_snapshot.0.get(cell_path) {
@@ -234,7 +234,7 @@ impl FsSnapshot {
         new_snapshot: &FsSnapshot,
         ignore_specs: &StdBuckHashMap<CellName, IgnoreSet>,
         cells: &CellResolver,
-    ) -> buck2_error::Result<(buck2_data::FileWatcherStats, FileChangeTracker)> {
+    ) -> bz_error::Result<(bz_data::FileWatcherStats, FileChangeTracker)> {
         let events = self.get_updates(new_snapshot)?;
         let mut changed = FileChangeTracker::new();
         let mut stats = FileWatcherStats::new(Default::default(), events.len());
@@ -296,7 +296,7 @@ impl FsSnapshot {
         cells: &CellResolver,
         ignore_specs: &StdBuckHashMap<CellName, IgnoreSet>,
         disk_path: &AbsNormPath,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for file in fs_util::read_dir(disk_path).categorize_internal()? {
             let file = file?;
             let filetype = file.file_type()?;
@@ -356,23 +356,23 @@ impl FsSnapshot {
 mod tests {
     use std::collections::BTreeSet;
 
-    use buck2_core::cells::CellResolver;
-    use buck2_core::cells::cell_path::CellPath;
-    use buck2_core::cells::cell_root_path::CellRootPathBuf;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::fs::project::ProjectRoot;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_data::FileWatcherEventType;
-    use buck2_data::FileWatcherKind;
-    use buck2_fs::fs_util::uncategorized as fs_util;
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    use buck2_fs::paths::abs_path::AbsPathBuf;
+    use bz_core::cells::CellResolver;
+    use bz_core::cells::cell_path::CellPath;
+    use bz_core::cells::cell_root_path::CellRootPathBuf;
+    use bz_core::cells::name::CellName;
+    use bz_core::fs::project::ProjectRoot;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_data::FileWatcherEventType;
+    use bz_data::FileWatcherKind;
+    use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use bz_fs::paths::abs_path::AbsPathBuf;
 
     use crate::fs_hash_crawler::FsEvent;
     use crate::fs_hash_crawler::FsSnapshot;
 
     #[tokio::test]
-    async fn test_fs_snapshot() -> buck2_error::Result<()> {
+    async fn test_fs_snapshot() -> bz_error::Result<()> {
         let cell_resolver = CellResolver::testing_with_name_and_path(
             CellName::testing_new("root"),
             CellRootPathBuf::testing_new(""),
@@ -381,7 +381,7 @@ mod tests {
         let root_path = fs_util::canonicalize(AbsNormPathBuf::new(tempdir.path().to_owned())?)?;
         let proj_root = ProjectRoot::new(root_path)?;
 
-        let get_path = |path| -> buck2_error::Result<(AbsPathBuf, CellPath)> {
+        let get_path = |path| -> bz_error::Result<(AbsPathBuf, CellPath)> {
             let path = ProjectRelativePath::new(path).unwrap();
             let cell_path = cell_resolver.get_cell_path(path);
             Ok((proj_root.resolve(path).into_abs_path_buf(), cell_path))

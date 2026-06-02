@@ -12,34 +12,34 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
 
-use buck2_downward_api::DownwardApi;
-use buck2_downward_api_proto::ConsoleRequest;
-use buck2_downward_api_proto::ExternalEventRequest;
-use buck2_downward_api_proto::LogRequest;
-use buck2_downward_api_proto::downward_api_client;
-use buck2_downward_api_proto::downward_api_server;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::dispatch::with_dispatcher_async;
-use buck2_grpc::ServerHandle;
-use buck2_grpc::make_channel;
-use buck2_grpc::spawn_oneshot;
-use buck2_grpc::to_tonic;
-use buck2_hash::StdBuckHashMap;
-use buck2_test_proto::AttachInfoMessageRequest;
-use buck2_test_proto::Empty;
-use buck2_test_proto::EndOfTestResultsRequest;
-use buck2_test_proto::ExecuteResponse2;
-use buck2_test_proto::PrepareForLocalExecutionResponse;
-use buck2_test_proto::ReportTestResultRequest;
-use buck2_test_proto::ReportTestSessionRequest;
-use buck2_test_proto::ReportTestsDiscoveredRequest;
-use buck2_test_proto::Testing;
-use buck2_test_proto::UploadFileToCasRequest;
-use buck2_test_proto::UploadFileToCasResponse;
-use buck2_test_proto::test_orchestrator_client;
-use buck2_test_proto::test_orchestrator_server;
+use bz_downward_api::DownwardApi;
+use bz_downward_api_proto::ConsoleRequest;
+use bz_downward_api_proto::ExternalEventRequest;
+use bz_downward_api_proto::LogRequest;
+use bz_downward_api_proto::downward_api_client;
+use bz_downward_api_proto::downward_api_server;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::dispatch::with_dispatcher_async;
+use bz_grpc::ServerHandle;
+use bz_grpc::make_channel;
+use bz_grpc::spawn_oneshot;
+use bz_grpc::to_tonic;
+use bz_hash::StdBuckHashMap;
+use bz_test_proto::AttachInfoMessageRequest;
+use bz_test_proto::Empty;
+use bz_test_proto::EndOfTestResultsRequest;
+use bz_test_proto::ExecuteResponse2;
+use bz_test_proto::PrepareForLocalExecutionResponse;
+use bz_test_proto::ReportTestResultRequest;
+use bz_test_proto::ReportTestSessionRequest;
+use bz_test_proto::ReportTestsDiscoveredRequest;
+use bz_test_proto::Testing;
+use bz_test_proto::UploadFileToCasRequest;
+use bz_test_proto::UploadFileToCasResponse;
+use bz_test_proto::test_orchestrator_client;
+use bz_test_proto::test_orchestrator_server;
 use dupe::Dupe;
 use futures::future::BoxFuture;
 use futures::future::FutureExt;
@@ -76,7 +76,7 @@ pub struct TestOrchestratorClient {
 }
 
 impl TestOrchestratorClient {
-    pub async fn new<T>(io: T) -> buck2_error::Result<Self>
+    pub async fn new<T>(io: T) -> bz_error::Result<Self>
     where
         T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
     {
@@ -97,7 +97,7 @@ impl TestOrchestratorClient {
 
 #[async_trait::async_trait]
 impl DownwardApi for TestOrchestratorClient {
-    async fn console(&self, level: Level, message: String) -> buck2_error::Result<()> {
+    async fn console(&self, level: Level, message: String) -> bz_error::Result<()> {
         let level = level.try_into().buck_error_context("Invalid `level`")?;
 
         self.downward_api_client
@@ -111,7 +111,7 @@ impl DownwardApi for TestOrchestratorClient {
         Ok(())
     }
 
-    async fn log(&self, level: Level, message: String) -> buck2_error::Result<()> {
+    async fn log(&self, level: Level, message: String) -> bz_error::Result<()> {
         let level = level.try_into().buck_error_context("Invalid `level`")?;
 
         self.downward_api_client
@@ -125,7 +125,7 @@ impl DownwardApi for TestOrchestratorClient {
         Ok(())
     }
 
-    async fn external(&self, data: StdBuckHashMap<String, String>) -> buck2_error::Result<()> {
+    async fn external(&self, data: StdBuckHashMap<String, String>) -> bz_error::Result<()> {
         let event = data.into();
 
         self.downward_api_client
@@ -150,7 +150,7 @@ impl TestOrchestratorClient {
         executor_override: Option<ExecutorConfigOverride>,
         required_local_resources: RequiredLocalResources,
         disable_test_execution_caching: bool,
-    ) -> buck2_error::Result<ExecuteResponse> {
+    ) -> bz_error::Result<ExecuteResponse> {
         let test_executable = TestExecutable {
             stage: ui_prints,
             target,
@@ -168,7 +168,7 @@ impl TestOrchestratorClient {
             disable_test_execution_caching,
         };
 
-        let req: buck2_test_proto::ExecuteRequest2 = req
+        let req: bz_test_proto::ExecuteRequest2 = req
             .try_into()
             .buck_error_context("Invalid execute request")?;
 
@@ -180,19 +180,19 @@ impl TestOrchestratorClient {
             .into_inner();
 
         let response = match response.ok_or_else(|| internal_error!("Missing `response`"))? {
-            buck2_test_proto::execute_response2::Response::Result(res) => {
+            bz_test_proto::execute_response2::Response::Result(res) => {
                 ExecuteResponse::Result(res.try_into().buck_error_context("Invalid `result`")?)
             }
-            buck2_test_proto::execute_response2::Response::Cancelled(
-                buck2_test_proto::Cancelled { reason },
+            bz_test_proto::execute_response2::Response::Cancelled(
+                bz_test_proto::Cancelled { reason },
             ) => {
                 let reason = match reason {
-                    Some(reason) => buck2_test_proto::CancellationReason::try_from(reason)
+                    Some(reason) => bz_test_proto::CancellationReason::try_from(reason)
                         .map(|proto_reason| match proto_reason {
-                            buck2_test_proto::CancellationReason::NotSpecified => {
+                            bz_test_proto::CancellationReason::NotSpecified => {
                                 crate::data::CancellationReason::NotSpecified
                             }
-                            buck2_test_proto::CancellationReason::ReQueueTimeout => {
+                            bz_test_proto::CancellationReason::ReQueueTimeout => {
                                 crate::data::CancellationReason::ReQueueTimeout
                             }
                         })
@@ -206,7 +206,7 @@ impl TestOrchestratorClient {
         Ok(response)
     }
 
-    pub async fn report_test_result(&self, result: TestResult) -> buck2_error::Result<()> {
+    pub async fn report_test_result(&self, result: TestResult) -> bz_error::Result<()> {
         let result = result.try_into().buck_error_context("Invalid `result`")?;
 
         self.test_orchestrator_client
@@ -224,7 +224,7 @@ impl TestOrchestratorClient {
         target: ConfiguredTargetHandle,
         suite: String,
         tests: Vec<String>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let target = target.try_into().buck_error_context("Invalid `target`")?;
 
         self.test_orchestrator_client
@@ -247,7 +247,7 @@ impl TestOrchestratorClient {
         &self,
         session_info: String,
         test_session_id: Option<String>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.test_orchestrator_client
             .clone()
             .report_test_session(ReportTestSessionRequest {
@@ -259,7 +259,7 @@ impl TestOrchestratorClient {
         Ok(())
     }
 
-    pub async fn end_of_test_results(&self, exit_code: i32) -> buck2_error::Result<()> {
+    pub async fn end_of_test_results(&self, exit_code: i32) -> bz_error::Result<()> {
         self.test_orchestrator_client
             .clone()
             .end_of_test_results(EndOfTestResultsRequest { exit_code })
@@ -276,7 +276,7 @@ impl TestOrchestratorClient {
         env: SortedVectorMap<String, ArgValue>,
         pre_create_dirs: Vec<DeclaredOutput>,
         required_local_resources: RequiredLocalResources,
-    ) -> buck2_error::Result<PrepareForLocalExecutionResult> {
+    ) -> bz_error::Result<PrepareForLocalExecutionResult> {
         let executable = TestExecutable {
             stage,
             target,
@@ -285,11 +285,11 @@ impl TestOrchestratorClient {
             pre_create_dirs,
         };
 
-        let executable: buck2_test_proto::TestExecutable = executable
+        let executable: bz_test_proto::TestExecutable = executable
             .try_into()
             .buck_error_context("Invalid prepare_for_local_execution request")?;
 
-        let request = buck2_test_proto::PrepareForLocalExecutionRequest {
+        let request = bz_test_proto::PrepareForLocalExecutionRequest {
             test_executable: Some(executable),
             required_local_resources: required_local_resources.resources.into_map(|r| r.into()),
         };
@@ -302,7 +302,7 @@ impl TestOrchestratorClient {
             .buck_error_context("Invalid `result`")
     }
 
-    pub async fn attach_info_message(&self, message: String) -> buck2_error::Result<()> {
+    pub async fn attach_info_message(&self, message: String) -> bz_error::Result<()> {
         self.test_orchestrator_client
             .clone()
             .attach_info_message(AttachInfoMessageRequest { message })
@@ -315,13 +315,13 @@ impl TestOrchestratorClient {
         local_path: String,
         ttl_seconds: i64,
         use_case: String,
-    ) -> buck2_error::Result<CasDigest> {
+    ) -> bz_error::Result<CasDigest> {
         let UploadFileToCasResponse { digest } = self
             .test_orchestrator_client
             .clone()
             .upload_file_to_cas(UploadFileToCasRequest {
                 local_path,
-                ttl_config: Some(buck2_test_proto::TtlConfig {
+                ttl_config: Some(bz_test_proto::TtlConfig {
                     ttl_seconds,
                     use_case,
                 }),
@@ -345,7 +345,7 @@ where
 {
     async fn execute2(
         &self,
-        request: tonic::Request<buck2_test_proto::ExecuteRequest2>,
+        request: tonic::Request<bz_test_proto::ExecuteRequest2>,
     ) -> Result<tonic::Response<ExecuteResponse2>, tonic::Status> {
         to_tonic(async move {
             let ExecuteRequest2 {
@@ -387,7 +387,7 @@ where
 
             let response = match response {
                 ExecuteResponse::Result(r) => {
-                    buck2_test_proto::execute_response2::Response::Result(
+                    bz_test_proto::execute_response2::Response::Result(
                         r.try_into()
                             .buck_error_context("Failed to serialize result")?,
                     )
@@ -396,17 +396,17 @@ where
                     let reason = if let Some(reason) = reason {
                         match reason {
                             crate::data::CancellationReason::NotSpecified => {
-                                Some(buck2_test_proto::CancellationReason::NotSpecified.into())
+                                Some(bz_test_proto::CancellationReason::NotSpecified.into())
                             }
                             crate::data::CancellationReason::ReQueueTimeout => {
-                                Some(buck2_test_proto::CancellationReason::ReQueueTimeout.into())
+                                Some(bz_test_proto::CancellationReason::ReQueueTimeout.into())
                             }
                         }
                     } else {
                         None
                     };
-                    buck2_test_proto::execute_response2::Response::Cancelled(
-                        buck2_test_proto::Cancelled { reason },
+                    bz_test_proto::execute_response2::Response::Cancelled(
+                        bz_test_proto::Cancelled { reason },
                     )
                 }
             };
@@ -505,10 +505,10 @@ where
 
     async fn prepare_for_local_execution(
         &self,
-        request: tonic::Request<buck2_test_proto::PrepareForLocalExecutionRequest>,
+        request: tonic::Request<bz_test_proto::PrepareForLocalExecutionRequest>,
     ) -> Result<tonic::Response<PrepareForLocalExecutionResponse>, tonic::Status> {
         to_tonic(async move {
-            let buck2_test_proto::PrepareForLocalExecutionRequest {
+            let bz_test_proto::PrepareForLocalExecutionRequest {
                 test_executable,
                 required_local_resources,
             } = request.into_inner();
@@ -596,7 +596,7 @@ where
     async fn console(
         &self,
         request: tonic::Request<ConsoleRequest>,
-    ) -> Result<tonic::Response<buck2_downward_api_proto::Empty>, tonic::Status> {
+    ) -> Result<tonic::Response<bz_downward_api_proto::Empty>, tonic::Status> {
         to_tonic(async move {
             let ConsoleRequest { level, message } = request.into_inner();
 
@@ -610,7 +610,7 @@ where
                 .await
                 .buck_error_context("Failed to console")?;
 
-            Ok(buck2_downward_api_proto::Empty {})
+            Ok(bz_downward_api_proto::Empty {})
         })
         .await
     }
@@ -618,7 +618,7 @@ where
     async fn log(
         &self,
         request: tonic::Request<LogRequest>,
-    ) -> Result<tonic::Response<buck2_downward_api_proto::Empty>, tonic::Status> {
+    ) -> Result<tonic::Response<bz_downward_api_proto::Empty>, tonic::Status> {
         to_tonic(async move {
             let LogRequest { level, message } = request.into_inner();
 
@@ -632,7 +632,7 @@ where
                 .await
                 .buck_error_context("Failed to log")?;
 
-            Ok(buck2_downward_api_proto::Empty {})
+            Ok(bz_downward_api_proto::Empty {})
         })
         .await
     }
@@ -640,7 +640,7 @@ where
     async fn external_event(
         &self,
         request: tonic::Request<ExternalEventRequest>,
-    ) -> Result<tonic::Response<buck2_downward_api_proto::Empty>, tonic::Status> {
+    ) -> Result<tonic::Response<bz_downward_api_proto::Empty>, tonic::Status> {
         to_tonic(async move {
             let ExternalEventRequest { event } = request.into_inner();
 
@@ -654,7 +654,7 @@ where
                 .await
                 .buck_error_context("Failed to deliver event")?;
 
-            Ok(buck2_downward_api_proto::Empty {})
+            Ok(bz_downward_api_proto::Empty {})
         })
         .await
     }

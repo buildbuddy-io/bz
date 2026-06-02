@@ -21,27 +21,27 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_condvar_fair::Condvar;
 use async_trait::async_trait;
-use buck2_build_signals::env::EXCLUSIVE_COMMAND_WAIT;
-use buck2_build_signals::env::EarlyCommandTimingBuilder;
-use buck2_cli_proto::client_context::ExitWhen;
-use buck2_cli_proto::client_context::PreemptibleWhen;
-use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::soft_error;
-use buck2_data::CommandPreempted;
-use buck2_data::DiceBlockConcurrentCommandEnd;
-use buck2_data::DiceBlockConcurrentCommandStart;
-use buck2_data::DiceEqualityCheck;
-use buck2_data::DiceSynchronizeSectionEnd;
-use buck2_data::DiceSynchronizeSectionStart;
-use buck2_data::ExclusiveCommandWaitEnd;
-use buck2_data::ExclusiveCommandWaitStart;
-use buck2_data::NoActiveDiceState;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_util::truncate::truncate;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_build_signals::env::EXCLUSIVE_COMMAND_WAIT;
+use bz_build_signals::env::EarlyCommandTimingBuilder;
+use bz_cli_proto::client_context::ExitWhen;
+use bz_cli_proto::client_context::PreemptibleWhen;
+use bz_common::legacy_configs::dice::HasInjectedLegacyConfigs;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::soft_error;
+use bz_data::CommandPreempted;
+use bz_data::DiceBlockConcurrentCommandEnd;
+use bz_data::DiceBlockConcurrentCommandStart;
+use bz_data::DiceEqualityCheck;
+use bz_data::DiceSynchronizeSectionEnd;
+use bz_data::DiceSynchronizeSectionStart;
+use bz_data::ExclusiveCommandWaitEnd;
+use bz_data::ExclusiveCommandWaitStart;
+use bz_data::NoActiveDiceState;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::EventDispatcher;
+use bz_util::truncate::truncate;
+use bz_wrapper_common::invocation_id::TraceId;
 use derive_more::Display;
 use dice::Dice;
 use dice::DiceEquality;
@@ -68,7 +68,7 @@ use tokio::sync::oneshot::error::RecvError;
 use crate::ctx::LockedPreviousCommandData;
 use crate::experiment_util::get_experiment_tags;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum ConcurrencyHandlerError {
     #[error(
@@ -170,13 +170,13 @@ impl CommandData {
     }
 
     fn notify_tainted(&self) {
-        self.dispatcher.instant_event(buck2_data::TagEvent {
+        self.dispatcher.instant_event(bz_data::TagEvent {
             tags: vec!["concurrency-tainted".to_owned()],
         });
     }
 
     fn notify_previously_tainted(&self) {
-        self.dispatcher.instant_event(buck2_data::TagEvent {
+        self.dispatcher.instant_event(bz_data::TagEvent {
             tags: vec!["concurrency-previously-tainted".to_owned()],
         });
     }
@@ -264,7 +264,7 @@ pub trait DiceUpdater: Send + Sync {
         &self,
         mut ctx: DiceTransactionUpdater,
         early_timings: &mut EarlyCommandTimingBuilder,
-    ) -> buck2_error::Result<(DiceTransactionUpdater, UserComputationData)>;
+    ) -> bz_error::Result<(DiceTransactionUpdater, UserComputationData)>;
 }
 
 #[derive(Allocative)]
@@ -365,7 +365,7 @@ impl ConcurrencyHandler {
         project_root: &ProjectRoot,
         exit_when: ExitWhen,
         mut early_command_timing: EarlyCommandTimingBuilder,
-    ) -> buck2_error::Result<R>
+    ) -> bz_error::Result<R>
     where
         F: FnOnce(DiceTransaction, EarlyCommandTimingBuilder) -> Fut,
         Fut: Future<Output = R> + Send,
@@ -449,7 +449,7 @@ impl ConcurrencyHandler {
         previous_command_data: Arc<LockedPreviousCommandData>,
         project_root: &ProjectRoot,
         exit_when: ExitWhen,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         OnExecExit,
         DiceTransaction,
         impl Future<Output = Result<(), RecvError>> + use<>,
@@ -490,8 +490,8 @@ impl ConcurrencyHandler {
                     drop(data);
                     event_dispatcher
                         .span_async(
-                            buck2_data::DiceCleanupStart { epoch: epoch as _ },
-                            async move { (future.await, buck2_data::DiceCleanupEnd {}) },
+                            bz_data::DiceCleanupStart { epoch: epoch as _ },
+                            async move { (future.await, bz_data::DiceCleanupEnd {}) },
                         )
                         .await;
                     data = self.data.lock().await;
@@ -508,28 +508,28 @@ impl ConcurrencyHandler {
                     // isn't a big perf bottleneck. Dice should be able to resurrect nodes properly.
 
                     let transaction = event_dispatcher
-                        .span_async(buck2_data::DiceStateUpdateStart {}, async {
+                        .span_async(bz_data::DiceStateUpdateStart {}, async {
                             (
                                 async {
                                     let updater = self.dice.updater();
                                     let (transaction, user_data) =
                                         updates.update(updater, early_timings).await?;
-                                    let transaction = buck2_events::dispatch::span_async(
-                                        buck2_data::DiceStateUpdateStageStart {
+                                    let transaction = bz_events::dispatch::span_async(
+                                        bz_data::DiceStateUpdateStageStart {
                                             stage: "committing graph changes".to_owned(),
                                         },
                                         async move {
                                             (
                                                 transaction.commit_with_data(user_data).await,
-                                                buck2_data::DiceStateUpdateStageEnd {},
+                                                bz_data::DiceStateUpdateStageEnd {},
                                             )
                                         },
                                     )
                                     .await;
-                                    buck2_error::Ok(transaction)
+                                    bz_error::Ok(transaction)
                                 }
                                 .await,
-                                buck2_data::DiceStateUpdateEnd {},
+                                bz_data::DiceStateUpdateEnd {},
                             )
                         })
                         .await?;
@@ -669,7 +669,7 @@ impl ConcurrencyHandler {
             .await?
         {
             let external_configs = transaction.get_injected_external_buckconfig_data().await?;
-            let current_external_and_local_configs: Vec<buck2_data::BuckconfigComponent> =
+            let current_external_and_local_configs: Vec<bz_data::BuckconfigComponent> =
                 external_configs
                     .get_buckconfig_components(project_root)
                     .await;
@@ -683,10 +683,10 @@ impl ConcurrencyHandler {
                 trace,
             );
 
-            event_dispatcher.instant_event(buck2_data::TagEvent {
+            event_dispatcher.instant_event(bz_data::TagEvent {
                 tags: get_experiment_tags(&current_external_and_local_configs),
             });
-            event_dispatcher.instant_event(buck2_data::BuckconfigInputValues {
+            event_dispatcher.instant_event(bz_data::BuckconfigInputValues {
                 components: current_external_and_local_configs,
             });
         }
@@ -706,7 +706,7 @@ impl ConcurrencyHandler {
         self: &Arc<Self>,
         event_dispatcher: EventDispatcher,
         command_name: String,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let _exclusive_command_guard = event_dispatcher
             .span_async(
                 ExclusiveCommandWaitStart {
@@ -779,7 +779,7 @@ impl ConcurrencyHandler {
         state: RunState,
         active_commands: &SmallMap<CommandId, CommandData>,
         current_command: &CommandData,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let active_commands = format_traces(active_commands, current_command);
 
         if let RunState::NestedSameState = state {
@@ -821,7 +821,7 @@ impl OnExecExit {
         command: CommandId,
         data: CommandData,
         mut guard: MutexGuard<'_, ConcurrencyHandlerData>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let prev = guard.active_commands.insert(command, data);
         if prev.is_some() {
             return Err(internal_error!(
@@ -868,17 +868,17 @@ mod tests {
     use allocative::Allocative;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use buck2_build_signals::env::EXCLUSIVE_COMMAND_WAIT;
-    use buck2_build_signals::env::FILE_WATCHER_WAIT;
-    use buck2_common::legacy_configs::dice::SetLegacyConfigs;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_core::is_open_source;
-    use buck2_events::BuckEvent;
-    use buck2_events::create_source_sink_pair;
-    use buck2_events::daemon_id::DaemonId;
-    use buck2_events::sink::null::NullEventSink;
-    use buck2_events::source::ChannelEventSource;
-    use buck2_events::span::SpanId;
+    use bz_build_signals::env::EXCLUSIVE_COMMAND_WAIT;
+    use bz_build_signals::env::FILE_WATCHER_WAIT;
+    use bz_common::legacy_configs::dice::SetLegacyConfigs;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_core::is_open_source;
+    use bz_events::BuckEvent;
+    use bz_events::create_source_sink_pair;
+    use bz_events::daemon_id::DaemonId;
+    use bz_events::sink::null::NullEventSink;
+    use bz_events::source::ChannelEventSource;
+    use bz_events::span::SpanId;
     use derivative::Derivative;
     use dice::DetectCycles;
     use dice::DiceComputations;
@@ -912,7 +912,7 @@ mod tests {
             &self,
             ctx: DiceTransactionUpdater,
             _early_timings: &mut EarlyCommandTimingBuilder,
-        ) -> buck2_error::Result<(DiceTransactionUpdater, UserComputationData)> {
+        ) -> bz_error::Result<(DiceTransactionUpdater, UserComputationData)> {
             Ok((ctx, Default::default()))
         }
     }
@@ -925,7 +925,7 @@ mod tests {
             &self,
             mut ctx: DiceTransactionUpdater,
             _early_timings: &mut EarlyCommandTimingBuilder,
-        ) -> buck2_error::Result<(DiceTransactionUpdater, UserComputationData)> {
+        ) -> bz_error::Result<(DiceTransactionUpdater, UserComputationData)> {
             ctx.changed_to(vec![(K, ())])?;
             Ok((ctx, Default::default()))
         }
@@ -1176,7 +1176,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parallel_invocation_different_traceid_blocks() -> buck2_error::Result<()> {
+    async fn parallel_invocation_different_traceid_blocks() -> bz_error::Result<()> {
         let dice = make_default_dice().await;
 
         let concurrency = ConcurrencyHandler::new(dice.dupe());
@@ -1302,7 +1302,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parallel_invocation_exit_when_different_state() -> buck2_error::Result<()> {
+    async fn parallel_invocation_exit_when_different_state() -> bz_error::Result<()> {
         let dice = make_default_dice().await;
 
         let concurrency = ConcurrencyHandler::new(dice.dupe());
@@ -1422,18 +1422,18 @@ mod tests {
 
         let fut3_result = fut3.await?;
 
-        let fut3_error: buck2_error::Error = fut3_result.unwrap_err();
+        let fut3_error: bz_error::Error = fut3_result.unwrap_err();
         assert!(
             fut3_error
                 .tags()
-                .contains(&buck2_error::ErrorTag::DaemonIsBusy),
+                .contains(&bz_error::ErrorTag::DaemonIsBusy),
         );
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn parallel_invocation_exit_when_preemptible() -> buck2_error::Result<()> {
+    async fn parallel_invocation_exit_when_preemptible() -> bz_error::Result<()> {
         let dice = make_default_dice().await;
 
         let concurrency = ConcurrencyHandler::new(dice.dupe());
@@ -1545,11 +1545,11 @@ mod tests {
 
         drop(blocked1);
         let fut1_result = fut1.await?;
-        let fut1_error: buck2_error::Error = fut1_result.unwrap_err();
+        let fut1_error: bz_error::Error = fut1_result.unwrap_err();
         assert!(
             fut1_error
                 .tags()
-                .contains(&buck2_error::ErrorTag::DaemonPreempted),
+                .contains(&bz_error::ErrorTag::DaemonPreempted),
         );
 
         assert!(!arrived.load(Ordering::Relaxed));
@@ -1598,7 +1598,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cleanup_stage() -> buck2_error::Result<()> {
+    async fn test_cleanup_stage() -> bz_error::Result<()> {
         let key = CleanupTestKey {
             is_executing: Arc::new(Mutex::new(())),
         };
@@ -1697,7 +1697,7 @@ mod tests {
     async fn wait_for_event<F>(
         source: &mut ChannelEventSource,
         matcher: Box<F>,
-    ) -> buck2_error::Result<BuckEvent>
+    ) -> bz_error::Result<BuckEvent>
     where
         F: Fn(&BuckEvent) -> bool + Send,
     {
@@ -1721,13 +1721,13 @@ mod tests {
     async fn wait_for_exclusive_span_start(
         source: &mut ChannelEventSource,
         cmd: Option<&str>,
-    ) -> buck2_error::Result<Option<SpanId>> {
+    ) -> bz_error::Result<Option<SpanId>> {
         let cmd = cmd.map(|c| c.to_owned());
         Ok(wait_for_event(
             source,
             Box::new(|e: &BuckEvent| {
                 if let Some(span_start) = &e.span_start_event() {
-                    if let Some(buck2_data::span_start_event::Data::ExclusiveCommandWait(data)) =
+                    if let Some(bz_data::span_start_event::Data::ExclusiveCommandWait(data)) =
                         &span_start.data
                     {
                         let ExclusiveCommandWaitStart {
@@ -1746,12 +1746,12 @@ mod tests {
     async fn wait_for_exclusive_span_end(
         source: &mut ChannelEventSource,
         span_id: Option<SpanId>,
-    ) -> buck2_error::Result<BuckEvent> {
+    ) -> bz_error::Result<BuckEvent> {
         wait_for_event(
             source,
             Box::new(|e: &BuckEvent| {
                 if let Some(span_end) = &e.span_end_event() {
-                    if let Some(buck2_data::span_end_event::Data::ExclusiveCommandWait(_)) =
+                    if let Some(bz_data::span_end_event::Data::ExclusiveCommandWait(_)) =
                         &span_end.data
                     {
                         return e.span_id() == span_id || span_id.is_none();
@@ -1765,7 +1765,7 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::await_holding_lock)] // Intentional: testing exclusive access
-    async fn exclusive_command_lock() -> buck2_error::Result<()> {
+    async fn exclusive_command_lock() -> bz_error::Result<()> {
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice.dupe());
         let (mut source, sink) = create_source_sink_pair();
@@ -1853,7 +1853,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_thundering_herd() -> buck2_error::Result<()> {
+    async fn test_thundering_herd() -> bz_error::Result<()> {
         let dice = make_default_dice().await;
 
         let concurrency = ConcurrencyHandler::new(dice.dupe());
@@ -1883,7 +1883,7 @@ mod tests {
                 .await
         });
 
-        buck2_util::future::try_join_all(tasks).await?;
+        bz_util::future::try_join_all(tasks).await?;
 
         assert!(!concurrency.data.lock().await.previously_tainted);
 
@@ -1891,7 +1891,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_updates_are_synchronized() -> buck2_error::Result<()> {
+    async fn test_updates_are_synchronized() -> bz_error::Result<()> {
         async fn wait_on(b: &AtomicBool) {
             while !b.load(Ordering::Relaxed) {
                 tokio::task::yield_now().await;
@@ -1914,7 +1914,7 @@ mod tests {
                 &self,
                 ctx: DiceTransactionUpdater,
                 _early_timings: &mut EarlyCommandTimingBuilder,
-            ) -> buck2_error::Result<(DiceTransactionUpdater, UserComputationData)> {
+            ) -> bz_error::Result<(DiceTransactionUpdater, UserComputationData)> {
                 self.on_enter.store(true, Ordering::Relaxed);
                 wait_on(&self.allow_exit).await;
                 Ok((ctx, Default::default()))
@@ -1995,7 +1995,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_exit_when_not_idle_with_same_state() -> buck2_error::Result<()> {
+    async fn test_exit_when_not_idle_with_same_state() -> bz_error::Result<()> {
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice.dupe());
 
@@ -2039,7 +2039,7 @@ mod tests {
         barrier.wait().await;
 
         // Start second command with --exit-when=notidle (same state, should fail)
-        let fut2 = tokio::spawn(buck2_util::async_move_clone!(concurrency, {
+        let fut2 = tokio::spawn(bz_util::async_move_clone!(concurrency, {
             concurrency
                 .enter(
                     null_sink_with_trace(traces2),
@@ -2063,11 +2063,11 @@ mod tests {
 
         // Second command should fail immediately
         let fut2_result = fut2.await?;
-        let fut2_error: buck2_error::Error = fut2_result.unwrap_err();
+        let fut2_error: bz_error::Error = fut2_result.unwrap_err();
         assert!(
             fut2_error
                 .tags()
-                .contains(&buck2_error::ErrorTag::DaemonIsBusy),
+                .contains(&bz_error::ErrorTag::DaemonIsBusy),
             "Expected DaemonIsBusy error tag"
         );
 
@@ -2079,7 +2079,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_exit_when_not_idle_with_different_state() -> buck2_error::Result<()> {
+    async fn test_exit_when_not_idle_with_different_state() -> bz_error::Result<()> {
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice.dupe());
 
@@ -2123,7 +2123,7 @@ mod tests {
         barrier.wait().await;
 
         // Start second command with --exit-when=notidle (different state, should fail)
-        let fut2 = tokio::spawn(buck2_util::async_move_clone!(concurrency, {
+        let fut2 = tokio::spawn(bz_util::async_move_clone!(concurrency, {
             concurrency
                 .enter(
                     null_sink_with_trace(traces2),
@@ -2147,11 +2147,11 @@ mod tests {
 
         // Second command should fail immediately
         let fut2_result = fut2.await?;
-        let fut2_error: buck2_error::Error = fut2_result.unwrap_err();
+        let fut2_error: bz_error::Error = fut2_result.unwrap_err();
         assert!(
             fut2_error
                 .tags()
-                .contains(&buck2_error::ErrorTag::DaemonIsBusy),
+                .contains(&bz_error::ErrorTag::DaemonIsBusy),
             "Expected DaemonIsBusy error tag"
         );
 
@@ -2165,7 +2165,7 @@ mod tests {
     // This test was moved to the top of the file
 
     #[tokio::test]
-    async fn test_multiple_exit_when_not_idle_commands_with_same_state() -> buck2_error::Result<()>
+    async fn test_multiple_exit_when_not_idle_commands_with_same_state() -> bz_error::Result<()>
     {
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice.dupe());
@@ -2211,7 +2211,7 @@ mod tests {
         barrier.wait().await;
 
         // Start second and third commands with --exit-when=notidle (should both fail)
-        let fut2 = tokio::spawn(buck2_util::async_move_clone!(concurrency, {
+        let fut2 = tokio::spawn(bz_util::async_move_clone!(concurrency, {
             concurrency
                 .enter(
                     null_sink_with_trace(traces2),
@@ -2232,7 +2232,7 @@ mod tests {
                 .await
         }));
 
-        let fut3 = tokio::spawn(buck2_util::async_move_clone!(concurrency, {
+        let fut3 = tokio::spawn(bz_util::async_move_clone!(concurrency, {
             concurrency
                 .enter(
                     null_sink_with_trace(traces3),
@@ -2255,19 +2255,19 @@ mod tests {
 
         // Both second and third commands should fail
         let fut2_result = fut2.await?;
-        let fut2_error: buck2_error::Error = fut2_result.unwrap_err();
+        let fut2_error: bz_error::Error = fut2_result.unwrap_err();
         assert!(
             fut2_error
                 .tags()
-                .contains(&buck2_error::ErrorTag::DaemonIsBusy)
+                .contains(&bz_error::ErrorTag::DaemonIsBusy)
         );
 
         let fut3_result = fut3.await?;
-        let fut3_error: buck2_error::Error = fut3_result.unwrap_err();
+        let fut3_error: bz_error::Error = fut3_result.unwrap_err();
         assert!(
             fut3_error
                 .tags()
-                .contains(&buck2_error::ErrorTag::DaemonIsBusy)
+                .contains(&bz_error::ErrorTag::DaemonIsBusy)
         );
 
         // Clean up first command
@@ -2278,7 +2278,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_exit_when_not_idle_with_preemptible_command() -> buck2_error::Result<()> {
+    async fn test_exit_when_not_idle_with_preemptible_command() -> bz_error::Result<()> {
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice.dupe());
 
@@ -2324,7 +2324,7 @@ mod tests {
         // Start second command with --exit-when=notidle (should fail)
         // Even though the first command is preemptible, this should still fail
         // because --exit-when=notidle means "only run if daemon is completely idle"
-        let fut2 = tokio::spawn(buck2_util::async_move_clone!(concurrency, {
+        let fut2 = tokio::spawn(bz_util::async_move_clone!(concurrency, {
             concurrency
                 .enter(
                     null_sink_with_trace(traces2),
@@ -2348,11 +2348,11 @@ mod tests {
 
         // Second command should fail immediately, even though first is preemptible
         let fut2_result = fut2.await?;
-        let fut2_error: buck2_error::Error = fut2_result.unwrap_err();
+        let fut2_error: bz_error::Error = fut2_result.unwrap_err();
         assert!(
             fut2_error
                 .tags()
-                .contains(&buck2_error::ErrorTag::DaemonIsBusy),
+                .contains(&bz_error::ErrorTag::DaemonIsBusy),
             "Expected DaemonIsBusy error tag, even though previous command is preemptible"
         );
 
@@ -2371,7 +2371,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_exit_when_not_idle_gets_preempted() -> buck2_error::Result<()> {
+    async fn test_exit_when_not_idle_gets_preempted() -> bz_error::Result<()> {
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice.dupe());
 
@@ -2415,10 +2415,10 @@ mod tests {
 
                 // Check if we got preempted
                 if let Err(ref e) = result {
-                    let error: buck2_error::Error = e.clone();
+                    let error: bz_error::Error = e.clone();
                     if error
                         .tags()
-                        .contains(&buck2_error::ErrorTag::DaemonPreempted)
+                        .contains(&bz_error::ErrorTag::DaemonPreempted)
                     {
                         preempted.store(true, Ordering::Relaxed);
                     }
@@ -2431,7 +2431,7 @@ mod tests {
 
         // Start second command (without any preemptible flag)
         // This should preempt the first command
-        let fut2 = tokio::spawn(buck2_util::async_move_clone!(concurrency, {
+        let fut2 = tokio::spawn(bz_util::async_move_clone!(concurrency, {
             concurrency
                 .enter(
                     null_sink_with_trace(traces2),
@@ -2472,7 +2472,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_exit_when_not_idle_commands_with_different_state()
-    -> buck2_error::Result<()> {
+    -> bz_error::Result<()> {
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice.dupe());
 
@@ -2516,7 +2516,7 @@ mod tests {
         barrier.wait().await;
 
         // Start second and third commands with --exit-when=notidle (should both fail)
-        let fut2 = tokio::spawn(buck2_util::async_move_clone!(concurrency, {
+        let fut2 = tokio::spawn(bz_util::async_move_clone!(concurrency, {
             concurrency
                 .enter(
                     null_sink_with_trace(traces2),
@@ -2540,11 +2540,11 @@ mod tests {
 
         // Both second and third commands should fail
         let fut2_result = fut2.await?;
-        let fut2_error: buck2_error::Error = fut2_result.unwrap_err();
+        let fut2_error: bz_error::Error = fut2_result.unwrap_err();
         assert!(
             fut2_error
                 .tags()
-                .contains(&buck2_error::ErrorTag::DaemonIsBusy)
+                .contains(&bz_error::ErrorTag::DaemonIsBusy)
         );
 
         // Clean up first command
@@ -2556,7 +2556,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exit_when_not_idle_allows_command_when_daemon_idle_with_same_state()
-    -> buck2_error::Result<()> {
+    -> bz_error::Result<()> {
         // This test verifies that when the daemon is idle (no command is currently running),
         // a command with --exit-when=notidle should succeed if it has the same state as the
         // previous command that has finished.
@@ -2622,7 +2622,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exit_when_not_idle_allows_command_when_daemon_idle_with_different_state()
-    -> buck2_error::Result<()> {
+    -> bz_error::Result<()> {
         // This test verifies that when the daemon is idle (no command is currently running),
         // a command with --exit-when=notidle should succeed even if it has a different state
         // than previous commands.
@@ -2712,7 +2712,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_enter_duration_parameter_populated() -> buck2_error::Result<()> {
+    async fn test_enter_duration_parameter_populated() -> bz_error::Result<()> {
         // Test that the duration parameter passed to the enter() callback is properly populated
         // when waiting for an exclusive command lock.
         let dice = make_default_dice().await;
@@ -2811,7 +2811,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_enter_duration_parameter_zero_for_non_exclusive() -> buck2_error::Result<()> {
+    async fn test_enter_duration_parameter_zero_for_non_exclusive() -> bz_error::Result<()> {
         // Test that the duration parameter is zero when no exclusive command lock is needed.
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice.dupe());
@@ -2855,7 +2855,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_file_watcher_sync_duration_captured() -> buck2_error::Result<()> {
+    async fn test_file_watcher_sync_duration_captured() -> bz_error::Result<()> {
         // Test that file_watcher_sync_duration is properly captured when the updater
         // returns a non-zero duration.
         let dice = make_default_dice().await;
@@ -2868,7 +2868,7 @@ mod tests {
                 &self,
                 ctx: DiceTransactionUpdater,
                 early_timings: &mut EarlyCommandTimingBuilder,
-            ) -> buck2_error::Result<(DiceTransactionUpdater, UserComputationData)> {
+            ) -> bz_error::Result<(DiceTransactionUpdater, UserComputationData)> {
                 // Simulate file watcher sync taking 50ms
                 early_timings.start_span(FILE_WATCHER_WAIT.to_owned());
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2925,7 +2925,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_watcher_sync_duration_accumulated_across_loop_iterations()
-    -> buck2_error::Result<()> {
+    -> bz_error::Result<()> {
         // Test that file_watcher_sync_duration is accumulated across multiple loop iterations
         // when the dice state transitions through cleanup.
         let dice = make_default_dice().await;
@@ -2964,7 +2964,7 @@ mod tests {
                 &self,
                 mut ctx: DiceTransactionUpdater,
                 early_timings: &mut EarlyCommandTimingBuilder,
-            ) -> buck2_error::Result<(DiceTransactionUpdater, UserComputationData)> {
+            ) -> bz_error::Result<(DiceTransactionUpdater, UserComputationData)> {
                 // First call changes state, second call doesn't
                 let is_first = !self.call_count.swap(true, Ordering::Relaxed);
                 if is_first {

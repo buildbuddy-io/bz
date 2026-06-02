@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::new_generic::ExplainRequest;
-use buck2_cli_proto::new_generic::ExplainResponse;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_cli_proto::new_generic::ExplainRequest;
+use bz_cli_proto::new_generic::ExplainResponse;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::DiceTransaction;
 use tonic::async_trait;
 
@@ -25,7 +25,7 @@ pub(crate) async fn explain_command(
     ctx: &dyn ServerCommandContextTrait,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
     req: ExplainRequest,
-) -> buck2_error::Result<ExplainResponse> {
+) -> bz_error::Result<ExplainResponse> {
     run_server_command(ExplainServerCommand { req }, ctx, partial_result_dispatcher).await
 }
 
@@ -35,9 +35,9 @@ struct ExplainServerCommand {
 
 #[async_trait]
 impl ServerCommandTemplate for ExplainServerCommand {
-    type StartEvent = buck2_data::ExplainCommandStart;
-    type EndEvent = buck2_data::ExplainCommandEnd;
-    type Response = buck2_cli_proto::new_generic::ExplainResponse;
+    type StartEvent = bz_data::ExplainCommandStart;
+    type EndEvent = bz_data::ExplainCommandEnd;
+    type Response = bz_cli_proto::new_generic::ExplainResponse;
     type PartialResult = NoPartialResult;
 
     async fn command(
@@ -45,7 +45,7 @@ impl ServerCommandTemplate for ExplainServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         // TODO iguridi: make it work for OSS
         #[cfg(fbcode_build)]
         {

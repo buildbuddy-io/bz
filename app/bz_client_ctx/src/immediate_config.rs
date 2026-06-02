@@ -11,27 +11,27 @@
 use std::sync::OnceLock;
 use std::time::SystemTime;
 
-use buck2_common::argv::ArgFileKind;
-use buck2_common::argv::ArgFilePath;
-use buck2_common::init::DaemonStartupConfig;
-use buck2_common::invocation_roots::InvocationRoots;
-use buck2_common::invocation_roots::find_invocation_roots;
-use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
+use bz_common::argv::ArgFileKind;
+use bz_common::argv::ArgFilePath;
+use bz_common::init::DaemonStartupConfig;
+use bz_common::invocation_roots::InvocationRoots;
+use bz_common::invocation_roots::find_invocation_roots;
+use bz_common::legacy_configs::cells::BuckConfigBasedCells;
 #[cfg(fbcode_build)]
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::buck2_env;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::cell_root_path::CellRootPathBuf;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::working_dir::AbsWorkingDir;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_core::bz_env;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::cell_root_path::CellRootPathBuf;
+use bz_core::fs::project::ProjectRoot;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::working_dir::AbsWorkingDir;
 use prost::Message;
 
 /// Limited view of the root config. This does not follow includes.
@@ -47,7 +47,7 @@ impl ImmediateConfig {
     /// Performs a parse of the root `.buckconfig` for the cell _only_ without following includes
     /// and without parsing any configs for any referenced cells. This means this function might return
     /// an empty mapping if the root `.buckconfig` does not contain the cell definitions.
-    fn parse(roots: &InvocationRoots) -> buck2_error::Result<ImmediateConfig> {
+    fn parse(roots: &InvocationRoots) -> bz_error::Result<ImmediateConfig> {
         // This function is non-reentrant, and blocking for a bit should be ok
         let cells = futures::executor::block_on(BuckConfigBasedCells::parse_for_immediate_config(
             &roots.project_root,
@@ -87,7 +87,7 @@ struct ImmediateConfigContextData {
 
 pub struct ImmediateConfigContext<'a> {
     // Deliberately use `OnceLock` rather than `Lazy` because `Lazy` forces
-    // us to have a shared reference to the underlying `buck2_error::Error` which
+    // us to have a shared reference to the underlying `bz_error::Error` which
     // we cannot use to correct chain the errors. Using `OnceLock` means
     // we don't get the result by a shared reference but instead as local
     // value which can be returned.
@@ -113,7 +113,7 @@ impl<'a> ImmediateConfigContext<'a> {
         &self.trace
     }
 
-    pub fn daemon_startup_config(&self) -> buck2_error::Result<&DaemonStartupConfig> {
+    pub fn daemon_startup_config(&self) -> bz_error::Result<&DaemonStartupConfig> {
         Ok(&self.data()?.daemon_startup_config)
     }
 
@@ -131,7 +131,7 @@ impl<'a> ImmediateConfigContext<'a> {
         &self,
         cell_alias: &str,
         cell_relative_path: &str,
-    ) -> buck2_error::Result<AbsNormPathBuf> {
+    ) -> bz_error::Result<AbsNormPathBuf> {
         let data = self.data()?;
 
         let cell = data.cwd_cell_alias_resolver.resolve(cell_alias)?;
@@ -143,7 +143,7 @@ impl<'a> ImmediateConfigContext<'a> {
     pub(crate) fn resolve_project_path(
         &self,
         path: CellPathRef,
-    ) -> buck2_error::Result<AbsNormPathBuf> {
+    ) -> bz_error::Result<AbsNormPathBuf> {
         let data = self.data()?;
         Ok(data
             .project_filesystem
@@ -153,13 +153,13 @@ impl<'a> ImmediateConfigContext<'a> {
     pub fn resolve_alias_to_path_in_cwd(
         &self,
         alias: &str,
-    ) -> buck2_error::Result<CellRootPathBuf> {
+    ) -> bz_error::Result<CellRootPathBuf> {
         let data = self.data()?;
         let cell = data.cwd_cell_alias_resolver.resolve(alias)?;
         Ok(data.cell_resolver.get(cell)?.path().to_buf())
     }
 
-    fn data(&self) -> buck2_error::Result<&ImmediateConfigContextData> {
+    fn data(&self) -> bz_error::Result<&ImmediateConfigContextData> {
         self.data
             .get_or_try_init(|| {
                 let roots = find_invocation_roots(self.cwd)?;
@@ -185,7 +185,7 @@ impl<'a> ImmediateConfigContext<'a> {
                     }
                 };
 
-                buck2_error::Ok(ImmediateConfigContextData {
+                bz_error::Ok(ImmediateConfigContextData {
                     cell_resolver: cfg.cell_resolver,
                     cwd_cell_alias_resolver: cfg.cwd_cell_alias_resolver,
                     daemon_startup_config,
@@ -201,7 +201,7 @@ impl<'a> ImmediateConfigContext<'a> {
         &self,
         canonicalized_path: AbsNormPathBuf,
         flag: Option<&str>,
-    ) -> Result<buck2_common::argv::ArgFileKind, buck2_error::Error> {
+    ) -> Result<bz_common::argv::ArgFileKind, bz_error::Error> {
         let is_py = canonicalized_path.extension() == Some("py".as_ref());
         let resolved_path =
             match self.data() {
@@ -224,8 +224,8 @@ impl<'a> ImmediateConfigContext<'a> {
     }
 }
 
-fn is_paranoid_enabled(path: &AbsPath) -> buck2_error::Result<bool> {
-    if let Some(p) = buck2_env!("BUCK_PARANOID", type=bool)? {
+fn is_paranoid_enabled(path: &AbsPath) -> bz_error::Result<bool> {
+    if let Some(p) = bz_env!("BUCK_PARANOID", type=bool)? {
         return Ok(p);
     }
 
@@ -234,7 +234,7 @@ fn is_paranoid_enabled(path: &AbsPath) -> buck2_error::Result<bool> {
         None => return Ok(false),
     };
 
-    let info = buck2_cli_proto::ParanoidInfo::decode(bytes.as_slice())
+    let info = bz_cli_proto::ParanoidInfo::decode(bytes.as_slice())
         .buck_error_context("Invalid data ")?;
 
     let now = SystemTime::now();

@@ -455,8 +455,8 @@ async def test_html(buck: Buck) -> None:
         "deps(root//bin:the_binary, 100, target_deps())",
         env={"BUCK_WRAPPER_UUID": uuid},
     )
-    with ManifoldClient({"bucket": "buck2_logs", "apikey": "buck2_logs-key"}) as client:
-        assert client.exists(bucket="buck2_logs", path=f"flat/{uuid}-graph.html")
+    with ManifoldClient({"bucket": "bz_logs", "apikey": "bz_logs-key"}) as client:
+        assert client.exists(bucket="bz_logs", path=f"flat/{uuid}-graph.html")
 
 
 # Tests for "%Ss" uses

@@ -16,43 +16,43 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_common::file_ops::delegate::FileOpsDelegate;
-use buck2_common::file_ops::dice::ReadFileProxy;
-use buck2_common::file_ops::metadata::FileDigestConfig;
-use buck2_common::file_ops::metadata::RawDirEntry;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
-use buck2_common::io::IoProvider;
-use buck2_common::io::NoWatchFsMetadataCache;
-use buck2_common::io::fs::FsIoProvider;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::external::GitCellSetup;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::directory::Directory;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::directory::INTERNER;
-use buck2_execute::entry::build_entry_from_disk;
-use buck2_execute::execute::blocking::HasBlockingExecutor;
-use buck2_execute::execute::blocking::IoRequest;
-use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
-use buck2_execute::materialize::materializer::DeclareArtifactPayload;
-use buck2_execute::materialize::materializer::HasMaterializer;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::StdBuckHashMap;
-use buck2_util::process::background_command;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_common::dice::data::HasIoProvider;
+use bz_common::file_ops::delegate::FileOpsDelegate;
+use bz_common::file_ops::dice::ReadFileProxy;
+use bz_common::file_ops::metadata::FileDigestConfig;
+use bz_common::file_ops::metadata::RawDirEntry;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
+use bz_common::io::IoProvider;
+use bz_common::io::NoWatchFsMetadataCache;
+use bz_common::io::fs::FsIoProvider;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::GitCellSetup;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::fs::buck_out_path::BuckOutPathResolver;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::directory::Directory;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::directory::INTERNER;
+use bz_execute::entry::build_entry_from_disk;
+use bz_execute::execute::blocking::HasBlockingExecutor;
+use bz_execute::execute::blocking::IoRequest;
+use bz_execute::execute::clean_output_paths::CleanOutputPaths;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_execute::materialize::materializer::HasMaterializer;
+use bz_execute::materialize::materializer::Materializer;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::StdBuckHashMap;
+use bz_util::process::background_command;
 use cmp_any::PartialEqAny;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -64,7 +64,7 @@ use pagable::Pagable;
 use pagable::pagable_typetag;
 use tokio::sync::Semaphore;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum GitError {
     #[error("Error fetching external cell with git, exit code: {exit_code:?}, stderr:\n{stderr}")]
@@ -84,15 +84,15 @@ struct GitFetchIoRequest {
 impl IoRequest for GitFetchIoRequest {
     fn execute(
         self: Box<Self>,
-        project_fs: &buck2_core::fs::project::ProjectRoot,
-    ) -> buck2_error::Result<()> {
+        project_fs: &bz_core::fs::project::ProjectRoot,
+    ) -> bz_error::Result<()> {
         let path = project_fs.resolve(&self.path);
         fs_util::create_dir_all(path.clone())?;
 
         // FIXME(JakobDegen): Ideally we'd use libgit2 directly here instead of shelling out, but
         // unfortunately the third party situation for that library in fbsource isn't great, so
         // let's do this for now
-        fn run_git(cwd: &AbsNormPath, f: impl FnOnce(&mut Command)) -> buck2_error::Result<()> {
+        fn run_git(cwd: &AbsNormPath, f: impl FnOnce(&mut Command)) -> bz_error::Result<()> {
             let mut cmd = background_command("git");
             f(&mut cmd);
             let output = cmd
@@ -148,7 +148,7 @@ async fn download_impl(
     path: &ProjectRelativePath,
     materializer: &dyn Materializer,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let io = ctx.get_blocking_executor();
     io.execute_io(
         Box::new(CleanOutputPaths {
@@ -212,7 +212,7 @@ async fn download_and_materialize(
     path: &ProjectRelativePath,
     setup: &GitCellSetup,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let materializer = ctx.per_transaction_data().get_materializer();
 
     if materializer.has_artifact_at(path.to_owned()).await? {
@@ -307,7 +307,7 @@ impl FileOpsDelegate for GitFileOpsDelegate {
         &self,
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<ReadFileProxy> {
+    ) -> bz_error::Result<ReadFileProxy> {
         Ok(ReadFileProxy::new_with_captures(
             (self.resolve(path), self.io.dupe()),
             |(project_path, io)| async move {
@@ -322,7 +322,7 @@ impl FileOpsDelegate for GitFileOpsDelegate {
         &self,
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_without_dice(path).await
     }
 
@@ -330,7 +330,7 @@ impl FileOpsDelegate for GitFileOpsDelegate {
         &self,
         _io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_without_dice(path).await
     }
 
@@ -338,7 +338,7 @@ impl FileOpsDelegate for GitFileOpsDelegate {
         &self,
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         let project_path = self.resolve(path);
 
         let Some(metadata) = (&self.io as &dyn IoProvider)
@@ -365,7 +365,7 @@ impl FileOpsDelegate for GitFileOpsDelegate {
         _io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         let project_path = self.resolve(path);
 
         let Some(metadata) = (&self.io as &dyn IoProvider)
@@ -396,7 +396,7 @@ impl GitFileOpsDelegate {
     async fn read_dir_without_dice(
         &self,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         let project_path = self.resolve(path);
         let mut entries = (&self.io as &dyn IoProvider)
             .read_dir(project_path)
@@ -414,7 +414,7 @@ pub(crate) async fn get_file_ops_delegate(
     ctx: &mut DiceComputations<'_>,
     cell: CellName,
     setup: GitCellSetup,
-) -> buck2_error::Result<Arc<GitFileOpsDelegate>> {
+) -> bz_error::Result<Arc<GitFileOpsDelegate>> {
     #[derive(
         dupe::Dupe,
         Clone,
@@ -432,7 +432,7 @@ pub(crate) async fn get_file_ops_delegate(
 
     #[async_trait::async_trait]
     impl Key for GitFileOpsDelegateKey {
-        type Value = buck2_error::Result<Arc<GitFileOpsDelegate>>;
+        type Value = bz_error::Result<Arc<GitFileOpsDelegate>>;
 
         async fn compute(
             &self,
@@ -469,7 +469,7 @@ pub(crate) async fn materialize_all(
     ctx: &mut DiceComputations<'_>,
     cell: CellName,
     setup: GitCellSetup,
-) -> buck2_error::Result<ProjectRelativePathBuf> {
+) -> bz_error::Result<ProjectRelativePathBuf> {
     // Get the `GitFileOpsDelegate` instance to make sure all the data is materialized.
     let ops = get_file_ops_delegate(ctx, cell, setup.dupe()).await?;
     Ok(ops.get_base_path())

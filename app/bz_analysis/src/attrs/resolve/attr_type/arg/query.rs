@@ -10,11 +10,11 @@
 
 use std::sync::Arc;
 
-use buck2_build_api::interpreter::rule_defs::resolve_query_macro::ResolvedQueryMacro;
-use buck2_build_api::interpreter::rule_defs::resolve_query_macro::ResolvedQueryMacroTargetAndOutputs;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_node::attrs::attr_type::arg::QueryExpansion;
-use buck2_node::attrs::attr_type::query::QueryMacroBase;
+use bz_build_api::interpreter::rule_defs::resolve_query_macro::ResolvedQueryMacro;
+use bz_build_api::interpreter::rule_defs::resolve_query_macro::ResolvedQueryMacroTargetAndOutputs;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_node::attrs::attr_type::arg::QueryExpansion;
+use bz_node::attrs::attr_type::query::QueryMacroBase;
 use dupe::Dupe;
 
 use crate::attrs::resolve::ctx::AnalysisQueryResult;
@@ -24,14 +24,14 @@ pub(crate) trait ConfiguredQueryMacroBaseExt {
     fn resolve(
         &self,
         ctx: &mut dyn AttrResolutionContext,
-    ) -> buck2_error::Result<ResolvedQueryMacro>;
+    ) -> bz_error::Result<ResolvedQueryMacro>;
 }
 
 impl ConfiguredQueryMacroBaseExt for QueryMacroBase<ConfiguredProvidersLabel> {
     fn resolve(
         &self,
         ctx: &mut dyn AttrResolutionContext,
-    ) -> buck2_error::Result<ResolvedQueryMacro> {
+    ) -> bz_error::Result<ResolvedQueryMacro> {
         let query_result: Arc<AnalysisQueryResult> = ctx.resolve_query(&self.query.query)?;
 
         match &self.expansion_type {
@@ -46,7 +46,7 @@ impl ConfiguredQueryMacroBaseExt for QueryMacroBase<ConfiguredProvidersLabel> {
                             .default_outputs()
                             .into_boxed_slice())
                     })
-                    .collect::<buck2_error::Result<_>>()?,
+                    .collect::<bz_error::Result<_>>()?,
             )),
             QueryExpansion::Target => Ok(ResolvedQueryMacro::Targets(
                 query_result
@@ -75,7 +75,7 @@ impl ConfiguredQueryMacroBaseExt for QueryMacroBase<ConfiguredProvidersLabel> {
                                         .into_boxed_slice(),
                                 ))
                             })
-                            .collect::<buck2_error::Result<_>>()?,
+                            .collect::<bz_error::Result<_>>()?,
                     },
                 )))
             }

@@ -11,7 +11,7 @@
 use std::fmt::Display;
 use std::fmt::Formatter;
 
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
 use dupe::Dupe;
 use itertools::Itertools;
 

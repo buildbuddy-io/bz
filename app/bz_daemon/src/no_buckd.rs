@@ -8,15 +8,15 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
-use buck2_client_ctx::daemon::client::connect::buckd_startup_timeout;
-use buck2_client_ctx::daemon::client::kill::kill_command_impl;
-use buck2_client_ctx::startup_deadline::StartupDeadline;
-use buck2_common::init::DaemonStartupConfig;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_core::logging::LogConfigurationReloadHandle;
-use buck2_error::buck2_error;
-use buck2_util::threads::thread_spawn;
+use bz_client_ctx::daemon::client::BuckdLifecycleLock;
+use bz_client_ctx::daemon::client::connect::buckd_startup_timeout;
+use bz_client_ctx::daemon::client::kill::kill_command_impl;
+use bz_client_ctx::startup_deadline::StartupDeadline;
+use bz_common::init::DaemonStartupConfig;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_core::logging::LogConfigurationReloadHandle;
+use bz_error::bz_error;
+use bz_util::threads::thread_spawn;
 
 use crate::daemon::DaemonCommand;
 
@@ -24,7 +24,7 @@ pub fn start_in_process_daemon(
     daemon_startup_config: &DaemonStartupConfig,
     paths: InvocationPaths,
     runtime: &tokio::runtime::Runtime,
-) -> buck2_error::Result<Option<Box<dyn FnOnce() -> buck2_error::Result<()> + Send + Sync>>> {
+) -> bz_error::Result<Option<Box<dyn FnOnce() -> bz_error::Result<()> + Send + Sync>>> {
     let daemon_dir = paths.daemon_dir()?;
     // Using --no-buckd must kill the existing daemon if there is one running.
     // This adds a few extra prints to stderr for killing the daemon, but that should be
@@ -58,10 +58,10 @@ pub fn start_in_process_daemon(
             // after it started listening.
             if let Err(e) = tx.send(result) {
                 match e.0 {
-                    Ok(()) => drop(buck2_client_ctx::eprintln!(
+                    Ok(()) => drop(bz_client_ctx::eprintln!(
                         "In-process daemon gracefully stopped"
                     )),
-                    Err(e) => drop(buck2_client_ctx::eprintln!(
+                    Err(e) => drop(bz_client_ctx::eprintln!(
                         "In-process daemon run failed: {:#}",
                         e
                     )),
@@ -71,8 +71,8 @@ pub fn start_in_process_daemon(
         // Wait for listener to start (or to fail).
         match rx.recv() {
             Ok(r) => r,
-            Err(_) => Err(buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            Err(_) => Err(bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "In-process daemon failed to start and we don't know why"
             )),
         }

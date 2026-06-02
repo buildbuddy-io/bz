@@ -10,16 +10,16 @@
 
 use std::collections::BTreeMap;
 
-use buck2_cli_proto::new_generic::ExpandExternalCellsRequest;
-use buck2_cli_proto::new_generic::ExpandExternalCellsResponse;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::external_cells::EXTERNAL_CELLS_IMPL;
-use buck2_core::cells::name::CellName;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_cli_proto::new_generic::ExpandExternalCellsRequest;
+use bz_cli_proto::new_generic::ExpandExternalCellsResponse;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::external_cells::EXTERNAL_CELLS_IMPL;
+use bz_core::cells::name::CellName;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::DiceTransaction;
 use dupe::Dupe;
 
@@ -27,7 +27,7 @@ pub(crate) async fn expand_external_cells_command(
     ctx: &dyn ServerCommandContextTrait,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
     req: ExpandExternalCellsRequest,
-) -> buck2_error::Result<ExpandExternalCellsResponse> {
+) -> bz_error::Result<ExpandExternalCellsResponse> {
     run_server_command(
         ExpandExternalCellsServerCommand { req },
         ctx,
@@ -40,7 +40,7 @@ struct ExpandExternalCellsServerCommand {
     req: ExpandExternalCellsRequest,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum ExpandExternalCellError {
     #[error("Cell `{0}` is not an external cell")]
@@ -49,9 +49,9 @@ enum ExpandExternalCellError {
 
 #[async_trait::async_trait]
 impl ServerCommandTemplate for ExpandExternalCellsServerCommand {
-    type StartEvent = buck2_data::ExpandExternalCellsCommandStart;
-    type EndEvent = buck2_data::ExpandExternalCellsCommandEnd;
-    type Response = buck2_cli_proto::new_generic::ExpandExternalCellsResponse;
+    type StartEvent = bz_data::ExpandExternalCellsCommandStart;
+    type EndEvent = bz_data::ExpandExternalCellsCommandEnd;
+    type Response = bz_cli_proto::new_generic::ExpandExternalCellsResponse;
     type PartialResult = NoPartialResult;
 
     async fn command(
@@ -59,7 +59,7 @@ impl ServerCommandTemplate for ExpandExternalCellsServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         mut ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         let cell_resolver = ctx.get_cell_resolver().await?;
         let cell_alias_resolver = ctx
             .get_cell_alias_resolver_for_dir(server_ctx.working_dir())

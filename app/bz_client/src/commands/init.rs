@@ -11,21 +11,21 @@
 use std::io::ErrorKind;
 use std::io::Write;
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::final_console::FinalConsole;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_common::argv::Argv;
-use buck2_common::argv::SanitizedArgv;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::buck2_error;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_util::process::background_command;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::final_console::FinalConsole;
+use bz_client_ctx::path_arg::PathArg;
+use bz_common::argv::Argv;
+use bz_common::argv::SanitizedArgv;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::bz_error;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_util::process::background_command;
 
 /// Initializes a buck2 project at the provided path.
 #[derive(Debug, clap::Parser)]
@@ -61,7 +61,7 @@ impl InitCommand {
             Err(e) => {
                 // include the backtrace with the error output
                 // (same behaviour as returning the Error from main)
-                buck2_error!(ErrorTag::Tier0, "{:?}", e).into()
+                bz_error!(ErrorTag::Tier0, "{:?}", e).into()
             }
         }
     }
@@ -75,15 +75,15 @@ fn exec_impl(
     cmd: InitCommand,
     ctx: ClientCommandContext<'_>,
     console: &FinalConsole,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let path = cmd.path.resolve(&ctx.working_dir);
     fs_util::create_dir_all(&path)?;
     let absolute = fs_util::canonicalize(&path).categorize_internal()?;
     let git = cmd.git;
 
     if absolute.is_file() {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Target path {} cannot be an existing file",
             absolute.display()
         ));
@@ -112,8 +112,8 @@ fn exec_impl(
         });
 
         if let (Some(true), false) = (changes, cmd.allow_dirty) {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Refusing to initialize in a dirty repo. Stash your changes or use `--allow-dirty` to override."
             ));
         }
@@ -122,7 +122,7 @@ fn exec_impl(
     set_up_project(&absolute, git, !cmd.no_prelude)
 }
 
-fn initialize_buckconfig(repo_root: &AbsPath, prelude: bool, git: bool) -> buck2_error::Result<()> {
+fn initialize_buckconfig(repo_root: &AbsPath, prelude: bool, git: bool) -> bz_error::Result<()> {
     let mut buckconfig = std::fs::File::create(repo_root.join(".buckconfig"))?;
     writeln!(buckconfig, "[cells]")?;
     writeln!(buckconfig, "  root = .")?;
@@ -175,7 +175,7 @@ fn initialize_buckconfig(repo_root: &AbsPath, prelude: bool, git: bool) -> buck2
     Ok(())
 }
 
-fn initialize_toolchains_buck(repo_root: &AbsPath) -> buck2_error::Result<()> {
+fn initialize_toolchains_buck(repo_root: &AbsPath) -> bz_error::Result<()> {
     std::fs::write(
         repo_root.join("BUCK"),
         r#"
@@ -190,7 +190,7 @@ system_demo_toolchains()
     Ok(())
 }
 
-fn initialize_root_buck(repo_root: &AbsPath, prelude: bool) -> buck2_error::Result<()> {
+fn initialize_root_buck(repo_root: &AbsPath, prelude: bool) -> bz_error::Result<()> {
     let mut buck = std::fs::File::create(repo_root.join("BUCK"))?;
 
     if prelude {
@@ -209,7 +209,7 @@ fn initialize_root_buck(repo_root: &AbsPath, prelude: bool) -> buck2_error::Resu
     Ok(())
 }
 
-fn set_up_gitignore(repo_root: &AbsPath) -> buck2_error::Result<()> {
+fn set_up_gitignore(repo_root: &AbsPath) -> bz_error::Result<()> {
     let gitignore = repo_root.join(".gitignore");
     // If .gitignore is empty or doesn't exist, add in buck-out
     if !gitignore.exists() || fs_util::metadata(&gitignore).categorize_internal()?.len() == 0 {
@@ -218,12 +218,12 @@ fn set_up_gitignore(repo_root: &AbsPath) -> buck2_error::Result<()> {
     Ok(())
 }
 
-fn set_up_buckroot(repo_root: &AbsPath) -> buck2_error::Result<()> {
+fn set_up_buckroot(repo_root: &AbsPath) -> bz_error::Result<()> {
     fs_util::write(repo_root.join(".buckroot"), "").categorize_internal()?;
     Ok(())
 }
 
-fn set_up_project(repo_root: &AbsPath, git: bool, prelude: bool) -> buck2_error::Result<()> {
+fn set_up_project(repo_root: &AbsPath, git: bool, prelude: bool) -> bz_error::Result<()> {
     set_up_buckroot(repo_root)?;
 
     if git {
@@ -233,8 +233,8 @@ fn set_up_project(repo_root: &AbsPath, git: bool, prelude: bool) -> buck2_error:
             .status()?
             .success()
         {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "Failure when running `git init`."
             ));
         };
@@ -243,7 +243,7 @@ fn set_up_project(repo_root: &AbsPath, git: bool, prelude: bool) -> buck2_error:
 
     // If the project already contains a .buckconfig, leave it alone
     if repo_root.join(".buckconfig").exists() {
-        buck2_client_ctx::println!(
+        bz_client_ctx::println!(
             ".buckconfig already exists, not overwriting and not generating toolchains"
         )?;
         return Ok(());
@@ -265,8 +265,8 @@ fn set_up_project(repo_root: &AbsPath, git: bool, prelude: bool) -> buck2_error:
 
 #[cfg(test)]
 mod tests {
-    use buck2_fs::fs_util::uncategorized as fs_util;
-    use buck2_fs::paths::abs_path::AbsPath;
+    use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::paths::abs_path::AbsPath;
 
     use crate::commands::init::initialize_buckconfig;
     use crate::commands::init::initialize_root_buck;
@@ -274,7 +274,7 @@ mod tests {
     use crate::commands::init::set_up_project;
 
     #[test]
-    fn test_set_up_project_with_prelude_no_git() -> buck2_error::Result<()> {
+    fn test_set_up_project_with_prelude_no_git() -> bz_error::Result<()> {
         let tempdir = tempfile::tempdir()?;
         let tempdir_path = tempdir.path();
         let tempdir_path = AbsPath::new(tempdir_path)?;
@@ -290,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn test_default_gitignore() -> buck2_error::Result<()> {
+    fn test_default_gitignore() -> bz_error::Result<()> {
         let tempdir = tempfile::tempdir()?;
         let tempdir_path = tempdir.path();
         let tempdir_path = AbsPath::new(tempdir_path)?;
@@ -322,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn test_buckconfig_generation_with_prelude() -> buck2_error::Result<()> {
+    fn test_buckconfig_generation_with_prelude() -> bz_error::Result<()> {
         let tempdir = tempfile::tempdir()?;
         let tempdir_path = tempdir.path();
         let tempdir_path = AbsPath::new(tempdir_path)?;
@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn test_buckconfig_generation_without_prelude() -> buck2_error::Result<()> {
+    fn test_buckconfig_generation_without_prelude() -> bz_error::Result<()> {
         let tempdir = tempfile::tempdir()?;
         let tempdir_path = tempdir.path();
         let tempdir_path = AbsPath::new(tempdir_path)?;
@@ -384,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn test_buckfile_generation_with_prelude() -> buck2_error::Result<()> {
+    fn test_buckfile_generation_with_prelude() -> bz_error::Result<()> {
         let tempdir = tempfile::tempdir()?;
         let tempdir_path = tempdir.path();
         let tempdir_path = AbsPath::new(tempdir_path)?;

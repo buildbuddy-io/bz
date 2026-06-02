@@ -20,7 +20,7 @@ from buck2.tests.e2e_util.buck_workspace import buck_test, env
 from manifold.clients.python.manifold_client_deprecated import Client as ManifoldClient
 
 TEST_TRACE_ID = "f115b5da-7d81-47cc-9c4a-57e283bfa384"
-BUCKET_CONFIG = {"bucket": "buck2_logs", "apikey": "buck2_logs-key"}
+BUCKET_CONFIG = {"bucket": "bz_logs", "apikey": "bz_logs-key"}
 
 # This test was failing in macos sandcastle, so attempt fix suggested
 # here: https://fb.workplace.com/groups/fbpython/permalink/5214295275278464/
@@ -30,12 +30,12 @@ if sys.platform != "windows" and os.path.exists("/etc/ssl/cert.pem"):
 
 async def manifold_exists(path: str) -> bool:
     with ManifoldClient(BUCKET_CONFIG) as client:
-        return client.exists(bucket="buck2_logs", path=path)
+        return client.exists(bucket="bz_logs", path=path)
 
 
 async def manifold_file_size(path: str) -> int:
     with ManifoldClient(BUCKET_CONFIG) as client:
-        return client.getFileSize(bucket="buck2_logs", path=path)
+        return client.getFileSize(bucket="bz_logs", path=path)
 
 
 EVENT_LOG_PLACEHOLDER = """

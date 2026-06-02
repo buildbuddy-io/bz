@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_hash::StdBuckHashSet;
+use bz_common::legacy_configs::dice::HasInjectedLegacyConfigs;
+use bz_core::fs::project::ProjectRoot;
+use bz_hash::StdBuckHashSet;
 use dice::DiceTransaction;
 
 use crate::experiment_util::get_experiment_tags;
@@ -22,7 +22,7 @@ use crate::experiment_util::get_experiment_tags;
 pub async fn get_tpx_experiments(
     mut ctx: DiceTransaction,
     project_root: &ProjectRoot,
-) -> buck2_error::Result<StdBuckHashSet<String>> {
+) -> bz_error::Result<StdBuckHashSet<String>> {
     // Get all experiments from buckconfig
     if !ctx.is_injected_external_buckconfig_data_key_set().await? {
         return Ok(StdBuckHashSet::default());

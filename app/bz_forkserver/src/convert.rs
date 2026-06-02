@@ -8,33 +8,33 @@
  * above-listed licenses.
  */
 
-use buck2_common::convert::ProstDurationExt;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute_local::CommandEvent;
-use buck2_execute_local::GatherOutputStatus;
-use buck2_resource_control::OrphanProcessInfo;
+use bz_common::convert::ProstDurationExt;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute_local::CommandEvent;
+use bz_execute_local::GatherOutputStatus;
+use bz_resource_control::OrphanProcessInfo;
 use futures::stream::Stream;
 use futures::stream::StreamExt;
 
 pub(crate) fn encode_event_stream<S>(
     s: S,
-) -> impl Stream<Item = Result<buck2_forkserver_proto::CommandEvent, tonic::Status>>
+) -> impl Stream<Item = Result<bz_forkserver_proto::CommandEvent, tonic::Status>>
 where
-    S: Stream<Item = buck2_error::Result<CommandEvent>>,
+    S: Stream<Item = bz_error::Result<CommandEvent>>,
 {
-    fn convert_event(e: CommandEvent) -> buck2_forkserver_proto::CommandEvent {
-        use buck2_forkserver_proto::command_event::Data;
+    fn convert_event(e: CommandEvent) -> bz_forkserver_proto::CommandEvent {
+        use bz_forkserver_proto::command_event::Data;
 
         let (data, orphans) = match e {
             CommandEvent::Stdout(bytes) => (
-                Data::Stdout(buck2_forkserver_proto::StreamEvent {
+                Data::Stdout(bz_forkserver_proto::StreamEvent {
                     data: bytes.to_vec(),
                 }),
                 Vec::new(),
             ),
             CommandEvent::Stderr(bytes) => (
-                Data::Stderr(buck2_forkserver_proto::StreamEvent {
+                Data::Stderr(bz_forkserver_proto::StreamEvent {
                     data: bytes.to_vec(),
                 }),
                 Vec::new(),
@@ -46,10 +46,10 @@ where
                 },
                 orphans,
             ) => (
-                Data::Exit(buck2_forkserver_proto::ExitEvent {
+                Data::Exit(bz_forkserver_proto::ExitEvent {
                     exit_code,
                     execution_stats: execution_stats.map(|s| {
-                        buck2_forkserver_proto::CollectedExecutionStats {
+                        bz_forkserver_proto::CollectedExecutionStats {
                             cpu_instructions_user: s.cpu_instructions_user,
                             cpu_instructions_kernel: s.cpu_instructions_kernel,
                             userspace_events: s.userspace_events,
@@ -60,26 +60,26 @@ where
                 orphans,
             ),
             CommandEvent::Exit(GatherOutputStatus::TimedOut(duration), orphans) => (
-                Data::Timeout(buck2_forkserver_proto::TimeoutEvent {
+                Data::Timeout(bz_forkserver_proto::TimeoutEvent {
                     duration: duration.try_into().ok(),
                 }),
                 orphans,
             ),
             CommandEvent::Exit(GatherOutputStatus::Cancelled, orphans) => (
-                Data::Cancel(buck2_forkserver_proto::CancelEvent {}),
+                Data::Cancel(bz_forkserver_proto::CancelEvent {}),
                 orphans,
             ),
             CommandEvent::Exit(GatherOutputStatus::SpawnFailed(reason), orphans) => (
-                Data::SpawnFailed(buck2_forkserver_proto::SpawnFailedEvent { reason }),
+                Data::SpawnFailed(bz_forkserver_proto::SpawnFailedEvent { reason }),
                 orphans,
             ),
         };
 
-        buck2_forkserver_proto::CommandEvent {
+        bz_forkserver_proto::CommandEvent {
             data: Some(data),
             orphan_processes: orphans
                 .into_iter()
-                .map(|o| buck2_forkserver_proto::OrphanProcess {
+                .map(|o| bz_forkserver_proto::OrphanProcess {
                     pid: o.pid,
                     comm: o.comm,
                 })
@@ -87,19 +87,19 @@ where
         }
     }
 
-    fn convert_err(e: buck2_error::Error) -> tonic::Status {
+    fn convert_err(e: bz_error::Error) -> tonic::Status {
         tonic::Status::unknown(format!("{e:#}"))
     }
 
     s.map(|r| r.map(convert_event).map_err(convert_err))
 }
 
-pub(crate) fn decode_event_stream<S>(s: S) -> impl Stream<Item = buck2_error::Result<CommandEvent>>
+pub(crate) fn decode_event_stream<S>(s: S) -> impl Stream<Item = bz_error::Result<CommandEvent>>
 where
-    S: Stream<Item = Result<buck2_forkserver_proto::CommandEvent, tonic::Status>>,
+    S: Stream<Item = Result<bz_forkserver_proto::CommandEvent, tonic::Status>>,
 {
-    fn convert_event(e: buck2_forkserver_proto::CommandEvent) -> buck2_error::Result<CommandEvent> {
-        use buck2_forkserver_proto::command_event::Data;
+    fn convert_event(e: bz_forkserver_proto::CommandEvent) -> bz_error::Result<CommandEvent> {
+        use bz_forkserver_proto::command_event::Data;
 
         let orphans: Vec<OrphanProcessInfo> = e
             .orphan_processes
@@ -111,20 +111,20 @@ where
             .collect();
 
         let event = match e.data.ok_or_else(|| internal_error!("Missing `data`"))? {
-            Data::Stdout(buck2_forkserver_proto::StreamEvent { data }) => {
+            Data::Stdout(bz_forkserver_proto::StreamEvent { data }) => {
                 CommandEvent::Stdout(data.into())
             }
-            Data::Stderr(buck2_forkserver_proto::StreamEvent { data }) => {
+            Data::Stderr(bz_forkserver_proto::StreamEvent { data }) => {
                 CommandEvent::Stderr(data.into())
             }
-            Data::Exit(buck2_forkserver_proto::ExitEvent {
+            Data::Exit(bz_forkserver_proto::ExitEvent {
                 exit_code,
                 execution_stats,
             }) => CommandEvent::Exit(
                 GatherOutputStatus::Finished {
                     exit_code,
                     execution_stats: execution_stats.map(|s| {
-                        buck2_execute_local::CollectedExecutionStats {
+                        bz_execute_local::CollectedExecutionStats {
                             cpu_instructions_user: s.cpu_instructions_user,
                             cpu_instructions_kernel: s.cpu_instructions_kernel,
                             userspace_events: s.userspace_events,
@@ -134,7 +134,7 @@ where
                 },
                 orphans,
             ),
-            Data::Timeout(buck2_forkserver_proto::TimeoutEvent { duration }) => CommandEvent::Exit(
+            Data::Timeout(bz_forkserver_proto::TimeoutEvent { duration }) => CommandEvent::Exit(
                 GatherOutputStatus::TimedOut(
                     duration
                         .ok_or_else(|| internal_error!("Missing `duration`"))?
@@ -143,10 +143,10 @@ where
                 ),
                 orphans,
             ),
-            Data::Cancel(buck2_forkserver_proto::CancelEvent {}) => {
+            Data::Cancel(bz_forkserver_proto::CancelEvent {}) => {
                 CommandEvent::Exit(GatherOutputStatus::Cancelled, orphans)
             }
-            Data::SpawnFailed(buck2_forkserver_proto::SpawnFailedEvent { reason }) => {
+            Data::SpawnFailed(bz_forkserver_proto::SpawnFailedEvent { reason }) => {
                 CommandEvent::Exit(GatherOutputStatus::SpawnFailed(reason), orphans)
             }
         };
@@ -154,9 +154,9 @@ where
         Ok(event)
     }
 
-    fn convert_err(e: tonic::Status) -> buck2_error::Error {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+    fn convert_err(e: tonic::Status) -> bz_error::Error {
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Tier0,
             "forkserver error: {}",
             e.message()
         )

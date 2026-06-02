@@ -133,7 +133,7 @@ pub enum DigestAlgorithmFamily {
     Blake3Keyed,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[error("Invalid Digest algorithm: `{0}`")]
 #[buck2(tag = Input)]
 pub struct InvalidDigestAlgorithmFamily(String);
@@ -269,7 +269,7 @@ impl fmt::Display for CasDigestConfig {
 
 static_interner::interner!(
     CAS_DIGEST_CONFIG_INTERNER,
-    buck2_hash::BuckDefaultHasher,
+    bz_hash::BuckDefaultHasher,
     CasDigestConfigInner
 );
 
@@ -353,7 +353,7 @@ impl CasDigestConfigInner {
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 pub enum CasDigestConfigError {
     #[error("At least one algorithm must be enabled")]
@@ -555,7 +555,7 @@ impl<Kind: CasDigestKind> CasDigest<Kind> {
         kind: DigestAlgorithmFamily,
         digest: &[u8],
         size: u64,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(match kind {
             DigestAlgorithmFamily::Sha1 => Self::new_sha1(digest.try_into()?, size),
             DigestAlgorithmFamily::Sha256 => Self::new_sha256(digest.try_into()?, size),
@@ -667,14 +667,14 @@ impl<Kind: CasDigestKind> CasDigest<Kind> {
         digester.finalize()
     }
 
-    pub fn from_reader<R: Read>(reader: R, config: CasDigestConfig) -> buck2_error::Result<Self> {
+    pub fn from_reader<R: Read>(reader: R, config: CasDigestConfig) -> bz_error::Result<Self> {
         Self::from_reader_for_algorithm(reader, config.preferred_algorithm())
     }
 
     pub fn from_reader_for_algorithm<R: Read>(
         mut reader: R,
         algorithm: DigestAlgorithm,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut digester = Self::digester_for_algorithm(algorithm);
 
         // Buffer size chosen based on benchmarks at D26176645
@@ -711,7 +711,7 @@ pub struct TinyDigest<'a, Kind: CasDigestKind> {
     of: &'a CasDigest<Kind>,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = InvalidDigest)]
 pub enum CasDigestParseError {
     #[error("The digest is missing a size separator, it should look like `HASH:SIZE`")]
@@ -808,7 +808,7 @@ impl<Kind: CasDigestKind> fmt::Debug for TrackedCasDigest<Kind> {
     }
 }
 
-impl<Kind: CasDigestKind> buck2_core::directory_digest::DirectoryDigest for TrackedCasDigest<Kind> {}
+impl<Kind: CasDigestKind> bz_core::directory_digest::DirectoryDigest for TrackedCasDigest<Kind> {}
 
 impl<Kind: CasDigestKind> TrackedCasDigest<Kind> {
     pub fn new(data: CasDigest<Kind>, config: CasDigestConfig) -> Self
@@ -883,15 +883,15 @@ impl<Kind: CasDigestKind> TrackedCasDigest<Kind> {
         self.inner.data.size()
     }
 
-    pub fn expires(&self) -> buck2_error::Result<DateTime<Utc>> {
+    pub fn expires(&self) -> bz_error::Result<DateTime<Utc>> {
         match Utc.timestamp_opt(self.inner.expires.load(Ordering::Relaxed), 0) {
             chrono::MappedLocalTime::Single(t) => Ok(t),
-            chrono::MappedLocalTime::None => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Environment,
+            chrono::MappedLocalTime::None => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Environment,
                 "CAS Digest expiration is an invalid local time"
             )),
-            chrono::MappedLocalTime::Ambiguous(t1, t2) => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Environment,
+            chrono::MappedLocalTime::Ambiguous(t1, t2) => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Environment,
                 "Cas Digest expiration is ambiguous, ranging from {:?} to {:?}",
                 t1,
                 t2

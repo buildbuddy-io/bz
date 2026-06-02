@@ -11,13 +11,13 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_core::configuration::constraints::ConstraintKey;
-use buck2_core::configuration::constraints::ConstraintValue;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::execution_types::execution::ExecutionPlatform;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_build_api_derive::internal_provider;
+use bz_core::configuration::constraints::ConstraintKey;
+use bz_core::configuration::constraints::ConstraintValue;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::execution_types::execution::ExecutionPlatform;
+use bz_core::target::label::label::TargetLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
@@ -31,12 +31,12 @@ use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::ValueTyped;
 use starlark::values::ValueTypedComplex;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::command_executor_config::StarlarkCommandExecutorConfig;
 use crate::interpreter::rule_defs::provider::builtin::configuration_info::ConfigurationInfo;
 use crate::interpreter::rule_defs::provider::builtin::configuration_info::FrozenConfigurationInfo;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum ExecutionPlatformProviderErrors {
     #[error("expected a ConfigurationInfo, got `{0}` (type `{1}`)")]
@@ -59,7 +59,7 @@ pub struct ExecutionPlatformInfoGen<V: ValueLifetimeless> {
 }
 
 impl<'v, V: ValueLike<'v>> ExecutionPlatformInfoGen<V> {
-    pub fn to_execution_platform(&self) -> buck2_error::Result<ExecutionPlatform> {
+    pub fn to_execution_platform(&self) -> bz_error::Result<ExecutionPlatform> {
         self.to_execution_platform_with_marker(None)
     }
 
@@ -67,7 +67,7 @@ impl<'v, V: ValueLike<'v>> ExecutionPlatformInfoGen<V> {
     pub fn to_execution_platform_with_marker(
         &self,
         marker_constraint: Option<&(ConstraintKey, ConstraintValue)>,
-    ) -> buck2_error::Result<ExecutionPlatform> {
+    ) -> bz_error::Result<ExecutionPlatform> {
         let target = self.label.cast::<&StarlarkTargetLabel>().unpack()?.label();
         let mut cfg = ConfigurationInfo::from_value(self.configuration.get().to_value())
             .ok_or_else(|| {

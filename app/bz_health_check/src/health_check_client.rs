@@ -10,8 +10,8 @@
 
 #![allow(dead_code)] // TODO(rajneeshl): Remove this when the health checks are moved to the server.
 
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::error::TrySendError;
@@ -38,10 +38,10 @@ impl StreamingHealthCheckClient {
         display_reports_sender: Option<Sender<Vec<DisplayReport>>>,
         event_receiver: Receiver<HealthCheckEvent>,
         paths: Option<&InvocationPaths>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let Some(path) = paths else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::HealthCheck,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::HealthCheck,
                 "Error setting up health check state dir. Health checks will not be run."
             ));
         };
@@ -145,7 +145,7 @@ impl HealthCheckClientInner {
         }
     }
 
-    fn send_reports(&mut self, reports: Vec<Report>) -> buck2_error::Result<()> {
+    fn send_reports(&mut self, reports: Vec<Report>) -> bz_error::Result<()> {
         let mut tags: Vec<String> = Vec::new();
         let mut display_reports: Vec<DisplayReport> = Vec::new();
 
@@ -163,7 +163,7 @@ impl HealthCheckClientInner {
         Ok(())
     }
 
-    fn send_tags(&mut self, tags: Vec<String>) -> buck2_error::Result<()> {
+    fn send_tags(&mut self, tags: Vec<String>) -> bz_error::Result<()> {
         if tags.is_empty() {
             // Since tags are aggregated and written to logs only once, we don't need to publish empty lists.
             return Ok(());
@@ -173,14 +173,14 @@ impl HealthCheckClientInner {
                 Err(TrySendError::Closed(_)) => {
                     // If the receiver is dropped, drop the sender to stop sending next time.
                     self.tags_sender = None;
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::HealthCheck,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::HealthCheck,
                         "Health check tags listener closed."
                     ));
                 }
                 Err(TrySendError::Full(_)) => {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::HealthCheck,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::HealthCheck,
                         "Health check tags channel full. Dropping tags."
                     ));
                 }
@@ -193,22 +193,22 @@ impl HealthCheckClientInner {
     fn send_display_reports(
         &mut self,
         display_reports: Vec<DisplayReport>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // Even if there are no reports, publish an empty list to signify that we have run the health checks.
         if let Some(display_reports_sender) = &mut self.display_reports_sender {
             match display_reports_sender.try_send(display_reports) {
                 Err(TrySendError::Closed(_)) => {
                     // If the receiver is dropped, drop the sender to stop sending next time.
                     self.display_reports_sender = None;
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::HealthCheck,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::HealthCheck,
                         "Health check display reports listener closed."
                     ));
                 }
                 Err(TrySendError::Full(_)) => {
                     // If the channel is full, skip sending these reports rather than OOMing due to huge buffers.
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::HealthCheck,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::HealthCheck,
                         "Health check display reports channel full. Dropping reports."
                     ));
                 }
@@ -243,14 +243,14 @@ mod tests {
         async fn update_context(
             &mut self,
             _event: HealthCheckContextEvent,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             Ok(())
         }
 
         async fn run_checks(
             &mut self,
             _snapshot: HealthCheckSnapshotData,
-        ) -> buck2_error::Result<Vec<Report>> {
+        ) -> bz_error::Result<Vec<Report>> {
             let reports = self.reports.lock().unwrap().clone();
             Ok(reports)
         }

@@ -281,9 +281,9 @@ impl ProviderCodegen {
             Ok(syn::parse_quote_spanned! {self.span=>
                 fn documentation(&self) -> starlark::docs::DocItem {
                     let docstring = #provider_docstring;
-                    buck2_build_api::interpreter::rule_defs::provider::doc::provider_callable_documentation(
+                    bz_build_api::interpreter::rule_defs::provider::doc::provider_callable_documentation(
                         Some(#create_func),
-                        buck2_build_api::interpreter::rule_defs::provider::doc::ProviderMembersSource::FromMethods(#custom_methods),
+                        bz_build_api::interpreter::rule_defs::provider::doc::ProviderMembersSource::FromMethods(#custom_methods),
                         BUILTIN_PROVIDER_TY.instance(),
                         &docstring,
                     )
@@ -318,9 +318,9 @@ impl ProviderCodegen {
                     let field_types: [starlark::typing::Ty; _] = [
                         #(#field_types),*
                     ];
-                    buck2_build_api::interpreter::rule_defs::provider::doc::provider_callable_documentation(
+                    bz_build_api::interpreter::rule_defs::provider::doc::provider_callable_documentation(
                         Some(#create_func),
-                        buck2_build_api::interpreter::rule_defs::provider::doc::ProviderMembersSource::FromFields {
+                        bz_build_api::interpreter::rule_defs::provider::doc::ProviderMembersSource::FromFields {
                             fields: &field_names,
                             field_docs: &field_docs,
                             field_types: &field_types,
@@ -337,11 +337,11 @@ impl ProviderCodegen {
         let gen_name = &self.input.ident;
         let callable_name = self.callable_name()?;
         Ok(syn::parse_quote_spanned! { self.span =>
-            static BUILTIN_PROVIDER_TY: buck2_build_api::interpreter::rule_defs::provider::builtin::ty::BuiltinProviderTy<
+            static BUILTIN_PROVIDER_TY: bz_build_api::interpreter::rule_defs::provider::builtin::ty::BuiltinProviderTy<
                     #gen_name<starlark::values::Value>,
                     #callable_name,
             > =
-                buck2_build_api::interpreter::rule_defs::provider::builtin::ty::BuiltinProviderTy::new();
+                bz_build_api::interpreter::rule_defs::provider::builtin::ty::BuiltinProviderTy::new();
         })
     }
 
@@ -362,7 +362,7 @@ impl ProviderCodegen {
         Ok(syn::parse_quote_spanned! { self.span=>
             impl<V: starlark::values::ValueLifetimeless> std::fmt::Display for #gen_name<V> {
                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    buck2_build_api::__derive_refs::display_container::fmt_keyed_container(
+                    bz_build_api::__derive_refs::display_container::fmt_keyed_container(
                         f,
                         &format!("{}(", #name_str),
                         ")",
@@ -443,7 +443,7 @@ impl ProviderCodegen {
 
                     fn provide(&'v self, demand: &mut starlark::values::Demand<'_, 'v>) {
                         demand.provide_value::<
-                            &dyn buck2_build_api::interpreter::rule_defs::provider::ProviderLike>(self);
+                            &dyn bz_build_api::interpreter::rule_defs::provider::ProviderLike>(self);
                     }
 
                     fn equals(&self, other: starlark::values::Value<'v>) -> starlark::Result<bool> {
@@ -478,11 +478,11 @@ impl ProviderCodegen {
         let field_names = self.field_names()?;
         let field_len = field_names.len();
         Ok(syn::parse_quote_spanned! { self.span=>
-            impl<'v, V: starlark::values::ValueLike<'v>> buck2_build_api::__derive_refs::serde::Serialize
+            impl<'v, V: starlark::values::ValueLike<'v>> bz_build_api::__derive_refs::serde::Serialize
                 for #gen_name<V>
             {
-                fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S : buck2_build_api::__derive_refs::serde::Serializer {
-                    use buck2_build_api::__derive_refs::serde::ser::SerializeMap;
+                fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error> where S : bz_build_api::__derive_refs::serde::Serializer {
+                    use bz_build_api::__derive_refs::serde::ser::SerializeMap;
 
                     let mut s = s.serialize_map(Some(#field_len))?;
                     #(
@@ -502,11 +502,11 @@ impl ProviderCodegen {
         let field_names = self.field_names()?;
         let callable_name = self.callable_name()?;
         Ok(syn::parse_quote_spanned! { self.span=>
-            impl<'v, V: starlark::values::ValueLike<'v>> buck2_build_api::interpreter::rule_defs::provider::ProviderLike<'v> for #gen_name<V>
+            impl<'v, V: starlark::values::ValueLike<'v>> bz_build_api::interpreter::rule_defs::provider::ProviderLike<'v> for #gen_name<V>
             where
                 Self: std::fmt::Debug,
             {
-                fn id(&self) -> &std::sync::Arc<buck2_core::provider::id::ProviderId> {
+                fn id(&self) -> &std::sync::Arc<bz_core::provider::id::ProviderId> {
                     #callable_name::provider_id()
                 }
 
@@ -523,8 +523,8 @@ impl ProviderCodegen {
         let frozen_name = self.frozen_name()?;
         let callable_name = self.callable_name()?;
         Ok(syn::parse_quote_spanned! { self.span=>
-            impl buck2_build_api::interpreter::rule_defs::provider::FrozenBuiltinProviderLike for #frozen_name {
-                fn builtin_provider_id() -> &'static std::sync::Arc<buck2_core::provider::id::ProviderId> {
+            impl bz_build_api::interpreter::rule_defs::provider::FrozenBuiltinProviderLike for #frozen_name {
+                fn builtin_provider_id() -> &'static std::sync::Arc<bz_core::provider::id::ProviderId> {
                     #callable_name::provider_id()
                 }
             }
@@ -537,7 +537,7 @@ impl ProviderCodegen {
         Ok(syn::parse_quote_spanned! { self.span=>
             #[derive(Debug, Clone, dupe::Dupe, starlark::any::ProvidesStaticType, starlark::values::NoSerialize, allocative::Allocative)]
             #vis struct #callable_name {
-                id: &'static std::sync::Arc<buck2_core::provider::id::ProviderId>,
+                id: &'static std::sync::Arc<bz_core::provider::id::ProviderId>,
             }
         })
     }
@@ -571,11 +571,11 @@ impl ProviderCodegen {
 
                     fn provide(&'v self, demand: &mut starlark::values::Demand<'_, 'v>) {
                         demand.provide_value::<
-                            &dyn buck2_interpreter::types::provider::callable::ProviderCallableLike>(self);
+                            &dyn bz_interpreter::types::provider::callable::ProviderCallableLike>(self);
                     }
 
                     fn equals(&self, other: starlark::values::Value<'v>) -> starlark::Result<bool> {
-                        buck2_build_api::interpreter::rule_defs::provider::callable::provider_callable_equals(
+                        bz_build_api::interpreter::rule_defs::provider::callable::provider_callable_equals(
                             self,
                             other,
                         )
@@ -585,7 +585,7 @@ impl ProviderCodegen {
                         &self,
                         hasher: &mut starlark::collections::StarlarkHasher,
                     ) -> starlark::Result<()> {
-                        buck2_build_api::interpreter::rule_defs::provider::callable::provider_callable_write_hash(
+                        bz_build_api::interpreter::rule_defs::provider::callable::provider_callable_write_hash(
                             self,
                             hasher,
                         )
@@ -605,8 +605,8 @@ impl ProviderCodegen {
     fn callable_impl_provider_callable_like(&self) -> syn::Result<syn::Item> {
         let callable_name = self.callable_name()?;
         Ok(syn::parse_quote_spanned! { self.span=>
-            impl buck2_interpreter::types::provider::callable::ProviderCallableLike for #callable_name {
-                fn id(&self) -> buck2_error::Result<&std::sync::Arc<buck2_core::provider::id::ProviderId>> {
+            impl bz_interpreter::types::provider::callable::ProviderCallableLike for #callable_name {
+                fn id(&self) -> bz_error::Result<&std::sync::Arc<bz_core::provider::id::ProviderId>> {
                     Ok(self.id)
                 }
             }
@@ -622,21 +622,21 @@ impl ProviderCodegen {
         Ok(syn::parse_quote_spanned! { self.span=>
             impl #callable_name {
                 #vis fn provider_id()
-                -> &'static std::sync::Arc<buck2_core::provider::id::ProviderId> {
+                -> &'static std::sync::Arc<bz_core::provider::id::ProviderId> {
                     Self::provider_id_t().id()
                 }
 
                 #vis fn provider_id_t() -> &'static std::sync::Arc<
-                    buck2_core::provider::id::ProviderIdWithType<#frozen_name>,
+                    bz_core::provider::id::ProviderIdWithType<#frozen_name>,
                 > {
                     static PROVIDER_ID_T: std::sync::OnceLock<
                         std::sync::Arc<
-                            buck2_core::provider::id::ProviderIdWithType<#frozen_name>,
+                            bz_core::provider::id::ProviderIdWithType<#frozen_name>,
                         >
                     > = std::sync::OnceLock::new();
                     PROVIDER_ID_T.get_or_init(|| {
                         std::sync::Arc::new(
-                            buck2_core::provider::id::ProviderIdWithType::new(
+                            bz_core::provider::id::ProviderIdWithType::new(
                                 None,
                                 #name_str.to_owned(),
                             ),
@@ -720,8 +720,8 @@ impl ProviderCodegen {
 
     fn inventory(&self) -> syn::Result<syn::Item> {
         Ok(syn::parse_quote_spanned! { self.span=>
-            buck2_build_api::__derive_refs::inventory::submit! {
-                buck2_build_api::interpreter::rule_defs::provider::registration::ProviderRegistration {
+            bz_build_api::__derive_refs::inventory::submit! {
+                bz_build_api::interpreter::rule_defs::provider::registration::ProviderRegistration {
                     register_globals: |globals| {
                         register_provider(globals)
                     }

@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::file_ops::metadata::TrackedFileDigest;
 use dupe::Dupe;
 use remote_execution as RE;
 

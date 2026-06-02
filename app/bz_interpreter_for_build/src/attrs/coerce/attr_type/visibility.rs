@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::attr_type::visibility::VisibilityAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
-use buck2_node::visibility::VisibilityWithinViewBuilder;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::attr_type::visibility::VisibilityAttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::visibility::VisibilityWithinViewBuilder;
 use starlark::values::Value;
 
 use crate::attrs::coerce::AttrTypeCoerce;
@@ -25,7 +25,7 @@ use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 use crate::bazel::visibility::add_visibility_pattern;
 use crate::interpreter::selector::StarlarkSelector;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 enum VisibilityAttrTypeCoerceError {
     #[error("Visibility attribute is not configurable (internal error)")]
     #[buck2(tag = Tier0)]
@@ -44,7 +44,7 @@ impl AttrTypeCoerce for VisibilityAttrType {
         configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         if configurable == AttrIsConfigurable::Yes {
             return Err(VisibilityAttrTypeCoerceError::AttrTypeNotConfigurable.into());
         }
@@ -61,7 +61,7 @@ impl AttrTypeCoerce for VisibilityAttrType {
 pub(crate) fn parse_visibility_with_view(
     ctx: &dyn AttrCoercionContext,
     attr: Value,
-) -> buck2_error::Result<VisibilityWithinViewBuilder> {
+) -> bz_error::Result<VisibilityWithinViewBuilder> {
     let list = match coerce_list(attr) {
         Ok(list) => list,
         Err(e) => {

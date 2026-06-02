@@ -11,8 +11,8 @@
 use std::any::Any;
 
 use allocative::Allocative;
-use buck2_common::events::HasEvents;
-use buck2_events::dispatch::with_dispatcher_async;
+use bz_common::events::HasEvents;
+use bz_events::dispatch::with_dispatcher_async;
 use dice_futures::spawner::Spawner;
 use dupe::Dupe;
 use futures::future::BoxFuture;
@@ -53,15 +53,15 @@ impl<T: HasEvents> Spawner<T> for BuckSpawner {
 mod tests {
     use std::sync::Arc;
 
-    use buck2_data::CommandEnd;
-    use buck2_data::CommandStart;
-    use buck2_events::BuckEvent;
-    use buck2_events::create_source_sink_pair;
-    use buck2_events::daemon_id::DaemonId;
-    use buck2_events::dispatch::EventDispatcher;
-    use buck2_events::dispatch::span;
-    use buck2_events::source::ChannelEventSource;
-    use buck2_wrapper_common::invocation_id::TraceId;
+    use bz_data::CommandEnd;
+    use bz_data::CommandStart;
+    use bz_events::BuckEvent;
+    use bz_events::create_source_sink_pair;
+    use bz_events::daemon_id::DaemonId;
+    use bz_events::dispatch::EventDispatcher;
+    use bz_events::dispatch::span;
+    use bz_events::source::ChannelEventSource;
+    use bz_wrapper_common::invocation_id::TraceId;
     use dice::DiceData;
     use dice::UserComputationData;
     use dice_futures::spawn::spawn_dropcancel;

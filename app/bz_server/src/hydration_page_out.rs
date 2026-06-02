@@ -11,11 +11,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::Dice;
 use dice::DiceTransaction;
 use dupe::Dupe;
@@ -25,8 +25,8 @@ use crate::ctx::ServerCommandContext;
 pub(crate) async fn hydration_page_out_command(
     ctx: &ServerCommandContext<'_>,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-    _req: buck2_cli_proto::HydrationPageOutRequest,
-) -> buck2_error::Result<buck2_cli_proto::GenericResponse> {
+    _req: bz_cli_proto::HydrationPageOutRequest,
+) -> bz_error::Result<bz_cli_proto::GenericResponse> {
     let dice = ctx.base_context.daemon.dice_manager.unsafe_dice().dupe();
     run_server_command(
         HydrationPageOutServerCommand { dice },
@@ -42,9 +42,9 @@ struct HydrationPageOutServerCommand {
 
 #[async_trait]
 impl ServerCommandTemplate for HydrationPageOutServerCommand {
-    type StartEvent = buck2_data::HydrationPageOutCommandStart;
-    type EndEvent = buck2_data::HydrationPageOutCommandEnd;
-    type Response = buck2_cli_proto::GenericResponse;
+    type StartEvent = bz_data::HydrationPageOutCommandStart;
+    type EndEvent = bz_data::HydrationPageOutCommandEnd;
+    type Response = bz_cli_proto::GenericResponse;
     type PartialResult = NoPartialResult;
 
     fn exclusive_command_name(&self) -> Option<String> {
@@ -56,10 +56,10 @@ impl ServerCommandTemplate for HydrationPageOutServerCommand {
         _server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         _ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         self.dice.page_out().await.map_err(|e| {
-            buck2_error::conversion::from_any_with_tag(e, buck2_error::ErrorTag::Environment)
+            bz_error::conversion::from_any_with_tag(e, bz_error::ErrorTag::Environment)
         })?;
-        Ok(buck2_cli_proto::GenericResponse {})
+        Ok(bz_cli_proto::GenericResponse {})
     }
 }

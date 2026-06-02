@@ -1,16 +1,16 @@
 [package]
-description = "Tests for buck2_node"
+description = "Tests for bz_node"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_node_tests"
+name = "bz_node_tests"
 repository = { workspace = true }
 version = "0.1.0"
 
 [dev-dependencies]
-buck2_error = { workspace = true }
+bz_error = { workspace = true }
 dupe = { workspace = true }
 
-buck2_core = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_node = { workspace = true }
-buck2_util = { workspace = true }
+bz_core = { workspace = true }
+bz_fs = { workspace = true }
+bz_node = { workspace = true }
+bz_util = { workspace = true }

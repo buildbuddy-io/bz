@@ -32,12 +32,12 @@ impl<A: Component, B: Component> HeaderLineComponent<A, B> {
     }
 }
 
-impl<A: Component<Error = buck2_error::Error>, B: Component<Error = buck2_error::Error>> Component
+impl<A: Component<Error = bz_error::Error>, B: Component<Error = bz_error::Error>> Component
     for HeaderLineComponent<A, B>
 {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         let mut draw = DrawHorizontal::new(dimensions);
         draw.draw(&self.lhs, mode)?;
         draw.draw(
@@ -59,13 +59,13 @@ pub(crate) struct StaticStringComponent<S: AsRef<str>> {
 }
 
 impl<S: AsRef<str>> Component for StaticStringComponent<S> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         _dimensions: Dimensions,
         _mode: DrawMode,
-    ) -> buck2_error::Result<Lines> {
+    ) -> bz_error::Result<Lines> {
         Ok(Lines(vec![Line::unstyled(self.header.as_ref())?]))
     }
 }

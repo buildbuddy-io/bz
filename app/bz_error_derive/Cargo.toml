@@ -1,10 +1,10 @@
 [package]
 description = """
-Fork of thiserror used by buck2_error
+Fork of thiserror used by bz_error
 """
 edition = "2024"
 license = { workspace = true }
-name = "buck2_error_derive"
+name = "bz_error_derive"
 repository = { workspace = true }
 version = "0.1.0"
 

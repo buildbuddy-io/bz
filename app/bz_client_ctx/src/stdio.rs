@@ -22,7 +22,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
-use buck2_error::internal_error;
+use bz_error::internal_error;
 use crossterm::tty::IsTty as CrosstermIsTty;
 use superconsole::Line;
 use tokio::sync::mpsc;
@@ -77,7 +77,7 @@ pub fn has_written_to_stdout() -> bool {
 
 static STDOUT_LOCKED: AtomicBool = AtomicBool::new(false);
 
-fn stdout() -> buck2_error::Result<io::Stdout> {
+fn stdout() -> bz_error::Result<io::Stdout> {
     if STDOUT_LOCKED.load(Ordering::Relaxed) {
         return Err(internal_error!("stdout is already locked"));
     }
@@ -131,45 +131,45 @@ macro_rules! eprintln {
     };
 }
 
-pub fn _print(fmt: Arguments) -> buck2_error::Result<()> {
+pub fn _print(fmt: Arguments) -> bz_error::Result<()> {
     let message = fmt.to_string();
     stdout()?
         .lock()
         .write_all(message.as_bytes())
-        .map_err(|e| buck2_error::Error::from(ClientIoError::from(e)))?;
+        .map_err(|e| bz_error::Error::from(ClientIoError::from(e)))?;
     tap_output(OutputStream::Stdout, message.as_bytes());
     Ok(())
 }
 
-pub fn _eprint(fmt: Arguments) -> buck2_error::Result<()> {
+pub fn _eprint(fmt: Arguments) -> bz_error::Result<()> {
     let message = fmt.to_string();
     io::stderr()
         .lock()
         .write_all(message.as_bytes())
-        .map_err(|e| buck2_error::Error::from(ClientIoError::from(e)))?;
+        .map_err(|e| bz_error::Error::from(ClientIoError::from(e)))?;
     tap_output(OutputStream::Stderr, message.as_bytes());
     Ok(())
 }
 
-pub fn print_bytes(bytes: &[u8]) -> buck2_error::Result<()> {
+pub fn print_bytes(bytes: &[u8]) -> bz_error::Result<()> {
     stdout()?
         .lock()
         .write_all(bytes)
-        .map_err(|e| buck2_error::Error::from(ClientIoError::from(e)))?;
+        .map_err(|e| bz_error::Error::from(ClientIoError::from(e)))?;
     tap_output(OutputStream::Stdout, bytes);
     Ok(())
 }
 
-pub fn eprint_line(line: &Line) -> buck2_error::Result<()> {
+pub fn eprint_line(line: &Line) -> bz_error::Result<()> {
     let line = line.render();
     crate::eprintln!("{}", line)
 }
 
-pub fn flush() -> buck2_error::Result<()> {
+pub fn flush() -> bz_error::Result<()> {
     stdout()?.flush().map_err(|e| ClientIoError::from(e).into())
 }
 
-fn stdout_to_file(stdout: &Stdout) -> buck2_error::Result<File> {
+fn stdout_to_file(stdout: &Stdout) -> bz_error::Result<File> {
     #[cfg(not(windows))]
     {
         use std::os::fd::AsFd;
@@ -250,9 +250,9 @@ impl Write for StderrWriter {
     }
 }
 
-pub async fn print_with_writer<E, F>(f: F) -> buck2_error::Result<()>
+pub async fn print_with_writer<E, F>(f: F) -> bz_error::Result<()>
 where
-    E: Into<buck2_error::Error>,
+    E: Into<bz_error::Error>,
     F: AsyncFnOnce(&mut (dyn Write + Send)) -> Result<(), E>,
 {
     let stdout = stdout()?;

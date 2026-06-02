@@ -9,15 +9,15 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::new_generic::CompleteRequest;
-use buck2_cli_proto::new_generic::CompleteResponse;
-use buck2_cli_proto::new_generic::DebugEvalRequest;
-use buck2_cli_proto::new_generic::DebugEvalResponse;
-use buck2_cli_proto::new_generic::ExpandExternalCellsRequest;
-use buck2_cli_proto::new_generic::ExpandExternalCellsResponse;
-use buck2_cli_proto::new_generic::ExplainRequest;
-use buck2_cli_proto::new_generic::ExplainResponse;
-use buck2_util::late_binding::LateBinding;
+use bz_cli_proto::new_generic::CompleteRequest;
+use bz_cli_proto::new_generic::CompleteResponse;
+use bz_cli_proto::new_generic::DebugEvalRequest;
+use bz_cli_proto::new_generic::DebugEvalResponse;
+use bz_cli_proto::new_generic::ExpandExternalCellsRequest;
+use bz_cli_proto::new_generic::ExpandExternalCellsResponse;
+use bz_cli_proto::new_generic::ExplainRequest;
+use bz_cli_proto::new_generic::ExplainResponse;
+use bz_util::late_binding::LateBinding;
 
 use crate::ctx::ServerCommandContextTrait;
 use crate::partial_result_dispatcher::NoPartialResult;
@@ -29,37 +29,37 @@ pub trait OtherServerCommands: Send + Sync + 'static {
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::BuildRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::BuildResponse>;
+        req: bz_cli_proto::BuildRequest,
+    ) -> bz_error::Result<bz_cli_proto::BuildResponse>;
     async fn install(
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::InstallRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::InstallResponse>;
+        req: bz_cli_proto::InstallRequest,
+    ) -> bz_error::Result<bz_cli_proto::InstallResponse>;
     async fn complete(
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
         req: CompleteRequest,
-    ) -> buck2_error::Result<CompleteResponse>;
+    ) -> bz_error::Result<CompleteResponse>;
     async fn debug_eval(
         &self,
         ctx: &dyn ServerCommandContextTrait,
         req: DebugEvalRequest,
-    ) -> buck2_error::Result<DebugEvalResponse>;
+    ) -> bz_error::Result<DebugEvalResponse>;
     async fn explain(
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
         req: ExplainRequest,
-    ) -> buck2_error::Result<ExplainResponse>;
+    ) -> bz_error::Result<ExplainResponse>;
     async fn expand_external_cells(
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
         req: ExpandExternalCellsRequest,
-    ) -> buck2_error::Result<ExpandExternalCellsResponse>;
+    ) -> bz_error::Result<ExpandExternalCellsResponse>;
 }
 
 pub static OTHER_SERVER_COMMANDS: LateBinding<&'static dyn OtherServerCommands> =
@@ -70,21 +70,21 @@ pub trait TargetsServerCommands: Send + Sync + 'static {
     async fn targets(
         &self,
         ctx: &dyn ServerCommandContextTrait,
-        partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-        req: buck2_cli_proto::TargetsRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::TargetsResponse>;
+        partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+        req: bz_cli_proto::TargetsRequest,
+    ) -> bz_error::Result<bz_cli_proto::TargetsResponse>;
     async fn targets_show_outputs(
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::TargetsRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::TargetsShowOutputsResponse>;
+        req: bz_cli_proto::TargetsRequest,
+    ) -> bz_error::Result<bz_cli_proto::TargetsShowOutputsResponse>;
     async fn ctargets(
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::ConfiguredTargetsRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::ConfiguredTargetsResponse>;
+        req: bz_cli_proto::ConfiguredTargetsRequest,
+    ) -> bz_error::Result<bz_cli_proto::ConfiguredTargetsResponse>;
 }
 
 pub static TARGETS_SERVER_COMMANDS: LateBinding<&'static dyn TargetsServerCommands> =
@@ -95,21 +95,21 @@ pub trait QueryServerCommands: Send + Sync + 'static {
     async fn uquery(
         &self,
         ctx: &dyn ServerCommandContextTrait,
-        partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-        req: buck2_cli_proto::UqueryRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::UqueryResponse>;
+        partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+        req: bz_cli_proto::UqueryRequest,
+    ) -> bz_error::Result<bz_cli_proto::UqueryResponse>;
     async fn cquery(
         &self,
         ctx: &dyn ServerCommandContextTrait,
-        partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-        req: buck2_cli_proto::CqueryRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::CqueryResponse>;
+        partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+        req: bz_cli_proto::CqueryRequest,
+    ) -> bz_error::Result<bz_cli_proto::CqueryResponse>;
     async fn aquery(
         &self,
         ctx: &dyn ServerCommandContextTrait,
-        partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-        req: buck2_cli_proto::AqueryRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::AqueryResponse>;
+        partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+        req: bz_cli_proto::AqueryRequest,
+    ) -> bz_error::Result<bz_cli_proto::AqueryResponse>;
 }
 
 pub static QUERY_SERVER_COMMANDS: LateBinding<&'static dyn QueryServerCommands> =
@@ -121,8 +121,8 @@ pub trait DocsServerCommand: Send + Sync + 'static {
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::new_generic::DocsRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::new_generic::DocsResponse>;
+        req: bz_cli_proto::new_generic::DocsRequest,
+    ) -> bz_error::Result<bz_cli_proto::new_generic::DocsResponse>;
 }
 
 pub static DOCS_SERVER_COMMAND: LateBinding<&'static dyn DocsServerCommand> =
@@ -133,9 +133,9 @@ pub trait AuditServerCommand: Send + Sync + 'static {
     async fn audit(
         &self,
         ctx: &dyn ServerCommandContextTrait,
-        partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-        req: buck2_cli_proto::GenericRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::GenericResponse>;
+        partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+        req: bz_cli_proto::GenericRequest,
+    ) -> bz_error::Result<bz_cli_proto::GenericResponse>;
 }
 
 pub static AUDIT_SERVER_COMMAND: LateBinding<&'static dyn AuditServerCommand> =
@@ -146,9 +146,9 @@ pub trait StarlarkServerCommand: Send + Sync + 'static {
     async fn starlark(
         &self,
         ctx: &dyn ServerCommandContextTrait,
-        partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-        req: buck2_cli_proto::GenericRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::GenericResponse>;
+        partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+        req: bz_cli_proto::GenericRequest,
+    ) -> bz_error::Result<bz_cli_proto::GenericResponse>;
 }
 
 pub static STARLARK_SERVER_COMMAND: LateBinding<&'static dyn StarlarkServerCommand> =

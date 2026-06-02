@@ -11,13 +11,13 @@
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use buck2_core::provider::id::ProviderId;
+use bz_core::provider::id::ProviderId;
 use starlark::any::ProvidesStaticType;
 use starlark::values::Value;
 use starlark::values::ValueLike;
 
 pub trait ProviderCallableLike {
-    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>>;
+    fn id(&self) -> bz_error::Result<&Arc<ProviderId>>;
 }
 
 unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn ProviderCallableLike {

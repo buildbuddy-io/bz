@@ -15,10 +15,10 @@
 use std::sync::Once;
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::AuditCommand;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::AuditCommand;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 mod analysis_queries;
 mod cell;
@@ -54,9 +54,9 @@ pub trait ServerAuditSubcommand: Send + Sync + 'static {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         client_server_ctx: ClientContext,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }
 
 #[async_trait]
@@ -64,9 +64,9 @@ pub trait AuditCommandExt {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         client_server_ctx: ClientContext,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
     fn as_subcommand(&self) -> &dyn ServerAuditSubcommand;
 }
 
@@ -75,9 +75,9 @@ impl AuditCommandExt for AuditCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         client_server_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.as_subcommand()
             .server_execute(server_ctx, stdout, client_server_ctx)
             .await

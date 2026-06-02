@@ -18,21 +18,21 @@ use std::io::BufWriter;
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_cli_proto::TargetsRequest;
-use buck2_cli_proto::TargetsResponse;
-use buck2_cli_proto::targets_request;
-use buck2_cli_proto::targets_request::Compression;
-use buck2_cli_proto::targets_request::TargetHashGraphType;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_cli_proto::TargetsRequest;
+use bz_cli_proto::TargetsResponse;
+use bz_cli_proto::targets_request;
+use bz_cli_proto::targets_request::Compression;
+use bz_cli_proto::targets_request::TargetHashGraphType;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::DiceTransaction;
 use flate2::write::GzEncoder;
 use zstd::stream::write as zstd;
@@ -50,7 +50,7 @@ enum OutputType {
 }
 
 trait Compressor: Write + Send {
-    fn finish(self: Box<Self>) -> buck2_error::Result<()>;
+    fn finish(self: Box<Self>) -> bz_error::Result<()>;
 }
 
 struct UncompressedCompressor<T>(T);
@@ -70,20 +70,20 @@ impl<T: Write> Write for UncompressedCompressor<T> {
 }
 
 impl<T: Write + Send> Compressor for UncompressedCompressor<T> {
-    fn finish(self: Box<Self>) -> buck2_error::Result<()> {
+    fn finish(self: Box<Self>) -> bz_error::Result<()> {
         Ok(())
     }
 }
 
 impl<T: Write + Send> Compressor for GzEncoder<T> {
-    fn finish(self: Box<Self>) -> buck2_error::Result<()> {
+    fn finish(self: Box<Self>) -> bz_error::Result<()> {
         (*self).finish()?;
         Ok(())
     }
 }
 
 impl<T: Write + Send> Compressor for zstd::Encoder<'_, T> {
-    fn finish(self: Box<Self>) -> buck2_error::Result<()> {
+    fn finish(self: Box<Self>) -> bz_error::Result<()> {
         (*self).finish()?;
         Ok(())
     }
@@ -92,7 +92,7 @@ impl<T: Write + Send> Compressor for zstd::Encoder<'_, T> {
 fn outputter<'a, W: Write + Send + 'a>(
     request: &TargetsRequest,
     stdout: W,
-) -> buck2_error::Result<(OutputType, Box<dyn Compressor + 'a>)> {
+) -> bz_error::Result<(OutputType, Box<dyn Compressor + 'a>)> {
     let (output_type, output): (_, Box<dyn Compressor>) = match &request.output {
         None => (OutputType::Stdout, Box::new(UncompressedCompressor(stdout))),
         Some(file) => {
@@ -115,9 +115,9 @@ fn outputter<'a, W: Write + Send + 'a>(
 
 pub async fn targets_command(
     server_ctx: &dyn ServerCommandContextTrait,
-    partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+    partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
     req: TargetsRequest,
-) -> buck2_error::Result<TargetsResponse> {
+) -> bz_error::Result<TargetsResponse> {
     run_server_command(
         TargetsServerCommand { req },
         server_ctx,
@@ -132,17 +132,17 @@ struct TargetsServerCommand {
 
 #[async_trait]
 impl ServerCommandTemplate for TargetsServerCommand {
-    type StartEvent = buck2_data::TargetsCommandStart;
-    type EndEvent = buck2_data::TargetsCommandEnd;
+    type StartEvent = bz_data::TargetsCommandStart;
+    type EndEvent = bz_data::TargetsCommandEnd;
     type Response = TargetsResponse;
-    type PartialResult = buck2_cli_proto::StdoutBytes;
+    type PartialResult = bz_cli_proto::StdoutBytes;
 
     async fn command(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
         mut partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         dice: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         targets(
             server_ctx,
             &mut partial_result_dispatcher.as_writer(),
@@ -152,13 +152,13 @@ impl ServerCommandTemplate for TargetsServerCommand {
         .await
     }
 
-    fn end_event(&self, _response: &buck2_error::Result<Self::Response>) -> Self::EndEvent {
-        buck2_data::TargetsCommandEnd {
+    fn end_event(&self, _response: &bz_error::Result<Self::Response>) -> Self::EndEvent {
+        bz_data::TargetsCommandEnd {
             unresolved_target_patterns: self
                 .req
                 .target_patterns
                 .iter()
-                .map(|p| buck2_data::TargetPattern { value: p.clone() })
+                .map(|p| bz_data::TargetPattern { value: p.clone() })
                 .collect(),
         }
     }
@@ -169,7 +169,7 @@ async fn targets(
     stdout: &mut (impl Write + Send),
     dice: DiceTransaction,
     request: &TargetsRequest,
-) -> buck2_error::Result<TargetsResponse> {
+) -> bz_error::Result<TargetsResponse> {
     let (output_type, mut output) = outputter(request, stdout)?;
     let mut res = targets_with_output(server_ctx, dice, request, &mut output).await;
     match &mut res {
@@ -192,7 +192,7 @@ async fn targets_with_output(
     mut dice: DiceTransaction,
     request: &TargetsRequest,
     output: &mut (impl Write + Send),
-) -> buck2_error::Result<TargetsResponse> {
+) -> bz_error::Result<TargetsResponse> {
     let cwd = server_ctx.working_dir();
     let cell_resolver = dice.get_cell_resolver().await?;
     let parsed_target_patterns = parse_patterns_from_cli_args::<TargetPatternExtra>(

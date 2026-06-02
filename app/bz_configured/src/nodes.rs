@@ -18,88 +18,88 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::dep_only_incompatible_info::DepOnlyIncompatibleCustomSoftErrors;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::dep_only_incompatible_info::FrozenDepOnlyIncompatibleInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::FrozenPlatformInfo;
-use buck2_build_api::transition::TRANSITION_ATTRS_PROVIDER;
-use buck2_build_api::transition::TRANSITION_CALCULATION;
-use buck2_build_api::transition::TransitionAttrs;
-use buck2_build_signals::node_key::BuildSignalsNodeKey;
-use buck2_build_signals::node_key::BuildSignalsNodeKeyImpl;
-use buck2_common::bazel::bzlmod::get_bazel_module_registered_toolchains_on_dice;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::cycles::CycleGuard;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::legacy_configs::view::LegacyBuckConfigView;
-use buck2_common::pattern::resolve::ResolveTargetPatterns;
-use buck2_core::cells::external::bazel_canonical_label_key;
-use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
-use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::configuration::compatibility::ResultMaybeCompatible;
-use buck2_core::configuration::data::BazelBuildSettingValue;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::pair::Configuration;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::configuration::pair::ConfigurationWithExec;
-use buck2_core::configuration::transition::applied::TransitionApplied;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern::TargetParsingRel;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::plugins::PluginKind;
-use buck2_core::plugins::PluginKindSet;
-use buck2_core::plugins::PluginListElemKind;
-use buck2_core::plugins::PluginLists;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::soft_error;
-use buck2_core::target::configured_or_unconfigured::ConfiguredOrUnconfiguredTargetLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_hash::BuckHasher;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::configuration_context::AttrConfigurationContext;
-use buck2_node::attrs::configuration_context::AttrConfigurationContextImpl;
-use buck2_node::attrs::configuration_context::PlatformConfigurationError;
-use buck2_node::attrs::configured_attr::ConfiguredAttr;
-use buck2_node::attrs::configured_traversal::ConfiguredAttrTraversal;
-use buck2_node::attrs::display::AttrDisplayWithContextExt;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::attrs::spec::AttributeId;
-use buck2_node::attrs::spec::internal::EXEC_COMPATIBLE_WITH_ATTRIBUTE;
-use buck2_node::attrs::spec::internal::INCOMING_TRANSITION_ATTRIBUTE;
-use buck2_node::attrs::spec::internal::LEGACY_TARGET_COMPATIBLE_WITH_ATTRIBUTE;
-use buck2_node::attrs::spec::internal::TARGET_COMPATIBLE_WITH_ATTRIBUTE;
-use buck2_node::configuration::calculation::CellNameForConfigurationResolution;
-use buck2_node::configuration::resolved::ConfigurationSettingKey;
-use buck2_node::configuration::resolved::MatchedConfigurationSettingKeys;
-use buck2_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
-use buck2_node::nodes::configured::BazelResolvedToolchain;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured_frontend::CONFIGURED_TARGET_NODE_CALCULATION;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculationImpl;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_node::nodes::unconfigured::TargetNodeRef;
-use buck2_node::rule::BazelToolchainRequirement;
-use buck2_node::rule::RuleIncomingTransition;
-use buck2_node::rule_type::RuleType;
-use buck2_node::visibility::VisibilityError;
-use buck2_node::visibility::VisibilityPatternList;
-use buck2_util::arc_str::ArcStr;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::interpreter::rule_defs::provider::builtin::dep_only_incompatible_info::DepOnlyIncompatibleCustomSoftErrors;
+use bz_build_api::interpreter::rule_defs::provider::builtin::dep_only_incompatible_info::FrozenDepOnlyIncompatibleInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::platform_info::FrozenPlatformInfo;
+use bz_build_api::transition::TRANSITION_ATTRS_PROVIDER;
+use bz_build_api::transition::TRANSITION_CALCULATION;
+use bz_build_api::transition::TransitionAttrs;
+use bz_build_signals::node_key::BuildSignalsNodeKey;
+use bz_build_signals::node_key::BuildSignalsNodeKeyImpl;
+use bz_common::bazel::bzlmod::get_bazel_module_registered_toolchains_on_dice;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::dice::cycles::CycleGuard;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::legacy_configs::view::LegacyBuckConfigView;
+use bz_common::pattern::resolve::ResolveTargetPatterns;
+use bz_core::cells::external::bazel_canonical_label_key;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::configuration::compatibility::IncompatiblePlatformReason;
+use bz_core::configuration::compatibility::IncompatiblePlatformReasonCause;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::configuration::compatibility::ResultMaybeCompatible;
+use bz_core::configuration::data::BazelBuildSettingValue;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::pair::Configuration;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::configuration::pair::ConfigurationWithExec;
+use bz_core::configuration::transition::applied::TransitionApplied;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::execution_types::execution::ExecutionPlatformResolutionPartial;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern::TargetParsingRel;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::plugins::PluginKind;
+use bz_core::plugins::PluginKindSet;
+use bz_core::plugins::PluginListElemKind;
+use bz_core::plugins::PluginLists;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::soft_error;
+use bz_core::target::configured_or_unconfigured::ConfiguredOrUnconfiguredTargetLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_hash::BuckHasher;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::configuration_context::AttrConfigurationContext;
+use bz_node::attrs::configuration_context::AttrConfigurationContextImpl;
+use bz_node::attrs::configuration_context::PlatformConfigurationError;
+use bz_node::attrs::configured_attr::ConfiguredAttr;
+use bz_node::attrs::configured_traversal::ConfiguredAttrTraversal;
+use bz_node::attrs::display::AttrDisplayWithContextExt;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::attrs::spec::AttributeId;
+use bz_node::attrs::spec::internal::EXEC_COMPATIBLE_WITH_ATTRIBUTE;
+use bz_node::attrs::spec::internal::INCOMING_TRANSITION_ATTRIBUTE;
+use bz_node::attrs::spec::internal::LEGACY_TARGET_COMPATIBLE_WITH_ATTRIBUTE;
+use bz_node::attrs::spec::internal::TARGET_COMPATIBLE_WITH_ATTRIBUTE;
+use bz_node::configuration::calculation::CellNameForConfigurationResolution;
+use bz_node::configuration::resolved::ConfigurationSettingKey;
+use bz_node::configuration::resolved::MatchedConfigurationSettingKeys;
+use bz_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
+use bz_node::nodes::configured::BazelResolvedToolchain;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured_frontend::CONFIGURED_TARGET_NODE_CALCULATION;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculationImpl;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_node::nodes::unconfigured::TargetNodeRef;
+use bz_node::rule::BazelToolchainRequirement;
+use bz_node::rule::RuleIncomingTransition;
+use bz_node::rule_type::RuleType;
+use bz_node::visibility::VisibilityError;
+use bz_node::visibility::VisibilityPatternList;
+use bz_util::arc_str::ArcStr;
 use derive_more::Display;
 use dice::Demand;
 use dice::DiceComputations;
@@ -128,7 +128,7 @@ use crate::execution::configure_exec_dep_with_modifiers;
 use crate::execution::find_execution_platform_by_configuration;
 use crate::execution::resolve_execution_platform;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum NodeCalculationError {
     #[error("expected `{0}` attribute to be a list but got `{1}`")]
@@ -180,7 +180,7 @@ enum CompatibilityConstraints {
     All(ConfiguredAttr),
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ToolchainDepError {
     #[error("Target `{0}` was used as a toolchain_dep, but is not a toolchain rule")]
@@ -189,7 +189,7 @@ enum ToolchainDepError {
     ToolchainRuleUsedAsNormalDep(TargetLabel),
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum PluginDepError {
     #[error("Plugin dep `{0}` is a toolchain rule")]
@@ -201,7 +201,7 @@ fn unpack_target_compatible_with_attr(
     target_node: TargetNodeRef,
     resolved_cfg: &MatchedConfigurationSettingKeysWithCfg,
     attr_id: AttributeId,
-) -> buck2_error::Result<Option<ConfiguredAttr>> {
+) -> bz_error::Result<Option<ConfiguredAttr>> {
     let attr = target_node.known_attr_or_none(attr_id, AttrInspectOptions::All);
     let attr = match attr {
         Some(attr) => attr,
@@ -227,7 +227,7 @@ fn unpack_target_compatible_with_attr(
             Some(&self.label)
         }
 
-        fn base_exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
+        fn base_exec_cfg(&self) -> bz_error::Result<ConfigurationNoExec> {
             Err(internal_error!(
                 "exec_cfg() is not needed to resolve `{}` or `{}`",
                 TARGET_COMPATIBLE_WITH_ATTRIBUTE.name,
@@ -239,7 +239,7 @@ fn unpack_target_compatible_with_attr(
             unreachable!()
         }
 
-        fn platform_cfg(&self, _label: &TargetLabel) -> buck2_error::Result<ConfigurationData> {
+        fn platform_cfg(&self, _label: &TargetLabel) -> bz_error::Result<ConfigurationData> {
             unreachable!(
                 "platform_cfg() is not needed to resolve `{}` or `{}`",
                 TARGET_COMPATIBLE_WITH_ATTRIBUTE.name, LEGACY_TARGET_COMPATIBLE_WITH_ATTRIBUTE.name
@@ -248,7 +248,7 @@ fn unpack_target_compatible_with_attr(
 
         fn resolved_transitions(
             &self,
-        ) -> buck2_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>> {
+        ) -> bz_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>> {
             Err(internal_error!(
                 "resolved_transitions() is not needed to resolve `{}` or `{}`",
                 TARGET_COMPATIBLE_WITH_ATTRIBUTE.name,
@@ -296,7 +296,7 @@ fn check_compatible(
     target_label: &ConfiguredTargetLabel,
     target_node: TargetNodeRef,
     resolved_cfg: &MatchedConfigurationSettingKeysWithCfg,
-) -> buck2_error::Result<MaybeCompatible<()>> {
+) -> bz_error::Result<MaybeCompatible<()>> {
     let target_compatible_with = unpack_target_compatible_with_attr(
         target_label,
         target_node,
@@ -327,7 +327,7 @@ fn check_compatible(
 
     // We are compatible if the list of target expressions is empty,
     // OR if we match ANY expression in the list of attributes.
-    let check_compatibility = |attr| -> buck2_error::Result<(Vec<_>, Vec<_>)> {
+    let check_compatibility = |attr| -> bz_error::Result<(Vec<_>, Vec<_>)> {
         let mut left = Vec::new();
         let mut right = Vec::new();
         for label in ConfiguredTargetNode::attr_as_target_compatible_with(attr) {
@@ -388,7 +388,7 @@ async fn check_plugin_deps(
     ctx: &mut DiceComputations<'_>,
     target_label: &ConfiguredTargetLabel,
     plugin_deps: &PluginLists,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for (_, dep_label, elem_kind) in plugin_deps.iter() {
         if *elem_kind == PluginListElemKind::Direct {
             let dep_node = ctx
@@ -423,7 +423,7 @@ impl CheckVisibility {
     fn for_bazel_attr(
         target_node: TargetNodeRef<'_>,
         attr_name: &str,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(
             match target_node.bazel_implicit_attr_visibility_package(attr_name)? {
                 Some(package) => CheckVisibility::OrPackages(vec![package]),
@@ -460,7 +460,7 @@ impl Default for CheckVisibility {
 
 #[derive(Default)]
 pub(crate) struct ErrorsAndIncompatibilities {
-    errs: Vec<buck2_error::Error>,
+    errs: Vec<bz_error::Error>,
     incompats: Vec<Arc<IncompatiblePlatformReason>>,
 }
 
@@ -560,7 +560,7 @@ async fn dependency_is_visible(
     dep: &ConfiguredTargetNode,
     target_label: &TargetConfiguredTargetLabel,
     check_visibility: &CheckVisibility,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     target_node_dependency_is_visible(ctx, dep.target_node(), target_label, check_visibility).await
 }
 
@@ -569,7 +569,7 @@ async fn target_node_dependency_is_visible(
     dep: &TargetNode,
     target_label: &TargetConfiguredTargetLabel,
     check_visibility: &CheckVisibility,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     if dep.bazel_package_group().is_some() {
         return Ok(true);
     }
@@ -611,7 +611,7 @@ async fn precheck_exec_dep_visibility(
     target_label: &TargetConfiguredTargetLabel,
     exec_deps: SmallMap<ConfiguredProvidersLabel, CheckVisibility>,
     errors_and_incompats: &mut ErrorsAndIncompatibilities,
-) -> buck2_error::Result<SmallMap<ConfiguredProvidersLabel, CheckVisibility>> {
+) -> bz_error::Result<SmallMap<ConfiguredProvidersLabel, CheckVisibility>> {
     let mut checked = SmallMap::new();
     for (dep, check_visibility) in exec_deps {
         if check_visibility == CheckVisibility::No {
@@ -653,7 +653,7 @@ async fn precheck_toolchain_dep_visibility(
     target_label: &TargetConfiguredTargetLabel,
     toolchain_deps: SmallSet<TargetConfiguredTargetLabel>,
     errors_and_incompats: &mut ErrorsAndIncompatibilities,
-) -> buck2_error::Result<SmallSet<TargetConfiguredTargetLabel>> {
+) -> bz_error::Result<SmallSet<TargetConfiguredTargetLabel>> {
     let mut checked = SmallSet::new();
     for dep in toolchain_deps {
         let dep_node = ctx
@@ -690,7 +690,7 @@ async fn target_node_is_visible_to(
     ctx: &mut DiceComputations<'_>,
     dep: &TargetNode,
     target: &TargetLabel,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     if dep.is_visible_to(target)? {
         return Ok(true);
     }
@@ -701,7 +701,7 @@ async fn target_node_visibility_matches_bazel_package_groups_for_target(
     ctx: &mut DiceComputations<'_>,
     dep: &TargetNode,
     target: &TargetLabel,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let group_labels = bazel_package_group_visibility_labels(dep)?;
     bazel_package_groups_allow_target(ctx, group_labels, target).await
 }
@@ -710,14 +710,14 @@ async fn target_node_visibility_matches_bazel_package_groups_for_package(
     ctx: &mut DiceComputations<'_>,
     dep: &TargetNode,
     package: &PackageLabel,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let group_labels = bazel_package_group_visibility_labels(dep)?;
     bazel_package_groups_allow_package(ctx, group_labels, package).await
 }
 
 fn bazel_package_group_visibility_labels(
     dep: &TargetNode,
-) -> buck2_error::Result<Vec<TargetLabel>> {
+) -> bz_error::Result<Vec<TargetLabel>> {
     let mut labels = Vec::new();
     if let VisibilityPatternList::List(patterns) = &dep.visibility()?.0 {
         for pattern in patterns {
@@ -733,7 +733,7 @@ async fn bazel_package_groups_allow_target(
     ctx: &mut DiceComputations<'_>,
     group_labels: Vec<TargetLabel>,
     target: &TargetLabel,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let mut seen = BTreeSet::new();
     let mut stack = group_labels;
     while let Some(group_label) = stack.pop() {
@@ -761,7 +761,7 @@ async fn bazel_package_groups_allow_package(
     ctx: &mut DiceComputations<'_>,
     group_labels: Vec<TargetLabel>,
     package: &PackageLabel,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let mut seen = BTreeSet::new();
     let mut stack = group_labels;
     while let Some(group_label) = stack.pop() {
@@ -834,7 +834,7 @@ pub(crate) async fn gather_deps(
         fn insert_bazel_make_variable_label_deps(
             &mut self,
             attr: &ConfiguredAttr,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             match attr {
                 ConfiguredAttr::Label(label) => self.dep(label),
                 ConfiguredAttr::List(list) => {
@@ -863,7 +863,7 @@ pub(crate) async fn gather_deps(
     }
 
     impl ConfiguredAttrTraversal for Traversal {
-        fn dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+        fn dep(&mut self, dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
             self.insert_dep_visibility(dep);
             Ok(())
         }
@@ -872,7 +872,7 @@ pub(crate) async fn gather_deps(
             &mut self,
             dep: &ConfiguredProvidersLabel,
             plugin_kinds: &PluginKindSet,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             self.insert_dep_visibility(dep);
             self.deps
                 .entry(dep.dupe())
@@ -882,12 +882,12 @@ pub(crate) async fn gather_deps(
             Ok(())
         }
 
-        fn exec_dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+        fn exec_dep(&mut self, dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
             self.insert_exec_dep_visibility(dep);
             Ok(())
         }
 
-        fn toolchain_dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+        fn toolchain_dep(&mut self, dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
             self.toolchain_deps
                 .insert(TargetConfiguredTargetLabel::new_without_exec_cfg(
                     dep.target().dupe(),
@@ -895,7 +895,7 @@ pub(crate) async fn gather_deps(
             Ok(())
         }
 
-        fn plugin_dep(&mut self, dep: &TargetLabel, kind: &PluginKind) -> buck2_error::Result<()> {
+        fn plugin_dep(&mut self, dep: &TargetLabel, kind: &PluginKind) -> bz_error::Result<()> {
             self.plugin_lists
                 .insert(kind.dupe(), dep.dupe(), PluginListElemKind::Direct);
             Ok(())
@@ -998,7 +998,7 @@ pub(crate) async fn gather_deps(
 fn new_bazel_input_file_configured_target_node(
     target_label: &ConfiguredTargetLabel,
     target_node: TargetNode,
-) -> buck2_error::Result<ConfiguredTargetNode> {
+) -> bz_error::Result<ConfiguredTargetNode> {
     Ok(ConfiguredTargetNode::new(
         target_label.dupe(),
         target_node,
@@ -1075,7 +1075,7 @@ async fn resolve_transition_input_attrs<'a>(
             Some(&self.label)
         }
 
-        fn base_exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
+        fn base_exec_cfg(&self) -> bz_error::Result<ConfigurationNoExec> {
             // Bazel transition implementations receive attrs in the pre-rule
             // configuration, and label attrs are exposed as unconfigured Label
             // values. If an attr itself has `cfg = "exec"`, we still need to
@@ -1088,7 +1088,7 @@ async fn resolve_transition_input_attrs<'a>(
             self.toolchain_cfg.dupe()
         }
 
-        fn platform_cfg(&self, label: &TargetLabel) -> buck2_error::Result<ConfigurationData> {
+        fn platform_cfg(&self, label: &TargetLabel) -> bz_error::Result<ConfigurationData> {
             match self.platform_cfgs.get(label) {
                 Some(configuration) => Ok(configuration.dupe()),
                 None => Err(PlatformConfigurationError::UnknownPlatformTarget(label.dupe()).into()),
@@ -1097,7 +1097,7 @@ async fn resolve_transition_input_attrs<'a>(
 
         fn resolved_transitions(
             &self,
-        ) -> buck2_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>> {
+        ) -> bz_error::Result<&OrderedMap<Arc<TransitionId>, Arc<TransitionApplied>>> {
             // TODO(cjhopman): Why is this an internal error? Doesn't it indicate an error in the
             // rule or the target definition? Do we enforce it somewhere else as an input error?
             Err(internal_error!(
@@ -1109,7 +1109,7 @@ async fn resolve_transition_input_attrs<'a>(
             &self,
             label: &ProvidersLabel,
             _tr: &TransitionId,
-        ) -> buck2_error::Result<ConfiguredProvidersLabel> {
+        ) -> bz_error::Result<ConfiguredProvidersLabel> {
             // Transition implementations receive attr label values as labels in the
             // pre-transition configuration. The outgoing attr transition is applied
             // later when configured deps are gathered.
@@ -1311,7 +1311,7 @@ fn verify_transitioned_attrs(
     pre_transition_attrs: &OrderedMap<&str, Arc<ConfiguredAttr>>,
     pre_transition_config: &ConfigurationData,
     node: &ConfiguredTargetNode,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for (attr, attr_value) in pre_transition_attrs {
         let transition_configured_attr =
             node.get(attr, AttrInspectOptions::All).ok_or_else(|| {
@@ -1345,7 +1345,7 @@ fn normalize_bazel_toolchain_key(key: &str) -> String {
     key.trim_start_matches('@').to_owned()
 }
 
-fn buck_label_for_bazel_canonical_key(key: &str) -> buck2_error::Result<String> {
+fn buck_label_for_bazel_canonical_key(key: &str) -> bz_error::Result<String> {
     let key = normalize_bazel_toolchain_key(key);
     let Some((repo, package_and_target)) = key.split_once("//") else {
         return Ok(key);
@@ -1429,7 +1429,7 @@ async fn bazel_toolchain_implementation_label(
     ctx: &mut DiceComputations<'_>,
     toolchain_node: &TargetNode,
     attr: &CoercedAttr,
-) -> buck2_error::Result<Option<TargetLabel>> {
+) -> bz_error::Result<Option<TargetLabel>> {
     match attr {
         CoercedAttr::String(value) => {
             let cell_resolver = ctx.get_cell_resolver().await?;
@@ -1450,9 +1450,9 @@ async fn bazel_toolchain_implementation_label(
 fn parse_bazel_nodep_label(
     value: &str,
     owning_node: &TargetNode,
-    cell_resolver: &buck2_core::cells::CellResolver,
-    cell_alias_resolver: &buck2_core::cells::CellAliasResolver,
-) -> buck2_error::Result<TargetLabel> {
+    cell_resolver: &bz_core::cells::CellResolver,
+    cell_alias_resolver: &bz_core::cells::CellAliasResolver,
+) -> bz_error::Result<TargetLabel> {
     let package = owning_node.label().pkg();
     let parse = |value: &str| {
         ParsedPattern::<TargetPatternExtra>::parse_not_relaxed(
@@ -1475,7 +1475,7 @@ const BAZEL_PLATFORMS_OPTION: &str = "//command_line_option:platforms";
 const BAZEL_EXTRA_TOOLCHAINS_OPTION: &str = "//command_line_option:extra_toolchains";
 
 fn bazel_transitioned_label(
-    data: &buck2_core::configuration::data::ConfigurationDataData,
+    data: &bz_core::configuration::data::ConfigurationDataData,
     is_marked_as_exec_platform: bool,
 ) -> String {
     let mut hasher = BuckHasher::default();
@@ -1488,7 +1488,7 @@ fn bazel_transitioned_label(
 async fn parse_bazel_platform_target(
     ctx: &mut DiceComputations<'_>,
     label: &str,
-) -> buck2_error::Result<TargetLabel> {
+) -> bz_error::Result<TargetLabel> {
     let cell_resolver = ctx.get_cell_resolver().await?;
     let cell_alias_resolver = ctx
         .get_cell_alias_resolver(cell_resolver.root_cell())
@@ -1504,7 +1504,7 @@ async fn parse_bazel_platform_target(
 async fn bazel_platform_targets_from_setting(
     ctx: &mut DiceComputations<'_>,
     value: &BazelBuildSettingValue,
-) -> buck2_error::Result<Vec<TargetLabel>> {
+) -> bz_error::Result<Vec<TargetLabel>> {
     match value {
         BazelBuildSettingValue::Label(label) => Ok(vec![label.target().dupe()]),
         BazelBuildSettingValue::LabelList(labels) => {
@@ -1537,7 +1537,7 @@ async fn bazel_platform_targets_from_setting(
 
 async fn bazel_host_platform_target(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<TargetLabel> {
+) -> bz_error::Result<TargetLabel> {
     parse_bazel_platform_target(ctx, "platforms//host:host").await
 }
 
@@ -1545,7 +1545,7 @@ async fn bazel_platform_configuration(
     ctx: &mut DiceComputations<'_>,
     target: &TargetLabel,
     is_marked_as_exec_platform: bool,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     ctx.get_configuration_analysis_result(&ProvidersLabel::default_for(target.dupe()))
         .await?
         .provider_collection()
@@ -1557,7 +1557,7 @@ async fn bazel_platform_configuration(
 async fn apply_bazel_platform_cfg_to_bazel_rule(
     ctx: &mut DiceComputations<'_>,
     cfg: &ConfigurationData,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     if !cfg.is_bound() {
         return Ok(cfg.dupe());
     }
@@ -1606,7 +1606,7 @@ async fn configuration_settings_match(
     cfg: &ConfigurationData,
     target_cell: CellNameForConfigurationResolution,
     keys: &[ConfigurationSettingKey],
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     if keys.is_empty() {
         return Ok(true);
     }
@@ -1626,8 +1626,8 @@ async fn configuration_settings_match(
 
 fn platform_constraints_contain_label(
     platform_constraints: &std::collections::BTreeMap<
-        buck2_core::configuration::constraints::ConstraintKey,
-        buck2_core::configuration::constraints::ConstraintValue,
+        bz_core::configuration::constraints::ConstraintKey,
+        bz_core::configuration::constraints::ConstraintValue,
     >,
     constraint_value: &TargetLabel,
 ) -> bool {
@@ -1640,7 +1640,7 @@ fn platform_constraints_contain_label(
 async fn resolve_bazel_alias(
     ctx: &mut DiceComputations<'_>,
     label: &TargetLabel,
-) -> buck2_error::Result<TargetLabel> {
+) -> bz_error::Result<TargetLabel> {
     let mut current = label.dupe();
     for _ in 0..16 {
         let node = ctx.get_target_node(&current).await?;
@@ -1665,14 +1665,14 @@ async fn resolve_bazel_alias(
 async fn resolve_constraint_value_alias(
     ctx: &mut DiceComputations<'_>,
     constraint_value: &TargetLabel,
-) -> buck2_error::Result<TargetLabel> {
+) -> bz_error::Result<TargetLabel> {
     resolve_bazel_alias(ctx, constraint_value).await
 }
 
 async fn resolve_registered_bazel_toolchain_node(
     ctx: &mut DiceComputations<'_>,
     node: TargetNode,
-) -> buck2_error::Result<Option<TargetNode>> {
+) -> bz_error::Result<Option<TargetNode>> {
     if bazel_rule_kind_is(&node, "toolchain") {
         return Ok(Some(node));
     }
@@ -1700,7 +1700,7 @@ async fn platform_contains_constraint_values(
     ctx: &mut DiceComputations<'_>,
     platform_cfg: &ConfigurationData,
     constraint_values: &[TargetLabel],
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     if constraint_values.is_empty() {
         return Ok(true);
     }
@@ -1726,7 +1726,7 @@ async fn platform_contains_constraint_values(
 fn platform_contains_platform_constraints(
     platform_cfg: &ConfigurationData,
     required_cfg: &ConfigurationData,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     if !platform_cfg.is_bound() || !required_cfg.is_bound() {
         return Ok(false);
     }
@@ -1747,7 +1747,7 @@ async fn toolchain_constraints_match(
     target_node: &TargetNode,
     target_cfg: &ConfigurationData,
     exec_cfg: &ConfigurationData,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let toolchain_cell = CellNameForConfigurationResolution(target_node.label().pkg().cell_name());
 
     let target_settings = target_node
@@ -1801,7 +1801,7 @@ struct RegisteredBazelToolchainNodesKey {
 async fn compute_registered_bazel_toolchain_nodes(
     ctx: &mut DiceComputations<'_>,
     extra_toolchains: Vec<String>,
-) -> buck2_error::Result<Arc<Vec<BazelRegisteredToolchain>>> {
+) -> bz_error::Result<Arc<Vec<BazelRegisteredToolchain>>> {
     let root_conf = ctx.get_legacy_root_config_on_dice().await?;
     let registered: Vec<String> = root_conf
         .view(ctx)
@@ -1850,7 +1850,7 @@ async fn compute_registered_bazel_toolchain_nodes(
                     let result = ctx
                         .get_interpreter_results(package_with_modifiers.package)
                         .await?;
-                    buck2_error::Ok((result, spec))
+                    bz_error::Ok((result, spec))
                 }
                 .boxed()
             },
@@ -1887,7 +1887,7 @@ async fn compute_registered_bazel_toolchain_nodes(
 
 #[async_trait]
 impl Key for RegisteredBazelToolchainNodesKey {
-    type Value = buck2_error::Result<Arc<Vec<BazelRegisteredToolchain>>>;
+    type Value = bz_error::Result<Arc<Vec<BazelRegisteredToolchain>>>;
 
     async fn compute(
         &self,
@@ -1912,7 +1912,7 @@ impl Key for RegisteredBazelToolchainNodesKey {
 async fn registered_bazel_toolchain_nodes(
     ctx: &mut DiceComputations<'_>,
     extra_toolchains: Vec<String>,
-) -> buck2_error::Result<Arc<Vec<BazelRegisteredToolchain>>> {
+) -> bz_error::Result<Arc<Vec<BazelRegisteredToolchain>>> {
     ctx.compute(&RegisteredBazelToolchainNodesKey { extra_toolchains })
         .await?
 }
@@ -1935,7 +1935,7 @@ struct BazelSingleToolchainResolutionKey {
 async fn compute_bazel_single_toolchain_resolution(
     ctx: &mut DiceComputations<'_>,
     key: &BazelSingleToolchainResolutionKey,
-) -> buck2_error::Result<Option<TargetLabel>> {
+) -> bz_error::Result<Option<TargetLabel>> {
     let registered = registered_bazel_toolchain_nodes(ctx, key.extra_toolchains.clone()).await?;
     if registered.is_empty() {
         return Ok(None);
@@ -1966,7 +1966,7 @@ async fn compute_bazel_single_toolchain_resolution(
 
 #[async_trait]
 impl Key for BazelSingleToolchainResolutionKey {
-    type Value = buck2_error::Result<Option<TargetLabel>>;
+    type Value = bz_error::Result<Option<TargetLabel>>;
 
     async fn compute(
         &self,
@@ -1994,7 +1994,7 @@ async fn resolve_bazel_single_toolchain(
     target_cfg: ConfigurationData,
     exec_cfg: ConfigurationData,
     extra_toolchains: Vec<String>,
-) -> buck2_error::Result<Option<TargetLabel>> {
+) -> bz_error::Result<Option<TargetLabel>> {
     ctx.compute(&BazelSingleToolchainResolutionKey {
         toolchain_type,
         target_cfg,
@@ -2006,7 +2006,7 @@ async fn resolve_bazel_single_toolchain(
 
 fn bazel_extra_toolchain_patterns_from_cfg(
     cfg: &ConfigurationData,
-) -> buck2_error::Result<Vec<String>> {
+) -> bz_error::Result<Vec<String>> {
     if !cfg.is_bound() {
         return Ok(Vec::new());
     }
@@ -2032,7 +2032,7 @@ fn bazel_extra_toolchain_patterns_from_cfg(
 async fn resolve_bazel_toolchain_type_alias(
     ctx: &mut DiceComputations<'_>,
     toolchain_type: &str,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let cell_resolver = ctx.get_cell_resolver().await?;
     let root_cell = cell_resolver.root_cell();
     let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
@@ -2056,7 +2056,7 @@ pub async fn resolve_bazel_declared_toolchain_deps(
     target_label: &ConfiguredTargetLabel,
     declared_toolchain_requirements: Vec<BazelToolchainRequirement>,
     execution_platform_cfg: &ConfigurationNoExec,
-) -> buck2_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
+) -> bz_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
     if !target_label.cfg().is_bound() || declared_toolchain_requirements.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -2086,7 +2086,7 @@ pub async fn resolve_bazel_declared_toolchain_deps(
                         extra_toolchains,
                     )
                     .await?;
-                    buck2_error::Ok((
+                    bz_error::Ok((
                         declared.clone(),
                         resolution_key.clone(),
                         *mandatory,
@@ -2102,8 +2102,8 @@ pub async fn resolve_bazel_declared_toolchain_deps(
     for (declared, resolution_key, mandatory, toolchain_impl) in selected_toolchain_impls {
         let Some(toolchain_impl) = toolchain_impl else {
             if mandatory {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "mandatory toolchain type `{}` was not resolved for `{}`",
                     declared,
                     target_label
@@ -2148,7 +2148,7 @@ async fn resolve_bazel_toolchain_deps(
     target_label: &ConfiguredTargetLabel,
     target_node: &TargetNode,
     execution_platform_cfg: &ConfigurationNoExec,
-) -> buck2_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
+) -> bz_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
     resolve_bazel_declared_toolchain_deps(
         ctx,
         target_label,
@@ -2577,8 +2577,8 @@ pub(crate) struct LookingUpConfiguredNodeContext {
     rest: Option<Arc<Self>>,
 }
 
-impl buck2_error::TypedContext for LookingUpConfiguredNodeContext {
-    fn eq(&self, other: &dyn buck2_error::TypedContext) -> bool {
+impl bz_error::TypedContext for LookingUpConfiguredNodeContext {
+    fn eq(&self, other: &dyn bz_error::TypedContext) -> bool {
         match (other as &dyn std::any::Any).downcast_ref::<Self>() {
             Some(v) => self == v,
             None => false,
@@ -2600,9 +2600,9 @@ impl LookingUpConfiguredNodeContext {
     }
 
     pub(crate) fn add_context<T>(
-        res: buck2_error::Result<T>,
+        res: bz_error::Result<T>,
         target: ConfiguredTargetLabel,
-    ) -> buck2_error::Result<T> {
+    ) -> bz_error::Result<T> {
         res.compute_context(
             |parent_ctx: Arc<Self>| Self::new(target.dupe(), Some(parent_ctx)),
             || Self::new(target.dupe(), None),
@@ -2761,7 +2761,7 @@ pagable::static_str!(
 async fn check_error_on_incompatible_dep(
     ctx: &mut DiceComputations<'_>,
     target_label: &TargetLabel,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     if check_target_enabled_for_config(
         ctx,
         target_label,
@@ -2786,7 +2786,7 @@ async fn check_target_enabled_for_config(
     target_label: &TargetLabel,
     section: StaticStr,
     property: StaticStr,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
     #[display("ConfigPatternCalculation({section}, {property})")]
     #[pagable_typetag(dice::DiceKeyDyn)]
@@ -2797,7 +2797,7 @@ async fn check_target_enabled_for_config(
 
     #[async_trait]
     impl Key for ConfigPatternCalculation {
-        type Value = buck2_error::Result<Arc<Vec<ParsedPattern<TargetPatternExtra>>>>;
+        type Value = bz_error::Result<Arc<Vec<ParsedPattern<TargetPatternExtra>>>>;
 
         async fn compute(
             &self,
@@ -2858,14 +2858,14 @@ async fn check_target_enabled_for_config(
 async fn get_dep_only_incompatible_custom_soft_error(
     ctx: &mut DiceComputations<'_>,
     target_label: &TargetLabel,
-) -> buck2_error::Result<Option<Vec<ArcStr>>> {
+) -> bz_error::Result<Option<Vec<ArcStr>>> {
     #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
     #[pagable_typetag(dice::DiceKeyDyn)]
     struct GetDepOnlyIncompatibleInfo;
 
     #[async_trait]
     impl Key for GetDepOnlyIncompatibleInfo {
-        type Value = buck2_error::Result<Option<Arc<DepOnlyIncompatibleCustomSoftErrors>>>;
+        type Value = bz_error::Result<Option<Arc<DepOnlyIncompatibleCustomSoftErrors>>>;
 
         async fn compute(
             &self,

@@ -11,9 +11,9 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use buck2_build_signals::env::WaitingCategory;
-use buck2_core::soft_error;
-use buck2_util::time_span::TimeSpan;
+use bz_build_signals::env::WaitingCategory;
+use bz_core::soft_error;
+use bz_util::time_span::TimeSpan;
 use gazebo::variants::VariantName;
 
 use crate::DetailedCriticalPathEntry;
@@ -28,7 +28,7 @@ pub(crate) struct CriticalPathProtoEnhancer {
     command_start: Instant,
     /// Tracks the end time of the last added entry to detect gaps
     last_entry_end: Instant,
-    entries: Vec<buck2_data::CriticalPathEntry2>,
+    entries: Vec<bz_data::CriticalPathEntry2>,
 }
 
 impl CriticalPathProtoEnhancer {
@@ -57,8 +57,8 @@ impl CriticalPathProtoEnhancer {
         {
             self.add_simple_entry(
                 None,
-                buck2_data::critical_path_entry2::Entry::Waiting(
-                    buck2_data::critical_path_entry2::Waiting {
+                bz_data::critical_path_entry2::Entry::Waiting(
+                    bz_data::critical_path_entry2::Waiting {
                         category: Some("for_deps".to_owned()),
                     },
                 ),
@@ -93,8 +93,8 @@ impl CriticalPathProtoEnhancer {
                     {
                         self.add_simple_entry(
                             None,
-                            buck2_data::critical_path_entry2::Entry::Waiting(
-                                buck2_data::critical_path_entry2::Waiting {
+                            bz_data::critical_path_entry2::Entry::Waiting(
+                                bz_data::critical_path_entry2::Waiting {
                                     category: Some(category.variant_name_lowercase().to_owned()),
                                 },
                             ),
@@ -114,7 +114,7 @@ impl CriticalPathProtoEnhancer {
         self.add_entry_impl(
             None,
             data.duration.total,
-            buck2_data::CriticalPathEntry2 {
+            bz_data::CriticalPathEntry2 {
                 span_ids: data
                     .span_ids
                     .iter()
@@ -155,7 +155,7 @@ impl CriticalPathProtoEnhancer {
     pub(crate) fn add_simple_entry(
         &mut self,
         waiting_category: Option<&str>,
-        entry: buck2_data::critical_path_entry2::Entry,
+        entry: bz_data::critical_path_entry2::Entry,
         time_span: TimeSpan,
         is_critical: bool,
     ) {
@@ -171,7 +171,7 @@ impl CriticalPathProtoEnhancer {
         )
     }
 
-    pub(crate) fn into_entries(self) -> Vec<buck2_data::CriticalPathEntry2> {
+    pub(crate) fn into_entries(self) -> Vec<bz_data::CriticalPathEntry2> {
         self.entries
     }
 
@@ -184,7 +184,7 @@ impl CriticalPathProtoEnhancer {
         &mut self,
         waiting_category: Option<&str>,
         time_span: TimeSpan,
-        entry: buck2_data::CriticalPathEntry2,
+        entry: bz_data::CriticalPathEntry2,
     ) {
         let entry_start = time_span.start();
         if let Some(overlap) = self.last_entry_end.checked_duration_since(entry_start)
@@ -192,8 +192,8 @@ impl CriticalPathProtoEnhancer {
         {
             let _ignored = soft_error!(
                 "critical_path_entry_overlap",
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "Critical path nodes had overlapping time spans (overlap duration {}us). \
                     This indicates that the work of the latter node does not actually \
                     depend on the work of the previous node. This leads to incorrect critical \
@@ -216,7 +216,7 @@ impl CriticalPathProtoEnhancer {
         if missing_duration.as_millis() > 0 {
             self.entries.push(
                 self.create_simple_entry(
-                    buck2_data::critical_path_entry2::Waiting {
+                    bz_data::critical_path_entry2::Waiting {
                         category: waiting_category.map(|v| v.to_owned()),
                     }
                     .into(),
@@ -232,13 +232,13 @@ impl CriticalPathProtoEnhancer {
 
     fn create_simple_entry(
         &self,
-        entry: buck2_data::critical_path_entry2::Entry,
+        entry: bz_data::critical_path_entry2::Entry,
         start_time: Instant,
         duration: Duration,
         non_critical_duration: Duration,
-    ) -> buck2_data::CriticalPathEntry2 {
+    ) -> bz_data::CriticalPathEntry2 {
         let duration_proto = duration_to_proto_saturating(duration);
-        buck2_data::CriticalPathEntry2 {
+        bz_data::CriticalPathEntry2 {
             span_ids: Vec::new(),
             duration: Some(duration_proto),
             user_duration: Some(prost_types::Duration::default()),

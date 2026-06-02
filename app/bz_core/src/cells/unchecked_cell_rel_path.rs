@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_fs::paths::path_util::path_remove_prefix;
+use bz_fs::paths::path_util::path_remove_prefix;
 
 use crate::cells::paths::CellRelativePath;
 

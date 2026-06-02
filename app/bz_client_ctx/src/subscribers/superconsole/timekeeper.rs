@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use buck2_event_observer::span_tracker::EventTimestamp;
+use bz_event_observer::span_tracker::EventTimestamp;
 
 use crate::ticker::Tick;
 

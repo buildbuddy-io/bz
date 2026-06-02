@@ -11,13 +11,13 @@
 use std::cmp;
 use std::iter;
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_core::env::registry::Applicability;
-use buck2_core::env::registry::ENV_INFO;
-use buck2_core::env::registry::EnvInfoEntry;
-use buck2_error::internal_error;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_core::env::registry::Applicability;
+use bz_core::env::registry::ENV_INFO;
+use bz_core::env::registry::EnvInfoEntry;
+use bz_error::internal_error;
 
 /// Print help for environment variables used by buck2.
 #[derive(Debug, clap::Parser)]
@@ -44,7 +44,7 @@ impl HelpEnvCommand {
             .filter(|x| match x.applicability {
                 Applicability::All => true,
                 Applicability::Testing => self.self_testing,
-                Applicability::Internal => !buck2_core::is_open_source(),
+                Applicability::Internal => !bz_core::is_open_source(),
             })
             .collect();
         env_info.sort();
@@ -81,7 +81,7 @@ impl HelpEnvCommand {
             let line = format!(
                 "{name:name_column_width$} {ty:ty_column_width$} {default:default_column_width$}",
             );
-            buck2_client_ctx::println!("{}", line.trim_end())?;
+            bz_client_ctx::println!("{}", line.trim_end())?;
         }
         ExitResult::success()
     }

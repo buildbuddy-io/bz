@@ -548,7 +548,7 @@ async def _check_uploaded_dep_file_key(buck: Buck, dep_file_key: str) -> None:
 
 
 @buck_test(data_dir="upload_dep_files")
-@env("BUCK_LOG", "buck2_execute_impl::executors::caching=debug")
+@env("BUCK_LOG", "bz_execute_impl::executors::caching=debug")
 @env("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")
 async def test_re_dep_file_uploads_same_key(buck: Buck) -> None:
     # Test all the cases where the remote dep file key should stay the same
@@ -585,7 +585,7 @@ async def test_re_dep_file_uploads_same_key(buck: Buck) -> None:
 
 
 @buck_test(data_dir="upload_dep_files")
-@env("BUCK_LOG", "buck2_execute_impl::executors::caching=debug")
+@env("BUCK_LOG", "bz_execute_impl::executors::caching=debug")
 @env("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")
 async def test_re_dep_file_uploads_different_key(buck: Buck) -> None:
     # TODO: Mergebase is currently not set in this test.
@@ -648,7 +648,7 @@ async def test_re_dep_file_uploads_different_key(buck: Buck) -> None:
 
 
 @buck_test(data_dir="upload_dep_files")
-@env("BUCK_LOG", "buck2_execute_impl::executors::caching=debug")
+@env("BUCK_LOG", "bz_execute_impl::executors::caching=debug")
 @env("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")
 async def test_dep_file_does_not_upload_when_allow_cache_upload_is_true(
     buck: Buck,
@@ -672,7 +672,7 @@ async def test_dep_file_does_not_upload_when_allow_cache_upload_is_true(
 
 
 @buck_test(data_dir="upload_dep_files")
-@env("BUCK_LOG", "buck2_execute_impl::executors::caching=debug")
+@env("BUCK_LOG", "bz_execute_impl::executors::caching=debug")
 @env("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")
 @env("BUCK2_TEST_ONLY_REMOTE_DEP_FILE_CACHE", "true")
 async def test_only_do_cache_lookup_when_dep_file_upload_is_enabled(
@@ -710,7 +710,7 @@ async def test_only_do_cache_lookup_when_dep_file_upload_is_enabled(
 
 
 @buck_test(data_dir="upload_dep_files")
-@env("BUCK_LOG", "buck2_execute_impl::executors::caching=debug")
+@env("BUCK_LOG", "bz_execute_impl::executors::caching=debug")
 @env("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")
 async def test_re_dep_file_remote_upload(buck: Buck) -> None:
     target = [
@@ -729,7 +729,7 @@ async def test_re_dep_file_remote_upload(buck: Buck) -> None:
 
 
 @buck_test(data_dir="upload_dep_files", write_invocation_record=True)
-@env("BUCK_LOG", "buck2_action_impl=debug,buck2_execute_impl::executors::caching=debug")
+@env("BUCK_LOG", "bz_action_impl=debug,bz_execute_impl::executors::caching=debug")
 @env("BUCK2_TEST_SKIP_ACTION_CACHE_WRITE", "true")
 async def test_re_dep_file_cache_hit_upload(buck: Buck) -> None:
     target = [
@@ -811,7 +811,7 @@ async def check_remote_dep_file_cache_query_took_place(buck: Buck) -> str:
 @buck_test(data_dir="upload_dep_files")
 @env(
     "BUCK_LOG",
-    "buck2_execute_impl::executors::caching=debug,buck2_execute_impl::executors::action_cache=debug,buck2_action_impl=debug",
+    "bz_execute_impl::executors::caching=debug,bz_execute_impl::executors::action_cache=debug,bz_action_impl=debug",
 )
 # Disable the regular action cache query so that we actually hit the remote dep file cache query.
 @env("BUCK2_TEST_ONLY_REMOTE_DEP_FILE_CACHE", "true")
@@ -907,7 +907,7 @@ async def test_re_dep_file_query_change_tagged_unused_file(buck: Buck) -> None:
 @buck_test(data_dir="upload_dep_files")
 @env(
     "BUCK_LOG",
-    "buck2_execute_impl::executors::caching=debug,buck2_execute_impl::executors::action_cache=debug,buck2_action_impl=debug",
+    "bz_execute_impl::executors::caching=debug,bz_execute_impl::executors::action_cache=debug,bz_action_impl=debug",
 )
 # Disable the regular action cache query so that we actually hit the remote dep file cache query.
 @env("BUCK2_TEST_ONLY_REMOTE_DEP_FILE_CACHE", "true")

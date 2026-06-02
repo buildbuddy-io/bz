@@ -13,27 +13,27 @@ use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::liveliness_observer::CancelledLivelinessGuard;
-use buck2_common::liveliness_observer::LivelinessGuard;
-use buck2_common::liveliness_observer::LivelinessObserver;
-use buck2_common::liveliness_observer::LivelinessObserverExt;
-use buck2_core::execution_types::executor_config::HybridExecutionLevel;
-use buck2_data::SchedulingMode;
-use buck2_error::internal_error;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_execute::execute::claim::Claim;
-use buck2_execute::execute::claim::ClaimManager;
-use buck2_execute::execute::claim::MutexClaimManager;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::manager::CommandExecutionManagerExt;
-use buck2_execute::execute::prepared::PreparedCommand;
-use buck2_execute::execute::prepared::PreparedCommandExecutor;
-use buck2_execute::execute::request::CommandExecutionPaths;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::result::CommandExecutionErrorType;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::execute::result::CommandExecutionStatus;
+use bz_build_signals::env::WaitingData;
+use bz_common::liveliness_observer::CancelledLivelinessGuard;
+use bz_common::liveliness_observer::LivelinessGuard;
+use bz_common::liveliness_observer::LivelinessObserver;
+use bz_common::liveliness_observer::LivelinessObserverExt;
+use bz_core::execution_types::executor_config::HybridExecutionLevel;
+use bz_data::SchedulingMode;
+use bz_error::internal_error;
+use bz_events::dispatch::EventDispatcher;
+use bz_execute::execute::claim::Claim;
+use bz_execute::execute::claim::ClaimManager;
+use bz_execute::execute::claim::MutexClaimManager;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::manager::CommandExecutionManagerExt;
+use bz_execute::execute::prepared::PreparedCommand;
+use bz_execute::execute::prepared::PreparedCommandExecutor;
+use bz_execute::execute::request::CommandExecutionPaths;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::result::CommandExecutionErrorType;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::execute::result::CommandExecutionStatus;
 use derivative::Derivative;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
@@ -96,7 +96,7 @@ where
     fn command_executor_preference(
         &self,
         command: &PreparedCommand<'_, '_>,
-    ) -> buck2_error::Result<ExecutorPreference> {
+    ) -> bz_error::Result<ExecutorPreference> {
         let action_preference = command.request.executor_preference();
         if action_preference.requires_local() || action_preference.requires_remote() {
             return Ok(action_preference);
@@ -478,7 +478,7 @@ impl Claim for ReClaim {
     ///
     /// In that case, RE will have failed. To fix this, we need local to release its claim instead
     /// of returning ClaimCancelled.
-    fn release(self: Box<Self>) -> buck2_error::Result<()> {
+    fn release(self: Box<Self>) -> bz_error::Result<()> {
         // An error here should only occur if local execution had started without the claim.
         self.released_liveliness_guard
             .restore()

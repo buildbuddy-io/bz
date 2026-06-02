@@ -17,16 +17,16 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_execute::materialize::materializer::DeferredMaterializerEntry;
-use buck2_execute::materialize::materializer::DeferredMaterializerExtensions;
-use buck2_execute::materialize::materializer::DeferredMaterializerIterItem;
-use buck2_execute::materialize::materializer::DeferredMaterializerSubscription;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::dispatch::get_dispatcher;
+use bz_execute::materialize::materializer::DeferredMaterializerEntry;
+use bz_execute::materialize::materializer::DeferredMaterializerExtensions;
+use bz_execute::materialize::materializer::DeferredMaterializerIterItem;
+use bz_execute::materialize::materializer::DeferredMaterializerSubscription;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::TimeZone;
@@ -189,7 +189,7 @@ impl<T: IoHandler> ExtensionCommand<T> for Iterate {
 #[derivative(Debug)]
 struct ClearAllArtifacts {
     #[derivative(Debug = "ignore")]
-    sender: Sender<BoxFuture<'static, buck2_error::Result<()>>>,
+    sender: Sender<BoxFuture<'static, bz_error::Result<()>>>,
 }
 
 impl<T: IoHandler> ExtensionCommand<T> for ClearAllArtifacts {
@@ -245,7 +245,7 @@ struct Fsck {
     /// This is for debug commands so we use an unbounded channel to avoid locking up the
     /// materializer command thread.
     #[derivative(Debug = "ignore")]
-    sender: UnboundedSender<(ProjectRelativePathBuf, buck2_error::Error)>,
+    sender: UnboundedSender<(ProjectRelativePathBuf, bz_error::Error)>,
 }
 
 impl<T: IoHandler> ExtensionCommand<T> for Fsck {
@@ -278,7 +278,7 @@ impl<T: IoHandler> ExtensionCommand<T> for Fsck {
 #[derive(Derivative)]
 #[derivative(Debug)]
 struct RefreshTtls {
-    sender: Sender<Option<JoinHandle<buck2_error::Result<()>>>>,
+    sender: Sender<Option<JoinHandle<bz_error::Result<()>>>>,
     min_ttl: i64,
 }
 
@@ -395,7 +395,7 @@ impl<T: IoHandler> ExtensionCommand<T> for FlushAccessTimes {
 
 #[async_trait]
 impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccessor<T> {
-    fn iterate(&self) -> buck2_error::Result<BoxStream<'static, DeferredMaterializerIterItem>> {
+    fn iterate(&self) -> bz_error::Result<BoxStream<'static, DeferredMaterializerIterItem>> {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.command_sender.send(MaterializerCommand::Extension(
             Box::new(Iterate { sender }) as _
@@ -405,7 +405,7 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
 
     fn list_subscriptions(
         &self,
-    ) -> buck2_error::Result<BoxStream<'static, ProjectRelativePathBuf>> {
+    ) -> bz_error::Result<BoxStream<'static, ProjectRelativePathBuf>> {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.command_sender
             .send(MaterializerCommand::Extension(
@@ -416,7 +416,7 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
 
     fn fsck(
         &self,
-    ) -> buck2_error::Result<BoxStream<'static, (ProjectRelativePathBuf, buck2_error::Error)>> {
+    ) -> bz_error::Result<BoxStream<'static, (ProjectRelativePathBuf, bz_error::Error)>> {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.command_sender.send(MaterializerCommand::Extension(
             Box::new(Fsck { sender }) as _
@@ -424,7 +424,7 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
         Ok(UnboundedReceiverStream::new(receiver).boxed())
     }
 
-    async fn refresh_ttls(&self, min_ttl: i64) -> buck2_error::Result<()> {
+    async fn refresh_ttls(&self, min_ttl: i64) -> bz_error::Result<()> {
         let (sender, receiver) = oneshot::channel();
         self.command_sender
             .send(MaterializerCommand::Extension(
@@ -441,7 +441,7 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
         Ok(())
     }
 
-    async fn get_ttl_refresh_log(&self) -> buck2_error::Result<String> {
+    async fn get_ttl_refresh_log(&self) -> bz_error::Result<String> {
         let (sender, receiver) = oneshot::channel();
         self.command_sender
             .send(MaterializerCommand::Extension(
@@ -457,7 +457,7 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
         keep_since_time: DateTime<Utc>,
         dry_run: bool,
         tracked_only: bool,
-    ) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse> {
+    ) -> bz_error::Result<bz_cli_proto::CleanStaleResponse> {
         let dispatcher = get_dispatcher();
         let (sender, recv) = oneshot::channel();
         self.command_sender
@@ -475,7 +475,7 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
         recv.await?.await.map(|res| res.into())
     }
 
-    async fn clear_all_artifacts(&self) -> buck2_error::Result<()> {
+    async fn clear_all_artifacts(&self) -> bz_error::Result<()> {
         let (sender, recv) = oneshot::channel();
         self.command_sender
             .send(MaterializerCommand::Extension(Box::new(
@@ -486,7 +486,7 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
             .await
     }
 
-    async fn test_iter(&self, count: usize) -> buck2_error::Result<String> {
+    async fn test_iter(&self, count: usize) -> bz_error::Result<String> {
         let (sender, receiver) = oneshot::channel();
         self.command_sender
             .send(MaterializerCommand::Extension(
@@ -497,7 +497,7 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
             .buck_error_context("No response from materializer")
     }
 
-    async fn flush_all_access_times(&self) -> buck2_error::Result<String> {
+    async fn flush_all_access_times(&self) -> bz_error::Result<String> {
         let (sender, receiver) = oneshot::channel();
         self.command_sender
             .send(MaterializerCommand::Extension(
@@ -510,7 +510,7 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
 
     async fn create_subscription(
         &self,
-    ) -> buck2_error::Result<Box<dyn DeferredMaterializerSubscription>> {
+    ) -> bz_error::Result<Box<dyn DeferredMaterializerSubscription>> {
         let (sender, receiver) = oneshot::channel();
         self.command_sender.send(MaterializerCommand::Subscription(
             MaterializerSubscriptionOperation::Create { sender },

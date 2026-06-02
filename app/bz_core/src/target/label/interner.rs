@@ -13,7 +13,7 @@ use std::fmt::Formatter;
 use std::hash::BuildHasher;
 
 use allocative::Allocative;
-use buck2_hash::BuckHasherBuilder;
+use bz_hash::BuckHasherBuilder;
 use lock_free_hashtable::sharded::ShardedLockFreeRawTable;
 
 use crate::target::label::label::TargetLabel;

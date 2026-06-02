@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_e2e_test")
+load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
 load("@fbcode_macros//build_defs:native_rules.bzl", "buck_genrule")
 load("@fbsource//tools/build_defs/windows:powershell.bzl", "powershell_cmd_exe")
 load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
@@ -23,7 +23,7 @@ def _check_dependencies_test(
         deps,
         compatible_with = None,
         **kwargs):
-    buck2_e2e_test(
+    bz_e2e_test(
         contacts = contacts,
         name = name,
         srcs = {"fbcode//bz/tests/e2e_util:test_bxl_check_dependencies_template.py": "test_bxl_check_dependencies_template.py"},

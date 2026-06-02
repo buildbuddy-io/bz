@@ -11,16 +11,16 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use buck2_core::io_counters::IoCounterKey;
-use buck2_error::BuckErrorContext;
-use buck2_events::EventSinkStats;
-use buck2_execute::re::manager::ReConnectionManager;
-use buck2_fs::fs_util::DiskSpaceStats;
-use buck2_fs::fs_util::disk_space_stats;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_hash::StdBuckHashMap;
-use buck2_util::process_stats::process_stats;
-use buck2_util::system_stats::UnixSystemStats;
+use bz_core::io_counters::IoCounterKey;
+use bz_error::BuckErrorContext;
+use bz_events::EventSinkStats;
+use bz_execute::re::manager::ReConnectionManager;
+use bz_fs::fs_util::DiskSpaceStats;
+use bz_fs::fs_util::disk_space_stats;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_hash::StdBuckHashMap;
+use bz_util::process_stats::process_stats;
+use bz_util::system_stats::UnixSystemStats;
 use dupe::Dupe;
 
 use crate::cpu_usage_collector::CpuUsageCollector;
@@ -49,8 +49,8 @@ impl SnapshotCollector {
     }
 
     /// Create a new Snapshot.
-    pub async fn create_snapshot(&self) -> buck2_data::Snapshot {
-        let mut snapshot = buck2_data::Snapshot::default();
+    pub async fn create_snapshot(&self) -> bz_data::Snapshot {
+        let mut snapshot = bz_data::Snapshot::default();
         self.add_system_metrics(&mut snapshot);
         self.add_daemon_metrics(&mut snapshot);
         self.add_re_metrics(&mut snapshot);
@@ -65,12 +65,12 @@ impl SnapshotCollector {
         snapshot
     }
 
-    fn add_daemon_metrics(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_daemon_metrics(&self, snapshot: &mut bz_data::Snapshot) {
         snapshot.blocking_executor_io_queue_size =
             self.daemon.blocking_executor.queue_size() as u64;
     }
 
-    fn add_io_metrics(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_io_metrics(&self, snapshot: &mut bz_data::Snapshot) {
         let metrics = tokio::runtime::Handle::current().metrics();
         snapshot.tokio_blocking_queue_depth = metrics.blocking_queue_depth() as u64;
         snapshot.tokio_num_idle_blocking_threads = metrics.num_idle_blocking_threads() as u64;
@@ -126,11 +126,11 @@ impl SnapshotCollector {
         }
     }
 
-    fn add_re_metrics(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_re_metrics(&self, snapshot: &mut bz_data::Snapshot) {
         fn inner(
-            snapshot: &mut buck2_data::Snapshot,
+            snapshot: &mut bz_data::Snapshot,
             re: &ReConnectionManager,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             let stats = re
                 .get_network_stats()
                 .buck_error_context("Error collecting network stats")?;
@@ -206,22 +206,22 @@ impl SnapshotCollector {
         }
     }
 
-    fn add_http_metrics(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_http_metrics(&self, snapshot: &mut bz_data::Snapshot) {
         snapshot.http_download_bytes = self.daemon.http_client.stats().get_downloaded_bytes();
     }
 
-    fn add_dice_metrics(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_dice_metrics(&self, snapshot: &mut bz_data::Snapshot) {
         let metrics = self.daemon.dice_manager.unsafe_dice().metrics();
         snapshot.dice_key_count = metrics.key_count as u64;
         snapshot.dice_currently_active_key_count = metrics.currently_active_key_count as u64;
         snapshot.dice_active_transaction_count = metrics.active_transaction_count;
     }
 
-    fn add_materializer_metrics(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_materializer_metrics(&self, snapshot: &mut bz_data::Snapshot) {
         self.daemon.materializer.add_snapshot_stats(snapshot);
     }
 
-    fn add_sink_metrics(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_sink_metrics(&self, snapshot: &mut bz_data::Snapshot) {
         if let Some(metrics) = self.daemon.scribe_sink.as_ref().map(|sink| sink.stats()) {
             let EventSinkStats {
                 successes,
@@ -253,21 +253,21 @@ impl SnapshotCollector {
         }
     }
 
-    fn add_net_io_metrics(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_net_io_metrics(&self, snapshot: &mut bz_data::Snapshot) {
         if let Ok(Some(net_io_counters_per_nic)) = self.net_io_collector.collect() {
             snapshot.network_interface_stats = net_io_counters_per_nic
                 .into_iter()
                 .map(|(nic, counters)| {
                     (
                         nic,
-                        buck2_data::NetworkInterfaceStats {
+                        bz_data::NetworkInterfaceStats {
                             tx_bytes: counters.bytes_sent,
                             rx_bytes: counters.bytes_recv,
                             network_kind: match counters.network_kind {
-                                NetworkKind::WiFi => buck2_data::NetworkKind::WiFi.into(),
-                                NetworkKind::Ethernet => buck2_data::NetworkKind::Ethernet.into(),
+                                NetworkKind::WiFi => bz_data::NetworkKind::WiFi.into(),
+                                NetworkKind::Ethernet => bz_data::NetworkKind::Ethernet.into(),
                                 NetworkKind::Unknown => {
-                                    buck2_data::NetworkKind::UnknownNetKind.into()
+                                    bz_data::NetworkKind::UnknownNetKind.into()
                                 }
                             },
                         },
@@ -279,19 +279,19 @@ impl SnapshotCollector {
         }
     }
 
-    fn add_system_metrics(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_system_metrics(&self, snapshot: &mut bz_data::Snapshot) {
         let process_stats = process_stats();
         if let Some(max_rss_bytes) = process_stats.max_rss_bytes {
-            snapshot.buck2_max_rss = max_rss_bytes;
+            snapshot.bz_max_rss = max_rss_bytes;
         }
         if let Some(user_cpu_us) = process_stats.user_cpu_us {
-            snapshot.buck2_user_cpu_us = user_cpu_us;
+            snapshot.bz_user_cpu_us = user_cpu_us;
         }
         if let Some(system_cpu_us) = process_stats.system_cpu_us {
-            snapshot.buck2_system_cpu_us = system_cpu_us;
+            snapshot.bz_system_cpu_us = system_cpu_us;
         }
         snapshot.daemon_uptime_s = (Instant::now() - self.daemon.start_time).as_secs();
-        snapshot.buck2_rss = process_stats.rss_bytes;
+        snapshot.bz_rss = process_stats.rss_bytes;
         let allocator_stats = get_allocator_stats().ok();
         if let Some(alloc_stats) = allocator_stats {
             snapshot.malloc_bytes_active = alloc_stats.bytes_active;
@@ -312,7 +312,7 @@ impl SnapshotCollector {
             load15,
         }) = UnixSystemStats::get()
         {
-            snapshot.unix_system_stats = Some(buck2_data::UnixSystemStats {
+            snapshot.unix_system_stats = Some(bz_data::UnixSystemStats {
                 load1,
                 load5,
                 load15,
@@ -320,7 +320,7 @@ impl SnapshotCollector {
         }
     }
 
-    fn add_cpu_usage(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_cpu_usage(&self, snapshot: &mut bz_data::Snapshot) {
         if let Some(collector) = &self.cpu_usage_collector {
             if let Some(cpu_usage) = collector.get_usage_since_command_start() {
                 snapshot.host_cpu_usage_system_ms = Some(cpu_usage.system_millis);
@@ -329,22 +329,22 @@ impl SnapshotCollector {
         }
     }
 
-    async fn add_memory_metrics(&self, snapshot: &mut buck2_data::Snapshot) {
+    async fn add_memory_metrics(&self, snapshot: &mut bz_data::Snapshot) {
         #[cfg(not(unix))]
         {
             let _snapshot = snapshot;
         }
         #[cfg(unix)]
         {
-            use buck2_resource_control::cgroup_files::MemoryStat;
+            use bz_resource_control::cgroup_files::MemoryStat;
 
             fn convert_stats(
                 stats: &MemoryStat,
                 swap_bytes: u64,
                 memory_pressure_10s_avg: f64,
                 memory_pressure_60s_avg: f64,
-            ) -> buck2_data::UnixCgroupMemoryStats {
-                buck2_data::UnixCgroupMemoryStats {
+            ) -> bz_data::UnixCgroupMemoryStats {
+                bz_data::UnixCgroupMemoryStats {
                     anon: stats.anon,
                     file: stats.file,
                     kernel: stats.kernel,

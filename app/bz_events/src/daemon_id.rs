@@ -35,7 +35,7 @@ impl DaemonId {
         }
     }
 
-    pub fn parse_from_str(s: &str) -> buck2_error::Result<DaemonId> {
+    pub fn parse_from_str(s: &str) -> bz_error::Result<DaemonId> {
         Ok(Self {
             uuid: Arc::new(Uuid::try_parse(s)?),
         })

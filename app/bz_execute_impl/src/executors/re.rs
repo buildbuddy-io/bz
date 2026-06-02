@@ -13,45 +13,45 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
-use buck2_core::execution_types::executor_config::ReGangWorker;
-use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::soft_error;
-use buck2_events::dispatch::span_async;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::execute::action_digest::ActionDigest;
-use buck2_execute::execute::blobs::ActionBlobs;
-use buck2_execute::execute::kind::CommandExecutionKind;
-use buck2_execute::execute::kind::RemoteCommandExecutionDetails;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::manager::CommandExecutionManagerExt;
-use buck2_execute::execute::output::CommandStdStreams;
-use buck2_execute::execute::prepared::PreparedAction;
-use buck2_execute::execute::prepared::PreparedCommand;
-use buck2_execute::execute::prepared::PreparedCommandExecutor;
-use buck2_execute::execute::request::CommandExecutionPaths;
-use buck2_execute::execute::request::CommandExecutionRequest;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::result::CommandCancellationReason;
-use buck2_execute::execute::result::CommandExecutionErrorType;
-use buck2_execute::execute::result::CommandExecutionMetadata;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::knobs::ExecutorGlobalKnobs;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::re::action_identity::ReActionIdentity;
-use buck2_execute::re::client::CancellationReason;
-use buck2_execute::re::client::ExecuteResponseOrCancelled;
-use buck2_execute::re::error::RemoteExecutionError;
-use buck2_execute::re::error::get_re_error_tag;
-use buck2_execute::re::manager::ManagedRemoteExecutionClient;
-use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
-use buck2_execute::re::remote_action_result::ExecuteResponseWithQueueStats;
-use buck2_execute::re::remote_action_result::RemoteActionResult;
-use buck2_hash::BuckIndexMap;
-use buck2_util::time_span::TimeSpan;
+use bz_core::execution_types::executor_config::MetaInternalExtraParams;
+use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RemoteExecutorDependency;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::soft_error;
+use bz_events::dispatch::span_async;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::execute::action_digest::ActionDigest;
+use bz_execute::execute::blobs::ActionBlobs;
+use bz_execute::execute::kind::CommandExecutionKind;
+use bz_execute::execute::kind::RemoteCommandExecutionDetails;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::manager::CommandExecutionManagerExt;
+use bz_execute::execute::output::CommandStdStreams;
+use bz_execute::execute::prepared::PreparedAction;
+use bz_execute::execute::prepared::PreparedCommand;
+use bz_execute::execute::prepared::PreparedCommandExecutor;
+use bz_execute::execute::request::CommandExecutionPaths;
+use bz_execute::execute::request::CommandExecutionRequest;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::result::CommandCancellationReason;
+use bz_execute::execute::result::CommandExecutionErrorType;
+use bz_execute::execute::result::CommandExecutionMetadata;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::knobs::ExecutorGlobalKnobs;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::re::action_identity::ReActionIdentity;
+use bz_execute::re::client::CancellationReason;
+use bz_execute::re::client::ExecuteResponseOrCancelled;
+use bz_execute::re::error::RemoteExecutionError;
+use bz_execute::re::error::get_re_error_tag;
+use bz_execute::re::manager::ManagedRemoteExecutionClient;
+use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+use bz_execute::re::remote_action_result::ExecuteResponseWithQueueStats;
+use bz_execute::re::remote_action_result::RemoteActionResult;
+use bz_hash::BuckIndexMap;
+use bz_util::time_span::TimeSpan;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -72,7 +72,7 @@ const RE_TRANSIENT_RETRY_ATTEMPTS: usize = 5;
 const RE_TRANSIENT_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
 const RE_TRANSIENT_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 pub enum RemoteExecutorError {
     #[error("Trying to execute a `local_only = True` action on remote executor")]
     #[buck2(input)]
@@ -112,7 +112,7 @@ impl ReExecutor {
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
         let re_client = &self.re_client;
 
-        let upload_response = span_async(buck2_data::ReUploadStart {}, async move {
+        let upload_response = span_async(bz_data::ReUploadStart {}, async move {
             let res = re_client
                 .upload(
                     &self.project_fs,
@@ -129,13 +129,13 @@ impl ReExecutor {
             match res {
                 Ok(stats) => (
                     Ok(()),
-                    buck2_data::ReUploadEnd {
+                    bz_data::ReUploadEnd {
                         digests_uploaded: Some(stats.total.digests_uploaded),
                         bytes_uploaded: Some(stats.total.bytes_uploaded),
                         stats_by_extension: stats.by_extension,
                     },
                 ),
-                Err(e) => (Err(e), buck2_data::ReUploadEnd::default()),
+                Err(e) => (Err(e), bz_data::ReUploadEnd::default()),
             }
         })
         .await;
@@ -143,7 +143,7 @@ impl ReExecutor {
         match upload_response {
             Ok(()) => {}
             Err(e) => {
-                let e: buck2_error::Error = e;
+                let e: bz_error::Error = e;
                 let is_storage_resource_exhausted = e
                     .find_typed_context::<RemoteExecutionError>()
                     .is_some_and(|re_client_error| {
@@ -174,7 +174,7 @@ impl ReExecutor {
         digest_config: DigestConfig,
         platform: &RE::Platform,
         dependencies: impl IntoIterator<Item = &'a RemoteExecutorDependency>,
-        re_gang_workers: &[buck2_core::execution_types::executor_config::ReGangWorker],
+        re_gang_workers: &[bz_core::execution_types::executor_config::ReGangWorker],
         meta_internal_extra_params: &MetaInternalExtraParams,
         worker_tool_action_digest: Option<ActionDigest>,
         force_skip_cache_read: bool,
@@ -210,14 +210,14 @@ impl ReExecutor {
             );
 
             let execute_response =
-                if let Some(timeout) = buck2_common::self_test_timeout::maybe_cap_timeout(None) {
+                if let Some(timeout) = bz_common::self_test_timeout::maybe_cap_timeout(None) {
                     match tokio::time::timeout(timeout, execute_response_fut).await {
                         Ok(resp) => resp,
                         Err(_) => {
                             return ControlFlow::Break(manager.error(
                                 "re_timeout_exceeded",
-                                buck2_error::buck2_error!(
-                                    buck2_error::ErrorTag::Tier0,
+                                bz_error::bz_error!(
+                                    bz_error::ErrorTag::Tier0,
                                     "Command {} exceeded its timeout (timeout was {}s)",
                                     &identity.action_key,
                                     timeout.as_secs(),
@@ -366,8 +366,8 @@ impl ReExecutor {
             if execution_time > timeout {
                 let res = soft_error!(
                     "re_timeout_exceeded",
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::Tier0,
                         "Command {} exceeded its timeout (ran for {}s, timeout was {}s)",
                         &identity.action_key,
                         execution_time.as_secs(),
@@ -540,8 +540,8 @@ impl PreparedCommandExecutor for ReExecutor {
             *digest_config,
             manager,
             &identity,
-            buck2_data::ReStage {
-                stage: Some(buck2_data::ReDownload {}.into()),
+            bz_data::ReStage {
+                stage: Some(bz_data::ReDownload {}.into()),
             }
             .into(),
             request.paths(),
@@ -586,7 +586,7 @@ impl PreparedCommandExecutor for ReExecutor {
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[error(
     "action_digest={}, re_code={}, re_message={}",
     action_digest,
@@ -624,7 +624,7 @@ fn is_timeout_error(err: &remote_execution::TStatus) -> bool {
     }
 }
 
-fn is_re_queue_full(e: &buck2_error::Error) -> bool {
+fn is_re_queue_full(e: &bz_error::Error) -> bool {
     #[cfg(all(fbcode_build, target_os = "linux"))]
     let enabled = justknobs::eval(
         "buck2/remote_execution:re_queue_full_as_cancelled",
@@ -644,7 +644,7 @@ fn is_re_queue_full(e: &buck2_error::Error) -> bool {
         .is_some_and(|re_err| re_err.group == TCodeReasonGroup::USER_QUEUE_FULL)
 }
 
-fn is_transient_re_error(e: &buck2_error::Error) -> bool {
+fn is_transient_re_error(e: &bz_error::Error) -> bool {
     e.find_typed_context::<RemoteExecutionError>()
         .is_some_and(|re_err| {
             matches!(

@@ -9,24 +9,24 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::new_generic::DocsOutputFormat;
-use buck2_cli_proto::new_generic::DocsRequest;
-use buck2_cli_proto::new_generic::DocsStarlarkRequest;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_error::ErrorTag;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
+use bz_cli_proto::new_generic::DocsOutputFormat;
+use bz_cli_proto::new_generic::DocsRequest;
+use bz_cli_proto::new_generic::DocsStarlarkRequest;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::path_arg::PathArg;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_error::ErrorTag;
+use bz_error::bz_error;
+use bz_error::internal_error;
 use dupe::Dupe;
 
 #[derive(Debug, Clone, Dupe, clap::ValueEnum)]
@@ -97,7 +97,7 @@ impl StreamingCommand for DocsStarlarkCommand {
             .with_flushing()
             .new_generic(
                 client_context,
-                buck2_cli_proto::new_generic::NewGenericRequest::Docs(DocsRequest::Starlark(
+                bz_cli_proto::new_generic::NewGenericRequest::Docs(DocsRequest::Starlark(
                     DocsStarlarkRequest {
                         symbol_patterns: self.patterns.clone(),
                         format,
@@ -108,8 +108,8 @@ impl StreamingCommand for DocsStarlarkCommand {
             )
             .await??;
 
-        let buck2_cli_proto::new_generic::NewGenericResponse::Docs(response) = response else {
-            return buck2_error!(
+        let bz_cli_proto::new_generic::NewGenericResponse::Docs(response) = response else {
+            return bz_error!(
                 ErrorTag::InvalidEvent,
                 "Unexpected response type from generic command"
             )
@@ -117,7 +117,7 @@ impl StreamingCommand for DocsStarlarkCommand {
         };
 
         if let Some(json_output) = response.json_output {
-            buck2_client_ctx::println!("{}", json_output.trim_end())?;
+            bz_client_ctx::println!("{}", json_output.trim_end())?;
         }
 
         ExitResult::success()

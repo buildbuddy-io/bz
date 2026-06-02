@@ -29,9 +29,9 @@ impl From<serde_json::Error> for crate::Error {
     }
 }
 
-/// Trait extension to convert `buck2_error::Result<T>` to any serde error type.
+/// Trait extension to convert `bz_error::Result<T>` to any serde error type.
 pub trait BuckErrorSerde<T> {
-    /// Convert a `buck2_error::Result<T>` to `Result<T, E>` where `E: serde::de::Error`.
+    /// Convert a `bz_error::Result<T>` to `Result<T, E>` where `E: serde::de::Error`.
     fn serde_err<E: serde::de::Error>(self) -> Result<T, E>;
 }
 

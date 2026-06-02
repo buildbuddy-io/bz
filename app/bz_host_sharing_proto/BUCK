@@ -4,7 +4,7 @@ load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
 oncall("build_infra")
 
 rust_protobuf_library(
-    name = "buck2_host_sharing_proto",
+    name = "bz_host_sharing_proto",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",
     proto_srcs = ":host_sharing.proto",

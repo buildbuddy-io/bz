@@ -10,8 +10,8 @@
 
 use std::sync::Arc;
 
-use buck2_common::dice::cycles::CycleAdapterDescriptor;
-use buck2_util::cycle_detector::CycleDescriptor;
+use bz_common::dice::cycles::CycleAdapterDescriptor;
+use bz_util::cycle_detector::CycleDescriptor;
 use derive_more::Display;
 use dice::DynKey;
 use dupe::Dupe;
@@ -21,7 +21,7 @@ use crate::execution::ExecutionPlatformResolutionKey;
 use crate::execution::ToolchainExecutionPlatformCompatibilityKey;
 use crate::nodes::ConfiguredTargetNodeKey;
 
-#[derive(Debug, buck2_error::Error, Clone, Dupe)]
+#[derive(Debug, bz_error::Error, Clone, Dupe)]
 #[buck2(input)]
 #[error("{}", display_configured_graph_cycle_error(&.cycle[..]))]
 pub struct ConfiguredGraphCycleError {

@@ -14,7 +14,7 @@ pub mod module;
 pub mod package_deps;
 
 use async_trait::async_trait;
-use buck2_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonCommandOptions;
 
 use crate::AuditSubcommand;
 use crate::starlark::module::StarlarkModuleCommand;

@@ -10,7 +10,7 @@
 
 use std::io::Write;
 
-use buck2_hash::BuckIndexMap;
+use bz_hash::BuckIndexMap;
 use regex::RegexSet;
 
 use super::buck_out_path_parser::BuckOutPathType;
@@ -21,7 +21,7 @@ pub(crate) struct BuckOutPathTypePrinter {
 }
 
 impl BuckOutPathTypePrinter {
-    pub(crate) fn new(json: bool, attributes: &Vec<String>) -> buck2_error::Result<Self> {
+    pub(crate) fn new(json: bool, attributes: &Vec<String>) -> bz_error::Result<Self> {
         let attributes = if attributes.is_empty() {
             None
         } else {
@@ -35,7 +35,7 @@ impl BuckOutPathTypePrinter {
         &self,
         path_type: &BuckOutPathType,
         mut stdout: impl Write,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if self.json {
             writeln!(
                 &mut stdout,

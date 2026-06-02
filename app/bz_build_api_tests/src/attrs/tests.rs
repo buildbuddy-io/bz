@@ -8,40 +8,40 @@
  * above-listed licenses.
  */
 
-use buck2_analysis::attrs::resolve::configured_attr::ConfiguredAttrExt;
-use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_common::package_listing::listing::testing::PackageListingExt;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_root_path::CellRootPathBuf;
-use buck2_core::cells::name::CellName;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::package::PackageLabel;
-use buck2_core::plugins::PluginKindSet;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_hash::BuckHashMap;
-use buck2_interpreter_for_build::attrs::coerce::attr_type::AttrTypeExt;
-use buck2_interpreter_for_build::attrs::coerce::testing::coercion_ctx;
-use buck2_interpreter_for_build::attrs::coerce::testing::coercion_ctx_listing;
-use buck2_interpreter_for_build::attrs::coerce::testing::to_value;
-use buck2_interpreter_for_build::interpreter::selector::register_select;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::coerced_deps_collector::CoercedDepsCollector;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
-use buck2_node::attrs::configuration_context::AttrConfigurationContext;
-use buck2_node::attrs::configured_attr_info_for_tests::ConfiguredAttrInfoForTests;
-use buck2_node::attrs::display::AttrDisplayWithContextExt;
-use buck2_node::attrs::fmt_context::AttrFmtContext;
-use buck2_node::attrs::testing::configuration_ctx;
-use buck2_node::provider_id_set::ProviderIdSet;
+use bz_analysis::attrs::resolve::configured_attr::ConfiguredAttrExt;
+use bz_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
+use bz_common::package_listing::listing::PackageListing;
+use bz_common::package_listing::listing::testing::PackageListingExt;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_root_path::CellRootPathBuf;
+use bz_core::cells::name::CellName;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuckOutPathResolver;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::package::PackageLabel;
+use bz_core::plugins::PluginKindSet;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_hash::BuckHashMap;
+use bz_interpreter_for_build::attrs::coerce::attr_type::AttrTypeExt;
+use bz_interpreter_for_build::attrs::coerce::testing::coercion_ctx;
+use bz_interpreter_for_build::attrs::coerce::testing::coercion_ctx_listing;
+use bz_interpreter_for_build::attrs::coerce::testing::to_value;
+use bz_interpreter_for_build::interpreter::selector::register_select;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::coerced_deps_collector::CoercedDepsCollector;
+use bz_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::configuration_context::AttrConfigurationContext;
+use bz_node::attrs::configured_attr_info_for_tests::ConfiguredAttrInfoForTests;
+use bz_node::attrs::display::AttrDisplayWithContextExt;
+use bz_node::attrs::fmt_context::AttrFmtContext;
+use bz_node::attrs::testing::configuration_ctx;
+use bz_node::provider_id_set::ProviderIdSet;
 use dupe::Dupe;
 use gazebo::prelude::*;
 use indoc::indoc;
@@ -55,7 +55,7 @@ use crate::attrs::resolve::testing::resolution_ctx;
 use crate::attrs::resolve::testing::resolution_ctx_with_providers;
 
 #[test]
-fn test() -> buck2_error::Result<()> {
+fn test() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard().with(register_select).build();
 
@@ -109,7 +109,7 @@ fn test() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_string() -> buck2_error::Result<()> {
+fn test_string() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard().with(register_select).build();
         let attr = AttrType::string();
@@ -126,7 +126,7 @@ fn test_string() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_invalid_concat_coercion_into_one_of() -> buck2_error::Result<()> {
+fn test_invalid_concat_coercion_into_one_of() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard().with(register_select).build();
 
@@ -189,13 +189,13 @@ fn test_concat_option_one_of() {
             r#"["foo", "bar"]"#,
             configured.as_display_no_ctx().to_string()
         );
-        buck2_error::Ok(())
+        bz_error::Ok(())
     })
     .unwrap();
 }
 
 #[test]
-fn test_any() -> buck2_error::Result<()> {
+fn test_any() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let value = heap.alloc(vec!["//some:target", "cell1//named:target[foo]"]);
         let attr = AttrType::any();
@@ -242,7 +242,7 @@ fn test_any() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_option() -> buck2_error::Result<()> {
+fn test_option() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let attr = AttrType::option(AttrType::list(AttrType::string()));
 
@@ -273,7 +273,7 @@ fn test_option() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_dict() -> buck2_error::Result<()> {
+fn test_dict() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard().with(register_select).build();
         let value = to_value(&env, &globals, r#"{"b":["1"],"a":[]}"#);
@@ -343,7 +343,7 @@ fn test_dict() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_one_of() -> buck2_error::Result<()> {
+fn test_one_of() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let value = heap.alloc("one");
         let values = heap.alloc(vec!["test", "extra"]);
@@ -378,7 +378,7 @@ fn test_one_of() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_label() -> buck2_error::Result<()> {
+fn test_label() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let value = heap.alloc(vec!["//some:target", "cell1//named:target[foo]"]);
 
@@ -407,7 +407,7 @@ fn test_label() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_coerced_deps() -> buck2_error::Result<()> {
+fn test_coerced_deps() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard().with(register_select).build();
 
@@ -458,7 +458,7 @@ fn test_coerced_deps() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_configured_deps() -> buck2_error::Result<()> {
+fn test_configured_deps() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard().with(register_select).build();
 
@@ -527,11 +527,11 @@ fn test_configured_deps() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_resolved_deps() -> buck2_error::Result<()> {
+fn test_resolved_deps() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard()
             .with(register_select)
-            .with(buck2_build_api::interpreter::rule_defs::register_rule_defs)
+            .with(bz_build_api::interpreter::rule_defs::register_rule_defs)
             .build();
 
         let content = indoc!(
@@ -579,7 +579,7 @@ fn test_resolved_deps() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_dep_requires_providers() -> buck2_error::Result<()> {
+fn test_dep_requires_providers() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let (mut resolution_ctx, provider_ids) = resolution_ctx_with_providers(&env);
 
@@ -637,7 +637,7 @@ fn test_source_missing() {
 }
 
 #[test]
-fn test_source_label() -> buck2_error::Result<()> {
+fn test_source_label() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let value = heap.alloc(vec![
             "//some:target",
@@ -691,7 +691,7 @@ fn test_source_label() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_source_label_deps() -> buck2_error::Result<()> {
+fn test_source_label_deps() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard().with(register_select).build();
 
@@ -753,12 +753,12 @@ fn test_source_label_deps() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_source_label_resolution() -> buck2_error::Result<()> {
+fn test_source_label_resolution() -> bz_error::Result<()> {
     fn resolve_and_test(
         content: &str,
         test_content: &str,
         files: &[&str],
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Module::with_temp_heap(|env| {
             let globals = GlobalsBuilder::standard()
                 .with(register_select)
@@ -834,7 +834,7 @@ fn test_source_label_resolution() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_single_source_label_fails_if_multiple_returned() -> buck2_error::Result<()> {
+fn test_single_source_label_fails_if_multiple_returned() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         Heap::temp(|heap| {
             let value = heap.alloc("//sub/dir:foo[multiple]");
@@ -857,7 +857,7 @@ fn test_single_source_label_fails_if_multiple_returned() -> buck2_error::Result<
 }
 
 #[test]
-fn test_arg() -> buck2_error::Result<()> {
+fn test_arg() -> bz_error::Result<()> {
     Heap::temp(|heap| {
         let value = heap.alloc("$(exe //some:exe) --file=$(location \"//some:location\")");
 
@@ -926,7 +926,7 @@ fn test_arg() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_bool() -> buck2_error::Result<()> {
+fn test_bool() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard().with(register_select).build();
 
@@ -972,7 +972,7 @@ fn test_bool() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_user_placeholders() -> buck2_error::Result<()> {
+fn test_user_placeholders() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard()
             .with(register_select)
@@ -1068,10 +1068,10 @@ fn test_user_placeholders() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_select_incompatible_configure() -> buck2_error::Result<()> {
+fn test_select_incompatible_configure() -> bz_error::Result<()> {
     let attr = AttrType::string();
-    let coerced = buck2_node::attrs::coerced_attr::CoercedAttr::SelectIncompatible(
-        buck2_util::arc_str::ArcStr::from("not supported on this platform"),
+    let coerced = bz_node::attrs::coerced_attr::CoercedAttr::SelectIncompatible(
+        bz_util::arc_str::ArcStr::from("not supported on this platform"),
     );
     let result = coerced.configure(&attr, &configuration_ctx(), None);
     assert!(

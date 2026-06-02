@@ -8,49 +8,49 @@
  * above-listed licenses.
  */
 
-use buck2_artifact::actions::key::ActionIndex;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::actions::registry::ActionsRegistry;
-use buck2_build_api::analysis::registry::AnalysisRegistry;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
-use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
-use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
-use buck2_core::category::CategoryRef;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_core::package::source_path::SourcePath;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_execute::execute::request::OutputType;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckHashMap;
-use buck2_hash::buck_indexset;
-use buck2_interpreter_for_build::interpreter::build_context::BuildContext;
-use buck2_interpreter_for_build::interpreter::testing::cells;
-use buck2_util::arc_str::ArcS;
+use bz_artifact::actions::key::ActionIndex;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_build_api::actions::registry::ActionsRegistry;
+use bz_build_api::analysis::registry::AnalysisRegistry;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use bz_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
+use bz_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
+use bz_core::category::CategoryRef;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::fs::buck_out_path::BuckOutPathResolver;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::package::PackageLabel;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_core::package::source_path::SourcePath;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_execute::execute::request::OutputType;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckHashMap;
+use bz_hash::buck_indexset;
+use bz_interpreter_for_build::interpreter::build_context::BuildContext;
+use bz_interpreter_for_build::interpreter::testing::cells;
+use bz_util::arc_str::ArcS;
 use dupe::Dupe;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
@@ -60,7 +60,7 @@ use starlark::values::list_or_tuple::UnpackListOrTuple;
 
 use crate::actions::testings::SimpleUnregisteredAction;
 
-fn get_label(eval: &Evaluator, target: &str) -> buck2_error::Result<ConfiguredTargetLabel> {
+fn get_label(eval: &Evaluator, target: &str) -> bz_error::Result<ConfiguredTargetLabel> {
     let ctx = BuildContext::from_context(eval)?;
     match ParsedPattern::<TargetPatternExtra>::parse_precise(
         target,

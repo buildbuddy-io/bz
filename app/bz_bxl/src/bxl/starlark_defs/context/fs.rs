@@ -10,23 +10,23 @@
 
 use allocative::Allocative;
 use async_recursion::async_recursion;
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::file_ops::metadata::PathMetadataOrRedirection;
-use buck2_common::package_listing::dice::DicePackageListingResolver;
-use buck2_common::package_listing::resolver::PackageListingResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::instance::CellInstance;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_core::package::source_path::SourcePath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_node::nodes::unconfigured::TargetNode;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::file_ops::metadata::PathMetadataOrRedirection;
+use bz_common::package_listing::dice::DicePackageListingResolver;
+use bz_common::package_listing::resolver::PackageListingResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::instance::CellInstance;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::package::PackageLabel;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_core::package::source_path::SourcePath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_node::nodes::unconfigured::TargetNode;
 use derivative::Derivative;
 use derive_more::Display;
 use dice::DiceComputations;
@@ -84,7 +84,7 @@ impl<'v> BxlFilesystem<'v> {
         self.ctx.project_fs()
     }
 
-    fn cell(&self) -> buck2_error::Result<&CellInstance> {
+    fn cell(&self) -> bz_error::Result<&CellInstance> {
         self.ctx.cell_resolver().get(self.ctx.cell_name())
     }
 }
@@ -103,7 +103,7 @@ impl<'v> AllocValue<'v> for BxlFilesystem<'v> {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum BxlFilesystemError {
     #[error("Inferred package path `{0}` is not a valid package within the given file path `{1}`")]
@@ -118,7 +118,7 @@ impl<'v> BxlFilesystem<'v> {
         &'v self,
         expr: FileExpr<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<AbsNormPathBuf> {
+    ) -> bz_error::Result<AbsNormPathBuf> {
         let project_rel_path = self.project_relative_path(expr, eval)?;
         Ok(self.project_fs().resolve(&project_rel_path))
     }
@@ -128,7 +128,7 @@ impl<'v> BxlFilesystem<'v> {
         &'v self,
         expr: FileExpr<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let cell_path = self.ctx.via_dice(eval, |ctx| {
             ctx.via(|dice| async { expr.get(dice, self.cell()?).await }.boxed_local())
         })?;
@@ -140,7 +140,7 @@ impl<'v> BxlFilesystem<'v> {
 async fn try_exists(
     ctx: &mut DiceComputations<'_>,
     path: CellPathRef<'async_recursion>,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     match DiceFileComputations::read_path_metadata_if_exists(ctx, path).await? {
         Some(path) => match PathMetadataOrRedirection::from(path) {
             PathMetadataOrRedirection::PathMetadata(_) => Ok(true),

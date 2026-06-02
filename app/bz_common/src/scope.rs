@@ -10,8 +10,8 @@
 
 use std::future::Future;
 
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::dispatch::with_dispatcher_async;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::dispatch::with_dispatcher_async;
 use dice::DiceComputations;
 use dupe::Dupe;
 

@@ -14,19 +14,19 @@ use std::sync::Mutex;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::file_ops::dice::FileChangeTracker;
-use buck2_common::ignores::ignore_set::IgnoreSet;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::name::CellName;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_data::FileWatcherEventType;
-use buck2_data::FileWatcherKind;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_events::dispatch::span_async;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_hash::StdBuckHashMap;
+use bz_common::file_ops::dice::FileChangeTracker;
+use bz_common::ignores::ignore_set::IgnoreSet;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::name::CellName;
+use bz_core::fs::project::ProjectRoot;
+use bz_data::FileWatcherEventType;
+use bz_data::FileWatcherKind;
+use bz_error::conversion::from_any_with_tag;
+use bz_events::dispatch::span_async;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_hash::StdBuckHashMap;
 use dice::DiceTransactionUpdater;
 use dupe::Dupe;
 use notify::EventKind;
@@ -80,9 +80,9 @@ impl NotifyFileData {
         root: &ProjectRoot,
         cells: &CellResolver,
         ignore_specs: &StdBuckHashMap<CellName, IgnoreSet>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let event =
-            event.map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::NotifyWatcher))?;
+            event.map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::NotifyWatcher))?;
 
         for path in &event.paths {
             // Testing shows that we get absolute paths back from the `notify` library.
@@ -129,7 +129,7 @@ impl NotifyFileData {
         Ok(())
     }
 
-    fn sync(self) -> (buck2_data::FileWatcherStats, Option<FileChangeTracker>) {
+    fn sync(self) -> (bz_data::FileWatcherStats, Option<FileChangeTracker>) {
         // The changes that go into the DICE transaction
         let mut changed = FileChangeTracker::new();
         let mut stats = FileWatcherStats::new(Default::default(), self.events.len());
@@ -257,7 +257,7 @@ pub struct NotifyFileWatcher {
     #[expect(unused)]
     // FIXME(JakobDegen): Clarify if this just needs to be kept alive or can be removed?
     watcher: RecommendedWatcher,
-    data: Arc<Mutex<buck2_error::Result<NotifyFileData>>>,
+    data: Arc<Mutex<bz_error::Result<NotifyFileData>>>,
 }
 
 impl NotifyFileWatcher {
@@ -265,7 +265,7 @@ impl NotifyFileWatcher {
         root: &ProjectRoot,
         cells: CellResolver,
         ignore_specs: StdBuckHashMap<CellName, IgnoreSet>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let data = Arc::new(Mutex::new(Ok(NotifyFileData::new())));
         let data2 = data.dupe();
         let root2 = root.dupe();
@@ -277,17 +277,17 @@ impl NotifyFileWatcher {
                 }
             }
         })
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::NotifyWatcher))?;
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::NotifyWatcher))?;
         watcher
             .watch(root.root().as_path(), notify::RecursiveMode::Recursive)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::NotifyWatcher))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::NotifyWatcher))?;
         Ok(Self { watcher, data })
     }
 
     fn sync2(
         &self,
         mut dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(buck2_data::FileWatcherStats, DiceTransactionUpdater)> {
+    ) -> bz_error::Result<(bz_data::FileWatcherStats, DiceTransactionUpdater)> {
         let old = {
             let mut guard = self.data.lock().unwrap();
             mem::replace(&mut *guard, Ok(NotifyFileData::new()))
@@ -308,10 +308,10 @@ impl FileWatcher for NotifyFileWatcher {
     async fn sync(
         &self,
         dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(DiceTransactionUpdater, Mergebase)> {
+    ) -> bz_error::Result<(DiceTransactionUpdater, Mergebase)> {
         span_async(
-            buck2_data::FileWatcherStart {
-                provider: buck2_data::FileWatcherProvider::RustNotify as i32,
+            bz_data::FileWatcherStart {
+                provider: bz_data::FileWatcherProvider::RustNotify as i32,
             },
             async {
                 let (stats, res) = match self.sync2(dice) {
@@ -321,7 +321,7 @@ impl FileWatcher for NotifyFileWatcher {
                     }
                     Err(e) => (None, Err(e)),
                 };
-                (res, buck2_data::FileWatcherEnd { stats })
+                (res, bz_data::FileWatcherEnd { stats })
             },
         )
         .await

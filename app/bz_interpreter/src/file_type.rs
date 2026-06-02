@@ -25,7 +25,7 @@ pub enum StarlarkFileType {
 /// What type of file are we parsing - a `.bzl` file, `.bxl` file, or a `BUCK`/`TARGETS` file.
 impl StarlarkFileType {
     pub fn dialect(&self, disable_starlark_types: bool) -> Dialect {
-        let enable_f_strings = buck2_core::is_open_source();
+        let enable_f_strings = bz_core::is_open_source();
         let buck_dialect: Dialect = Dialect {
             enable_def: false,
             enable_lambda: true,

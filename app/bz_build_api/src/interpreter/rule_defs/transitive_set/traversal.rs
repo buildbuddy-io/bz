@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_error::internal_error;
+use bz_error::internal_error;
 use derive_more::Display;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
@@ -50,7 +50,7 @@ pub enum TransitiveSetOrdering {
 }
 
 impl TransitiveSetOrdering {
-    pub fn parse(s: &str) -> buck2_error::Result<TransitiveSetOrdering> {
+    pub fn parse(s: &str) -> bz_error::Result<TransitiveSetOrdering> {
         // NOTE: If this list is updated, update the OrderingUnexpectedValue error text.
         match s {
             "preorder" => Ok(Self::Preorder),

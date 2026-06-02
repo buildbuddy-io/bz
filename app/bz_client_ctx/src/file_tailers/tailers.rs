@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_common::daemon_dir::DaemonDir;
+use bz_common::daemon_dir::DaemonDir;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -23,7 +23,7 @@ pub struct FileTailers {
 }
 
 impl FileTailers {
-    pub fn new(daemon_dir: &DaemonDir) -> buck2_error::Result<Self> {
+    pub fn new(daemon_dir: &DaemonDir) -> bz_error::Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
         let stdout_tailer = FileTailer::tail_file(
             daemon_dir.buckd_stdout(),

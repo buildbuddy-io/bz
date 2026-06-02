@@ -18,7 +18,7 @@ use allocative::Allocative;
 use dupe::Dupe;
 
 /// Errors that can occur when creating a `TimeSpan`.
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 pub enum TimeSpanError {
     #[error("End time ({end:?}) must be after or equal to start ({start:?}) time")]

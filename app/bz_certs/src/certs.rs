@@ -11,9 +11,9 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::conversion::from_any_with_tag;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::conversion::from_any_with_tag;
 use rustls::ClientConfig;
 use rustls::RootCertStore;
 use rustls_pki_types::CertificateDer;
@@ -39,7 +39,7 @@ fn setup_cryptography() -> std::result::Result<(), std::sync::Arc<rustls::crypto
 
 /// Load system root certs, trying a few different methods to get a valid root
 /// certificate store.
-async fn load_system_root_certs() -> buck2_error::Result<RootCertStore> {
+async fn load_system_root_certs() -> bz_error::Result<RootCertStore> {
     let root_certs = if let Some(path) = find_root_ca_certs() {
         load_certs(&path).await.with_buck_error_context(|| {
             format!("Loading root certs from: {}", path.to_string_lossy())
@@ -54,9 +54,9 @@ async fn load_system_root_certs() -> buck2_error::Result<RootCertStore> {
             let native_certs_error = native_certs_results
                 .errors
                 .pop()
-                .map(buck2_error::Error::from)
-                .unwrap_or(buck2_error!(
-                    buck2_error::ErrorTag::NoValidCerts,
+                .map(bz_error::Error::from)
+                .unwrap_or(bz_error!(
+                    bz_error::ErrorTag::NoValidCerts,
                     "No certs or cert errors"
                 ));
 
@@ -93,8 +93,8 @@ async fn load_system_root_certs() -> buck2_error::Result<RootCertStore> {
     // But make sure we get at least _one_ valid cert, otherwise we legitimately won't be
     // able to make any connections via https.
     if valid == 0 {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Environment,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Environment,
             "Error loading system certs: unable to find any valid system certs"
         ));
     }
@@ -104,7 +104,7 @@ async fn load_system_root_certs() -> buck2_error::Result<RootCertStore> {
 }
 
 // Load private key from the given path
-async fn load_key<P: AsRef<Path>>(key: P) -> buck2_error::Result<PrivateKeyDer<'static>> {
+async fn load_key<P: AsRef<Path>>(key: P) -> bz_error::Result<PrivateKeyDer<'static>> {
     let key = key.as_ref();
 
     let private_key = PrivateKeyDer::from_pem_file(key)
@@ -118,14 +118,14 @@ async fn load_key<P: AsRef<Path>>(key: P) -> buck2_error::Result<PrivateKeyDer<'
 async fn load_cert_pair<P: AsRef<Path>>(
     cert: P,
     key: P,
-) -> buck2_error::Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+) -> bz_error::Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
     let certs = load_certs(cert).await?;
     let key = load_key(key).await?;
 
     Ok((certs, key))
 }
 
-pub async fn tls_config_with_system_roots() -> buck2_error::Result<ClientConfig> {
+pub async fn tls_config_with_system_roots() -> bz_error::Result<ClientConfig> {
     let system_roots = load_system_root_certs().await?;
     Ok(ClientConfig::builder()
         .with_root_certificates(system_roots)
@@ -135,7 +135,7 @@ pub async fn tls_config_with_system_roots() -> buck2_error::Result<ClientConfig>
 pub async fn tls_config_with_single_cert<P: AsRef<Path>>(
     cert_path: P,
     key_path: P,
-) -> buck2_error::Result<ClientConfig> {
+) -> bz_error::Result<ClientConfig> {
     let system_roots = load_system_root_certs().await?;
     let (cert, key) = load_cert_pair(cert_path, key_path)
         .await
@@ -143,14 +143,14 @@ pub async fn tls_config_with_single_cert<P: AsRef<Path>>(
     ClientConfig::builder()
         .with_root_certificates(system_roots)
         .with_client_auth_cert(cert, key)
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Certs))
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Certs))
         .buck_error_context("Error creating TLS config with cert and key path")
 }
 
 // Load certs from the given path
 pub(crate) async fn load_certs<P: AsRef<Path>>(
     cert_path: P,
-) -> buck2_error::Result<Vec<CertificateDer<'static>>> {
+) -> bz_error::Result<Vec<CertificateDer<'static>>> {
     let cert_path = cert_path.as_ref();
 
     let cert_data = tokio::fs::read(cert_path)

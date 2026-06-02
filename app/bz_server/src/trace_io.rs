@@ -8,23 +8,23 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::trace_io_request;
-use buck2_cli_proto::trace_io_response;
-use buck2_common::file_ops::metadata::RawSymlink;
-use buck2_common::io::trace::TracingIoProvider;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::span_async;
-use buck2_server_ctx::commands::command_end;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
+use bz_cli_proto::trace_io_request;
+use bz_cli_proto::trace_io_response;
+use bz_common::file_ops::metadata::RawSymlink;
+use bz_common::io::trace::TracingIoProvider;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::span_async;
+use bz_server_ctx::commands::command_end;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
 
 use crate::ctx::ServerCommandContext;
 
 pub(crate) async fn trace_io_command(
     context: &ServerCommandContext<'_>,
-    req: buck2_cli_proto::TraceIoRequest,
-) -> buck2_error::Result<buck2_cli_proto::TraceIoResponse> {
+    req: bz_cli_proto::TraceIoRequest,
+) -> bz_error::Result<bz_cli_proto::TraceIoResponse> {
     let start_event = context
-        .command_start_event(buck2_data::TraceIoCommandStart {}.into())
+        .command_start_event(bz_data::TraceIoCommandStart {}.into())
         .await?;
     span_async(start_event, async move {
         let tracing_provider = TracingIoProvider::from_io(&*context.base_context.daemon.io);
@@ -35,14 +35,14 @@ pub(crate) async fn trace_io_command(
 
         let result = match (tracing_provider, respond_with_trace) {
             (Some(provider), true) => build_response_with_trace(context, provider).await,
-            (Some(_), false) => Ok(buck2_cli_proto::TraceIoResponse {
+            (Some(_), false) => Ok(bz_cli_proto::TraceIoResponse {
                 enabled: true,
                 trace: Vec::new(),
                 external_entries: Vec::new(),
                 relative_symlinks: Vec::new(),
                 external_symlinks: Vec::new(),
             }),
-            (None, _) => Ok(buck2_cli_proto::TraceIoResponse {
+            (None, _) => Ok(bz_cli_proto::TraceIoResponse {
                 enabled: false,
                 trace: Vec::new(),
                 external_entries: Vec::new(),
@@ -51,7 +51,7 @@ pub(crate) async fn trace_io_command(
             }),
         };
 
-        let end_event = command_end(&result, buck2_data::TraceIoCommandEnd {});
+        let end_event = command_end(&result, bz_data::TraceIoCommandEnd {});
         (result, end_event)
     })
     .await
@@ -60,7 +60,7 @@ pub(crate) async fn trace_io_command(
 async fn build_response_with_trace(
     context: &ServerCommandContext<'_>,
     provider: &TracingIoProvider,
-) -> buck2_error::Result<buck2_cli_proto::TraceIoResponse> {
+) -> bz_error::Result<bz_cli_proto::TraceIoResponse> {
     // Materialize buck-out paths so they can be archived.
     let buck_out_entries: Vec<_> = provider.trace().buck_out_entries();
     context
@@ -110,7 +110,7 @@ async fn build_response_with_trace(
     relative_symlinks.sort_unstable_by(|a, b| a.link.cmp(&b.link));
     external_symlinks.sort_unstable_by(|a, b| a.link.cmp(&b.link));
 
-    Ok(buck2_cli_proto::TraceIoResponse {
+    Ok(bz_cli_proto::TraceIoResponse {
         enabled: true,
         trace,
         external_entries,

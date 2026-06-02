@@ -10,17 +10,17 @@
 
 use std::fmt;
 
-use buck2_common::cas_digest::CasDigest;
-use buck2_common::cas_digest::CasDigestKind;
-use buck2_common::cas_digest::CasDigestParseError;
-use buck2_common::cas_digest::DigestAlgorithm;
-use buck2_common::cas_digest::TrackedCasDigest;
+use bz_common::cas_digest::CasDigest;
+use bz_common::cas_digest::CasDigestKind;
+use bz_common::cas_digest::CasDigestParseError;
+use bz_common::cas_digest::DigestAlgorithm;
+use bz_common::cas_digest::TrackedCasDigest;
 use remote_execution::Digest;
 use remote_execution::TDigest;
 
 use crate::digest_config::DigestConfig;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = InvalidDigest)]
 pub enum DigestConversionError {
     #[error("Error parsing digest: `{}`", digest)]

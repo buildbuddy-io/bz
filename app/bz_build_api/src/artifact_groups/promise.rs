@@ -15,15 +15,15 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use dupe::Dupe;
 use pagable::Pagable;
 use pagable::PagablePanic;
 use starlark::codemap::FileSpan;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum PromiseArtifactResolveError {
     #[error("Resolved promise of the artifact promise was not an artifact (was `{0}`)")]
@@ -116,7 +116,7 @@ impl PromiseArtifact {
         Self { artifact, id }
     }
 
-    pub fn get_err(&self) -> buck2_error::Result<&Artifact> {
+    pub fn get_err(&self) -> bz_error::Result<&Artifact> {
         match self.artifact.get() {
             Some(v) => Ok(v),
             None => Err(PromiseArtifactResolveError::PromiseNotYetResolved.into()),
@@ -136,7 +136,7 @@ impl PromiseArtifact {
         artifact: Artifact,
         expected_short_path: &Option<ForwardRelativePathBuf>,
         promise_has_content_based_path: bool,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let bound = artifact;
         if bound.is_source() {
             return Err(PromiseArtifactResolveError::SourceArtifact.into());
@@ -160,7 +160,7 @@ impl PromiseArtifact {
         if let Some(expected_short_path) = expected_short_path {
             bound.get_path().with_short_path(|artifact_short_path| {
                 if artifact_short_path != expected_short_path {
-                    Err(buck2_error::Error::from(
+                    Err(bz_error::Error::from(
                         PromiseArtifactResolveError::ShortPathMismatch(
                             expected_short_path.clone(),
                             artifact_short_path.to_string(),

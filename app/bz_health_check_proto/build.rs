@@ -21,8 +21,8 @@ fn main() -> io::Result<()> {
         vec![".", "../bz_data", "../bz_host_sharing_proto"]
     };
 
-    let builder = buck2_protoc_dev::configure();
+    let builder = bz_protoc_dev::configure();
     unsafe { builder.setup_protoc() }
-        .extern_path(".buck.data", "::buck2_data")
+        .extern_path(".buck.data", "::bz_data")
         .compile(proto_files, &includes)
 }

@@ -11,7 +11,7 @@
 use std::sync::OnceLock;
 
 use allocative::Allocative;
-use buck2_interpreter::late_binding_ty::ProviderReprLate;
+use bz_interpreter::late_binding_ty::ProviderReprLate;
 use dupe::Dupe;
 use starlark::type_matcher;
 use starlark::typing::Ty;
@@ -38,7 +38,7 @@ impl TypeMatcher for ProviderMatcher {
     }
 }
 
-fn mk_ty_provider() -> buck2_error::Result<Ty> {
+fn mk_ty_provider() -> bz_error::Result<Ty> {
     Ok(Ty::custom(TyUser::new(
         "Provider".to_owned(),
         // Builtin providers behave like `UserProvider`.

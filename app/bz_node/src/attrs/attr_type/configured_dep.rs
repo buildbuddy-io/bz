@@ -9,9 +9,9 @@
  */
 
 use allocative::Allocative;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
 use dupe::Dupe;
 use pagable::Pagable;
 
@@ -32,7 +32,7 @@ impl ExplicitConfiguredDepAttrType {
     pub(crate) fn configure(
         ctx: &dyn AttrConfigurationContext,
         dep_attr: &UnconfiguredExplicitConfiguredDep,
-    ) -> buck2_error::Result<ConfiguredAttr> {
+    ) -> bz_error::Result<ConfiguredAttr> {
         let configured = Self::configure_target_with_platform(ctx, dep_attr)?;
         Ok(ConfiguredAttr::ExplicitConfiguredDep(Box::new(configured)))
     }
@@ -40,7 +40,7 @@ impl ExplicitConfiguredDepAttrType {
     fn configure_target_with_platform(
         ctx: &dyn AttrConfigurationContext,
         dep_attr: &UnconfiguredExplicitConfiguredDep,
-    ) -> buck2_error::Result<ConfiguredExplicitConfiguredDep> {
+    ) -> bz_error::Result<ConfiguredExplicitConfiguredDep> {
         let configuration = ctx.platform_cfg(&dep_attr.platform)?;
         let configured_label = dep_attr.label.configure(configuration.dupe());
         Ok(ConfiguredExplicitConfiguredDep::new(
@@ -94,27 +94,27 @@ impl ConfiguredExplicitConfiguredDep {
 }
 
 impl ConfiguredExplicitConfiguredDep {
-    pub(crate) fn to_json(&self) -> buck2_error::Result<serde_json::Value> {
+    pub(crate) fn to_json(&self) -> bz_error::Result<serde_json::Value> {
         Ok(serde_json::to_value(self.to_string())?)
     }
 
     pub(crate) fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         filter(&self.to_string())
     }
 
     pub(crate) fn traverse(
         &self,
         traversal: &mut dyn ConfiguredAttrTraversal,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         traversal.dep(&self.label)
     }
 }
 
 impl UnconfiguredExplicitConfiguredDep {
-    pub(crate) fn to_json(&self) -> buck2_error::Result<serde_json::Value> {
+    pub(crate) fn to_json(&self) -> bz_error::Result<serde_json::Value> {
         Ok(serde_json::to_value([
             self.label.to_string(),
             self.platform.to_string(),
@@ -123,15 +123,15 @@ impl UnconfiguredExplicitConfiguredDep {
 
     pub(crate) fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         filter(&self.to_string())
     }
 
     pub fn traverse<'a>(
         &'a self,
         traversal: &mut dyn CoercedAttrTraversal<'a>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         traversal.dep(&self.label)?;
         let label = ProvidersLabel::default_for(self.platform.dupe());
         traversal.configuration_dep(&label, ConfigurationDepKind::ConfiguredDepPlatform)

@@ -12,14 +12,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::transition::TRANSITION_ATTRS_PROVIDER;
-use buck2_build_api::transition::TransitionAttrProvider;
-use buck2_build_api::transition::TransitionAttrs;
-use buck2_core::configuration::data::BazelBuildSettingValue;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_interpreter::load_module::InterpreterCalculation;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::transition::TRANSITION_ATTRS_PROVIDER;
+use bz_build_api::transition::TransitionAttrProvider;
+use bz_build_api::transition::TransitionAttrs;
+use bz_core::configuration::data::BazelBuildSettingValue;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::provider::label::ProvidersLabel;
+use bz_interpreter::load_module::InterpreterCalculation;
 use dice::DiceComputations;
 use dice::Key;
 use dice::OkPagableValueSerialize;
@@ -195,10 +195,10 @@ mod tests {
 #[async_trait]
 pub(crate) trait FetchTransition {
     /// Fetch transition object by id.
-    async fn fetch_transition(&mut self, id: &TransitionId) -> buck2_error::Result<TransitionData>;
+    async fn fetch_transition(&mut self, id: &TransitionId) -> bz_error::Result<TransitionData>;
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum FetchTransitionError {
     #[error("Transition object not found by id {:?}", _0)]
@@ -211,7 +211,7 @@ enum FetchTransitionError {
 
 #[async_trait]
 impl FetchTransition for DiceComputations<'_> {
-    async fn fetch_transition(&mut self, id: &TransitionId) -> buck2_error::Result<TransitionData> {
+    async fn fetch_transition(&mut self, id: &TransitionId) -> bz_error::Result<TransitionData> {
         match id {
             TransitionId::MagicObject { path, name } => {
                 let module = self.get_loaded_module_from_import_path(path).await?;
@@ -220,7 +220,7 @@ impl FetchTransition for DiceComputations<'_> {
                     // This is a hashmap lookup, so we are not caching the result in DICE.
                     .get_any_visibility(name)
                     .map_err(|_| {
-                        buck2_error::Error::from(FetchTransitionError::NotFound(id.clone()))
+                        bz_error::Error::from(FetchTransitionError::NotFound(id.clone()))
                     })?
                     .0;
 
@@ -233,7 +233,7 @@ impl FetchTransition for DiceComputations<'_> {
                         .env()
                         .get_any_visibility(name)
                         .map_err(|_| {
-                            buck2_error::Error::from(FetchTransitionError::NotFound(id.clone()))
+                            bz_error::Error::from(FetchTransitionError::NotFound(id.clone()))
                         })?
                         .0
                         .downcast_starlark()?;
@@ -293,7 +293,7 @@ struct TransitionAttrsKey(TransitionId);
 
 #[async_trait]
 impl Key for TransitionAttrsKey {
-    type Value = buck2_error::Result<TransitionAttrs>;
+    type Value = bz_error::Result<TransitionAttrs>;
 
     async fn compute(
         &self,
@@ -324,7 +324,7 @@ impl TransitionAttrProvider for TransitionGetAttrs {
         &self,
         ctx: &mut DiceComputations<'_>,
         transition_id: &TransitionId,
-    ) -> buck2_error::Result<TransitionAttrs> {
+    ) -> bz_error::Result<TransitionAttrs> {
         let k = TransitionAttrsKey::ref_cast(transition_id);
         ctx.compute(k).await?
     }

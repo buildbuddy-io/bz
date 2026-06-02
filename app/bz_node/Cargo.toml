@@ -2,7 +2,7 @@
 description = "Target graph node"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_node"
+name = "bz_node"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -33,16 +33,16 @@ pagable = { workspace = true }
 starlark_map = { workspace = true }
 strong_hash = { workspace = true }
 
-buck2_common = { workspace = true }
-buck2_core = { workspace = true }
-buck2_data = { workspace = true }
-buck2_error = { workspace = true }
-buck2_events = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_hash = { workspace = true }
-buck2_query = { workspace = true }
-buck2_query_parser = { workspace = true }
-buck2_util = { workspace = true }
+bz_common = { workspace = true }
+bz_core = { workspace = true }
+bz_data = { workspace = true }
+bz_error = { workspace = true }
+bz_events = { workspace = true }
+bz_fs = { workspace = true }
+bz_hash = { workspace = true }
+bz_query = { workspace = true }
+bz_query_parser = { workspace = true }
+bz_util = { workspace = true }
 dice_futures = { workspace = true }
 
 [dev-dependencies]

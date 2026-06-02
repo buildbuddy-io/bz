@@ -13,25 +13,25 @@ use std::future::pending;
 use std::time::Duration;
 use std::time::SystemTime;
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::common::ui::get_console_with_root;
-use buck2_client_ctx::daemon::client::NoPartialResultHandler;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::events_ctx::DaemonEventsCtx;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::signal_handler::with_simple_sigint_handler;
-use buck2_client_ctx::subscribers::superconsole::timekeeper::Clock;
-use buck2_client_ctx::subscribers::superconsole::timekeeper::Timekeeper;
-use buck2_client_ctx::subscribers::superconsole::timekeeper::duration_between_timestamps;
-use buck2_client_ctx::ticker::Tick;
-use buck2_event_log::read::EventLogPathBuf;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_event_log::utils::Invocation;
-use buck2_event_observer::span_tracker::EventTimestamp;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::common::ui::get_console_with_root;
+use bz_client_ctx::daemon::client::NoPartialResultHandler;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::events_ctx::DaemonEventsCtx;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::signal_handler::with_simple_sigint_handler;
+use bz_client_ctx::subscribers::superconsole::timekeeper::Clock;
+use bz_client_ctx::subscribers::superconsole::timekeeper::Timekeeper;
+use bz_client_ctx::subscribers::superconsole::timekeeper::duration_between_timestamps;
+use bz_client_ctx::ticker::Tick;
+use bz_event_log::read::EventLogPathBuf;
+use bz_event_log::stream_value::StreamValue;
+use bz_event_log::utils::Invocation;
+use bz_event_observer::span_tracker::EventTimestamp;
 use futures::Stream;
 use futures::StreamExt;
 use futures::TryStreamExt;
@@ -43,7 +43,7 @@ use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum ReplayError {
     #[error("Invalid speed {0}")]
@@ -115,16 +115,16 @@ impl BuckSubcommand for ReplayCommand {
         } = self;
 
         if !speed.is_finite() || speed <= 0.0 {
-            return ExitResult::from(buck2_error::Error::from(ReplayError::InvalidSpeed(speed)));
+            return ExitResult::from(bz_error::Error::from(ReplayError::InvalidSpeed(speed)));
         }
 
         let seek = if let Some(seek) = seek {
             if !seek.is_finite() || seek < 0.0 {
-                return ExitResult::from(buck2_error::Error::from(ReplayError::InvalidSeek(seek)));
+                return ExitResult::from(bz_error::Error::from(ReplayError::InvalidSeek(seek)));
             }
             Seek::Relative(Duration::from_secs(1).mul_f64(seek))
         } else if let Some(seek_absolute) = seek_absolute {
-            Seek::Absolute(buck2_event_log::utils::timestamp::parse(seek_absolute.as_str())?.into())
+            Seek::Absolute(bz_event_log::utils::timestamp::parse(seek_absolute.as_str())?.into())
         } else {
             Seek::Relative(Duration::from_secs(0))
         };
@@ -163,7 +163,7 @@ impl BuckSubcommand for ReplayCommand {
             if let Err(e) = &res {
                 let msg = "request finished without returning a CommandResult";
                 if e.to_string().contains(msg) {
-                    buck2_client_ctx::eprintln!(
+                    bz_client_ctx::eprintln!(
                         "Warning: Incomplete log. Replay may be inaccurate."
                     )?;
                 };
@@ -171,7 +171,7 @@ impl BuckSubcommand for ReplayCommand {
 
             let res = res??;
             for e in &res.errors {
-                buck2_client_ctx::eprintln!("{}", e.message)?;
+                bz_client_ctx::eprintln!("{}", e.message)?;
             }
 
             // FIXME(JakobDegen)(easy): This should probably return failures if there were errors
@@ -185,14 +185,14 @@ impl BuckSubcommand for ReplayCommand {
 }
 
 struct ReplayResult {
-    errors: Vec<buck2_data::ErrorReport>,
+    errors: Vec<bz_data::ErrorReport>,
 }
 
-impl TryFrom<buck2_cli_proto::command_result::Result> for ReplayResult {
-    type Error = buck2_cli_proto::command_result::Result;
+impl TryFrom<bz_cli_proto::command_result::Result> for ReplayResult {
+    type Error = bz_cli_proto::command_result::Result;
 
-    fn try_from(v: buck2_cli_proto::command_result::Result) -> Result<Self, Self::Error> {
-        use buck2_cli_proto::command_result::Result;
+    fn try_from(v: bz_cli_proto::command_result::Result) -> Result<Self, Self::Error> {
+        use bz_cli_proto::command_result::Result;
 
         // It would be good to declare this as a extension trait on our types, but for now to
         // support Replay this is fine;
@@ -214,8 +214,8 @@ async fn make_replayer(
     seek: Seek,
     preload: bool,
     start_paused: bool,
-) -> buck2_error::Result<(
-    impl Stream<Item = buck2_error::Result<StreamValue>> + Unpin,
+) -> bz_error::Result<(
+    impl Stream<Item = bz_error::Result<StreamValue>> + Unpin,
     Invocation,
     Timekeeper,
 )> {
@@ -310,11 +310,11 @@ async fn make_replayer(
 
 /// Replays the events into the sink, but inserts an appropriate delay between events
 async fn replay_events_into(
-    sink: UnboundedSender<buck2_error::Result<StreamValue>>,
-    events: impl Stream<Item = buck2_error::Result<StreamValue>>,
+    sink: UnboundedSender<bz_error::Result<StreamValue>>,
+    events: impl Stream<Item = bz_error::Result<StreamValue>>,
     syncher: Syncher,
     mut speed_update_requests: mpsc::Receiver<SpeedUpdateRequest>,
-    first_event: buck2_error::Result<StreamValue>,
+    first_event: bz_error::Result<StreamValue>,
     first_event_timestamp: prost_types::Timestamp,
 ) {
     pin!(events);
@@ -366,10 +366,10 @@ async fn replay_events_into(
 
 /// Replay events from the stream into the sink until we find the first event that requires a delay
 async fn find_next_event_with_delay(
-    sink: &UnboundedSender<buck2_error::Result<StreamValue>>,
-    events: &mut (impl Stream<Item = buck2_error::Result<StreamValue>> + Unpin),
+    sink: &UnboundedSender<bz_error::Result<StreamValue>>,
+    events: &mut (impl Stream<Item = bz_error::Result<StreamValue>> + Unpin),
     min_timestamp: Option<prost_types::Timestamp>,
-) -> Option<(buck2_error::Result<StreamValue>, prost_types::Timestamp)> {
+) -> Option<(bz_error::Result<StreamValue>, prost_types::Timestamp)> {
     while let Some(event) = events.next().await {
         if let Ok(StreamValue::Event(buck_event)) = &event {
             let ts = buck_event.timestamp.unwrap();

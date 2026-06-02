@@ -48,7 +48,7 @@ mod interactive_terminal {
     use std::io::IsTerminal;
     use std::os::unix::io::AsRawFd;
 
-    use buck2_error::BuckErrorContext;
+    use bz_error::BuckErrorContext;
     use termios::*;
 
     pub struct InteractiveTerminal {
@@ -56,7 +56,7 @@ mod interactive_terminal {
     }
 
     impl InteractiveTerminal {
-        pub fn enable() -> buck2_error::Result<Option<Self>> {
+        pub fn enable() -> bz_error::Result<Option<Self>> {
             let fd = std::io::stdin().as_raw_fd();
 
             if !std::io::stdin().is_terminal() {
@@ -101,7 +101,7 @@ mod interactive_terminal {
             Ok(Some(Self { orig }))
         }
 
-        pub fn disable(&mut self) -> buck2_error::Result<()> {
+        pub fn disable(&mut self) -> bz_error::Result<()> {
             let fd = std::io::stdin().as_raw_fd();
             tcsetattr(fd, TCSANOW, &self.orig).buck_error_context("Failed to reset termios")?;
             Ok(())
@@ -114,14 +114,14 @@ mod interactive_terminal {
     use std::io::IsTerminal;
     use std::os::windows::io::AsRawHandle;
 
-    use buck2_error::BuckErrorContext;
+    use bz_error::BuckErrorContext;
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::System::Console::ENABLE_ECHO_INPUT;
     use windows_sys::Win32::System::Console::ENABLE_LINE_INPUT;
     use windows_sys::Win32::System::Console::GetConsoleMode;
     use windows_sys::Win32::System::Console::SetConsoleMode;
 
-    fn get_console_mode(handle: HANDLE) -> buck2_error::Result<u32> {
+    fn get_console_mode(handle: HANDLE) -> bz_error::Result<u32> {
         let mut mode: u32 = 0;
         if unsafe { GetConsoleMode(handle, &mut mode) } != 0 {
             Ok(mode)
@@ -130,7 +130,7 @@ mod interactive_terminal {
         }
     }
 
-    fn set_console_mode(handle: HANDLE, mode: u32) -> buck2_error::Result<()> {
+    fn set_console_mode(handle: HANDLE, mode: u32) -> bz_error::Result<()> {
         if unsafe { SetConsoleMode(handle, mode) != 0 } {
             Ok(())
         } else {
@@ -143,7 +143,7 @@ mod interactive_terminal {
     }
 
     impl InteractiveTerminal {
-        pub fn enable() -> buck2_error::Result<Option<Self>> {
+        pub fn enable() -> bz_error::Result<Option<Self>> {
             let handle = std::io::stdin().as_raw_handle() as HANDLE;
 
             if !std::io::stdin().is_terminal()
@@ -159,7 +159,7 @@ mod interactive_terminal {
             Ok(Some(Self { mode }))
         }
 
-        pub fn disable(&mut self) -> buck2_error::Result<()> {
+        pub fn disable(&mut self) -> bz_error::Result<()> {
             let handle = std::io::stdin().as_raw_handle() as HANDLE;
             set_console_mode(handle, self.mode)?;
             Ok(())
@@ -172,11 +172,11 @@ mod interactive_terminal {
     pub struct InteractiveTerminal;
 
     impl InteractiveTerminal {
-        pub fn enable() -> buck2_error::Result<Option<Self>> {
+        pub fn enable() -> bz_error::Result<Option<Self>> {
             Ok(None)
         }
 
-        pub fn disable(&mut self) -> buck2_error::Result<()> {
+        pub fn disable(&mut self) -> bz_error::Result<()> {
             Ok(())
         }
     }
@@ -250,12 +250,12 @@ impl SuperConsoleToggle {
 
 #[async_trait::async_trait]
 pub trait SuperConsoleInteraction: Send + Sync {
-    async fn toggle(&mut self) -> buck2_error::Result<Option<SuperConsoleToggle>>;
+    async fn toggle(&mut self) -> bz_error::Result<Option<SuperConsoleToggle>>;
 }
 
 #[async_trait::async_trait]
 impl SuperConsoleInteraction for ConsoleInteractionStream<'_> {
-    async fn toggle(&mut self) -> buck2_error::Result<Option<SuperConsoleToggle>> {
+    async fn toggle(&mut self) -> bz_error::Result<Option<SuperConsoleToggle>> {
         match self.stdin.read_u8().await {
             Ok(c) => {
                 let c: char = c.into();
@@ -285,7 +285,7 @@ impl SuperConsoleInteraction for ConsoleInteractionStream<'_> {
             {
                 futures::future::pending().await
             }
-            Err(e) => Err(buck2_error::Error::from(e).context("Error reading char from console")),
+            Err(e) => Err(bz_error::Error::from(e).context("Error reading char from console")),
         }
     }
 }
@@ -294,7 +294,7 @@ pub struct NoopSuperConsoleInteraction;
 
 #[async_trait::async_trait]
 impl SuperConsoleInteraction for NoopSuperConsoleInteraction {
-    async fn toggle(&mut self) -> buck2_error::Result<Option<SuperConsoleToggle>> {
+    async fn toggle(&mut self) -> bz_error::Result<Option<SuperConsoleToggle>> {
         futures::future::pending().await
     }
 }

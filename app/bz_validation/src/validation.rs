@@ -9,9 +9,9 @@
  */
 
 use async_trait::async_trait;
-use buck2_build_api::validation::validation_impl::VALIDATION_IMPL;
-use buck2_build_api::validation::validation_impl::ValidationImpl;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_build_api::validation::validation_impl::VALIDATION_IMPL;
+use bz_build_api::validation::validation_impl::ValidationImpl;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 use dice::DiceComputations;
 
 use crate::cached_validation_result::CachedValidationResultData;
@@ -29,12 +29,12 @@ impl ValidationImpl for ValidationImplInstance {
         &self,
         ctx: &mut DiceComputations<'_>,
         target: ConfiguredTargetLabel,
-    ) -> Result<(), buck2_error::Error> {
+    ) -> Result<(), bz_error::Error> {
         let key = TransitiveValidationKey(target);
         let result = ctx.compute(&key).await??;
         match result.0.as_ref() {
             CachedValidationResultData::Success => Ok(()),
-            CachedValidationResultData::Failure(e) => Err(buck2_error::Error::from(e.clone())),
+            CachedValidationResultData::Failure(e) => Err(bz_error::Error::from(e.clone())),
         }
     }
 }

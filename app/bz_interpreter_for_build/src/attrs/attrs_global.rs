@@ -10,29 +10,29 @@
 
 use std::sync::Arc;
 
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::cells::name::CellName;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::package::PackageLabel;
-use buck2_core::plugins::PluginKindSet;
-use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
-use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
-use buck2_interpreter::types::transition::transition_id_from_value;
-use buck2_interpreter::types::transition::transition_id_from_value_for_bazel_attr;
-use buck2_node::attrs::attr::Attribute;
-use buck2_node::attrs::attr::AttributeAllowedValues;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::attr_type::any::AnyAttrType;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
-use buck2_node::attrs::display::AttrDisplayWithContextExt;
-use buck2_node::provider_id_set::ProviderIdSet;
-use buck2_node::rule::BazelOutputAttrKind;
+use bz_common::package_listing::listing::PackageListing;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::cells::name::CellName;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::package::PackageLabel;
+use bz_core::plugins::PluginKindSet;
+use bz_core::target::label::interner::ConcurrentTargetLabelInterner;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
+use bz_interpreter::types::provider::callable::ValueAsProviderCallableLike;
+use bz_interpreter::types::transition::transition_id_from_value;
+use bz_interpreter::types::transition::transition_id_from_value_for_bazel_attr;
+use bz_node::attrs::attr::Attribute;
+use bz_node::attrs::attr::AttributeAllowedValues;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::attr_type::any::AnyAttrType;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::display::AttrDisplayWithContextExt;
+use bz_node::provider_id_set::ProviderIdSet;
+use bz_node::rule::BazelOutputAttrKind;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use either::Either;
@@ -67,7 +67,7 @@ use crate::plugins::PluginKindArg;
 
 const OPTION_NONE_EXPLANATION: &str = "`None` as an attribute value always picks the default. For `attrs.option`, if the default isn't `None`, there is no way to express `None`.";
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum AttrError {
     #[error(
@@ -92,7 +92,7 @@ pub(crate) trait AttributeExt {
         default: Option<Value<'v>>,
         doc: &str,
         coercer: AttrType,
-    ) -> buck2_error::Result<StarlarkAttribute<'v>>;
+    ) -> bz_error::Result<StarlarkAttribute<'v>>;
 }
 
 impl AttributeExt for Attribute {
@@ -102,7 +102,7 @@ impl AttributeExt for Attribute {
         default: Option<Value<'v>>,
         doc: &str,
         coercer: AttrType,
-    ) -> buck2_error::Result<StarlarkAttribute<'v>> {
+    ) -> bz_error::Result<StarlarkAttribute<'v>> {
         let default = match default {
             None => None,
             Some(x) => Some(Arc::new(
@@ -136,7 +136,7 @@ fn bazel_allowed_values<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     values: Vec<Value<'v>>,
     coercer: &AttrType,
-) -> buck2_error::Result<Option<AttributeAllowedValues>> {
+) -> bz_error::Result<Option<AttributeAllowedValues>> {
     let ctx = attr_coercion_context_for_bzl(eval)?;
     let values = values
         .into_try_map(|value| coercer.coerce(AttrIsConfigurable::No, &ctx, value))
@@ -152,7 +152,7 @@ fn bazel_attr<'v>(
     doc: &str,
     coercer: AttrType,
     configurable: Option<bool>,
-) -> buck2_error::Result<StarlarkAttribute<'v>> {
+) -> bz_error::Result<StarlarkAttribute<'v>> {
     bazel_attr_with_allowed_values(
         eval,
         default,
@@ -174,7 +174,7 @@ fn bazel_attr_with_allowed_values<'v>(
     coercer: AttrType,
     configurable: Option<bool>,
     allowed_values: Option<AttributeAllowedValues>,
-) -> buck2_error::Result<StarlarkAttribute<'v>> {
+) -> bz_error::Result<StarlarkAttribute<'v>> {
     bazel_attr_with_allowed_values_and_aspects(
         eval,
         default,
@@ -198,7 +198,7 @@ fn bazel_attr_with_allowed_values_and_aspects<'v>(
     configurable: Option<bool>,
     allowed_values: Option<AttributeAllowedValues>,
     bazel_aspects: Vec<Value<'v>>,
-) -> buck2_error::Result<StarlarkAttribute<'v>> {
+) -> bz_error::Result<StarlarkAttribute<'v>> {
     let computed_default = match default {
         Some(default) => BazelComputedDefault::from_value(default)?,
         None => None,
@@ -234,7 +234,7 @@ fn bazel_attr_with_allowed_values_and_aspects<'v>(
 fn bazel_label_default<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     default: Option<Value<'v>>,
-) -> buck2_error::Result<Option<Value<'v>>> {
+) -> bz_error::Result<Option<Value<'v>>> {
     let Some(default) = default else {
         return Ok(None);
     };
@@ -272,7 +272,7 @@ fn bazel_label_default<'v>(
 fn bazel_label_list_default<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     default: Option<Value<'v>>,
-) -> buck2_error::Result<Option<Value<'v>>> {
+) -> bz_error::Result<Option<Value<'v>>> {
     let Some(default) = default else {
         return Ok(None);
     };
@@ -289,7 +289,7 @@ fn bazel_attr_required<'v>(
     _eval: &mut Evaluator<'v, '_, '_>,
     doc: &str,
     coercer: AttrType,
-) -> buck2_error::Result<StarlarkAttribute<'v>> {
+) -> bz_error::Result<StarlarkAttribute<'v>> {
     Ok(StarlarkAttribute::new_bazel(Attribute::new(
         None, doc, coercer,
     )?))
@@ -303,7 +303,7 @@ fn bazel_dep_attr_type<'v>(
     required_providers: ProviderIdSet,
     cfg: Option<Value<'v>>,
     eval: &mut Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<AttrType> {
+) -> bz_error::Result<AttrType> {
     match cfg {
         None => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
         Some(cfg) if cfg.is_none() => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
@@ -331,7 +331,7 @@ fn bazel_label_attr_type<'v>(
     cfg: Option<Value<'v>>,
     list: bool,
     eval: &mut Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<AttrType> {
+) -> bz_error::Result<AttrType> {
     let dep = bazel_dep_attr_type(
         dep_like_attr_handle_providers_arg(providers.items)?,
         cfg,
@@ -348,7 +348,7 @@ fn bazel_label_attr_type<'v>(
 /// Coerction context for evaluating bzl files (attr default, transition rules).
 pub(crate) fn attr_coercion_context_for_bzl<'v>(
     eval: &Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<BuildAttrCoercionContext> {
+) -> bz_error::Result<BuildAttrCoercionContext> {
     let build_context = BuildContext::from_context(eval)?;
     let global_label_interner = Arc::new(ConcurrentTargetLabelInterner::default());
     if let PerFileTypeContext::Bzl(bzl) = &build_context.additional {
@@ -394,12 +394,12 @@ pub(crate) fn init_coerce_providers_label_for_bzl() {
 }
 
 /// Common code to handle `providers` argument of dep-like attrs.
-fn dep_like_attr_handle_providers_arg(providers: Vec<Value>) -> buck2_error::Result<ProviderIdSet> {
+fn dep_like_attr_handle_providers_arg(providers: Vec<Value>) -> bz_error::Result<ProviderIdSet> {
     fn provider_id_from_value(
         v: Value,
-    ) -> buck2_error::Result<Arc<buck2_core::provider::id::ProviderId>> {
+    ) -> bz_error::Result<Arc<bz_core::provider::id::ProviderId>> {
         match v.as_provider_callable() {
-            Some(callable) => buck2_error::Ok(callable.id()?.dupe()),
+            Some(callable) => bz_error::Ok(callable.id()?.dupe()),
             None => Err(AttrError::InvalidProviderValue(v.to_repr()).into()),
         }
     }
@@ -420,7 +420,7 @@ fn dep_like_attr_handle_providers_arg(providers: Vec<Value>) -> buck2_error::Res
                 group
                     .into_iter()
                     .map(provider_id_from_value)
-                    .collect::<buck2_error::Result<Vec<_>>>()?,
+                    .collect::<bz_error::Result<Vec<_>>>()?,
             );
         } else {
             direct_providers.push(provider_id_from_value(provider)?);
@@ -685,7 +685,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         let attr = Attribute::attr(eval, default, doc, coercer)?;
 
         match attr.default() {
-            Some(default) if !default.may_return_none() => Err(buck2_error::Error::from(
+            Some(default) if !default.may_return_none() => Err(bz_error::Error::from(
                 AttrError::OptionDefaultNone(default.as_display_no_ctx().to_string()),
             )
             .into()),
@@ -704,7 +704,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = "")] doc: &str,
     ) -> starlark::Result<StarlarkAttribute<'v>> {
         let Some(default) = inner.default().duped() else {
-            return Err(buck2_error::Error::from(AttrError::DefaultOnlyMustHaveDefault).into());
+            return Err(bz_error::Error::from(AttrError::DefaultOnlyMustHaveDefault).into());
         };
         Ok(StarlarkAttribute::new(Attribute::new_default_only(
             default,

@@ -101,7 +101,7 @@ impl<T: LabeledNode> Graph<T> {
         nodes: &impl AsyncNodeLookup<T>,
         root: impl IntoIterator<Item = T::Key>,
         successors: impl AsyncChildVisitor<T>,
-    ) -> buck2_error::Result<Graph<T>> {
+    ) -> bz_error::Result<Graph<T>> {
         let mut graph = GraphBuilder::<T> {
             nodes: VecAsMap::default(),
             node_to_index: UnorderedMap::default(),
@@ -138,7 +138,7 @@ impl<T: LabeledNode> Graph<T> {
         // (see https://github.com/rust-lang/futures-rs/issues/2053). Clean this up once a good
         // solution there exists.
         while let Some((target_index, node)) = tokio::task::unconstrained(queue.next()).await {
-            let result: buck2_error::Result<_> = try {
+            let result: bz_error::Result<_> = try {
                 let node = node?;
 
                 graph.insert(target_index, node.clone());
@@ -193,7 +193,7 @@ impl<T: LabeledNode> Graph<T> {
         nodes: &impl AsyncNodeLookup<T>,
         root: impl IntoIterator<Item = T::Key>,
         successors: impl AsyncChildVisitor<T>,
-    ) -> buck2_error::Result<Graph<T>> {
+    ) -> bz_error::Result<Graph<T>> {
         let root = root.into_iter().collect::<Vec<_>>();
         let graph = Self::build(nodes, root.iter().cloned(), successors).await?;
         let root = root.into_iter().map(|n| graph.node_to_index[&n]);
@@ -291,8 +291,8 @@ impl<T: LabeledNode> Graph<T> {
     pub(crate) fn depth_first_postorder_traversal<RootIter: IntoIterator<Item = T::Key>>(
         &self,
         root: RootIter,
-        mut visitor: impl FnMut(&T) -> buck2_error::Result<()>,
-    ) -> buck2_error::Result<()> {
+        mut visitor: impl FnMut(&T) -> bz_error::Result<()>,
+    ) -> bz_error::Result<()> {
         dfs_postorder_impl::<_, VecAsSet>(
             root.into_iter().map(|root| self.node_to_index[&root]),
             GraphSuccessorsImpl { graph: self },
@@ -366,7 +366,7 @@ impl<'a, N: LabeledNode> GraphSuccessors<u32> for GraphSuccessorsImpl<'a, N> {
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use buck2_query::query::traversal::ChildVisitor;
+    use bz_query::query::traversal::ChildVisitor;
     use dupe::Dupe;
 
     use crate::query::graph::bfs::bfs_preorder;
@@ -399,7 +399,7 @@ mod tests {
 
         #[async_trait]
         impl AsyncNodeLookup<Node> for Lookup {
-            async fn get(&self, label: &Ref) -> buck2_error::Result<Node> {
+            async fn get(&self, label: &Ref) -> bz_error::Result<Node> {
                 Ok(Node(label.dupe()))
             }
         }
@@ -413,7 +413,7 @@ mod tests {
                 &self,
                 node: &Node,
                 mut children: impl ChildVisitor<Node>,
-            ) -> buck2_error::Result<()> {
+            ) -> bz_error::Result<()> {
                 for (from, to) in &self.edges {
                     if node.0.0 == *from {
                         children.visit(&Ref(*to))?;

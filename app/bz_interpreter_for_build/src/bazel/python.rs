@@ -2,21 +2,21 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use allocative::Allocative;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_is_singleton;
-use buck2_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
-use buck2_build_api::interpreter::rule_defs::context::bazel_analysis_context_declare_file;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_with_generated_inits_empty_files_supplier;
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
-use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
-use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::package::PackageLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_is_singleton;
+use bz_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
+use bz_build_api::interpreter::rule_defs::context::bazel_analysis_context_declare_file;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_with_generated_inits_empty_files_supplier;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::cells::external::bzlmod_cell_aliases_for_cell;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::package::PackageLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use fancy_regex::Regex;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
@@ -34,7 +34,7 @@ use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BazelPythonError {
     #[error("Invalid py_internal regex `{pattern}`: {error}")]
@@ -107,7 +107,7 @@ fn label_repo_runfiles_path(package: PackageLabel) -> String {
     }
 }
 
-fn label_value_repo_runfiles_path(label: Value<'_>) -> buck2_error::Result<String> {
+fn label_value_repo_runfiles_path(label: Value<'_>) -> bz_error::Result<String> {
     if let Some(label) = StarlarkConfiguredProvidersLabel::from_value(label) {
         return Ok(label_repo_runfiles_path(label.label().target().pkg()));
     }
@@ -164,7 +164,7 @@ fn repo_mapping_cell_from_bazel_path(path: &str) -> String {
 fn repo_mapping_cell_from_artifact<'v>(
     value: Value<'v>,
     heap: Heap<'v>,
-) -> buck2_error::Result<Option<String>> {
+) -> bz_error::Result<Option<String>> {
     let Some(artifact) = ValueAsInputArtifactLike::unpack_value(value)? else {
         return Ok(None);
     };
@@ -178,13 +178,13 @@ fn repo_mapping_cell_from_artifact<'v>(
 fn repo_mapping_ctx_cell<'v>(
     ctx: Value<'v>,
     heap: Heap<'v>,
-) -> buck2_error::Result<Option<String>> {
+) -> bz_error::Result<Option<String>> {
     let label = ctx.get_attr_error("label", heap)?;
     if label.is_none() {
         return Ok(None);
     }
     let label = StarlarkConfiguredProvidersLabel::from_value(label).ok_or_else(|| {
-        buck2_error::Error::from(BazelPythonError::ExpectedLabel(
+        bz_error::Error::from(BazelPythonError::ExpectedLabel(
             label.to_string_for_type_error(),
         ))
     })?;
@@ -199,8 +199,8 @@ fn repo_mapping_symlink_path<'v>(heap: Heap<'v>, symlink: Value<'v>) -> starlark
         .unpack_str()
         .map(str::to_owned)
         .ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "runfiles symlink path should be a string"
             )
             .into()
@@ -285,7 +285,7 @@ fn ctx_is_tool_configuration<'v>(ctx: Value<'v>, heap: Heap<'v>) -> starlark::Re
         return Ok(false);
     }
     let label = StarlarkConfiguredProvidersLabel::from_value(label).ok_or_else(|| {
-        buck2_error::Error::from(BazelPythonError::ExpectedLabel(
+        bz_error::Error::from(BazelPythonError::ExpectedLabel(
             label.to_string_for_type_error(),
         ))
     })?;
@@ -313,7 +313,7 @@ fn bazel_py_internal_methods(builder: &mut MethodsBuilder) {
             .unwrap_or(pattern);
         let anchored = format!("^(?:{normalized_pattern})$");
         let regex = Regex::new(&anchored).map_err(|error| {
-            buck2_error::Error::from(BazelPythonError::InvalidRegex {
+            bz_error::Error::from(BazelPythonError::InvalidRegex {
                 pattern: pattern.to_owned(),
                 error: error.to_string(),
             })
@@ -324,7 +324,7 @@ fn bazel_py_internal_methods(builder: &mut MethodsBuilder) {
                 pattern: pattern.to_owned(),
                 error: error.to_string(),
             })
-            .map_err(|error| buck2_error::Error::from(error).into())
+            .map_err(|error| bz_error::Error::from(error).into())
     }
 
     fn get_current_os_name(

@@ -10,13 +10,13 @@
 
 use std::sync::Arc;
 
-use buck2_common::dice::cells::SetCellResolver;
-use buck2_common::legacy_configs::cells::ExternalBuckconfigData;
-use buck2_common::legacy_configs::dice::SetLegacyConfigs;
-use buck2_core::cells::CellResolver;
-use buck2_interpreter::dice::starlark_types::SetStarlarkTypes;
-use buck2_interpreter::starlark_profiler::config::SetStarlarkProfilerInstrumentation;
-use buck2_interpreter::starlark_profiler::config::StarlarkProfilerConfiguration;
+use bz_common::dice::cells::SetCellResolver;
+use bz_common::legacy_configs::cells::ExternalBuckconfigData;
+use bz_common::legacy_configs::dice::SetLegacyConfigs;
+use bz_core::cells::CellResolver;
+use bz_interpreter::dice::starlark_types::SetStarlarkTypes;
+use bz_interpreter::starlark_profiler::config::SetStarlarkProfilerInstrumentation;
+use bz_interpreter::starlark_profiler::config::StarlarkProfilerConfiguration;
 use dice::DiceTransactionUpdater;
 
 use crate::interpreter::configuror::BuildInterpreterConfiguror;
@@ -31,7 +31,7 @@ pub fn setup_interpreter(
     starlark_profiler_instrumentation_override: StarlarkProfilerConfiguration,
     disable_starlark_types: bool,
     unstable_typecheck: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     updater.set_cell_resolver(cell_resolver)?;
     updater.set_interpreter_context(configuror)?;
     updater.set_legacy_config_external_data(legacy_config_overrides)?;
@@ -45,7 +45,7 @@ pub fn setup_interpreter_basic(
     dice: &mut DiceTransactionUpdater,
     cell_resolver: CellResolver,
     configuror: Arc<BuildInterpreterConfiguror>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     setup_interpreter(
         dice,
         cell_resolver,

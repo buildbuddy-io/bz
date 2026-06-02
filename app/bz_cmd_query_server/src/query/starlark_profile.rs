@@ -10,23 +10,23 @@
 
 use std::path::Path;
 
-use buck2_core::package::PackageLabel;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::console_message;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_profile::write_starlark_profile;
+use bz_core::package::PackageLabel;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::console_message;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_profile::write_starlark_profile;
 use dice::DiceComputations;
 use futures::FutureExt;
 
 pub(crate) async fn write_query_profile_for_targets(
     ctx: &mut DiceComputations<'_>,
-    _profile_mode: buck2_cli_proto::ProfileMode,
+    _profile_mode: bz_cli_proto::ProfileMode,
     output_path: Option<&str>,
     targets: impl IntoIterator<Item = PackageLabel>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let output_path =
         output_path.ok_or_else(|| internal_error!("Outut path must be set for profile mode"))?;
     let output_path = AbsPath::new(Path::new(output_path))
@@ -40,7 +40,7 @@ async fn do_write_query_profile_for_targets(
     ctx: &mut DiceComputations<'_>,
     output_path: &AbsPath,
     mut targets: Vec<PackageLabel>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // We want stable output.
     targets.sort();
     targets.dedup();

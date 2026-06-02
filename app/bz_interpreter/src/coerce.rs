@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_util::late_binding::LateBinding;
+use bz_core::provider::label::ProvidersLabel;
+use bz_util::late_binding::LateBinding;
 use starlark::eval::Evaluator;
 
 pub static COERCE_PROVIDERS_LABEL_FOR_BZL: LateBinding<
-    fn(&mut Evaluator, &str) -> buck2_error::Result<ProvidersLabel>,
+    fn(&mut Evaluator, &str) -> bz_error::Result<ProvidersLabel>,
 > = LateBinding::new("COERCE_PROVIDERS_LABEL");

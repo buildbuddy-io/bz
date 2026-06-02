@@ -10,19 +10,19 @@
 
 use std::sync::Arc;
 
-use buck2_common::sqlite::sqlite_db::SqliteDb;
-use buck2_common::sqlite::sqlite_db::SqliteIdentity;
-use buck2_common::sqlite::sqlite_db::SqliteTable;
-use buck2_common::sqlite::sqlite_db::SqliteTables;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::soft_error;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_hash::BuckDashMap;
-use buck2_hash::StdBuckHashMap;
+use bz_common::sqlite::sqlite_db::SqliteDb;
+use bz_common::sqlite::sqlite_db::SqliteIdentity;
+use bz_common::sqlite::sqlite_db::SqliteTable;
+use bz_common::sqlite::sqlite_db::SqliteTables;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::soft_error;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_hash::BuckDashMap;
+use bz_hash::StdBuckHashMap;
 use chrono::DateTime;
 use chrono::Utc;
 use dupe::Dupe;
@@ -73,8 +73,8 @@ impl IncrementalDbState {
                 if let Err(e) = db.incremental_state_table().insert(key.to_owned(), value) {
                     soft_error!(
                         "insert_to_incremental_db",
-                        buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Tier0,
+                        bz_error::bz_error!(
+                            bz_error::ErrorTag::Tier0,
                             "Failed to insert {} into sqlite db. {}",
                             key, e
                         ),
@@ -97,8 +97,8 @@ impl IncrementalDbState {
             // might show up as an error but doesn't actually matter in reality.
             soft_error!(
                 "delete_from_incremental_db",
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "Failed to remove incremental path map from sqlite db. {}",
                     e
                 ),
@@ -110,7 +110,7 @@ impl IncrementalDbState {
         self.state.remove(key);
     }
 
-    pub fn clear(&self) -> buck2_error::Result<()> {
+    pub fn clear(&self) -> bz_error::Result<()> {
         if let Some(db) = &self.db {
             db.incremental_state_table().clear()?;
         }
@@ -128,7 +128,7 @@ pub struct IncrementalStateEntry {
 
 /// Concrete implementation of SqliteTable for IncrementalStateSqliteTable
 impl SqliteTable for IncrementalStateSqliteTable {
-    fn create_table(&self) -> buck2_error::Result<()> {
+    fn create_table(&self) -> bz_error::Result<()> {
         IncrementalStateSqliteTable::create_table(self)
     }
 }
@@ -146,12 +146,12 @@ impl SqliteDb for IncrementalStateSqliteDb {
     type StateType = IncrementalState;
     type TableType = IncrementalStateSqliteTable;
 
-    fn new(tables: SqliteTables<Self::TableType>) -> buck2_error::Result<Self> {
+    fn new(tables: SqliteTables<Self::TableType>) -> bz_error::Result<Self> {
         let identity = tables.get_identity()?;
         Ok(Self { tables, identity })
     }
 
-    fn open_tables(path: &AbsNormPath) -> buck2_error::Result<SqliteTables<Self::TableType>> {
+    fn open_tables(path: &AbsNormPath) -> bz_error::Result<SqliteTables<Self::TableType>> {
         let connection = SqliteTables::<Self::TableType>::create_connection(path)?;
         let incremental_state_table = IncrementalStateSqliteTable::new(connection.dupe());
         Ok(SqliteTables::new(incremental_state_table, connection))
@@ -174,7 +174,7 @@ impl IncrementalStateSqliteDb {
         current_instance_metadata: StdBuckHashMap<String, String>,
         io_executor: Arc<dyn BlockingExecutor>,
         reject_identity: Option<&SqliteIdentity>,
-    ) -> buck2_error::Result<IncrementalDbState> {
+    ) -> bz_error::Result<IncrementalDbState> {
         io_executor
             .execute_io_inline(|| {
                 Self::initialize_incremental_sqlite_db(
@@ -192,7 +192,7 @@ impl IncrementalStateSqliteDb {
         versions: StdBuckHashMap<String, String>,
         current_instance_metadata: StdBuckHashMap<String, String>,
         reject_identity: Option<&SqliteIdentity>,
-    ) -> buck2_error::Result<IncrementalDbState> {
+    ) -> bz_error::Result<IncrementalDbState> {
         let reject_identity = reject_identity.cloned();
 
         let (db, state) = match Self::get_sqlite_db(
@@ -252,7 +252,7 @@ pub(crate) fn testing_incremental_state_sqlite_db(
     versions: StdBuckHashMap<String, String>,
     metadata: StdBuckHashMap<String, String>,
     reject_identity: Option<&SqliteIdentity>,
-) -> buck2_error::Result<IncrementalDbState> {
+) -> bz_error::Result<IncrementalDbState> {
     IncrementalStateSqliteDb::initialize_incremental_sqlite_db(
         fs.resolve(ProjectRelativePath::unchecked_new(
             "buck-out/v2/cache/incremental_state",
@@ -265,17 +265,17 @@ pub(crate) fn testing_incremental_state_sqlite_db(
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_events::daemon_id::DaemonId;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_events::daemon_id::DaemonId;
     use starlark_map::small_map::SmallMap;
 
     use super::*;
     use crate::incremental_actions_helper::IncrementalPathMap;
 
     #[test]
-    fn test_initialize_incremental_sqlite_db() -> buck2_error::Result<()> {
+    fn test_initialize_incremental_sqlite_db() -> bz_error::Result<()> {
         fn testing_metadatas() -> Vec<StdBuckHashMap<String, String>> {
-            let metadata = buck2_events::metadata::collect(&DaemonId::new());
+            let metadata = bz_events::metadata::collect(&DaemonId::new());
             let mut metadatas = vec![metadata; 5];
             for (i, metadata) in metadatas.iter_mut().enumerate() {
                 metadata.insert("version".to_owned(), i.to_string());
@@ -297,7 +297,7 @@ mod tests {
         let run_action_key = "test_action".to_owned();
         let mut mapping = SmallMap::new();
         mapping.insert(
-            buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf::unchecked_new(
+            bz_fs::paths::forward_rel_path::ForwardRelativePathBuf::unchecked_new(
                 "test_file".to_owned(),
             ),
             ProjectRelativePathBuf::unchecked_new("buck-out/content_hash/test_file".to_owned()),

@@ -12,10 +12,10 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::configuration::config_setting::ConfigSettingData;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
+use bz_core::configuration::config_setting::ConfigSettingData;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark_map::unordered_map::UnorderedMap;

@@ -45,12 +45,12 @@ pub struct OrphanProcessInfo {
 
 #[cfg(not(unix))]
 pub mod buck_cgroup_tree {
-    use buck2_common::init::ResourceControlConfig;
+    use bz_common::init::ResourceControlConfig;
 
     pub struct PreppedBuckCgroups;
 
     impl PreppedBuckCgroups {
-        pub fn prep_current_process() -> buck2_error::Result<Self> {
+        pub fn prep_current_process() -> bz_error::Result<Self> {
             unreachable!("not used on windows")
         }
     }
@@ -62,7 +62,7 @@ pub mod buck_cgroup_tree {
         pub async fn set_up(
             _prepped: PreppedBuckCgroups,
             _config: &ResourceControlConfig,
-        ) -> buck2_error::Result<Self> {
+        ) -> bz_error::Result<Self> {
             unreachable!("not used on windows")
         }
     }
@@ -73,8 +73,8 @@ pub mod memory_tracker {
     use std::sync::Arc;
 
     use allocative::Allocative;
-    use buck2_common::init::ResourceControlConfig;
-    use buck2_events::daemon_id::DaemonId;
+    use bz_common::init::ResourceControlConfig;
+    use bz_events::daemon_id::DaemonId;
 
     use crate::buck_cgroup_tree::BuckCgroupTree;
 
@@ -89,7 +89,7 @@ pub mod memory_tracker {
         _cgroup_tree: Option<BuckCgroupTree>,
         _resource_control_config: &ResourceControlConfig,
         _daemon_id: &DaemonId,
-    ) -> buck2_error::Result<Option<MemoryTrackerHandle>> {
+    ) -> bz_error::Result<Option<MemoryTrackerHandle>> {
         Ok(None)
     }
 }
@@ -141,7 +141,7 @@ pub mod action_scene {
 
     pub struct ActionCgroupResult {
         pub memory_peak: Option<u64>,
-        pub error: Option<buck2_error::Error>,
+        pub error: Option<bz_error::Error>,
         pub suspend_duration: Option<Duration>,
         pub suspend_count: u64,
     }
@@ -155,7 +155,7 @@ pub mod action_scene {
             _command_type: CommandType,
             _action_digest: Option<String>,
             _disable_kill_and_retry_suspend: bool,
-        ) -> buck2_error::Result<Option<(Self, RetryFuture)>> {
+        ) -> bz_error::Result<Option<(Self, RetryFuture)>> {
             Ok(None)
         }
 

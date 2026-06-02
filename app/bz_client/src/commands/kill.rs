@@ -10,14 +10,14 @@
 
 use std::time::Duration;
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::startup_deadline::StartupDeadline;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::daemon::client::BuckdLifecycleLock;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::startup_deadline::StartupDeadline;
 
 /// Kill the buck daemon.
 ///
@@ -49,7 +49,7 @@ impl BuckSubcommand for KillCommand {
         )
         .await?;
 
-        buck2_client_ctx::daemon::client::kill::kill_command_impl(
+        bz_client_ctx::daemon::client::kill::kill_command_impl(
             &lifecycle_lock,
             "`buck kill` was invoked",
         )

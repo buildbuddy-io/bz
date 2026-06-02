@@ -11,50 +11,50 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_build_api::configure_targets::load_compatible_patterns_with_modifiers;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::package_listing::dice::DicePackageListingResolver;
-use buck2_common::package_listing::resolver::PackageListingResolver;
-use buck2_common::pattern::resolve::ResolveTargetPatterns;
-use buck2_common::pattern::resolve::ResolvedPattern;
-use buck2_common::target_aliases::BuckConfigTargetAliasResolver;
-use buck2_common::target_aliases::HasTargetAliasResolver;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
-use buck2_core::pattern::pattern::TargetParsingRel;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::pattern::query_file_literal::parse_query_file_literal;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::soft_error;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::buck_indexset;
-use buck2_node::load_patterns::MissingTargetBehavior;
-use buck2_node::load_patterns::load_patterns;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
-use buck2_query::query::syntax::simple::eval::file_set::FileNode;
-use buck2_query::query::syntax::simple::eval::file_set::FileSet;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_build_api::configure_targets::load_compatible_patterns_with_modifiers;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::dice::data::HasIoProvider;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::package_listing::dice::DicePackageListingResolver;
+use bz_common::package_listing::resolver::PackageListingResolver;
+use bz_common::pattern::resolve::ResolveTargetPatterns;
+use bz_common::pattern::resolve::ResolvedPattern;
+use bz_common::target_aliases::BuckConfigTargetAliasResolver;
+use bz_common::target_aliases::HasTargetAliasResolver;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern::ParsedPatternWithModifiers;
+use bz_core::pattern::pattern::TargetParsingRel;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::pattern::query_file_literal::parse_query_file_literal;
+use bz_core::provider::label::ProvidersName;
+use bz_core::soft_error;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_hash::StdBuckHashMap;
+use bz_hash::buck_indexset;
+use bz_node::load_patterns::MissingTargetBehavior;
+use bz_node::load_patterns::load_patterns;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
+use bz_query::query::syntax::simple::eval::file_set::FileNode;
+use bz_query::query::syntax::simple::eval::file_set::FileSet;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 use dice::DiceComputations;
 use dice::LinearRecomputeDiceComputations;
 use futures::FutureExt;
@@ -66,7 +66,7 @@ use crate::uquery::environment::UqueryDelegate;
 
 pub(crate) mod aquery;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum LiteralParserError {
     #[error("Expected a target pattern without providers, got: `{0}`")]
@@ -88,7 +88,7 @@ impl LiteralParser {
         &self,
         value: &str,
         providers_pattern: ParsedPattern<ProvidersPatternExtra>,
-    ) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
+    ) -> bz_error::Result<ParsedPattern<TargetPatternExtra>> {
         let target_pattern = match providers_pattern {
             ParsedPattern::Target(package, target_name, ProvidersPatternExtra { providers }) => {
                 if providers != ProvidersName::Default {
@@ -116,7 +116,7 @@ impl LiteralParser {
     fn parse_target_pattern(
         &self,
         value: &str,
-    ) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
+    ) -> bz_error::Result<ParsedPattern<TargetPatternExtra>> {
         let providers_pattern = self.parse_providers_pattern(value)?;
         self.convert_parsed_pattern(value, providers_pattern)
     }
@@ -124,7 +124,7 @@ impl LiteralParser {
     fn parse_target_pattern_with_modifiers(
         &self,
         value: &str,
-    ) -> buck2_error::Result<ParsedPatternWithModifiers<TargetPatternExtra>> {
+    ) -> bz_error::Result<ParsedPatternWithModifiers<TargetPatternExtra>> {
         let ParsedPatternWithModifiers {
             parsed_pattern,
             modifiers,
@@ -141,7 +141,7 @@ impl LiteralParser {
     pub(crate) fn parse_providers_pattern(
         &self,
         value: &str,
-    ) -> buck2_error::Result<ParsedPattern<ProvidersPatternExtra>> {
+    ) -> bz_error::Result<ParsedPattern<ProvidersPatternExtra>> {
         ParsedPattern::parse_not_relaxed(
             value,
             TargetParsingRel::AllowRelative(
@@ -158,7 +158,7 @@ impl LiteralParser {
     pub(crate) fn parse_providers_pattern_with_modifiers(
         &self,
         value: &str,
-    ) -> buck2_error::Result<ParsedPatternWithModifiers<ProvidersPatternExtra>> {
+    ) -> bz_error::Result<ParsedPatternWithModifiers<ProvidersPatternExtra>> {
         ParsedPatternWithModifiers::parse_not_relaxed(
             value,
             TargetParsingRel::AllowRelative(
@@ -172,7 +172,7 @@ impl LiteralParser {
         )
     }
 
-    fn parse_file_literal(&self, literal: &str) -> buck2_error::Result<CellPath> {
+    fn parse_file_literal(&self, literal: &str) -> bz_error::Result<CellPath> {
         parse_query_file_literal(
             literal,
             &self.cell_alias_resolver,
@@ -252,7 +252,7 @@ impl UqueryDelegate for DiceQueryDelegate<'_, '_> {
     // get the list of potential buildfile names for each cell
     async fn get_buildfile_names_by_cell(
         &self,
-    ) -> buck2_error::Result<StdBuckHashMap<CellName, Arc<[FileNameBuf]>>> {
+    ) -> bz_error::Result<StdBuckHashMap<CellName, Arc<[FileNameBuf]>>> {
         let mut ctx = self.ctx.get();
         let resolver = ctx.get_cell_resolver().await?;
         let buildfiles = ctx
@@ -272,7 +272,7 @@ impl UqueryDelegate for DiceQueryDelegate<'_, '_> {
     async fn resolve_target_patterns(
         &self,
         patterns: &[&str],
-    ) -> buck2_error::Result<ResolvedPattern<TargetPatternExtra>> {
+    ) -> bz_error::Result<ResolvedPattern<TargetPatternExtra>> {
         let parsed_patterns =
             patterns.try_map(|p| self.query_data.literal_parser.parse_target_pattern(p))?;
         Ok(ResolveTargetPatterns::resolve(&mut self.ctx.get(), &parsed_patterns).await?)
@@ -282,7 +282,7 @@ impl UqueryDelegate for DiceQueryDelegate<'_, '_> {
     async fn get_enclosing_packages(
         &self,
         path: &CellPath,
-    ) -> buck2_error::Result<Vec<PackageLabel>> {
+    ) -> bz_error::Result<Vec<PackageLabel>> {
         let cell_root = CellPath::new(path.cell(), CellRelativePath::empty().to_buf());
         Ok(DicePackageListingResolver(&mut self.ctx.get())
             .get_enclosing_packages(path.as_ref(), cell_root.as_ref())
@@ -291,7 +291,7 @@ impl UqueryDelegate for DiceQueryDelegate<'_, '_> {
             .collect())
     }
 
-    async fn eval_file_literal(&self, literal: &str) -> buck2_error::Result<FileSet> {
+    async fn eval_file_literal(&self, literal: &str) -> bz_error::Result<FileSet> {
         let cell_path = self.query_data.literal_parser.parse_file_literal(literal)?;
         Ok(FileSet::new(buck_indexset![FileNode(cell_path)]))
     }
@@ -314,7 +314,7 @@ impl CqueryDelegate for DiceQueryDelegate<'_, '_> {
     async fn get_node_for_configured_target(
         &self,
         target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<ConfiguredTargetNode> {
+    ) -> bz_error::Result<ConfiguredTargetNode> {
         Ok(self
             .ctx
             .get()
@@ -326,7 +326,7 @@ impl CqueryDelegate for DiceQueryDelegate<'_, '_> {
     async fn get_node_for_default_configured_target(
         &self,
         target: &TargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<ConfiguredTargetNode>> {
+    ) -> bz_error::Result<MaybeCompatible<ConfiguredTargetNode>> {
         let target = self.ctx.get().get_default_configured_target(target).await?;
         self.ctx
             .get()
@@ -346,7 +346,7 @@ impl QueryLiterals<ConfiguredTargetNode> for DiceQueryData {
         &self,
         literals: &[&str],
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<TargetSet<ConfiguredTargetNode>> {
+    ) -> bz_error::Result<TargetSet<ConfiguredTargetNode>> {
         let parsed_patterns =
             literals.try_map(|p| self.literal_parser.parse_target_pattern_with_modifiers(p))?;
 
@@ -368,7 +368,7 @@ impl QueryLiterals<TargetNode> for DiceQueryData {
         &self,
         literals: &[&str],
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<TargetSet<TargetNode>> {
+    ) -> bz_error::Result<TargetSet<TargetNode>> {
         let parsed_patterns = literals.try_map(|p| self.literal_parser.parse_target_pattern(p))?;
         let loaded_patterns =
             load_patterns(ctx, parsed_patterns, MissingTargetBehavior::Fail).await?;
@@ -384,7 +384,7 @@ pub(crate) async fn get_dice_query_delegate<'a, 'c: 'a, 'd>(
     ctx: &'c LinearRecomputeDiceComputations<'d>,
     working_dir: &'a ProjectRelativePath,
     global_cfg_options: GlobalCfgOptions,
-) -> buck2_error::Result<DiceQueryDelegate<'c, 'd>> {
+) -> bz_error::Result<DiceQueryDelegate<'c, 'd>> {
     let cell_resolver = ctx.get().get_cell_resolver().await?;
     let cell_alias_resolver = ctx
         .get()

@@ -14,35 +14,35 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::Action;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::UnregisteredAction;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_common::io::trace::TracingIoProvider;
-use buck2_core::category::CategoryRef;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_core::soft_error;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest::CasDigestToReExt;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::INTERNER;
-use buck2_execute::directory::re_directory_to_re_tree;
-use buck2_execute::directory::re_tree_to_directory;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::materialize::materializer::CasDownloadInfo;
-use buck2_execute::materialize::materializer::DeclareArtifactPayload;
-use buck2_hash::BuckIndexSet;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::Action;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::UnregisteredAction;
+use bz_build_api::actions::execute::action_executor::ActionExecutionKind;
+use bz_build_api::actions::execute::action_executor::ActionExecutionMetadata;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::actions::execute::error::ExecuteError;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_signals::env::WaitingData;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::io::trace::TracingIoProvider;
+use bz_core::category::CategoryRef;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_core::soft_error;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest::CasDigestToReExt;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::INTERNER;
+use bz_execute::directory::re_directory_to_re_tree;
+use bz_execute::directory::re_tree_to_directory;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::materialize::materializer::CasDownloadInfo;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_hash::BuckIndexSet;
 use chrono::DateTime;
 use chrono::TimeZone;
 use chrono::Utc;
@@ -53,14 +53,14 @@ use starlark::values::OwnedFrozenValue;
 
 use crate::actions::impls::offline;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 enum CasArtifactActionDeclarationError {
     #[error("CAS artifact action should have exactly 1 output, got {0}")]
     #[buck2(tag = ReCasArtifactWrongNumberOfOutputs)]
     WrongNumberOfOutputs(usize),
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 enum CasArtifactActionExecutionError {
     #[error(
         "The digest `{digest}` was declared to expire after `{declared_expiration}`, but it was set to expire at `{effective_expiration}`{}"
@@ -110,7 +110,7 @@ impl UnregisteredAction for UnregisteredCasArtifactAction {
         outputs: BuckIndexSet<BuildArtifact>,
         _starlark_data: Option<OwnedFrozenValue>,
         _error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         Ok(Box::new(CasArtifactAction::new(outputs, *self)?))
     }
 }
@@ -125,7 +125,7 @@ impl CasArtifactAction {
     fn new(
         outputs: BuckIndexSet<BuildArtifact>,
         inner: UnregisteredCasArtifactAction,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let outputs_len = outputs.len();
         let mut outputs = outputs.into_iter();
 
@@ -144,7 +144,7 @@ impl CasArtifactAction {
     async fn execute_for_offline(
         &self,
         ctx: &mut dyn ActionExecutionCtx,
-    ) -> buck2_error::Result<(ActionOutputs, ActionExecutionMetadata)> {
+    ) -> bz_error::Result<(ActionOutputs, ActionExecutionMetadata)> {
         let outputs = offline::declare_copy_from_offline_cache(ctx, &[&self.output]).await?;
 
         Ok((
@@ -161,11 +161,11 @@ impl CasArtifactAction {
 
 #[async_trait]
 impl Action for CasArtifactAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::CasArtifact
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::CasArtifact
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         Ok(Cow::Borrowed(&[]))
     }
 
@@ -198,7 +198,7 @@ impl Action for CasArtifactAction {
         let re_client = ctx.re_client().with_use_case(self.inner.re_use_case);
 
         let get_expiration = || async {
-            buck2_error::Ok(
+            bz_error::Ok(
                 re_client
                     .get_digest_expirations(vec![self.inner.digest.to_re()])
                     .await
@@ -213,7 +213,7 @@ impl Action for CasArtifactAction {
                     .ok_or_else(|| {
                         internal_error!("get_digest_expirations did not return anything")
                     })
-                    .tag(buck2_error::ErrorTag::ReCasArtifactGetDigestExpirationError)?
+                    .tag(bz_error::ErrorTag::ReCasArtifactGetDigestExpirationError)?
                     .1,
             )
         };
@@ -244,7 +244,7 @@ impl Action for CasArtifactAction {
 
             // We were able to extend the ttl, so this won't be failing builds, but we need to report it so we can track it.
             let new_expiration = get_expiration().await?;
-            let error: buck2_error::Error = CasArtifactActionExecutionError::InvalidExpiration {
+            let error: bz_error::Error = CasArtifactActionExecutionError::InvalidExpiration {
                 digest: self.inner.digest.dupe(),
                 declared_expiration: self.inner.expires_after,
                 effective_expiration: expiration,

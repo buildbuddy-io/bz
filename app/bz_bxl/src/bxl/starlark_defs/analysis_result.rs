@@ -11,10 +11,10 @@
 use std::fmt;
 
 use allocative::Allocative;
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
-use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
+use bz_build_api::analysis::AnalysisResult;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+use bz_build_api::interpreter::rule_defs::provider::dependency::Dependency;
+use bz_core::provider::label::ConfiguredProvidersLabel;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Methods;
@@ -55,7 +55,7 @@ impl StarlarkAnalysisResult {
     pub(crate) fn new(
         analysis: AnalysisResult,
         label: ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         // Check that the specified subtarget actually exists
         drop(analysis.lookup_inner(&label)?);
         Ok(Self { analysis, label })

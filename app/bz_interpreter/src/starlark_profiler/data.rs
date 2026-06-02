@@ -14,8 +14,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use allocative::Allocative;
-use buck2_common::starlark_profiler::StarlarkProfileDataAndStatsDyn;
-use buck2_error::internal_error;
+use bz_common::starlark_profiler::StarlarkProfileDataAndStatsDyn;
+use bz_error::internal_error;
 use starlark::eval::ProfileData;
 
 use crate::dice::starlark_provider::StarlarkEvalKind;
@@ -47,7 +47,7 @@ impl StarlarkProfileDataAndStats {
 
     pub fn merge<'a>(
         datas: impl IntoIterator<Item = &'a StarlarkProfileDataAndStats>,
-    ) -> buck2_error::Result<StarlarkProfileDataAndStats> {
+    ) -> bz_error::Result<StarlarkProfileDataAndStats> {
         let datas = Vec::from_iter(datas);
         let mut iter = datas.iter().copied();
         let first = iter
@@ -79,7 +79,7 @@ impl StarlarkProfileDataAndStats {
 
     pub fn downcast(
         profile_data: &dyn StarlarkProfileDataAndStatsDyn,
-    ) -> buck2_error::Result<&Self> {
+    ) -> bz_error::Result<&Self> {
         profile_data.as_any().downcast_ref::<Self>().ok_or_else(|| {
             internal_error!("There's only one implementation of StarlarkProfileDataAndStatsDyn")
         })

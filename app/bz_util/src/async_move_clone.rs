@@ -14,7 +14,7 @@
 ///
 /// ```rust
 /// let s = String::new();
-/// let f = buck2_util::async_move_clone!(s, {
+/// let f = bz_util::async_move_clone!(s, {
 ///     drop(s);
 /// });
 /// drop(s);

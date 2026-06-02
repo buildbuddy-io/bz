@@ -11,9 +11,9 @@
 use std::time::Duration;
 use std::time::SystemTime;
 
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_miniperf_proto::MiniperfCounter;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_miniperf_proto::MiniperfCounter;
 use remote_execution::ActionResultResponse;
 use remote_execution::ExecuteResponse;
 use remote_execution::TDirectory2;
@@ -30,7 +30,7 @@ use crate::re::manager::ManagedRemoteExecutionClient;
 use crate::re::queue_stats::QueueStats;
 use crate::re::streams::RemoteCommandStdStreams;
 
-pub struct ActionCacheResult(pub ActionResultResponse, pub buck2_data::CacheType);
+pub struct ActionCacheResult(pub ActionResultResponse, pub bz_data::CacheType);
 
 pub trait RemoteActionResult: Send + Sync {
     fn output_files(&self) -> &[TFile];
@@ -127,8 +127,8 @@ impl RemoteActionResult for ActionCacheResult {
 
     fn execution_kind(&self, details: RemoteCommandExecutionDetails) -> CommandExecutionKind {
         match self.1 {
-            buck2_data::CacheType::ActionCache => CommandExecutionKind::ActionCache { details },
-            buck2_data::CacheType::RemoteDepFileCache => {
+            bz_data::CacheType::ActionCache => CommandExecutionKind::ActionCache { details },
+            bz_data::CacheType::RemoteDepFileCache => {
                 CommandExecutionKind::RemoteDepFileCache { details }
             }
         }
@@ -166,7 +166,7 @@ impl RemoteActionResult for ActionCacheResult {
 pub struct ReMetadataTiming {
     pub execution_time: Duration,
     pub start_time: SystemTime,
-    pub execution_stats: Option<buck2_data::CommandExecutionStats>,
+    pub execution_stats: Option<bz_data::CommandExecutionStats>,
     pub input_materialization_duration: Duration,
     pub queue_duration: Option<Duration>,
 }
@@ -208,11 +208,11 @@ fn timing_from_re_metadata(meta: &TExecutedActionMetadata) -> ReMetadataTiming {
 
 fn convert_perf_counts(
     meta: &TExecutedActionMetadata,
-) -> buck2_error::Result<buck2_data::CommandExecutionStats> {
+) -> bz_error::Result<bz_data::CommandExecutionStats> {
     Ok({
         let userspace_counter = convert_perf_count(&meta.instruction_counts.userspace_events)?;
         let kernel_counter = convert_perf_count(&meta.instruction_counts.kernel_events)?;
-        buck2_data::CommandExecutionStats {
+        bz_data::CommandExecutionStats {
             cpu_instructions_user: userspace_counter.map(|p| p.adjusted_count()),
             cpu_instructions_kernel: kernel_counter.map(|p| p.adjusted_count()),
             userspace_events: userspace_counter.map(|p| p.to_proto()),
@@ -224,7 +224,7 @@ fn convert_perf_counts(
 
 fn convert_perf_count(
     perf_count: &TSubsysPerfCount,
-) -> buck2_error::Result<Option<MiniperfCounter>> {
+) -> bz_error::Result<Option<MiniperfCounter>> {
     if perf_count.time_running == 0 {
         return Ok(None);
     }

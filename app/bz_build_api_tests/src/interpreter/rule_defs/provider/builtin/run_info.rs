@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::collection::tester::collection_creator;
-use buck2_build_api::interpreter::rule_defs::register_rule_defs;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_build_api::interpreter::rule_defs::provider::collection::tester::collection_creator;
+use bz_build_api::interpreter::rule_defs::register_rule_defs;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
@@ -26,7 +26,7 @@ fn run_info_tester() -> Tester {
 }
 
 #[test]
-fn run_info_stringifies() -> buck2_error::Result<()> {
+fn run_info_stringifies() -> bz_error::Result<()> {
     let mut tester = run_info_tester();
     let content = indoc!(
         r#"
@@ -123,7 +123,7 @@ fn run_info_validates_types_2() {
 }
 
 #[test]
-fn run_info_works_as_provider_key() -> buck2_error::Result<()> {
+fn run_info_works_as_provider_key() -> bz_error::Result<()> {
     let mut tester = run_info_tester();
 
     let content = indoc!(

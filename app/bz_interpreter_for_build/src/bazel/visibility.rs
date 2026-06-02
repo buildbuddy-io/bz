@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 
-use buck2_core::package::PackageLabel;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::visibility::VisibilityPattern;
-use buck2_node::visibility::VisibilityWithinViewBuilder;
+use bz_core::package::PackageLabel;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::visibility::VisibilityPattern;
+use bz_node::visibility::VisibilityWithinViewBuilder;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum NormalizedVisibilityPattern<'a> {
@@ -56,7 +56,7 @@ pub(crate) fn add_visibility_pattern(
     builder: &mut VisibilityWithinViewBuilder,
     ctx: &dyn AttrCoercionContext,
     pattern: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match normalize_visibility_pattern(pattern, ctx.enclosing_package().as_ref()) {
         NormalizedVisibilityPattern::Public => builder.add_public(),
         NormalizedVisibilityPattern::Private => {}
@@ -73,7 +73,7 @@ pub(crate) fn add_visibility_pattern(
 mod tests {
     use std::borrow::Cow;
 
-    use buck2_core::package::PackageLabel;
+    use bz_core::package::PackageLabel;
 
     use super::NormalizedVisibilityPattern;
     use super::normalize_visibility_pattern;

@@ -13,30 +13,30 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use buck2_action_metadata_proto::REMOTE_DEP_FILE_KEY;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::buck2_env;
-use buck2_core::execution_types::executor_config::RePlatformFields;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::span_async;
-use buck2_execute::digest::CasDigestToReExt;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::directory_to_re_tree;
-use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
-use buck2_execute::execute::blobs::ActionBlobs;
-use buck2_execute::execute::cache_uploader::CacheUploadInfo;
-use buck2_execute::execute::cache_uploader::CacheUploadResults;
-use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
-use buck2_execute::execute::cache_uploader::UploadCache;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::re::action_identity::ReActionIdentity;
-use buck2_execute::re::client::ActionCacheWriteType;
-use buck2_execute::re::error::RemoteExecutionError;
-use buck2_execute::re::manager::ManagedRemoteExecutionClient;
+use bz_action_metadata_proto::REMOTE_DEP_FILE_KEY;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::bz_env;
+use bz_core::execution_types::executor_config::RePlatformFields;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::span_async;
+use bz_execute::digest::CasDigestToReExt;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::directory_to_re_tree;
+use bz_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
+use bz_execute::execute::blobs::ActionBlobs;
+use bz_execute::execute::cache_uploader::CacheUploadInfo;
+use bz_execute::execute::cache_uploader::CacheUploadResults;
+use bz_execute::execute::cache_uploader::IntoRemoteDepFile;
+use bz_execute::execute::cache_uploader::UploadCache;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::re::action_identity::ReActionIdentity;
+use bz_execute::re::client::ActionCacheWriteType;
+use bz_execute::re::error::RemoteExecutionError;
+use bz_execute::re::manager::ManagedRemoteExecutionClient;
 use derive_more::Display;
 use dupe::Dupe;
 use futures::future;
@@ -58,8 +58,8 @@ use crate::executors::action_cache_upload_permission_checker::ActionCacheUploadP
 use crate::executors::to_re_platform::RePlatformFieldsToRePlatform;
 
 // Whether to throw errors when cache uploads fail (primarily for tests).
-fn error_on_cache_upload() -> buck2_error::Result<bool> {
-    buck2_env!(
+fn error_on_cache_upload() -> bz_error::Result<bool> {
+    bz_env!(
         "BUCK2_TEST_ERROR_ON_CACHE_UPLOAD",
         bool,
         applicability = testing
@@ -110,13 +110,13 @@ impl CacheUploader {
         error_on_cache_upload: bool,
         has_depfile_entry: bool,
         identity: Option<&ReActionIdentity<'_>>,
-    ) -> buck2_error::Result<CacheUploadOutcome> {
+    ) -> bz_error::Result<CacheUploadOutcome> {
         let digest = action_digest_and_blobs.action;
         let digest_str = digest.to_string();
         let output_bytes = result.calc_output_size_bytes();
 
         span_async(
-            buck2_data::CacheUploadStart {
+            bz_data::CacheUploadStart {
                 key: Some(info.target.as_proto_action_key()),
                 name: Some(info.target.as_proto_action_name()),
                 action_digest: digest_str.clone(),
@@ -184,10 +184,10 @@ impl CacheUploader {
                     Ok(CacheUploadOutcome::Success(result_for_dep_file))
                 }
                 .await
-                .map_err(|e: buck2_error::Error| e)
+                .map_err(|e: bz_error::Error| e)
                 .unwrap_or_else(CacheUploadOutcome::Failed);
 
-                let cache_upload_end_event = buck2_data::CacheUploadEnd {
+                let cache_upload_end_event = bz_data::CacheUploadEnd {
                     key: Some(info.target.as_proto_action_key()),
                     name: Some(info.target.as_proto_action_name()),
                     action_digest: digest_str.clone(),
@@ -219,10 +219,10 @@ impl CacheUploader {
         remote_dep_file_action: &ActionDigestAndBlobs,
         error_on_cache_upload: bool,
         identity: Option<&ReActionIdentity<'_>>,
-    ) -> buck2_error::Result<CacheUploadOutcome> {
+    ) -> bz_error::Result<CacheUploadOutcome> {
         let remote_dep_file_key = remote_dep_file_action.action.to_string();
         span_async(
-            buck2_data::DepFileUploadStart {
+            bz_data::DepFileUploadStart {
                 key: Some(info.target.as_proto_action_key()),
                 name: Some(info.target.as_proto_action_name()),
                 remote_dep_file_key: remote_dep_file_key.clone(),
@@ -283,7 +283,7 @@ impl CacheUploader {
                 .await
                 .unwrap_or_else(CacheUploadOutcome::Failed);
 
-                let end_event = buck2_data::DepFileUploadEnd {
+                let end_event = bz_data::DepFileUploadEnd {
                     key: Some(info.target.as_proto_action_key()),
                     name: Some(info.target.as_proto_action_name()),
                     remote_dep_file_key: remote_dep_file_key.clone(),
@@ -303,7 +303,7 @@ impl CacheUploader {
     async fn check_upload_permission(
         &self,
         info: &CacheUploadInfo<'_>,
-    ) -> buck2_error::Result<Result<(), CacheUploadOutcome>> {
+    ) -> bz_error::Result<Result<(), CacheUploadOutcome>> {
         let outcome = if let Err(reason) = self
             .cache_upload_permission_checker
             .has_permission_to_upload_to_cache(&self.re_client, &self.platform, info.digest_config)
@@ -324,7 +324,7 @@ impl CacheUploader {
         file_digests: &mut Vec<TrackedFileDigest>,
         tree_digests: &mut Vec<TrackedFileDigest>,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<Result<TActionResult2, CacheUploadRejectionReason>> {
+    ) -> bz_error::Result<Result<TActionResult2, CacheUploadRejectionReason>> {
         let mut upload_futs = vec![];
         let mut output_files: Vec<TFile> = Vec::new();
         let mut output_directories: Vec<TDirectory2> = Vec::new();
@@ -423,7 +423,7 @@ impl CacheUploader {
         }
 
         let uploads = async {
-            buck2_util::future::try_join_all(upload_futs)
+            bz_util::future::try_join_all(upload_futs)
                 .await
                 .buck_error_context("Error uploading outputs")?;
 
@@ -490,7 +490,7 @@ impl CacheUploader {
 enum CacheUploadOutcome {
     Success(Option<TActionResult2>),
     Rejected(CacheUploadRejectionReason),
-    Failed(buck2_error::Error),
+    Failed(bz_error::Error),
 }
 
 impl CacheUploadOutcome {
@@ -527,7 +527,7 @@ impl CacheUploadOutcome {
         self,
         digest_str: &String,
         error_on_cache_upload: bool,
-    ) -> buck2_error::Result<CacheUploadOutcome> {
+    ) -> bz_error::Result<CacheUploadOutcome> {
         match &self {
             CacheUploadOutcome::Success(_) => {
                 tracing::info!("Cache upload for `{}` succeeded", digest_str);
@@ -540,8 +540,8 @@ impl CacheUploadOutcome {
             }
         };
         if !self.uploaded() && error_on_cache_upload {
-            Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::CacheUploadFailed,
+            Err(bz_error::bz_error!(
+                bz_error::ErrorTag::CacheUploadFailed,
                 "cache_upload_failed"
             ))
         } else {
@@ -561,12 +561,12 @@ enum CacheUploadRejectionReason {
     PermissionDenied(String),
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[error("Missing action result for dep file key `{0}`")]
 #[buck2(tag = Tier0)]
 struct DepFileReActionResultMissingError(String);
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[error("No dep files were declared, nothing to upload for dep file key `{0}`")]
 #[buck2(tag = Input)]
 struct DepFileUploadNoDeclaredDepFiles(String);
@@ -581,7 +581,7 @@ impl UploadCache for CacheUploader {
         dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
         action_digest_and_blobs: &ActionDigestAndBlobs,
         identity: Option<&ReActionIdentity<'_>>,
-    ) -> buck2_error::Result<CacheUploadResults> {
+    ) -> bz_error::Result<CacheUploadResults> {
         let error_on_cache_upload = error_on_cache_upload().buck_error_context("cache_upload")?;
 
         let (did_cache_upload, action_result) = if res.was_locally_executed() {
@@ -661,7 +661,7 @@ impl UploadCache for CacheUploader {
     }
 }
 
-fn systemtime_to_ttimestamp(time: SystemTime) -> buck2_error::Result<TTimestamp> {
+fn systemtime_to_ttimestamp(time: SystemTime) -> bz_error::Result<TTimestamp> {
     let duration = time.duration_since(SystemTime::UNIX_EPOCH)?;
     Ok(TTimestamp {
         seconds: duration

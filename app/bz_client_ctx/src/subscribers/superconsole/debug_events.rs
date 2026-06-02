@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use buck2_event_observer::debug_events::DebugEventsState;
+use bz_event_observer::debug_events::DebugEventsState;
 use gazebo::prelude::*;
 use superconsole::Component;
 use superconsole::Lines;
@@ -23,13 +23,13 @@ pub(crate) struct DebugEventsComponent<'s> {
 }
 
 impl Component for DebugEventsComponent<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         _dimensions: superconsole::Dimensions,
         _mode: superconsole::DrawMode,
-    ) -> buck2_error::Result<superconsole::Lines> {
+    ) -> bz_error::Result<superconsole::Lines> {
         if !self.super_console_config.enable_debug_events {
             return Ok(Lines::new());
         }

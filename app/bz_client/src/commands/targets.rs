@@ -9,36 +9,36 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::TargetsRequest;
-use buck2_cli_proto::targets_request;
-use buck2_cli_proto::targets_request::OutputFormat;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::PrintOutputsFormat;
-use buck2_client_ctx::common::build::CommonOutputOptions;
-use buck2_client_ctx::common::target_cfg::TargetCfgOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::console_interaction_stream::ConsoleInteractionStream;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::NoPartialResultHandler;
-use buck2_client_ctx::daemon::client::StdoutPartialResultHandler;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ClientIoError;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::query_args::CommonAttributeArgs;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use bz_cli_proto::TargetsRequest;
+use bz_cli_proto::targets_request;
+use bz_cli_proto::targets_request::OutputFormat;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::PrintOutputsFormat;
+use bz_client_ctx::common::build::CommonOutputOptions;
+use bz_client_ctx::common::target_cfg::TargetCfgOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::console_interaction_stream::ConsoleInteractionStream;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::NoPartialResultHandler;
+use bz_client_ctx::daemon::client::StdoutPartialResultHandler;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ClientIoError;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::path_arg::PathArg;
+use bz_client_ctx::query_args::CommonAttributeArgs;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
 use dupe::Dupe;
 use gazebo::prelude::*;
 
 use crate::print::PrintOutputs;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum TargetsError {
     /// Clap should report it, but if we missed something, this is a fallback.
@@ -96,11 +96,11 @@ enum Compression {
 }
 
 impl Compression {
-    fn to_proto(&self) -> buck2_cli_proto::targets_request::Compression {
+    fn to_proto(&self) -> bz_cli_proto::targets_request::Compression {
         match self {
-            Compression::None => buck2_cli_proto::targets_request::Compression::Uncompressed,
-            Compression::Gzip => buck2_cli_proto::targets_request::Compression::Gzip,
-            Compression::Zstd => buck2_cli_proto::targets_request::Compression::Zstd,
+            Compression::None => bz_cli_proto::targets_request::Compression::Uncompressed,
+            Compression::Gzip => bz_cli_proto::targets_request::Compression::Gzip,
+            Compression::Zstd => bz_cli_proto::targets_request::Compression::Zstd,
         }
     }
 }
@@ -242,7 +242,7 @@ pub struct TargetsCommand {
 
 impl TargetsCommand {
     #[allow(clippy::if_same_then_else)]
-    fn output_format(&self) -> buck2_error::Result<OutputFormat> {
+    fn output_format(&self) -> bz_error::Result<OutputFormat> {
         if self.json {
             if self.json_lines || self.stats {
                 return Err(TargetsError::IncompatibleArguments.into());
@@ -269,7 +269,7 @@ impl TargetsCommand {
 
     /// Return each of the strings that were supplied as arguments to `--package-values-regex` or,
     /// if `--package-values` is used, return an empty string that effectively matches all package values.
-    fn package_values_as_regexes(&self) -> buck2_error::Result<Vec<String>> {
+    fn package_values_as_regexes(&self) -> bz_error::Result<Vec<String>> {
         if self.package_values {
             if self.package_values_regex.is_empty() {
                 Ok(vec![String::new()])
@@ -295,13 +295,13 @@ impl StreamingCommand for TargetsCommand {
     ) -> ExitResult {
         let target_hash_use_fast_hash = match self.target_hash_function {
             TargetHashFunction::Sha1 | TargetHashFunction::Sha256 => {
-                buck2_client_ctx::eprintln!(
+                bz_client_ctx::eprintln!(
                     "buck2 only supports \"fast\" and \"strong\" target hash functions. Using the \"strong\" hash."
                 )?;
                 false
             }
             TargetHashFunction::Murmur_Hash3 => {
-                buck2_client_ctx::eprintln!(
+                bz_client_ctx::eprintln!(
                     "buck2 only supports \"fast\" and \"strong\" target hash functions. Using the \"fast\" hash."
                 )?;
                 true
@@ -358,7 +358,7 @@ impl StreamingCommand for TargetsCommand {
                 .try_map(|x| x.resolve(&ctx.working_dir).into_string())?,
             concurrency: self
                 .num_threads
-                .map(|num| buck2_cli_proto::Concurrency { concurrency: num }),
+                .map(|num| bz_cli_proto::Concurrency { concurrency: num }),
             compression: self.compression.to_proto() as i32,
         };
 
@@ -419,7 +419,7 @@ async fn targets_show_outputs(
         )
         .await??;
 
-    buck2_client_ctx::stdio::print_with_writer::<ClientIoError, _>(async move |w| {
+    bz_client_ctx::stdio::print_with_writer::<ClientIoError, _>(async move |w| {
         let root_path = root_path.map(|root| root.to_path_buf());
         let mut print = PrintOutputs::new(w, root_path, format)?;
         for target_paths in response.targets_paths {
@@ -450,7 +450,7 @@ async fn targets(
         )
         .await??;
     if !response.serialized_targets_output.is_empty() {
-        buck2_client_ctx::print!("{}", response.serialized_targets_output)?;
+        bz_client_ctx::print!("{}", response.serialized_targets_output)?;
     }
     ExitResult::success()
 }

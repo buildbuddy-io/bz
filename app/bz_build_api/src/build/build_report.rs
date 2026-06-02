@@ -21,45 +21,45 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::sync::Arc;
 
-use buck2_artifact::artifact::artifact_dump::ArtifactInfo;
-use buck2_artifact::artifact::artifact_dump::DirectoryInfo;
-use buck2_artifact::artifact::artifact_dump::ExternalSymlinkInfo;
-use buck2_artifact::artifact::artifact_dump::FileInfo;
-use buck2_artifact::artifact::artifact_dump::SymlinkInfo;
-use buck2_cli_proto::CommonBuildOptions;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::cells::CellResolver;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::pattern::pattern::Modifiers;
-use buck2_core::pattern::pattern::TargetLabelWithModifiers;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::NonDefaultProvidersName;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_data::ErrorReport;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_error::UniqueRootId;
-use buck2_error::classify::ErrorLike;
-use buck2_error::classify::Tier;
-use buck2_error::classify::best_error;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_hash::BuckDefaultHasher;
-use buck2_sketches::DependencyGraphSketch;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_artifact::artifact::artifact_dump::ArtifactInfo;
+use bz_artifact::artifact::artifact_dump::DirectoryInfo;
+use bz_artifact::artifact::artifact_dump::ExternalSymlinkInfo;
+use bz_artifact::artifact::artifact_dump::FileInfo;
+use bz_artifact::artifact::artifact_dump::SymlinkInfo;
+use bz_cli_proto::CommonBuildOptions;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_core::cells::CellResolver;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::pattern::pattern::Modifiers;
+use bz_core::pattern::pattern::TargetLabelWithModifiers;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::NonDefaultProvidersName;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_data::ErrorReport;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::BuckErrorContext;
+use bz_error::UniqueRootId;
+use bz_error::classify::ErrorLike;
+use bz_error::classify::Tier;
+use bz_error::classify::best_error;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_hash::BuckDefaultHasher;
+use bz_sketches::DependencyGraphSketch;
+use bz_wrapper_common::invocation_id::TraceId;
 use derivative::Derivative;
 use dice::DiceComputations;
 use dupe::Dupe;
@@ -275,7 +275,7 @@ pub struct BuildReportCollector<'a> {
     cell_resolver: &'a CellResolver,
     overall_success: bool,
     include_unconfigured_section: bool,
-    error_cause_cache: HashMap<buck2_error::UniqueRootId, usize>,
+    error_cause_cache: HashMap<bz_error::UniqueRootId, usize>,
     next_cause_index: usize,
     strings: BTreeMap<String, String>,
     failures: HashMap<EntryLabel, String>,
@@ -290,13 +290,13 @@ pub struct BuildReportCollector<'a> {
 }
 
 // Build report generation should never produce an input error, always return an error with an infra tag
-#[derive(buck2_error::Error)]
+#[derive(bz_error::Error)]
 #[error(transparent)]
 #[buck2(tag = BuildReport)]
-pub struct BuildReportGenerationError(buck2_error::Error);
+pub struct BuildReportGenerationError(bz_error::Error);
 
-impl From<buck2_error::Error> for BuildReportGenerationError {
-    fn from(e: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for BuildReportGenerationError {
+    fn from(e: bz_error::Error) -> Self {
         Self(e)
     }
 }
@@ -356,7 +356,7 @@ impl<'a> BuildReportCollector<'a> {
         truncate_error_content: bool,
         configured: &BTreeMap<ConfiguredProvidersLabel, Option<ConfiguredBuildTargetResult>>,
         configured_to_pattern_modifiers: &HashMap<ConfiguredProvidersLabel, BTreeSet<Modifiers>>,
-        other_errors: &BTreeMap<Option<ProvidersLabel>, Vec<buck2_error::Error>>,
+        other_errors: &BTreeMap<Option<ProvidersLabel>, Vec<bz_error::Error>>,
         detailed_metrics: Option<DetailedAggregatedMetrics>,
         action_graph_sketch_result: Option<ActionGraphSketchResult>,
         graph_properties_opts: GraphPropertiesOptions,
@@ -506,7 +506,7 @@ impl<'a> BuildReportCollector<'a> {
         exclude_action_error_diagnostics: bool,
         truncate_error_content: bool,
         bxl_label: &BxlFunctionLabel,
-        errors: &[buck2_error::Error],
+        errors: &[bz_error::Error],
         detailed_metrics: Option<DetailedAggregatedMetrics>,
         _action_graph_sketch_result: Option<ActionGraphSketchResult>,
         graph_properties_opts: GraphPropertiesOptions,
@@ -654,11 +654,11 @@ impl<'a> BuildReportCollector<'a> {
                 &'b Option<ConfiguredBuildTargetResult>,
             ),
         >,
-        errors: &[buck2_error::Error],
+        errors: &[bz_error::Error],
         metrics: &mut HashMap<ConfiguredProvidersLabel, Arc<TargetBuildMetrics>>,
         action_graph_sketches: &HashMap<ConfiguredProvidersLabel, String>,
         all_error_reports: &mut Vec<ErrorReport>,
-    ) -> buck2_error::Result<BuildReportEntry> {
+    ) -> bz_error::Result<BuildReportEntry> {
         // NOTE: if we're actually building a thing, then the package path must exist, but be
         // conservative and don't crash the overall processing if that happens.
         let package_project_relative_path = if self.include_package_project_relative_paths {
@@ -746,7 +746,7 @@ impl<'a> BuildReportCollector<'a> {
         metrics: &mut HashMap<ConfiguredProvidersLabel, Arc<TargetBuildMetrics>>,
         action_graph_sketches: &HashMap<ConfiguredProvidersLabel, String>,
         all_error_reports: &mut Vec<ErrorReport>,
-    ) -> buck2_error::Result<ConfiguredBuildReportEntry> {
+    ) -> bz_error::Result<ConfiguredBuildReportEntry> {
         let mut configured_report = ConfiguredBuildReportEntry::default();
         let mut errors = Vec::new();
         for (label, result) in results {
@@ -835,7 +835,7 @@ impl<'a> BuildReportCollector<'a> {
     /// deterministic. The particular order of the errors need not be.
     fn convert_error_list(
         &mut self,
-        errors: &[buck2_error::Error],
+        errors: &[bz_error::Error],
         entry_label: EntryLabel,
     ) -> Vec<BuildReportError> {
         if errors.is_empty() {
@@ -866,7 +866,7 @@ impl<'a> BuildReportCollector<'a> {
             };
             // Apply truncation if enabled
             let message = if self.truncate_error_content {
-                buck2_util::truncate::truncate(&message, MAX_ERROR_CONTENT_BYTES)
+                bz_util::truncate::truncate(&message, MAX_ERROR_CONTENT_BYTES)
             } else {
                 message
             };
@@ -1031,7 +1031,7 @@ pub async fn build_report_opts<'a>(
     cell_resolver: &CellResolver,
     build_opts: &CommonBuildOptions,
     graph_properties_opts: GraphPropertiesOptions,
-) -> buck2_error::Result<BuildReportOpts> {
+) -> bz_error::Result<BuildReportOpts> {
     let esto = &build_opts.unstable_build_report_filename;
     let build_report_opts = BuildReportOpts {
         print_unconfigured_section: ctx
@@ -1067,7 +1067,7 @@ fn write_or_serialize_build_report(
     filename: &str,
     project_root: &ProjectRoot,
     cwd: &ProjectRelativePath,
-) -> Result<Option<String>, buck2_error::Error> {
+) -> Result<Option<String>, bz_error::Error> {
     let mut serialized_build_report = None;
 
     if !filename.is_empty() {
@@ -1096,10 +1096,10 @@ pub fn write_build_report(
     trace_id: &TraceId,
     configured: &BTreeMap<ConfiguredProvidersLabel, Option<ConfiguredBuildTargetResult>>,
     configured_to_pattern_modifiers: &HashMap<ConfiguredProvidersLabel, BTreeSet<Modifiers>>,
-    other_errors: &BTreeMap<Option<ProvidersLabel>, Vec<buck2_error::Error>>,
+    other_errors: &BTreeMap<Option<ProvidersLabel>, Vec<bz_error::Error>>,
     detailed_metrics: Option<DetailedAggregatedMetrics>,
     action_graph_sketch_result: Option<ActionGraphSketchResult>,
-) -> Result<Option<String>, buck2_error::Error> {
+) -> Result<Option<String>, bz_error::Error> {
     let build_report = BuildReportCollector::convert(
         trace_id,
         artifact_fs,
@@ -1135,10 +1135,10 @@ pub fn write_bxl_build_report(
     cwd: &ProjectRelativePath,
     trace_id: &TraceId,
     bxl_label: &BxlFunctionLabel,
-    errors: &[buck2_error::Error],
+    errors: &[bz_error::Error],
     detailed_metrics: Option<DetailedAggregatedMetrics>,
     action_graph_sketch_result: Option<ActionGraphSketchResult>,
-) -> Result<Option<String>, buck2_error::Error> {
+) -> Result<Option<String>, bz_error::Error> {
     let build_report = BuildReportCollector::convert_bxl(
         trace_id,
         artifact_fs,
@@ -1174,10 +1174,10 @@ pub fn stream_build_report(
     trace_id: &TraceId,
     configured: &BTreeMap<ConfiguredProvidersLabel, Option<ConfiguredBuildTargetResult>>,
     configured_to_pattern_modifiers: &HashMap<ConfiguredProvidersLabel, BTreeSet<Modifiers>>,
-    other_errors: &BTreeMap<Option<ProvidersLabel>, Vec<buck2_error::Error>>,
+    other_errors: &BTreeMap<Option<ProvidersLabel>, Vec<bz_error::Error>>,
     detailed_metrics: Option<DetailedAggregatedMetrics>,
     action_graph_sketch_result: Option<ActionGraphSketchResult>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let build_report = BuildReportCollector::convert(
         trace_id,
         artifact_fs,
@@ -1220,7 +1220,7 @@ pub fn initialize_streaming_build_report(
     opts: BuildReportOpts,
     project_root: &ProjectRoot,
     cwd: &ProjectRelativePath,
-) -> Result<(), buck2_error::Error> {
+) -> Result<(), bz_error::Error> {
     let path = project_root
         .resolve(cwd)
         .as_abs_path()

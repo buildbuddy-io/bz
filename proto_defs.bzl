@@ -24,7 +24,7 @@ def rust_protobuf_library(
         name,
         srcs,
         build_script,
-        "buck2_protoc_dev",
+        "bz_protoc_dev",
         "0.14",
         protos,
         [
@@ -48,7 +48,7 @@ def _rust_protobuf_library(
         name,
         srcs,
         build_script,
-        buck2_protoc_dev,
+        bz_protoc_dev,
         prost_version,
         protos,
         deps,
@@ -68,7 +68,7 @@ def _rust_protobuf_library(
         srcs = [build_script],
         crate_root = build_script,
         deps = [
-            "fbcode//bz/app/bz_protoc_dev:" + buck2_protoc_dev,
+            "fbcode//bz/app/bz_protoc_dev:" + bz_protoc_dev,
         ],
     )
 

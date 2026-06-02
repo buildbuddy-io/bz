@@ -12,7 +12,7 @@ use std::cell::OnceCell;
 use std::rc::Rc;
 
 use async_trait::async_trait;
-use buck2_interpreter::factory::ReentrantStarlarkEvaluator;
+use bz_interpreter::factory::ReentrantStarlarkEvaluator;
 use dice::DiceComputations;
 use starlark::eval::Evaluator;
 
@@ -21,7 +21,7 @@ pub trait AnonPromisesDyn<'v>: 'v {
     async fn run_promises<'a, 'e: 'a>(
         self: Box<Self>,
         accessor: &mut dyn RunAnonPromisesAccessor<'v, 'a, 'e>,
-    ) -> buck2_error::Result<()>
+    ) -> bz_error::Result<()>
     where
         'v: 'a;
 }
@@ -29,8 +29,8 @@ pub trait AnonPromisesDyn<'v>: 'v {
 pub trait RunAnonPromisesAccessor<'v: 'a, 'a, 'e> {
     fn with_evaluator(
         &mut self,
-        closure: &mut dyn FnMut(&mut Evaluator<'v, 'a, 'e>) -> buck2_error::Result<()>,
-    ) -> buck2_error::Result<()>;
+        closure: &mut dyn FnMut(&mut Evaluator<'v, 'a, 'e>) -> bz_error::Result<()>,
+    ) -> bz_error::Result<()>;
 
     fn via_dice_impl<'s: 'b, 'b>(
         &'s mut self,
@@ -48,8 +48,8 @@ impl<'me, 'v, 'a, 'e, 'd> RunAnonPromisesAccessor<'v, 'a, 'e>
 {
     fn with_evaluator(
         &mut self,
-        closure: &mut dyn FnMut(&mut Evaluator<'v, 'a, 'e>) -> buck2_error::Result<()>,
-    ) -> buck2_error::Result<()> {
+        closure: &mut dyn FnMut(&mut Evaluator<'v, 'a, 'e>) -> bz_error::Result<()>,
+    ) -> bz_error::Result<()> {
         self.0.with_evaluator(closure)
     }
 

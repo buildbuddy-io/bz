@@ -11,26 +11,26 @@
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_cli_proto::DapRequest;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::common::ui::ConsoleType;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::events_ctx::PartialResultCtx;
-use buck2_client_ctx::events_ctx::PartialResultHandler;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::ide_support::ide_message_stream;
-use buck2_client_ctx::stream_util::reborrow_stream_for_static;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_client_ctx::subscribers::subscriber::EventSubscriber;
-use buck2_event_observer::unpack_event::UnpackedBuckEvent;
-use buck2_event_observer::unpack_event::unpack_event;
-use buck2_events::BuckEvent;
+use bz_cli_proto::DapRequest;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::common::ui::ConsoleType;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::events_ctx::PartialResultCtx;
+use bz_client_ctx::events_ctx::PartialResultHandler;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::ide_support::ide_message_stream;
+use bz_client_ctx::stream_util::reborrow_stream_for_static;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_client_ctx::subscribers::subscriber::EventSubscriber;
+use bz_event_observer::unpack_event::UnpackedBuckEvent;
+use bz_event_observer::unpack_event::unpack_event;
+use bz_events::BuckEvent;
 use futures::StreamExt;
 use once_cell::sync::Lazy;
 
@@ -52,7 +52,7 @@ pub struct StarlarkDebugAttachCommand {
     event_log_opts: CommonEventLogOptions,
 }
 
-pub fn write_dap_message(out: &mut impl Write, msg: &[u8]) -> buck2_error::Result<()> {
+pub fn write_dap_message(out: &mut impl Write, msg: &[u8]) -> bz_error::Result<()> {
     write!(out, "Content-Length: {}\r\n\r\n", msg.len())?;
     out.write_all(msg)?;
     out.flush()?;
@@ -60,7 +60,7 @@ pub fn write_dap_message(out: &mut impl Write, msg: &[u8]) -> buck2_error::Resul
 }
 
 /// All DAP messages are written to stdout.
-fn send_message_to_dap_client(msg: &[u8]) -> buck2_error::Result<()> {
+fn send_message_to_dap_client(msg: &[u8]) -> bz_error::Result<()> {
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
     write_dap_message(&mut stdout, msg)?;
@@ -85,7 +85,7 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
                 match m {
                     Ok(dap_json) => Some(DapRequest { dap_json }),
                     Err(e) => {
-                        let _ignored = buck2_client_ctx::eprintln!(
+                        let _ignored = bz_client_ctx::eprintln!(
                             "Could not read message from stdin: `{}`",
                             e
                         );
@@ -156,7 +156,7 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
         struct ConvertToDap;
 
         impl ConvertToDap {
-            fn write_console(&self, msg: &str) -> buck2_error::Result<()> {
+            fn write_console(&self, msg: &str) -> bz_error::Result<()> {
                 let ev = debugserver_types::OutputEvent {
                     type_: "event".to_owned(),
                     event: "output".to_owned(),
@@ -183,22 +183,22 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
 
         #[async_trait]
         impl EventSubscriber for ConvertToDap {
-            async fn handle_output(&mut self, raw_output: &[u8]) -> buck2_error::Result<()> {
+            async fn handle_output(&mut self, raw_output: &[u8]) -> bz_error::Result<()> {
                 Ok(self.write_console(&String::from_utf8_lossy(raw_output))?)
             }
 
-            async fn handle_tailer_stderr(&mut self, stderr: &str) -> buck2_error::Result<()> {
+            async fn handle_tailer_stderr(&mut self, stderr: &str) -> bz_error::Result<()> {
                 Ok(self.write_console(stderr)?)
             }
 
             async fn handle_events(
                 &mut self,
                 events: &[std::sync::Arc<BuckEvent>],
-            ) -> buck2_error::Result<()> {
+            ) -> bz_error::Result<()> {
                 for ev in events {
                     if let UnpackedBuckEvent::Instant(_, _, data) = unpack_event(ev)? {
                         match data {
-                            buck2_data::instant_event::Data::StructuredError(soft_error) => {
+                            bz_data::instant_event::Data::StructuredError(soft_error) => {
                                 if !soft_error.quiet {
                                     self.write_console(&format!(
                                         "soft error: {}",
@@ -206,7 +206,7 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
                                     ))?;
                                 }
                             }
-                            buck2_data::instant_event::Data::ConsoleMessage(message) => {
+                            bz_data::instant_event::Data::ConsoleMessage(message) => {
                                 self.write_console(&message.message)?;
                             }
                             _ => {}
@@ -218,8 +218,8 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
 
             async fn handle_error(
                 &mut self,
-                error: &buck2_error::Error,
-            ) -> buck2_error::Result<()> {
+                error: &bz_error::Error,
+            ) -> bz_error::Result<()> {
                 Ok(self
                     .write_console(&format!("buck2 starlark-attach debugserver error: {error}"))?)
             }
@@ -233,13 +233,13 @@ struct DapPartialResultHandler;
 
 #[async_trait]
 impl PartialResultHandler for DapPartialResultHandler {
-    type PartialResult = buck2_cli_proto::DapMessage;
+    type PartialResult = bz_cli_proto::DapMessage;
 
     async fn handle_partial_result(
         &mut self,
         mut _ctx: PartialResultCtx<'_>,
-        partial_res: buck2_cli_proto::DapMessage,
-    ) -> buck2_error::Result<()> {
+        partial_res: bz_cli_proto::DapMessage,
+    ) -> bz_error::Result<()> {
         Ok(send_message_to_dap_client(&partial_res.dap_json)?)
     }
 }

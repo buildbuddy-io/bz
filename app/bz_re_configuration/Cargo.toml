@@ -2,15 +2,15 @@
 description = "utilities to configure RE in Buck2"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_re_configuration"
+name = "bz_re_configuration"
 repository = { workspace = true }
 version = "0.1.0"
 
 [dependencies]
 allocative = { workspace = true }
-buck2_common = { workspace = true }
-buck2_core = { workspace = true }
-buck2_error = { workspace = true }
+bz_common = { workspace = true }
+bz_core = { workspace = true }
+bz_error = { workspace = true }
 
 [lints]
 workspace = true

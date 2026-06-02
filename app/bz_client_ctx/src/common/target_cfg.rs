@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::TargetCfg;
+use bz_cli_proto::TargetCfg;
 
 const HELP_HEADING: &str = "Target Configuration Options";
 
@@ -89,14 +89,14 @@ mod tests {
 
     use super::*;
 
-    fn parse(args: &[&str]) -> buck2_error::Result<TargetCfgOptions> {
+    fn parse(args: &[&str]) -> bz_error::Result<TargetCfgOptions> {
         Ok(TargetCfgOptions::try_parse_from(
             std::iter::once("program").chain(args.iter().copied()),
         )?)
     }
 
     #[test]
-    fn opt_multiple() -> buck2_error::Result<()> {
+    fn opt_multiple() -> bz_error::Result<()> {
         let opts = parse(&["--modifier", "value1", "--modifier", "value2"])?;
 
         assert_eq!(opts.cli_modifiers(), vec!["value1", "value2"]);
@@ -105,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn space_separated_fails() -> buck2_error::Result<()> {
+    fn space_separated_fails() -> bz_error::Result<()> {
         assert_matches!(parse(&["--modifier", "value1", "value2"]), Err(..));
 
         Ok(())

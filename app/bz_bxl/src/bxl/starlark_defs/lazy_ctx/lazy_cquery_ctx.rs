@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::global_cfg_options::GlobalCfgOptions;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;

@@ -23,7 +23,7 @@ use std::collections::hash_map::Entry::Vacant;
 use std::fmt::Display;
 use std::io::Write;
 
-use buck2_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashMap;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use starlark_map::small_map::SmallMap;
@@ -62,7 +62,7 @@ impl Display for DotNodeAttrs {
 
 /// A node in the graph.
 pub(crate) trait DotNode {
-    fn attrs(&self) -> buck2_error::Result<DotNodeAttrs>;
+    fn attrs(&self) -> bz_error::Result<DotNodeAttrs>;
     fn id(&self) -> String;
 }
 
@@ -77,15 +77,15 @@ pub(crate) trait DotDigraph<'a> {
 
     fn name(&self) -> &str;
 
-    fn for_each_node<F: FnMut(&Self::Node) -> buck2_error::Result<()>>(
+    fn for_each_node<F: FnMut(&Self::Node) -> bz_error::Result<()>>(
         &'a self,
         f: F,
-    ) -> buck2_error::Result<()>;
-    fn for_each_edge<F: FnMut(&DotEdge) -> buck2_error::Result<()>>(
+    ) -> bz_error::Result<()>;
+    fn for_each_edge<F: FnMut(&DotEdge) -> bz_error::Result<()>>(
         &'a self,
         node: &Self::Node,
         f: F,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }
 
 /// ids in dot format need to have the '"' escaped.
@@ -117,7 +117,7 @@ impl Dot {
     pub(crate) fn render<'a, T: DotDigraph<'a>, W: Write>(
         graph: &'a T,
         mut w: W,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         writeln!(w, "digraph {} {{", graph.name())?;
         graph.for_each_node(|node| {
             let attrs = node.attrs()?;
@@ -139,7 +139,7 @@ impl DotCompact {
     pub(crate) fn render<'a, T: DotDigraph<'a>, W: Write>(
         graph: &'a T,
         mut w: W,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         writeln!(w, "digraph {} {{", graph.name())?;
 
         let mut next_id: u32 = 0;

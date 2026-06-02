@@ -18,9 +18,9 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 pub use artifact_group_values::ArtifactGroupValues;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
 use derive_more::Display;
 use dice::DiceComputations;
 use dupe::Dupe;
@@ -104,7 +104,7 @@ impl ArtifactGroup {
     pub async fn resolved_artifact(
         &self,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<ResolvedArtifactGroup<'_>> {
+    ) -> bz_error::Result<ResolvedArtifactGroup<'_>> {
         Ok(match self {
             ArtifactGroup::Artifact(a) => ResolvedArtifactGroup::Artifact(a.clone()),
             ArtifactGroup::TransitiveSetProjection(a) => {
@@ -139,7 +139,7 @@ impl ArtifactGroup {
     pub fn is_eligible_for_dedupe(
         &self,
         target_platform: Option<&ConfigurationData>,
-    ) -> buck2_data::EligibleForDedupe {
+    ) -> bz_data::EligibleForDedupe {
         let is_artifact_group_eligible_for_dedupe = match self {
             ArtifactGroup::Artifact(a) => !a.has_configuration_based_path(),
             ArtifactGroup::TransitiveSetProjection(p) => p.is_eligible_for_dedupe,
@@ -147,7 +147,7 @@ impl ArtifactGroup {
         };
 
         if is_artifact_group_eligible_for_dedupe {
-            return buck2_data::EligibleForDedupe::Eligible;
+            return bz_data::EligibleForDedupe::Eligible;
         }
 
         let artifact_group_owner = match self {
@@ -157,24 +157,24 @@ impl ArtifactGroup {
             ArtifactGroup::TransitiveSetProjection(p) => p.key.key.holder_key().owner(),
             // We have to assume that anonymous targets are not eligible for dedupe unless they are content-based,
             // since they have a hash based on their inputs, which will very likely be different across configurations.
-            ArtifactGroup::Promise(_) => return buck2_data::EligibleForDedupe::IneligibleInput,
+            ArtifactGroup::Promise(_) => return bz_data::EligibleForDedupe::IneligibleInput,
         };
 
         match artifact_group_owner {
             BaseDeferredKey::TargetLabel(a) => {
                 if a.cfg().is_marked_as_exec_platform() {
                     if target_platform.is_some_and(|tp| tp == a.cfg()) {
-                        buck2_data::EligibleForDedupe::ExecutionPlatformUnknownEligibility
+                        bz_data::EligibleForDedupe::ExecutionPlatformUnknownEligibility
                     } else {
-                        buck2_data::EligibleForDedupe::Eligible
+                        bz_data::EligibleForDedupe::Eligible
                     }
                 } else {
-                    buck2_data::EligibleForDedupe::IneligibleInput
+                    bz_data::EligibleForDedupe::IneligibleInput
                 }
             }
             // TODO(ianc) do we have a better way of detecting if an artifact being built for an anon target is eligible for dedupe?
-            BaseDeferredKey::AnonTarget(_) => buck2_data::EligibleForDedupe::Eligible,
-            BaseDeferredKey::BxlLabel(_) => buck2_data::EligibleForDedupe::IneligibleInput,
+            BaseDeferredKey::AnonTarget(_) => bz_data::EligibleForDedupe::Eligible,
+            BaseDeferredKey::BxlLabel(_) => bz_data::EligibleForDedupe::IneligibleInput,
         }
     }
 }

@@ -13,10 +13,10 @@ use std::path::Path;
 use std::process::Stdio;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_util::process::async_background_command;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_util::process::async_background_command;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 
@@ -59,7 +59,7 @@ pub(crate) async fn get_mergebase<D: AsRef<Path>, C: AsRef<str>, M: AsRef<str>>(
     current_dir: D,
     commit: C,
     mergegase_with: M,
-) -> buck2_error::Result<Option<MergebaseDetails>> {
+) -> bz_error::Result<Option<MergebaseDetails>> {
     let output = async_background_command(get_sapling_exe_path())
         .current_dir(current_dir)
         .env("HGPLAIN", "1")
@@ -76,8 +76,8 @@ pub(crate) async fn get_mergebase<D: AsRef<Path>, C: AsRef<str>, M: AsRef<str>>(
         .buck_error_context("Failed to obtain mergebase")?;
 
     if !output.status.success() || !output.stderr.is_empty() {
-        buck2_error!(
-            buck2_error::ErrorTag::Sapling,
+        bz_error!(
+            bz_error::ErrorTag::Sapling,
             "Failed to obtain mergebase:\n{}",
             String::from_utf8(output.stderr)
                 .buck_error_context("Failed to stderr reported by get_mergebase.")?
@@ -87,7 +87,7 @@ pub(crate) async fn get_mergebase<D: AsRef<Path>, C: AsRef<str>, M: AsRef<str>>(
     parse_log_output(output.stdout)
 }
 
-fn parse_log_output(output: Vec<u8>) -> buck2_error::Result<Option<MergebaseDetails>> {
+fn parse_log_output(output: Vec<u8>) -> bz_error::Result<Option<MergebaseDetails>> {
     let output = String::from_utf8(output).buck_error_context("Failed to parse hg log output")?;
     if output.is_empty() {
         return Ok(None);
@@ -126,7 +126,7 @@ pub(crate) async fn get_status<D: AsRef<Path>, F: AsRef<str>, S: AsRef<str>>(
     first: F,
     second: Option<S>,
     limit_results: usize,
-) -> buck2_error::Result<SaplingGetStatusResult> {
+) -> bz_error::Result<SaplingGetStatusResult> {
     let mut args = vec!["status", "--traceback", "-mardu", "--rev", first.as_ref()];
     if let Some(ref second) = second {
         args.push("--rev");
@@ -142,8 +142,8 @@ pub(crate) async fn get_status<D: AsRef<Path>, F: AsRef<str>, S: AsRef<str>>(
         .buck_error_context("Failed to obtain Sapling status")?;
 
     let stdout = output.stdout.take().ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Sapling,
+        bz_error!(
+            bz_error::ErrorTag::Sapling,
             "Failed to read stdout when invoking 'hg status'."
         )
     })?;
@@ -171,7 +171,7 @@ pub(crate) async fn get_dir_diff<D: AsRef<Path>, F: AsRef<str>, S: AsRef<str>>(
     first: F,
     second: Option<S>,
     limit_results: usize,
-) -> buck2_error::Result<SaplingGetStatusResult> {
+) -> bz_error::Result<SaplingGetStatusResult> {
     let mut args = vec!["debugdiffdirs", "--rev", first.as_ref()];
     if let Some(ref second) = second {
         args.push("--rev");
@@ -187,8 +187,8 @@ pub(crate) async fn get_dir_diff<D: AsRef<Path>, F: AsRef<str>, S: AsRef<str>>(
         .buck_error_context("Failed to obtain Sapling debugdiffdirs")?;
 
     let stdout = output.stdout.take().ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Sapling,
+        bz_error!(
+            bz_error::ErrorTag::Sapling,
             "Failed to read stdout when invoking 'hg debugdiffdirs'."
         )
     })?;
@@ -223,7 +223,7 @@ pub(crate) async fn get_dir_diff<D: AsRef<Path>, F: AsRef<str>, S: AsRef<str>>(
 //     = origin of the previous file (with --copies)
 // Note:
 //   Paths can have spaces, but are not quoted.
-fn process_one_status_line(line: &str) -> buck2_error::Result<Option<(SaplingStatus, String)>> {
+fn process_one_status_line(line: &str) -> bz_error::Result<Option<(SaplingStatus, String)>> {
     let mut chars = line.chars();
     // Must include a status and at least one char path.
     if let (Some(status), Some(' '), path) = (chars.next(), chars.next(), chars.collect::<String>())
@@ -241,8 +241,8 @@ fn process_one_status_line(line: &str) -> buck2_error::Result<Option<(SaplingSta
             _ => None, // Skip all others
         })
     } else {
-        Err(buck2_error!(
-            buck2_error::ErrorTag::Sapling,
+        Err(bz_error!(
+            bz_error::ErrorTag::Sapling,
             "Invalid status line: {line}"
         ))
     }
@@ -253,7 +253,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_hg_status_line() -> buck2_error::Result<()> {
+    fn test_hg_status_line() -> bz_error::Result<()> {
         assert_eq!(
             process_one_status_line("M buck2/app/bz_file_watcher/src/edenfs/sapling.rs")?,
             Some((
@@ -349,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_log_output() -> buck2_error::Result<()> {
+    fn test_parse_log_output() -> bz_error::Result<()> {
         // the format is {node}\n{date}\n{global_rev}
         let output =
             "71de423b796418e8ff5300dbe9bd9ad3aef63a9c\n1739790802.028800\n1020164040".to_owned();
@@ -364,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_log_output_no_global_rev() -> buck2_error::Result<()> {
+    fn test_parse_log_output_no_global_rev() -> bz_error::Result<()> {
         // Not all repos have global revision
         let output = "71de423b796418e8ff5300dbe9bd9ad3aef63a9c\n1739790802.028800\n".to_owned();
         let details = parse_log_output(output.as_bytes().to_vec())?.unwrap();

@@ -11,15 +11,15 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_data::error::ErrorTag;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_event_observer::unpack_event::UnpackedBuckEvent;
-use buck2_event_observer::unpack_event::unpack_event;
-use buck2_events::BuckEvent;
-use buck2_fs::async_fs_util;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::paths::abs_path::AbsPathBuf;
+use bz_data::error::ErrorTag;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_event_observer::unpack_event::UnpackedBuckEvent;
+use bz_event_observer::unpack_event::unpack_event;
+use bz_events::BuckEvent;
+use bz_fs::async_fs_util;
+use bz_fs::error::IoResultExt;
+use bz_fs::paths::abs_path::AbsPathBuf;
 
 use crate::subscribers::subscriber::EventSubscriber;
 
@@ -40,7 +40,7 @@ impl TestIdWriter {
 
 #[async_trait]
 impl EventSubscriber for TestIdWriter {
-    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
+    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> bz_error::Result<()> {
         if self.written {
             return Ok(());
         }
@@ -49,16 +49,16 @@ impl EventSubscriber for TestIdWriter {
             if let Ok(UnpackedBuckEvent::Instant(
                 _,
                 _,
-                buck2_data::instant_event::Data::TestDiscovery(discovery),
+                bz_data::instant_event::Data::TestDiscovery(discovery),
             )) = unpack_event(event)
             {
-                if let Some(buck2_data::test_discovery::Data::Session(session)) = &discovery.data {
+                if let Some(bz_data::test_discovery::Data::Session(session)) = &discovery.data {
                     let test_id: &str = session
                         .test_session_id
                         .as_deref()
                         .filter(|id| !id.is_empty())
                         .ok_or_else(|| {
-                            buck2_error!(
+                            bz_error!(
                                 ErrorTag::InvalidEvent,
                                 "Test session did not include a test_session_id"
                             )
@@ -81,9 +81,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::SystemTime;
 
-    use buck2_events::BuckEvent;
-    use buck2_fs::paths::abs_path::AbsPathBuf;
-    use buck2_wrapper_common::invocation_id::TraceId;
+    use bz_events::BuckEvent;
+    use bz_fs::paths::abs_path::AbsPathBuf;
+    use bz_wrapper_common::invocation_id::TraceId;
 
     use super::*;
 
@@ -93,11 +93,11 @@ mod tests {
             TraceId::new(),
             None,
             None,
-            buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
+            bz_data::buck_event::Data::Instant(bz_data::InstantEvent {
                 data: Some(
-                    buck2_data::TestDiscovery {
-                        data: Some(buck2_data::test_discovery::Data::Session(
-                            buck2_data::TestSessionInfo {
+                    bz_data::TestDiscovery {
+                        data: Some(bz_data::test_discovery::Data::Session(
+                            bz_data::TestSessionInfo {
                                 info: info.to_owned(),
                                 test_session_id: test_session_id.map(|s| s.to_owned()),
                             },
@@ -115,9 +115,9 @@ mod tests {
             TraceId::new(),
             None,
             None,
-            buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
+            bz_data::buck_event::Data::Instant(bz_data::InstantEvent {
                 data: Some(
-                    buck2_data::ConsoleMessage {
+                    bz_data::ConsoleMessage {
                         message: "hello".to_owned(),
                     }
                     .into(),
@@ -132,8 +132,8 @@ mod tests {
             TraceId::new(),
             None,
             None,
-            buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
-                data: Some(buck2_data::TestDiscovery { data: None }.into()),
+            bz_data::buck_event::Data::Instant(bz_data::InstantEvent {
+                data: Some(bz_data::TestDiscovery { data: None }.into()),
             }),
         ))
     }
@@ -144,11 +144,11 @@ mod tests {
             TraceId::new(),
             None,
             None,
-            buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
+            bz_data::buck_event::Data::Instant(bz_data::InstantEvent {
                 data: Some(
-                    buck2_data::TestDiscovery {
-                        data: Some(buck2_data::test_discovery::Data::Tests(
-                            buck2_data::TestSuite {
+                    bz_data::TestDiscovery {
+                        data: Some(bz_data::test_discovery::Data::Tests(
+                            bz_data::TestSuite {
                                 test_names: vec!["test_foo".to_owned()],
                                 ..Default::default()
                             },
@@ -161,7 +161,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_writes_session_id() -> buck2_error::Result<()> {
+    async fn test_writes_session_id() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
         let path = AbsPathBuf::new(dir.path().join("test_id.txt"))?;
         let mut writer = TestIdWriter::new(path.clone());
@@ -178,7 +178,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_writes_only_once() -> buck2_error::Result<()> {
+    async fn test_writes_only_once() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
         let path = AbsPathBuf::new(dir.path().join("test_id.txt"))?;
         let mut writer = TestIdWriter::new(path.clone());
@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ignores_non_matching_events() -> buck2_error::Result<()> {
+    async fn test_ignores_non_matching_events() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
         let path = AbsPathBuf::new(dir.path().join("test_id.txt"))?;
         let mut writer = TestIdWriter::new(path.clone());
@@ -207,7 +207,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_finds_session_in_mixed_batch() -> buck2_error::Result<()> {
+    async fn test_finds_session_in_mixed_batch() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
         let path = AbsPathBuf::new(dir.path().join("test_id.txt"))?;
         let mut writer = TestIdWriter::new(path.clone());
@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_writes_first_session_in_batch() -> buck2_error::Result<()> {
+    async fn test_writes_first_session_in_batch() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
         let path = AbsPathBuf::new(dir.path().join("test_id.txt"))?;
         let mut writer = TestIdWriter::new(path.clone());
@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_errors_when_test_session_id_missing() -> buck2_error::Result<()> {
+    async fn test_errors_when_test_session_id_missing() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
         let path = AbsPathBuf::new(dir.path().join("test_id.txt"))?;
         let mut writer = TestIdWriter::new(path.clone());
@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_errors_when_test_session_id_empty() -> buck2_error::Result<()> {
+    async fn test_errors_when_test_session_id_empty() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
         let path = AbsPathBuf::new(dir.path().join("test_id.txt"))?;
         let mut writer = TestIdWriter::new(path.clone());

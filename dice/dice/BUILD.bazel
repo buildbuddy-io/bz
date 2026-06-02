@@ -40,7 +40,7 @@ rust_library(
         "//gazebo/dupe:dupe",
         "//gazebo/gazebo:gazebo",
         "//pagable:pagable",
-        "//shed/buck2_hash:buck2_hash",
+        "//shed/bz_hash:bz_hash",
         "//shed/lock_free_hashtable:lock_free_hashtable",
         "//shed/lock_free_vec:lock_free_vec",
     ],

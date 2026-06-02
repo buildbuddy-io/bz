@@ -347,13 +347,13 @@ pub(crate) fn codegen(parsed: Parsed) -> syn::Result<TokenStream> {
             #![allow(unused)]
             #![allow(clippy::match_single_binding)]
 
-            use ::buck2_query::__derive_refs::ref_cast::RefCast;
-            use ::buck2_query::__derive_refs::buck2_query_parser::{BinaryOp, SpannedExpr};
-            use ::buck2_query::__derive_refs::indexmap::indexmap;
-            use ::buck2_query::__derive_refs::async_trait::async_trait;
+            use ::bz_query::__derive_refs::ref_cast::RefCast;
+            use ::bz_query::__derive_refs::bz_query_parser::{BinaryOp, SpannedExpr};
+            use ::bz_query::__derive_refs::indexmap::indexmap;
+            use ::bz_query::__derive_refs::async_trait::async_trait;
 
             use super::*;
-            use ::buck2_query::query::{
+            use ::bz_query::query::{
                 environment::{QueryEnvironment, QueryTarget},
                 syntax::simple::{
                     eval::{error::QueryError, evaluator::QueryEvaluator, values::QueryValue},

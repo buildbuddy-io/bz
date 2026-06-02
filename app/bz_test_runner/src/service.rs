@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_error::BuckErrorContext;
-use buck2_grpc::DuplexChannel;
-use buck2_test_api::grpc::TestOrchestratorClient;
-use buck2_test_api::grpc::spawn_executor_server;
+use bz_error::BuckErrorContext;
+use bz_grpc::DuplexChannel;
+use bz_test_api::grpc::TestOrchestratorClient;
+use bz_test_api::grpc::spawn_executor_server;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 
@@ -22,7 +22,7 @@ pub async fn run<OC, ER, EW>(
     orchestrator_channel: OC,
     executor_channel: DuplexChannel<ER, EW>,
     args: Vec<String>,
-) -> buck2_error::Result<()>
+) -> bz_error::Result<()>
 where
     OC: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
     ER: AsyncRead + Send + Unpin + 'static,

@@ -10,13 +10,13 @@
 
 use std::time::Duration;
 
-use buck2_data::ParsedTargetPatterns;
-use buck2_error::BuckErrorContext;
-use buck2_fs::async_fs_util;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_hash::StdBuckHashMap;
+use bz_data::ParsedTargetPatterns;
+use bz_error::BuckErrorContext;
+use bz_fs::async_fs_util;
+use bz_fs::error::IoResultExt;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_hash::StdBuckHashMap;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -123,7 +123,7 @@ impl BuildCountManager {
     const LOCK_FILE_NAME: &'static str = "build_count.lock";
     const LOCK_TIMEOUT: Duration = Duration::from_millis(2000);
 
-    pub fn new(base_dir: AbsNormPathBuf) -> buck2_error::Result<Self> {
+    pub fn new(base_dir: AbsNormPathBuf) -> bz_error::Result<Self> {
         let file_path = base_dir.join(FileName::new(&BUILD_COUNT_VERSION.to_string())?);
         let lock_file_path = base_dir.join(FileName::new(Self::LOCK_FILE_NAME)?);
         Ok(Self {
@@ -133,11 +133,11 @@ impl BuildCountManager {
         })
     }
 
-    async fn ensure_dir(&self) -> buck2_error::Result<()> {
+    async fn ensure_dir(&self) -> bz_error::Result<()> {
         async_fs_util::create_dir_all(&self.base_dir).await
     }
 
-    async fn read(&self) -> buck2_error::Result<Option<BuildCountMap>> {
+    async fn read(&self) -> bz_error::Result<Option<BuildCountMap>> {
         let Some(buffer) = async_fs_util::read_to_string_if_exists(&self.file_path).await? else {
             return Ok(None);
         };
@@ -148,7 +148,7 @@ impl BuildCountManager {
         Ok(Some(build_count_map))
     }
 
-    async fn read_mergebase(&self, merge_base: &str) -> buck2_error::Result<BuildCountMap> {
+    async fn read_mergebase(&self, merge_base: &str) -> bz_error::Result<BuildCountMap> {
         if let Some(build_count_map) = self.read().await? {
             if build_count_map.merge_base == merge_base {
                 return Ok(build_count_map);
@@ -159,13 +159,13 @@ impl BuildCountManager {
         Ok(BuildCountMap::new(merge_base.to_owned()))
     }
 
-    async fn write(&self, build_count: &BuildCountMap) -> buck2_error::Result<()> {
+    async fn write(&self, build_count: &BuildCountMap) -> bz_error::Result<()> {
         async_fs_util::write(&self.file_path, &serde_json::to_vec(build_count)?)
             .await
             .categorize_internal()
     }
 
-    async fn lock_with_timeout(&self) -> buck2_error::Result<FileLockGuard> {
+    async fn lock_with_timeout(&self) -> bz_error::Result<FileLockGuard> {
         self.ensure_dir().await?;
         let file = std::fs::File::create(&self.lock_file_path)?;
         let fileref = &file;
@@ -173,7 +173,7 @@ impl BuildCountManager {
             Duration::from_millis(5),
             Duration::from_millis(100),
             Self::LOCK_TIMEOUT,
-            || async { buck2_error::Ok(fs4::fs_std::FileExt::try_lock_exclusive(fileref)?) },
+            || async { bz_error::Ok(fs4::fs_std::FileExt::try_lock_exclusive(fileref)?) },
         )
         .await?;
         Ok(FileLockGuard { file })
@@ -185,7 +185,7 @@ impl BuildCountManager {
         merge_base: &str,
         target_patterns: &ParsedTargetPatterns,
         is_success: bool,
-    ) -> buck2_error::Result<BuildCount> {
+    ) -> bz_error::Result<BuildCount> {
         let _guard = self.lock_with_timeout().await?;
         let mut build_count_map = self.read_mergebase(merge_base).await?;
         build_count_map.increment(target_patterns, is_success);
@@ -198,7 +198,7 @@ impl BuildCountManager {
     async fn min_count(
         &self,
         target_patterns: &ParsedTargetPatterns,
-    ) -> buck2_error::Result<BuildCount> {
+    ) -> bz_error::Result<BuildCount> {
         match self.read().await? {
             Some(build_count_map) => Ok(build_count_map.min_count(target_patterns)),
             None => Ok(Default::default()),
@@ -226,14 +226,14 @@ mod tests {
 
     fn make_patterns(targets: Vec<&'static str>) -> ParsedTargetPatterns {
         ParsedTargetPatterns {
-            target_patterns: targets.into_map(|v| buck2_data::TargetPattern {
+            target_patterns: targets.into_map(|v| bz_data::TargetPattern {
                 value: v.to_owned(),
             }),
         }
     }
 
     #[test]
-    fn test_update_normal_input() -> buck2_error::Result<()> {
+    fn test_update_normal_input() -> bz_error::Result<()> {
         let mut before = StdBuckHashMap::default();
         before.insert("//some:target".to_owned(), BuildCount::new(1, 1));
         before.insert("//some/other:target".to_owned(), BuildCount::new(2, 2));
@@ -250,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn test_update_empty_input() -> buck2_error::Result<()> {
+    fn test_update_empty_input() -> bz_error::Result<()> {
         let mut before = StdBuckHashMap::default();
         before.insert("//some:target".to_owned(), BuildCount::new(1, 1));
         let expected = before.clone();
@@ -263,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn test_min_count_some_value() -> buck2_error::Result<()> {
+    fn test_min_count_some_value() -> bz_error::Result<()> {
         let mut data = StdBuckHashMap::default();
         data.insert("//some:target1".to_owned(), BuildCount::new(3, 3));
         data.insert("//some:target2".to_owned(), BuildCount::new(4, 4));
@@ -276,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn test_min_count_ignores_others() -> buck2_error::Result<()> {
+    fn test_min_count_ignores_others() -> bz_error::Result<()> {
         let mut data = StdBuckHashMap::default();
         data.insert("//some:target1".to_owned(), BuildCount::new(3, 3));
         data.insert("//some:target2".to_owned(), BuildCount::new(4, 4));
@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn test_min_count_empty_data() -> buck2_error::Result<()> {
+    fn test_min_count_empty_data() -> bz_error::Result<()> {
         let data = StdBuckHashMap::default();
         let bc = BuildCountMap::testing_new(data);
         assert_eq!(bc.min_count(&make_patterns(vec![])), BuildCount::new(0, 0));
@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_no_such_file() -> buck2_error::Result<()> {
+    async fn test_read_no_such_file() -> bz_error::Result<()> {
         let no_such_dir = if cfg!(windows) {
             "C:\\no\\such\\dir"
         } else {
@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_normal_file() -> buck2_error::Result<()> {
+    async fn test_read_normal_file() -> bz_error::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let bcm = BuildCountManager::new(temp_dir.path().to_path_buf().try_into()?)?;
         tokio::fs::write(
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_illegal_file_contents() -> buck2_error::Result<()> {
+    async fn test_read_illegal_file_contents() -> bz_error::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let bcm = BuildCountManager::new(temp_dir.path().to_path_buf().try_into()?)?;
         tokio::fs::write(&bcm.file_path, "aaa").await?;
@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_normal_input() -> buck2_error::Result<()> {
+    async fn test_write_normal_input() -> bz_error::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let bcm = BuildCountManager::new(temp_dir.path().to_path_buf().try_into()?)?;
         let mut data = StdBuckHashMap::default();
@@ -354,7 +354,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_empty_input() -> buck2_error::Result<()> {
+    async fn test_write_empty_input() -> bz_error::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let bcm = BuildCountManager::new(temp_dir.path().to_path_buf().try_into()?)?;
         let data = StdBuckHashMap::default();
@@ -368,7 +368,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_increment_normal_input() -> buck2_error::Result<()> {
+    async fn test_increment_normal_input() -> bz_error::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let file_name = "some_file";
         tokio::fs::write(temp_dir.path().join(file_name), "{\"//some:target\":[1,1]}").await?;
@@ -387,7 +387,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_increment_on_failure() -> buck2_error::Result<()> {
+    async fn test_increment_on_failure() -> bz_error::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let file_name = "some_file";
         tokio::fs::write(temp_dir.path().join(file_name), "{\"//some:target\":[1,1]}").await?;
@@ -406,7 +406,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_increment_empty_input() -> buck2_error::Result<()> {
+    async fn test_increment_empty_input() -> bz_error::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let file_name = "some_file";
         tokio::fs::write(temp_dir.path().join(file_name), "{}").await?;
@@ -421,7 +421,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_min_count_no_increment() -> buck2_error::Result<()> {
+    async fn test_min_count_no_increment() -> bz_error::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let file_name = "some_file";
         let target_patterns = make_patterns(vec!["//some:target", "//some/other:target"]);
@@ -443,7 +443,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rebase() -> buck2_error::Result<()> {
+    async fn test_rebase() -> bz_error::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let merge_base1 = "merge_base1";
         let merge_base2 = "merge_base2";

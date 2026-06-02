@@ -13,17 +13,17 @@ use std::fmt::Display;
 use std::fmt::Formatter;
 
 use allocative::Allocative;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_util::arc_str::ThinArcSlice;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::label::label::TargetLabel;
+use bz_util::arc_str::ThinArcSlice;
 use dupe::Dupe;
 use gazebo::prelude::SliceExt;
 use pagable::Pagable;
 
 use crate::attrs::attr_type::any_matches::AnyMatches;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 pub enum VisibilityError {
     #[error(
         "`{0}` is not visible to `{1}` (run `buck2 uquery --output-attribute visibility {0}` to check the visibility)"
@@ -138,8 +138,8 @@ impl Display for VisibilityPatternList {
 impl AnyMatches for VisibilityPatternList {
     fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         match self {
             VisibilityPatternList::Public => filter(VisibilityPattern::PUBLIC),
             VisibilityPatternList::List(patterns) => {
@@ -219,8 +219,8 @@ impl Display for WithinViewSpecification {
 impl AnyMatches for VisibilitySpecification {
     fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         self.0.any_matches(filter)
     }
 }
@@ -228,8 +228,8 @@ impl AnyMatches for VisibilitySpecification {
 impl AnyMatches for WithinViewSpecification {
     fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         self.0.any_matches(filter)
     }
 }

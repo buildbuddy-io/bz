@@ -11,8 +11,8 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_core::configuration::data::ConfigurationData;
+use bz_build_api_derive::internal_provider;
+use bz_core::configuration::data::ConfigurationData;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -26,7 +26,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::provider::builtin::configuration_info::ConfigurationInfo;
 use crate::interpreter::rule_defs::provider::builtin::configuration_info::FrozenConfigurationInfo;
 
@@ -42,7 +42,7 @@ impl<'v, V: ValueLike<'v>> PlatformInfoGen<V> {
     pub fn to_configuration(
         &self,
         is_marked_as_exec_platform: bool,
-    ) -> buck2_error::Result<ConfigurationData> {
+    ) -> bz_error::Result<ConfigurationData> {
         let label = self
             .label
             .to_value()
@@ -61,7 +61,7 @@ impl<'v> PlatformInfo<'v> {
     pub fn from_configuration(
         cfg: &ConfigurationData,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<PlatformInfo<'v>> {
+    ) -> bz_error::Result<PlatformInfo<'v>> {
         let label = heap.alloc_str(cfg.label()?);
         let configuration = heap.alloc(ConfigurationInfo::from_configuration_data(
             cfg.data()?,

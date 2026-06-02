@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_e2e_test")
+load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
 load("@fbcode_macros//build_defs:python_binary.bzl", "python_binary")
 
 oncall("build_infra")
@@ -17,7 +17,7 @@ python_binary(
     ],
 )
 
-buck2_e2e_test(
+bz_e2e_test(
     name = "test_health_check",
     srcs = ["test_health_check.py"],
     skip_for_os = [

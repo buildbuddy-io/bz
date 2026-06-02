@@ -9,9 +9,9 @@
  */
 
 use async_trait::async_trait;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::target_cfg::TargetCfgOptions;
-use buck2_client_ctx::query_args::CommonAttributeArgs;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::target_cfg::TargetCfgOptions;
+use bz_client_ctx::query_args::CommonAttributeArgs;
 
 use crate::AuditSubcommand;
 

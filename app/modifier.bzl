@@ -8,7 +8,7 @@
 
 load("@fbcode//bz/cfg/experimental:modifiers.bzl", "modifiers")
 
-def buck2_modifiers():
+def bz_modifiers():
     # **WARNING**: This is not vetted for correctness and should only be used in fbcode/buck2.
     # A somewhat hacked together list of modifiers to enable mode-free builds and opt-by-default-cxx builds.
     # This currently only works for linux and mac but not for cross-building (ex. build mac from linux)
@@ -128,5 +128,5 @@ def buck2_modifiers():
         }),
     ]
 
-def disable_buck2_modifiers():
+def disable_bz_modifiers():
     return ["ovr_config//build_mode/default_opt_cxx:disabled"]

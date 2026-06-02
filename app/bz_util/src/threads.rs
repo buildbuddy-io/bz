@@ -17,7 +17,7 @@ use std::sync::OnceLock;
 use std::task::Poll;
 use std::thread;
 
-use buck2_error::internal_error;
+use bz_error::internal_error;
 
 /// Get the available parallelism
 ///
@@ -46,7 +46,7 @@ pub fn available_parallelism_fresh() -> usize {
 ///
 /// We want to be independent of possible future changes to the default stack size in Rust.
 pub(crate) const THREAD_DEFAULT_STACK_SIZE: usize = {
-    if cfg!(buck2_asan) {
+    if cfg!(bz_asan) {
         // ASAN requires much larger stack size.
         8 << 20
     } else if cfg!(debug_assertions) {
@@ -139,7 +139,7 @@ pub(crate) fn on_thread_stop() {
     assert!(range.is_some(), "stack range must be set in a thread");
 }
 
-pub fn check_stack_overflow() -> buck2_error::Result<()> {
+pub fn check_stack_overflow() -> bz_error::Result<()> {
     let stack_range = STACK_RANGE
         .get()
         .ok_or_else(|| internal_error!("stack range not set"))?;
@@ -198,7 +198,7 @@ pub(crate) mod tests {
     use crate::threads::check_stack_overflow;
     use crate::threads::thread_spawn;
 
-    pub(crate) fn recursive_function(frames: u32) -> buck2_error::Result<()> {
+    pub(crate) fn recursive_function(frames: u32) -> bz_error::Result<()> {
         let Some(frames) = frames.checked_sub(1) else {
             return Ok(());
         };

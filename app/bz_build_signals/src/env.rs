@@ -15,11 +15,11 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_hash::StdBuckHashMap;
-use buck2_util::time_span::TimeSpan;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::EventDispatcher;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_hash::StdBuckHashMap;
+use bz_util::time_span::TimeSpan;
 use dice::UserComputationData;
 use dupe::Dupe;
 use gazebo::variants::VariantName;
@@ -155,7 +155,7 @@ pub enum CriticalPathBackendName {
 }
 
 impl FromStr for CriticalPathBackendName {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "longest-path-graph" {
@@ -164,8 +164,8 @@ impl FromStr for CriticalPathBackendName {
             return Ok(Self::Logging);
         }
 
-        Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid backend name: `{}`",
             s
         ))
@@ -217,7 +217,7 @@ pub struct BuildSignalsContext {
 }
 
 /// Created along with the BuildSignalsInstaller (ideally, BuildSignalsInstaller's definition would
-/// live here, but that can't be done for now because it has some dependencies on buck2_build_api).
+/// live here, but that can't be done for now because it has some dependencies on bz_build_api).
 ///
 /// This can be started to actually start processing build signals.
 pub trait DeferredBuildSignals: Send {
@@ -253,10 +253,10 @@ pub async fn scope<F, R, Fut>(
     backend: CriticalPathBackendName,
     ctx: BuildSignalsContext,
     func: F,
-) -> buck2_error::Result<R>
+) -> bz_error::Result<R>
 where
     F: FnOnce() -> Fut + Send,
-    Fut: Future<Output = buck2_error::Result<R>> + Send,
+    Fut: Future<Output = bz_error::Result<R>> + Send,
     R: Send,
 {
     let handle = deferred.start(events, backend, ctx);
@@ -266,7 +266,7 @@ where
         .await
         .buck_error_context("Error computing critical path")
     {
-        buck2_fs::fs_util::soft_error!("critical_path_computation_failed", e)?;
+        bz_fs::fs_util::soft_error!("critical_path_computation_failed", e)?;
     }
     result
 }

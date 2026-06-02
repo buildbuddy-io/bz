@@ -66,7 +66,7 @@ pub struct StarlarkPromise<'v> {
 }
 
 #[derive(Allocative, Trace)]
-struct Validate<'v>(#[trace(unsafe_ignore)] fn(Value<'v>) -> buck2_error::Result<()>);
+struct Validate<'v>(#[trace(unsafe_ignore)] fn(Value<'v>) -> bz_error::Result<()>);
 
 #[derive(Clone, Debug, Trace, Allocative)]
 enum PromiseValue<'v> {
@@ -111,7 +111,7 @@ impl<'v> PromiseJoin<'v> {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum PromiseError {
     #[error("Can't .resolve on a promise produced with .map")]
@@ -166,7 +166,7 @@ impl<'v> StarlarkPromise<'v> {
         f: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
         x: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         Ok(eval.eval_function(f.0, &[x], &[])?)
     }
 
@@ -174,7 +174,7 @@ impl<'v> StarlarkPromise<'v> {
         x: ValueTyped<'v, StarlarkPromise<'v>>,
         f: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
+    ) -> bz_error::Result<ValueTyped<'v, StarlarkPromise<'v>>> {
         match x.get() {
             Some(x) => Ok(eval
                 .heap()
@@ -210,7 +210,7 @@ impl<'v> StarlarkPromise<'v> {
     }
 
     /// Validate the type of a promise. Will execute once the promise is resolved.
-    pub fn validate(&self, f: fn(Value<'v>) -> buck2_error::Result<()>) -> buck2_error::Result<()> {
+    pub fn validate(&self, f: fn(Value<'v>) -> bz_error::Result<()>) -> bz_error::Result<()> {
         match self.get() {
             Some(x) => f(x),
             _ => {
@@ -226,7 +226,7 @@ impl<'v> StarlarkPromise<'v> {
         &self,
         x: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if matches!(&*self.value.borrow(), PromiseValue::Map(..)) {
             return Err(PromiseError::CantResolveMap.into());
         }
@@ -237,7 +237,7 @@ impl<'v> StarlarkPromise<'v> {
         &self,
         x: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if matches!(&*self.value.borrow(), PromiseValue::Resolved(_)) {
             return Err(PromiseError::CantResolveTwice.into());
         }
@@ -343,7 +343,7 @@ pub fn register_promise(globals: &mut GlobalsBuilder) {}
 #[cfg(test)]
 mod tests {
 
-    use buck2_error::buck2_error;
+    use bz_error::bz_error;
     use starlark::any::ProvidesStaticType;
     use starlark::environment::Module;
     use starlark::syntax::AstModule;
@@ -391,8 +391,8 @@ mod tests {
                 if x.unpack_str() == Some("ok") {
                     Ok(())
                 } else {
-                    Err(buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
+                    Err(bz_error!(
+                        bz_error::ErrorTag::Tier0,
                         "VALIDATE_FAILED"
                     ))
                 }
@@ -412,7 +412,7 @@ mod tests {
         modu.get("__promises__").unwrap().downcast_ref().unwrap()
     }
 
-    fn assert_promise<'v>(modu: &Module<'v>, content: &str) -> buck2_error::Result<Value<'v>> {
+    fn assert_promise<'v>(modu: &Module<'v>, content: &str) -> bz_error::Result<Value<'v>> {
         alloc_promises(modu);
         let globals = GlobalsBuilder::standard().with(helpers).build();
         let ast = AstModule::parse(
@@ -430,7 +430,7 @@ mod tests {
     }
 
     #[allow(clippy::needless_lifetimes)]
-    fn assert_promise_err<'v>(modu: &Module<'v>, content: &str, err: &str) -> buck2_error::Error {
+    fn assert_promise_err<'v>(modu: &Module<'v>, content: &str, err: &str) -> bz_error::Error {
         match assert_promise(modu, content) {
             Ok(_) => panic!("Expected an error, got a result"),
             Err(e) => {

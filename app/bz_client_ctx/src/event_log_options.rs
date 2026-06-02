@@ -10,28 +10,28 @@
 
 use std::process::Stdio;
 
-use buck2_common::init::LogDownloadMethod;
-use buck2_common::temp_path::TempPath;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_event_log::file_names::find_log_by_trace_id;
-use buck2_event_log::file_names::retrieve_nth_recent_log;
-use buck2_event_log::read::EventLogPathBuf;
-use buck2_event_log::utils::Encoding;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_util::indent::indent;
-use buck2_util::process::async_background_command;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_common::init::LogDownloadMethod;
+use bz_common::temp_path::TempPath;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_event_log::file_names::find_log_by_trace_id;
+use bz_event_log::file_names::retrieve_nth_recent_log;
+use bz_event_log::read::EventLogPathBuf;
+use bz_event_log::utils::Encoding;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_util::indent::indent;
+use bz_util::process::async_background_command;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 
 use crate::client_ctx::ClientCommandContext;
 use crate::path_arg::PathArg;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = LogCmd)]
 enum EventLogOptionsError {
     #[error("{0} failed; stderr:\n{}", indent("  ", _1))]
@@ -68,7 +68,7 @@ impl EventLogOptions {
     pub async fn get(
         &self,
         ctx: &ClientCommandContext<'_>,
-    ) -> buck2_error::Result<EventLogPathBuf> {
+    ) -> bz_error::Result<EventLogPathBuf> {
         if let Some(path) = &self.path {
             EventLogPathBuf::infer(path.resolve(&ctx.working_dir))
         } else if let Some(id) = &self.trace_id {
@@ -100,7 +100,7 @@ impl EventLogOptions {
         &self,
         trace_id: &TraceId,
         ctx: &ClientCommandContext<'_>,
-    ) -> buck2_error::Result<AbsPathBuf> {
+    ) -> bz_error::Result<AbsPathBuf> {
         let log_file_name = FileNameBuf::try_from(format!(
             "{}{}",
             trace_id,
@@ -132,7 +132,7 @@ impl EventLogOptions {
             LogDownloadMethod::Manifold => {
                 let args = [
                     "get",
-                    &format!("buck2_logs/flat/{log_file_name}"),
+                    &format!("bz_logs/flat/{log_file_name}"),
                     temp_path
                         .path()
                         .as_os_str()

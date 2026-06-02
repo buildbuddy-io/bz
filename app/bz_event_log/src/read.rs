@@ -19,16 +19,16 @@ use std::time::SystemTime;
 
 use async_compression::tokio::bufread::GzipDecoder;
 use async_compression::tokio::bufread::ZstdDecoder;
-use buck2_cli_proto::protobuf_util::ProtobufSplitter;
-use buck2_cli_proto::*;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::BuckEvent;
-use buck2_fs::async_fs_util;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_cli_proto::protobuf_util::ProtobufSplitter;
+use bz_cli_proto::*;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::BuckEvent;
+use bz_fs::async_fs_util;
+use bz_fs::error::IoResultExt;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_wrapper_common::invocation_id::TraceId;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use futures::stream::Stream;
@@ -57,7 +57,7 @@ type EventLogReader<'a> = Box<dyn AsyncRead + Send + Sync + Unpin + 'a>;
 /// Check if an error is caused by a truncated compressed stream. This
 /// can happen when reading in-progress event logs that don't have a
 /// proper compression footer yet.
-fn is_truncated_stream_error(error: &buck2_error::Error) -> bool {
+fn is_truncated_stream_error(error: &bz_error::Error) -> bool {
     // Match exact error messages from compression-codecs library:
     // - zstd/bzip2/lz4: "... stream did not finish"
     // - gzip: "unexpected end of file" (default UnexpectedEof message)
@@ -69,8 +69,8 @@ fn is_truncated_stream_error(error: &buck2_error::Error) -> bool {
 /// This allows reading in-progress event logs that may not have a
 /// proper compression footer yet.
 fn tolerant_of_truncation<T>(
-    stream: impl Stream<Item = buck2_error::Result<T>>,
-) -> impl Stream<Item = buck2_error::Result<T>> {
+    stream: impl Stream<Item = bz_error::Result<T>>,
+) -> impl Stream<Item = bz_error::Result<T>> {
     stream.scan(false, |stopped, result| {
         if *stopped {
             return futures::future::ready(None);
@@ -164,7 +164,7 @@ pub struct EventLogSummary {
 }
 
 impl EventLogPathBuf {
-    pub fn infer(path: AbsPathBuf) -> buck2_error::Result<Self> {
+    pub fn infer(path: AbsPathBuf) -> bz_error::Result<Self> {
         match Self::infer_opt(&path)? {
             Some(v) => Ok(v),
             None => Err(EventLogInferenceError::InvalidExtension(path).into()),
@@ -175,7 +175,7 @@ impl EventLogPathBuf {
         &self.path
     }
 
-    fn file_name(path: &AbsPathBuf) -> buck2_error::Result<&str> {
+    fn file_name(path: &AbsPathBuf) -> bz_error::Result<&str> {
         let name = path
             .file_name()
             .ok_or_else(|| EventLogInferenceError::NoFilename(path.clone()))?
@@ -184,7 +184,7 @@ impl EventLogPathBuf {
         Ok(name)
     }
 
-    pub fn uuid_from_filename(&self) -> buck2_error::Result<TraceId> {
+    pub fn uuid_from_filename(&self) -> bz_error::Result<TraceId> {
         let name = Self::file_name(&self.path)?;
         let re = Regex::new(
             r"([a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})",
@@ -197,19 +197,19 @@ impl EventLogPathBuf {
     }
 
     // TODO iguridi: this should be done by parsing file header
-    pub fn command_from_filename(&self) -> buck2_error::Result<&str> {
+    pub fn command_from_filename(&self) -> bz_error::Result<&str> {
         let file_name = Self::file_name(&self.path)?;
         // format is of the form "{ts}_{command}_{uuid}_events{ext}"
         match file_name.split('_').nth(1) {
             Some(command) => Ok(command),
-            None => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            None => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "No command in filename"
             )),
         }
     }
 
-    pub(crate) fn infer_opt(path: &AbsPathBuf) -> buck2_error::Result<Option<Self>> {
+    pub(crate) fn infer_opt(path: &AbsPathBuf) -> bz_error::Result<Option<Self>> {
         let name = Self::file_name(path)?;
 
         for encoding in KNOWN_ENCODINGS {
@@ -229,7 +229,7 @@ impl EventLogPathBuf {
     async fn unpack_stream_json<'a>(
         &self,
         stats: Option<&'a ReaderStats>,
-    ) -> buck2_error::Result<(Invocation, BoxStream<'a, buck2_error::Result<StreamValue>>)> {
+    ) -> bz_error::Result<(Invocation, BoxStream<'a, bz_error::Result<StreamValue>>)> {
         assert_eq!(self.encoding.mode, LogMode::Json);
 
         let log_file = self.open(stats).await?;
@@ -259,7 +259,7 @@ impl EventLogPathBuf {
     async fn unpack_stream_protobuf<'a>(
         &self,
         stats: Option<&'a ReaderStats>,
-    ) -> buck2_error::Result<(Invocation, BoxStream<'a, buck2_error::Result<StreamValue>>)> {
+    ) -> bz_error::Result<(Invocation, BoxStream<'a, bz_error::Result<StreamValue>>)> {
         assert_eq!(self.encoding.mode, LogMode::Protobuf);
 
         let log_file = self.open(stats).await?;
@@ -269,12 +269,12 @@ impl EventLogPathBuf {
             .try_next()
             .await?
             .ok_or_else(|| internal_error!("No invocation found"))?;
-        let invocation = buck2_data::Invocation::decode_length_delimited(invocation)
+        let invocation = bz_data::Invocation::decode_length_delimited(invocation)
             .buck_error_context("Invalid Invocation")?;
         let invocation = Invocation::from_proto(invocation);
 
         let events = stream.and_then(|data| async move {
-            let val = buck2_cli_proto::CommandProgress::decode_length_delimited(data)
+            let val = bz_cli_proto::CommandProgress::decode_length_delimited(data)
                 .buck_error_context("Invalid CommandProgress")?;
             match val.progress {
                 Some(command_progress::Progress::Event(event)) => Ok(StreamValue::Event(event)),
@@ -282,8 +282,8 @@ impl EventLogPathBuf {
                 Some(command_progress::Progress::PartialResult(result)) => {
                     Ok(StreamValue::PartialResult(result))
                 }
-                None => Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::InvalidEvent,
+                None => Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::InvalidEvent,
                     "Event type not recognized"
                 )),
             }
@@ -298,9 +298,9 @@ impl EventLogPathBuf {
     async fn unpack_stream_inner<'a>(
         &self,
         stats: Option<&'a ReaderStats>,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         Invocation,
-        impl Stream<Item = buck2_error::Result<StreamValue>> + use<'a>,
+        impl Stream<Item = bz_error::Result<StreamValue>> + use<'a>,
     )> {
         match self.encoding.mode {
             LogMode::Json => self.unpack_stream_json(stats).await,
@@ -312,18 +312,18 @@ impl EventLogPathBuf {
     pub async fn unpack_stream_with_stats<'a>(
         &self,
         stats: &'a ReaderStats,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         Invocation,
-        impl Stream<Item = buck2_error::Result<StreamValue>> + use<'a>,
+        impl Stream<Item = bz_error::Result<StreamValue>> + use<'a>,
     )> {
         self.unpack_stream_inner(Some(stats)).await
     }
 
     pub async fn unpack_stream(
         &self,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         Invocation,
-        impl Stream<Item = buck2_error::Result<StreamValue>> + 'static + use<>,
+        impl Stream<Item = bz_error::Result<StreamValue>> + 'static + use<>,
     )> {
         self.unpack_stream_inner(None).await
     }
@@ -331,7 +331,7 @@ impl EventLogPathBuf {
     async fn open<'a>(
         &self,
         stats: Option<&'a ReaderStats>,
-    ) -> buck2_error::Result<EventLogReader<'a>> {
+    ) -> bz_error::Result<EventLogReader<'a>> {
         tracing::info!(
             "Open {} using encoding {:?}",
             self.path.display(),
@@ -367,7 +367,7 @@ impl EventLogPathBuf {
         Ok(file)
     }
 
-    pub async fn get_summary(&self) -> buck2_error::Result<EventLogSummary> {
+    pub async fn get_summary(&self) -> bz_error::Result<EventLogSummary> {
         let (invocation, events) = self.unpack_stream().await?;
         let buck_event: BuckEvent = events
             .try_filter_map(|log| {
@@ -395,16 +395,16 @@ impl EventLogPathBuf {
 
 #[cfg(test)]
 mod tests {
-    use buck2_data::CommandStart;
-    use buck2_data::SpanStartEvent;
-    use buck2_events::span::SpanId;
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use bz_data::CommandStart;
+    use bz_data::SpanStartEvent;
+    use bz_events::span::SpanId;
+    use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 
     use super::*;
     use crate::file_names::get_logfile_name;
 
     #[test]
-    fn test_get_uuid_from_logfile_name() -> buck2_error::Result<()> {
+    fn test_get_uuid_from_logfile_name() -> bz_error::Result<()> {
         // Create a test log path.
         let event = buck_event()?;
         let file_name = &get_logfile_name(&event, Encoding::PROTO_ZSTD, "bzl")?;
@@ -420,7 +420,7 @@ mod tests {
         Ok(())
     }
 
-    fn buck_event() -> Result<BuckEvent, buck2_error::Error> {
+    fn buck_event() -> Result<BuckEvent, bz_error::Error> {
         let event = BuckEvent::new(
             SystemTime::now(),
             TraceId::from_str("7b797fa8-62f1-4123-85f9-875cd74b0a63")?,

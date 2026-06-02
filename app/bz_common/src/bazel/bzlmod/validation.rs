@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
-use buck2_error::buck2_error;
-use buck2_error::conversion::from_any_with_tag;
+use bz_error::bz_error;
+use bz_error::conversion::from_any_with_tag;
 
 pub(super) fn is_valid_bzlmod_module_name(name: &str) -> bool {
     let mut chars = name.chars();
@@ -34,7 +34,7 @@ pub(super) struct BzlmodVersion {
     prerelease: Vec<BzlmodVersionIdentifier>,
 }
 
-pub(super) fn bzlmod_version_cmp(a: &str, b: &str) -> buck2_error::Result<Ordering> {
+pub(super) fn bzlmod_version_cmp(a: &str, b: &str) -> bz_error::Result<Ordering> {
     let a = parse_bzlmod_version(a)?;
     let b = parse_bzlmod_version(b)?;
 
@@ -58,7 +58,7 @@ pub(super) fn bzlmod_version_cmp(a: &str, b: &str) -> buck2_error::Result<Orderi
     }
 }
 
-pub(super) fn parse_bzlmod_version(version: &str) -> buck2_error::Result<BzlmodVersion> {
+pub(super) fn parse_bzlmod_version(version: &str) -> bz_error::Result<BzlmodVersion> {
     if version.is_empty() {
         return Ok(BzlmodVersion {
             release: Vec::new(),
@@ -72,8 +72,8 @@ pub(super) fn parse_bzlmod_version(version: &str) -> buck2_error::Result<BzlmodV
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-')
     {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "invalid bzlmod version build metadata `{}`",
             build
         ));
@@ -85,8 +85,8 @@ pub(super) fn parse_bzlmod_version(version: &str) -> buck2_error::Result<BzlmodV
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '.')
     {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "invalid bzlmod version release `{}`",
             release
         ));
@@ -96,8 +96,8 @@ pub(super) fn parse_bzlmod_version(version: &str) -> buck2_error::Result<BzlmodV
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-')
     {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "invalid bzlmod version prerelease `{}`",
             prerelease
         ));
@@ -115,20 +115,20 @@ pub(super) fn parse_bzlmod_version(version: &str) -> buck2_error::Result<BzlmodV
 
 fn parse_bzlmod_version_identifiers(
     value: &str,
-) -> buck2_error::Result<Vec<BzlmodVersionIdentifier>> {
+) -> bz_error::Result<Vec<BzlmodVersionIdentifier>> {
     value
         .split('.')
         .map(|identifier| {
             if identifier.is_empty() {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "empty bzlmod version identifier in `{}`",
                     value
                 ));
             }
             if identifier.chars().all(|ch| ch.is_ascii_digit()) {
                 let number = identifier.parse::<u64>().map_err(|e| {
-                    from_any_with_tag(e, buck2_error::ErrorTag::Input).context(format!(
+                    from_any_with_tag(e, bz_error::ErrorTag::Input).context(format!(
                         "numeric bzlmod version identifier `{identifier}` is too large"
                     ))
                 })?;

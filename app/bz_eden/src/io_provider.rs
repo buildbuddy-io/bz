@@ -13,25 +13,25 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::cas_digest::CasDigestConfig;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::FileType;
-use buck2_common::file_ops::metadata::RawDirEntry;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_common::io::IoProvider;
-use buck2_common::io::fs::FsIoProvider;
-use buck2_common::io::fs::ReadUncheckedOptions;
-use buck2_core;
-use buck2_core::buck2_env;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::io_counters::IoCounterKey;
-use buck2_core::soft_error;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::internal_error;
+use bz_common::cas_digest::CasDigestConfig;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::FileType;
+use bz_common::file_ops::metadata::RawDirEntry;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::io::IoProvider;
+use bz_common::io::fs::FsIoProvider;
+use bz_common::io::fs::ReadUncheckedOptions;
+use bz_core;
+use bz_core::bz_env;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::io_counters::IoCounterKey;
+use bz_core::soft_error;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::internal_error;
 use compact_str::CompactString;
 use dupe::Dupe;
 use edenfs::FileAttributes;
@@ -48,7 +48,7 @@ use fbinit::FacebookInit;
 use crate::connection::EdenConnectionManager;
 use crate::error::EdenDataIntoResult;
 use crate::error::EdenError;
-use crate::semaphore::buck2_default;
+use crate::semaphore::bz_default;
 
 #[derive(Allocative)]
 pub struct EdenIoProvider {
@@ -75,7 +75,7 @@ impl EdenIoProvider {
         fs: &ProjectRoot,
         cas_digest_config: CasDigestConfig,
         use_eden_thrift_read: bool,
-    ) -> buck2_error::Result<Option<Self>> {
+    ) -> bz_error::Result<Option<Self>> {
         let (digest, min_eden_version) = if cas_digest_config.source_files_config().allows_sha1() {
             (Digest::Sha1, "20220905-214046")
         } else if cas_digest_config
@@ -88,7 +88,7 @@ impl EdenIoProvider {
             return Ok(None);
         };
 
-        let eden_semaphore = buck2_default();
+        let eden_semaphore = bz_default();
 
         let manager = match EdenConnectionManager::new(fb, fs, Some(eden_semaphore))? {
             Some(manager) => manager,
@@ -126,7 +126,7 @@ impl EdenIoProvider {
     async fn read_path_metadata_if_exists_impl(
         &self,
         path: &ProjectRelativePathBuf,
-    ) -> buck2_error::Result<PathMetadataResult> {
+    ) -> bz_error::Result<PathMetadataResult> {
         let _guard = IoCounterKey::StatEden.guard();
 
         let hash_attribute = match self.digest {
@@ -257,7 +257,7 @@ impl EdenIoProvider {
     async fn read_dir_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Vec<RawDirEntry>> {
+    ) -> bz_error::Result<Vec<RawDirEntry>> {
         let _guard = IoCounterKey::ReadDirEden.guard();
 
         let requested_attributes = i64::from(i32::from(FileAttributes::SOURCE_CONTROL_TYPE));
@@ -297,8 +297,8 @@ impl EdenIoProvider {
                 }
             }
             edenfs::DirListAttributeDataOrError::UnknownField(code) => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::IoEden,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::IoEden,
                     "Eden ReadDir returned with unknown field code: {}",
                     code
                 ));
@@ -328,7 +328,7 @@ impl EdenIoProvider {
                     _ => FileType::Unknown,
                 };
 
-                buck2_error::Ok(RawDirEntry {
+                bz_error::Ok(RawDirEntry {
                     file_name,
                     file_type,
                 })
@@ -341,7 +341,7 @@ impl EdenIoProvider {
     async fn read_file_if_exists_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<String>> {
+    ) -> bz_error::Result<Option<String>> {
         let _guard = IoCounterKey::Read.guard();
         let params = GetFileContentRequest {
             mount: MountId {
@@ -378,8 +378,8 @@ impl EdenIoProvider {
                             // TODO(minglunli): Look at data, if this doesn't happen in practice, enforce the limit for all IoProvider
                             soft_error!(
                                 "eden_thrift_size_limit_exceeded",
-                                buck2_error::buck2_error!(
-                                    buck2_error::ErrorTag::Input,
+                                bz_error::bz_error!(
+                                    bz_error::ErrorTag::Input,
                                     "File size exceeded Thrift message limit of 2GB, falling back to regular file I/O.
                                     Set env var `BUCK2_DISABLE_EDEN_THRIFT_READ=true` if this is constantly an issue: {:#}",
                                     error
@@ -398,8 +398,8 @@ impl EdenIoProvider {
                         _ => Err(eden_error.into()),
                     }
                 }
-                ScmBlobOrError::UnknownField(code) => Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::IoEdenUnknownField,
+                ScmBlobOrError::UnknownField(code) => Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::IoEdenUnknownField,
                     "Eden getFileContent thrift call failed with unknown field code: {}",
                     code
                 )),
@@ -414,7 +414,7 @@ impl IoProvider for EdenIoProvider {
     async fn read_path_metadata_if_exists_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>> {
         match self.read_path_metadata_if_exists_impl(&path).await {
             Ok(PathMetadataResult::Result(res)) => Ok(res),
             Ok(PathMetadataResult::Error(err)) => {
@@ -444,8 +444,8 @@ impl IoProvider for EdenIoProvider {
     async fn read_file_if_exists_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<String>> {
-        if buck2_env!("BUCK2_ENABLE_EDEN_THRIFT_READ", bool).unwrap_or(false)
+    ) -> bz_error::Result<Option<String>> {
+        if bz_env!("BUCK2_ENABLE_EDEN_THRIFT_READ", bool).unwrap_or(false)
             || self.use_eden_thrift_read
         {
             self.read_file_if_exists_impl(path)
@@ -461,11 +461,11 @@ impl IoProvider for EdenIoProvider {
     async fn read_dir_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Vec<RawDirEntry>> {
+    ) -> bz_error::Result<Vec<RawDirEntry>> {
         self.read_dir_impl(path).await.tag(ErrorTag::IoEden)
     }
 
-    async fn settle(&self) -> buck2_error::Result<()> {
+    async fn settle(&self) -> bz_error::Result<()> {
         let _guard = IoCounterKey::EdenSettle.guard();
 
         let root = self.manager.get_mount_point();
@@ -492,7 +492,7 @@ impl IoProvider for EdenIoProvider {
         "eden"
     }
 
-    async fn eden_version(&self) -> buck2_error::Result<Option<String>> {
+    async fn eden_version(&self) -> bz_error::Result<Option<String>> {
         Ok(self.manager.get_eden_version().await?)
     }
 

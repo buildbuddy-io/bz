@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::package::PackageLabel;
-use buck2_error::BuckErrorContext;
+use bz_core::package::PackageLabel;
+use bz_error::BuckErrorContext;
 
 use crate::attrs::attr::Attribute;
 use crate::attrs::configured_attr::ConfiguredAttr;
@@ -28,7 +28,7 @@ impl ConfiguredAttrFull<'_> {
         &self,
         pkg: PackageLabel,
         traversal: &mut dyn ConfiguredAttrTraversal,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.value
             .traverse(pkg, traversal)
             .with_buck_error_context(|| format!("traversing attribute `{}`", self.name))

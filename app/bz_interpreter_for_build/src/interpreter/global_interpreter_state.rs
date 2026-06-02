@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::cells::CellResolver;
-use buck2_interpreter::dice::starlark_types::GetStarlarkTypes;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::cells::CellResolver;
+use bz_interpreter::dice::starlark_types::GetStarlarkTypes;
 use dice::DiceComputations;
 use dice::Key;
 use dice::OkPagableValueSerialize;
@@ -57,7 +57,7 @@ impl GlobalInterpreterState {
         interpreter_configuror: Arc<BuildInterpreterConfiguror>,
         disable_starlark_types: bool,
         unstable_typecheck: bool,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let global_env = base_globals()
             .with(|g| {
                 if let Some(additional_globals) = interpreter_configuror.additional_globals() {
@@ -97,14 +97,14 @@ impl GlobalInterpreterState {
 pub trait HasGlobalInterpreterState {
     async fn get_global_interpreter_state(
         &mut self,
-    ) -> buck2_error::Result<Arc<GlobalInterpreterState>>;
+    ) -> bz_error::Result<Arc<GlobalInterpreterState>>;
 }
 
 #[async_trait]
 impl HasGlobalInterpreterState for DiceComputations<'_> {
     async fn get_global_interpreter_state(
         &mut self,
-    ) -> buck2_error::Result<Arc<GlobalInterpreterState>> {
+    ) -> bz_error::Result<Arc<GlobalInterpreterState>> {
         #[derive(Clone, Dupe, Allocative, PagablePanic)]
         struct GisValue(Arc<GlobalInterpreterState>);
 
@@ -125,7 +125,7 @@ impl HasGlobalInterpreterState for DiceComputations<'_> {
 
         #[async_trait]
         impl Key for GisKey {
-            type Value = buck2_error::Result<GisValue>;
+            type Value = bz_error::Result<GisValue>;
             async fn compute(
                 &self,
                 ctx: &mut DiceComputations,

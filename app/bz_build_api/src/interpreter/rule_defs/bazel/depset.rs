@@ -141,7 +141,7 @@ impl Freeze for BazelDepsetArtifactInputsCache {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BazelDepsetError {
     #[error("Invalid order: {0}")]
@@ -157,8 +157,8 @@ enum BazelDepsetError {
     ElementTypeMismatch { expected: String, actual: String },
 }
 
-fn command_line_depset_error(error: starlark::Error) -> buck2_error::Error {
-    buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "{}", error)
+fn command_line_depset_error(error: starlark::Error) -> bz_error::Error {
+    bz_error::bz_error!(bz_error::ErrorTag::Input, "{}", error)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Allocative)]
@@ -170,7 +170,7 @@ pub(crate) enum BazelDepsetOrder {
 }
 
 impl BazelDepsetOrder {
-    fn parse(order: &str) -> buck2_error::Result<Self> {
+    fn parse(order: &str) -> bz_error::Result<Self> {
         match order {
             "default" => Ok(Self::Default),
             "postorder" => Ok(Self::Postorder),
@@ -436,7 +436,7 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
 
     fn collect_artifact_inputs_for_cache(
         &self,
-    ) -> buck2_error::Result<Option<Box<[ArtifactGroup]>>> {
+    ) -> bz_error::Result<Option<Box<[ArtifactGroup]>>> {
         let values = self.to_list_cached().map_err(command_line_depset_error)?;
         let mut inputs = Vec::with_capacity(values.len());
 
@@ -459,7 +459,7 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         Ok(Some(inputs.into_boxed_slice()))
     }
 
-    fn artifact_inputs_cached(&self) -> buck2_error::Result<Option<&[ArtifactGroup]>> {
+    fn artifact_inputs_cached(&self) -> bz_error::Result<Option<&[ArtifactGroup]>> {
         if self.artifact_inputs_cache.values.get().is_none() {
             let inputs = self.collect_artifact_inputs_for_cache()?;
             let _ignored = self.artifact_inputs_cache.values.set(inputs);
@@ -542,7 +542,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelDepsetGen<'v, V> {
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for value in self.to_list_cached().map_err(command_line_depset_error)? {
             ValueAsCommandLineLike::unpack_value_err(value)?
                 .0
@@ -556,7 +556,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelDepsetGen<'v, V> {
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for value in self.to_list_cached().map_err(command_line_depset_error)? {
             ValueAsCommandLineLike::unpack_value_err(value)?
                 .0
@@ -568,7 +568,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelDepsetGen<'v, V> {
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(inputs) = self.artifact_inputs_cached()? {
             for input in inputs {
                 visitor.visit_input(input.clone(), Vec::new());
@@ -607,7 +607,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelDepsetGen<'v, V> {
         &self,
         visitor: &mut dyn WriteToFileMacroVisitor,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for value in self.to_list_cached().map_err(command_line_depset_error)? {
             ValueAsCommandLineLike::unpack_value_err(value)?
                 .0
@@ -646,7 +646,7 @@ fn depset_from_value<'v>(value: Value<'v>) -> starlark::Result<&'v BazelDepset<'
         return Ok(depset);
     }
     Err(
-        buck2_error::Error::from(BazelDepsetError::TransitiveNotDepset(
+        bz_error::Error::from(BazelDepsetError::TransitiveNotDepset(
             value.to_string_for_type_error(),
         ))
         .into(),
@@ -789,7 +789,7 @@ pub fn bazel_depset_is_empty<'v>(value: Value<'v>) -> starlark::Result<bool> {
     Ok(depset_from_value(value)?.is_empty())
 }
 
-fn check_element_type(element_type: &mut Option<String>, value: Value) -> buck2_error::Result<()> {
+fn check_element_type(element_type: &mut Option<String>, value: Value) -> bz_error::Result<()> {
     let actual = value.get_type();
     match element_type {
         Some(expected) if expected != actual => Err(BazelDepsetError::ElementTypeMismatch {
@@ -849,7 +849,7 @@ fn bazel_depset_from_direct_and_transitive_values<'v>(
         }
         let transitive_order = transitive_depset.order();
         if !order.is_compatible(transitive_order) {
-            return Err(buck2_error::Error::from(BazelDepsetError::OrderMismatch {
+            return Err(bz_error::Error::from(BazelDepsetError::OrderMismatch {
                 parent: order.starlark_name(),
                 transitive: transitive_order.starlark_name(),
             })
@@ -858,7 +858,7 @@ fn bazel_depset_from_direct_and_transitive_values<'v>(
         match (element_type.as_deref(), transitive_depset.element_type()) {
             (Some(expected), Some(actual)) if expected != actual => {
                 return Err(
-                    buck2_error::Error::from(BazelDepsetError::ElementTypeMismatch {
+                    bz_error::Error::from(BazelDepsetError::ElementTypeMismatch {
                         expected: expected.to_owned(),
                         actual: actual.to_owned(),
                     })

@@ -12,20 +12,20 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::file_ops::dice::FileChangeTracker;
-use buck2_common::ignores::ignore_set::IgnoreSet;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::rollout_percentage::RolloutPercentage;
-use buck2_error::internal_error;
-use buck2_events::dispatch::span_async;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_hash::StdBuckHashMap;
-use buck2_util::process::async_background_command;
+use bz_common::file_ops::dice::FileChangeTracker;
+use bz_common::ignores::ignore_set::IgnoreSet;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_core::cells::CellResolver;
+use bz_core::cells::name::CellName;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::rollout_percentage::RolloutPercentage;
+use bz_error::internal_error;
+use bz_events::dispatch::span_async;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_hash::StdBuckHashMap;
+use bz_util::process::async_background_command;
 use dice::DiceTransactionUpdater;
 use tracing::debug;
 use tracing::info;
@@ -68,8 +68,8 @@ impl WatchmanQueryProcessor {
         &self,
         mut ctx: DiceTransactionUpdater,
         events: Vec<WatchmanEvent>,
-        base_stats: buck2_data::FileWatcherStats,
-    ) -> buck2_error::Result<(buck2_data::FileWatcherStats, DiceTransactionUpdater)> {
+        base_stats: bz_data::FileWatcherStats,
+    ) -> bz_error::Result<(bz_data::FileWatcherStats, DiceTransactionUpdater)> {
         let mut handler = FileChangeTracker::new();
 
         let mut stats = FileWatcherStats::new(base_stats, events.len());
@@ -112,7 +112,7 @@ impl WatchmanQueryProcessor {
         ev: ChangeEvent<'_>,
         handler: &mut FileChangeTracker,
         stats: &mut FileWatcherStats,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // Watchman cookie files are synchronization markers, not real source changes.
         if crate::is_watchman_cookie(path) {
             stats.add_ignored(1);
@@ -150,45 +150,45 @@ impl WatchmanQueryProcessor {
             match ev {
                 ChangeEvent::Watchman(ev) => match (&ev.kind, &ev.event) {
                     (WatchmanKind::File, typ) => {
-                        log_kind = buck2_data::FileWatcherKind::File;
+                        log_kind = bz_data::FileWatcherKind::File;
                         match typ {
                             WatchmanEventType::Modify => {
                                 handler.file_contents_changed(cell_path);
-                                log_event = buck2_data::FileWatcherEventType::Modify;
+                                log_event = bz_data::FileWatcherEventType::Modify;
                             }
                             WatchmanEventType::Create => {
                                 handler.file_added_or_removed(cell_path);
-                                log_event = buck2_data::FileWatcherEventType::Create;
+                                log_event = bz_data::FileWatcherEventType::Create;
                             }
                             WatchmanEventType::Delete => {
                                 handler.file_added_or_removed(cell_path);
-                                log_event = buck2_data::FileWatcherEventType::Delete;
+                                log_event = bz_data::FileWatcherEventType::Delete;
                             }
                         }
                     }
                     (WatchmanKind::Directory, typ) => {
-                        log_kind = buck2_data::FileWatcherKind::Directory;
+                        log_kind = bz_data::FileWatcherKind::Directory;
                         match typ {
                             WatchmanEventType::Modify => {
                                 handler.dir_entries_changed_for_watchman_bug(cell_path);
-                                log_event = buck2_data::FileWatcherEventType::Modify;
+                                log_event = bz_data::FileWatcherEventType::Modify;
                             }
                             WatchmanEventType::Create => {
                                 handler.dir_added_or_removed(cell_path);
-                                log_event = buck2_data::FileWatcherEventType::Create;
+                                log_event = bz_data::FileWatcherEventType::Create;
                             }
                             WatchmanEventType::Delete => {
                                 handler.dir_added_or_removed(cell_path);
-                                log_event = buck2_data::FileWatcherEventType::Delete;
+                                log_event = bz_data::FileWatcherEventType::Delete;
                             }
                         }
                     }
                     (WatchmanKind::Symlink, typ) => {
-                        log_kind = buck2_data::FileWatcherKind::Symlink;
+                        log_kind = bz_data::FileWatcherKind::Symlink;
                         match typ {
                             WatchmanEventType::Modify => {
                                 handler.file_contents_changed(cell_path);
-                                log_event = buck2_data::FileWatcherEventType::Modify;
+                                log_event = bz_data::FileWatcherEventType::Modify;
                             }
                             WatchmanEventType::Create => {
                                 debug!(
@@ -196,18 +196,18 @@ impl WatchmanQueryProcessor {
                                     cell_path
                                 );
                                 handler.file_added_or_removed(cell_path);
-                                log_event = buck2_data::FileWatcherEventType::Create;
+                                log_event = bz_data::FileWatcherEventType::Create;
                             }
                             WatchmanEventType::Delete => {
                                 handler.file_added_or_removed(cell_path);
-                                log_event = buck2_data::FileWatcherEventType::Delete;
+                                log_event = bz_data::FileWatcherEventType::Delete;
                             }
                         }
                     }
                 },
                 ChangeEvent::SyntheticDirectoryChange => {
-                    log_kind = buck2_data::FileWatcherKind::Directory;
-                    log_event = buck2_data::FileWatcherEventType::Modify;
+                    log_kind = bz_data::FileWatcherKind::Directory;
+                    log_event = bz_data::FileWatcherEventType::Modify;
                     // FIXME(JakobDegen): Add comment explaining why this is needed.
                     handler.dir_entries_changed_force_invalidate(cell_path);
                 }
@@ -256,7 +256,7 @@ async fn try_fetch_revision_details(hash: &str) -> Option<RevisionDetails> {
 
 #[async_trait]
 impl SyncableQueryProcessor for WatchmanQueryProcessor {
-    type Output = buck2_data::FileWatcherStats;
+    type Output = bz_data::FileWatcherStats;
     type Payload = DiceTransactionUpdater;
 
     async fn process_events(
@@ -265,12 +265,12 @@ impl SyncableQueryProcessor for WatchmanQueryProcessor {
         events: Vec<WatchmanEvent>,
         mergebase: &Option<String>,
         watchman_version: Option<String>,
-    ) -> buck2_error::Result<(Self::Output, DiceTransactionUpdater)> {
+    ) -> bz_error::Result<(Self::Output, DiceTransactionUpdater)> {
         self.last_mergebase = mergebase.clone();
         self.process_events_impl(
             dice,
             events,
-            buck2_data::FileWatcherStats {
+            bz_data::FileWatcherStats {
                 branched_from_revision: self.last_mergebase.clone(),
                 branched_from_global_rev: self.last_mergebase_global_rev,
                 branched_from_revision_timestamp: self.last_mergebase_timestamp,
@@ -287,7 +287,7 @@ impl SyncableQueryProcessor for WatchmanQueryProcessor {
         events: Vec<WatchmanEvent>,
         mergebase: &Option<String>,
         watchman_version: Option<String>,
-    ) -> buck2_error::Result<(Self::Output, DiceTransactionUpdater)> {
+    ) -> bz_error::Result<(Self::Output, DiceTransactionUpdater)> {
         let has_new_mergebase = self.last_mergebase.as_ref() != mergebase.as_ref();
 
         let clear_dep_files = has_new_mergebase;
@@ -328,13 +328,13 @@ impl SyncableQueryProcessor for WatchmanQueryProcessor {
         // it. So, we just send it off to its own thread.
         let ctx = ctx.unstable_take();
 
-        let mut base_stats = buck2_data::FileWatcherStats {
+        let mut base_stats = bz_data::FileWatcherStats {
             fresh_instance: true,
             branched_from_revision: mergebase.clone(),
             branched_from_global_rev: self.last_mergebase_global_rev,
             branched_from_revision_timestamp: self.last_mergebase_timestamp,
             watchman_version,
-            fresh_instance_data: Some(buck2_data::FreshInstance {
+            fresh_instance_data: Some(bz_data::FreshInstance {
                 new_mergebase: has_new_mergebase,
                 cleared_dice: true,
                 cleared_dep_files: clear_dep_files,
@@ -354,7 +354,7 @@ impl SyncableQueryProcessor for WatchmanQueryProcessor {
 #[derive(Allocative)]
 pub(crate) struct WatchmanFileWatcher {
     #[allocative(skip)]
-    query: SyncableQuery<buck2_data::FileWatcherStats, DiceTransactionUpdater>,
+    query: SyncableQuery<bz_data::FileWatcherStats, DiceTransactionUpdater>,
 }
 
 /// The watchman query is constructed once on daemon startup. It is an unfiltered watchman query
@@ -367,7 +367,7 @@ impl WatchmanFileWatcher {
         root_config: &LegacyBuckConfig,
         cells: CellResolver,
         ignore_specs: StdBuckHashMap<CellName, IgnoreSet>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let watchman_merge_base = root_config
             .get(BuckconfigKeyRef {
                 section: "project",
@@ -434,10 +434,10 @@ impl FileWatcher for WatchmanFileWatcher {
     async fn sync(
         &self,
         dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(DiceTransactionUpdater, Mergebase)> {
+    ) -> bz_error::Result<(DiceTransactionUpdater, Mergebase)> {
         span_async(
-            buck2_data::FileWatcherStart {
-                provider: buck2_data::FileWatcherProvider::Watchman as i32,
+            bz_data::FileWatcherStart {
+                provider: bz_data::FileWatcherProvider::Watchman as i32,
             },
             async {
                 let (stats, res) = match self.query.sync(dice).await {
@@ -447,7 +447,7 @@ impl FileWatcher for WatchmanFileWatcher {
                     }
                     Err(e) => (None, Err(e)),
                 };
-                (res, buck2_data::FileWatcherEnd { stats })
+                (res, bz_data::FileWatcherEnd { stats })
             },
         )
         .await

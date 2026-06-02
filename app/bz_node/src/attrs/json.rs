@@ -11,5 +11,5 @@
 use crate::attrs::fmt_context::AttrFmtContext;
 
 pub trait ToJsonWithContext {
-    fn to_json(&self, ctx: &AttrFmtContext) -> buck2_error::Result<serde_json::Value>;
+    fn to_json(&self, ctx: &AttrFmtContext) -> bz_error::Result<serde_json::Value>;
 }

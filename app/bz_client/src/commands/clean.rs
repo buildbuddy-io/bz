@@ -18,34 +18,34 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use buck2_cli_proto::CleanRequest;
-use buck2_cli_proto::CleanStaleResponse;
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::common::ui::ConsoleType;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
-use buck2_client_ctx::daemon::client::NoPartialResultHandler;
-use buck2_client_ctx::daemon::client::kill::kill_command_impl;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::final_console::FinalConsole;
-use buck2_client_ctx::startup_deadline::StartupDeadline;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_client_ctx::subscribers::superconsole::StatefulSuperConsole;
-use buck2_common::daemon_dir::DaemonDir;
-use buck2_error::BuckErrorContext;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
+use bz_cli_proto::CleanRequest;
+use bz_cli_proto::CleanStaleResponse;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::common::ui::ConsoleType;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::BuckdLifecycleLock;
+use bz_client_ctx::daemon::client::NoPartialResultHandler;
+use bz_client_ctx::daemon::client::kill::kill_command_impl;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::final_console::FinalConsole;
+use bz_client_ctx::startup_deadline::StartupDeadline;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_client_ctx::subscribers::superconsole::StatefulSuperConsole;
+use bz_common::daemon_dir::DaemonDir;
+use bz_error::BuckErrorContext;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPath;
 use dupe::Dupe;
 use gazebo::prelude::SliceExt;
 use superconsole::Line;
@@ -221,7 +221,7 @@ struct DaemonCleanCommand {
     common_opts: CommonCommandOptions,
 }
 
-fn format_clean_stats(stats: buck2_data::CleanStaleStats) -> String {
+fn format_clean_stats(stats: bz_data::CleanStaleStats) -> String {
     let mut output = String::new();
     output += &format!(
         "Found {} output roots ({})\n",
@@ -264,10 +264,10 @@ impl StreamingCommand for DaemonCleanCommand {
             .await??;
 
         if let Some(message) = response.message {
-            buck2_client_ctx::eprintln!("{}", message)?;
+            bz_client_ctx::eprintln!("{}", message)?;
         }
         if let Some(stats) = response.stats {
-            buck2_client_ctx::eprintln!("{}", format_clean_stats(stats))?;
+            bz_client_ctx::eprintln!("{}", format_clean_stats(stats))?;
         }
         ExitResult::success()
     }
@@ -296,7 +296,7 @@ impl BuckSubcommand for InnerCleanCommand {
         self,
         _matches: BuckArgMatches<'_>,
         ctx: ClientCommandContext<'_>,
-        _events_ctx: &mut buck2_client_ctx::events_ctx::EventsCtx,
+        _events_ctx: &mut bz_client_ctx::events_ctx::EventsCtx,
     ) -> ExitResult {
         let paths = ctx.paths()?;
         let buck_out_dir = paths.buck_out_path();
@@ -365,7 +365,7 @@ async fn clean(
     dry_run: bool,
     background: bool,
     delete_daemon_dir: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let paths_to_clean = if dry_run {
         let mut paths_to_clean = Vec::new();
         if buck_out_dir.exists() {
@@ -448,7 +448,7 @@ async fn clean(
     Ok(())
 }
 
-fn spawn_background_cleaner(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
+fn spawn_background_cleaner(path: &AbsNormPathBuf) -> bz_error::Result<()> {
     #[cfg(unix)]
     {
         let child = std::process::Command::new("/bin/sh")
@@ -496,7 +496,7 @@ fn spawn_background_cleaner(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
 
 fn collect_paths_to_clean(
     buck_out_path: &AbsNormPathBuf,
-) -> buck2_error::Result<Vec<AbsNormPathBuf>> {
+) -> bz_error::Result<Vec<AbsNormPathBuf>> {
     if !buck_out_path.exists() {
         return Ok(vec![]);
     }
@@ -517,7 +517,7 @@ fn collect_paths_to_clean(
 fn clean_buck_out_with_retry(
     path: &AbsNormPathBuf,
     console_type: ConsoleType,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut result = clean_buck_out(path, console_type);
     match result {
         Ok(_) => {
@@ -627,9 +627,9 @@ impl Drop for CleanProgressHandle {
     }
 }
 
-fn clean_buck_out(path: &AbsNormPathBuf, console_type: ConsoleType) -> buck2_error::Result<()> {
+fn clean_buck_out(path: &AbsNormPathBuf, console_type: ConsoleType) -> bz_error::Result<()> {
     let walk = WalkDir::new(path);
-    let thread_pool = ThreadPool::new(buck2_util::threads::available_parallelism());
+    let thread_pool = ThreadPool::new(bz_util::threads::available_parallelism());
     let error = Arc::new(Mutex::new(None));
 
     let state = Arc::new(CleanProgressState::new());
@@ -651,8 +651,8 @@ fn clean_buck_out(path: &AbsNormPathBuf, console_type: ConsoleType) -> buck2_err
 
     for dir_entry in walk.into_iter() {
         let dir_entry = dir_entry.map_err(|error| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "failed to walk `{}` while cleaning: {}",
                 path,
                 error
@@ -706,7 +706,7 @@ fn clean_buck_out(path: &AbsNormPathBuf, console_type: ConsoleType) -> buck2_err
     Ok(())
 }
 
-fn remove_children(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
+fn remove_children(path: &AbsNormPathBuf) -> bz_error::Result<()> {
     let dir = fs_util::read_dir(path).categorize_internal()?;
     for entry in dir {
         let entry = entry?;

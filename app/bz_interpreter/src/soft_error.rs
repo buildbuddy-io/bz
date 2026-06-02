@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_core::soft_error;
+use bz_core::soft_error;
 use starlark::eval::SoftErrorHandler;
 pub struct Buck2StarlarkSoftErrorHandler;
 
 /// When starlark deprecates something, we propagate it to our `soft_error!` handler.
 impl SoftErrorHandler for Buck2StarlarkSoftErrorHandler {
     fn soft_error(&self, category: &str, error: starlark::Error) -> Result<(), starlark::Error> {
-        let error = buck2_error::Error::from(error);
+        let error = bz_error::Error::from(error);
         soft_error!(&format!("starlark_rust_{category}"), error, deprecation: true, quiet: true, error_on_oss: true)?;
         Ok(())
     }

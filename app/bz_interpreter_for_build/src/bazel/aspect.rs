@@ -26,9 +26,9 @@ use starlark::values::starlark_value;
 use starlark::values::typing::StarlarkCallable;
 
 use crate::attrs::starlark_attribute::StarlarkAttribute;
-use buck2_interpreter::types::rule::FrozenBazelAspectInfo;
-use buck2_interpreter::types::rule::bazel_aspect_hidden_attr_name;
-use buck2_node::attrs::attr::Attribute;
+use bz_interpreter::types::rule::FrozenBazelAspectInfo;
+use bz_interpreter::types::rule::bazel_aspect_hidden_attr_name;
+use bz_node::attrs::attr::Attribute;
 
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
 pub(crate) struct StarlarkAspect<'v> {
@@ -149,12 +149,12 @@ pub(crate) fn frozen_aspect_implementation(aspect: FrozenValue) -> Option<Frozen
 
 pub(crate) fn frozen_aspect_info(
     aspect: FrozenValue,
-) -> buck2_error::Result<FrozenBazelAspectInfo> {
+) -> bz_error::Result<FrozenBazelAspectInfo> {
     let aspect = aspect
         .downcast_ref::<FrozenStarlarkAspect>()
         .ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected Bazel aspect, got `{}`",
                 aspect
             )

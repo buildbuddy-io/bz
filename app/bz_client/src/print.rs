@@ -11,8 +11,8 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use buck2_client_ctx::common::PrintOutputsFormat;
-use buck2_client_ctx::exit_result::ClientIoError;
+use bz_client_ctx::common::PrintOutputsFormat;
+use bz_client_ctx::exit_result::ClientIoError;
 
 pub struct PrintOutputs<W> {
     out: W,
@@ -96,7 +96,7 @@ mod tests {
     use super::PrintOutputsFormat;
 
     #[test]
-    fn test() -> buck2_error::Result<()> {
+    fn test() -> bz_error::Result<()> {
         for (format, root_path, expected) in [
             (
                 PrintOutputsFormat::Plain,
@@ -174,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn test_json_empty() -> buck2_error::Result<()> {
+    fn test_json_empty() -> bz_error::Result<()> {
         let mut out = Vec::new();
         let mut print = PrintOutputs::new(&mut out, None, PrintOutputsFormat::Json)?;
         print.finish()?;

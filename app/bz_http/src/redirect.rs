@@ -10,7 +10,7 @@
 
 use std::future::Future;
 
-use buck2_error::BuckErrorContext;
+use bz_error::BuckErrorContext;
 use bytes::Bytes;
 use http::HeaderMap;
 use http::Method;
@@ -22,7 +22,7 @@ use hyper::StatusCode;
 use crate::HttpError;
 
 trait UriWithRedirect {
-    fn with_redirect(&self, location: &Uri) -> buck2_error::Result<Uri>;
+    fn with_redirect(&self, location: &Uri) -> bz_error::Result<Uri>;
 
     fn is_cross_host(&self, other: &Uri) -> bool;
 }
@@ -30,7 +30,7 @@ trait UriWithRedirect {
 impl UriWithRedirect for Uri {
     /// Converts this Uri into the redirect Uri by combining it with the URI
     /// obtained from the Location header of a response.
-    fn with_redirect(&self, location: &Uri) -> buck2_error::Result<Uri> {
+    fn with_redirect(&self, location: &Uri) -> bz_error::Result<Uri> {
         let mut redirected = Uri::builder();
         if let Some(scheme) = location.scheme().or_else(|| self.scheme()) {
             redirected = redirected.scheme(scheme.clone());
@@ -72,7 +72,7 @@ impl PendingRequest {
         }
     }
 
-    pub(super) fn to_request(&self) -> buck2_error::Result<Request<Bytes>> {
+    pub(super) fn to_request(&self) -> bz_error::Result<Request<Bytes>> {
         let mut builder = Request::builder()
             .method(self.method.clone())
             .uri(self.uri.clone());
@@ -176,7 +176,7 @@ impl<B> RedirectEngine<B> {
     }
 
     /// Updates the request in place to send to the redirect location.
-    fn update_and_create_request(&mut self) -> buck2_error::Result<Option<Request<Bytes>>> {
+    fn update_and_create_request(&mut self) -> bz_error::Result<Option<Request<Bytes>>> {
         let redirect_location =
             if let Some(location) = self.extract_redirect_location_from_response() {
                 location

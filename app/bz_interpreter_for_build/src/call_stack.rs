@@ -11,8 +11,8 @@
 use std::hash::Hash;
 use std::hash::Hasher;
 
-use buck2_node::call_stack::StarlarkCallStackImpl;
-use buck2_node::call_stack::StarlarkTargetCallStackRoot;
+use bz_node::call_stack::StarlarkCallStackImpl;
+use bz_node::call_stack::StarlarkTargetCallStackRoot;
 use cmp_any::PartialEqAny;
 use starlark::eval::CallStack;
 

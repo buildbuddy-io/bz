@@ -12,16 +12,16 @@
 
 use std::sync::OnceLock;
 
-use buck2_error::buck2_error;
+use bz_error::bz_error;
 
-pub fn sc_page_size() -> buck2_error::Result<usize> {
+pub fn sc_page_size() -> bz_error::Result<usize> {
     static PAGE_SIZE: OnceLock<usize> = OnceLock::new();
     PAGE_SIZE
         .get_or_try_init(|| unsafe {
             let size = libc::sysconf(libc::_SC_PAGESIZE);
             if size <= 0 {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Environment,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Environment,
                     "Invalid page size from sysconf: {}",
                     size
                 ));

@@ -13,49 +13,49 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::build::build_report::BuildReportOpts;
-use buck2_build_api::build::build_report::write_bxl_build_report;
-use buck2_build_api::bxl::result::BxlResult;
-use buck2_build_api::bxl::result::PendingStreamingOutput;
-use buck2_build_api::bxl::types::BxlFunctionLabel;
-use buck2_build_api::materialize::HasMaterializationQueueTracker;
-use buck2_build_api::materialize::MaterializationAndUploadContext;
-use buck2_build_api::materialize::materialize_and_upload_artifact_group;
-use buck2_cli_proto::BxlRequest;
-use buck2_cli_proto::BxlResponse;
-use buck2_cli_proto::build_request::Materializations;
-use buck2_cli_proto::build_request::Uploads;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::events::HasEvents;
-use buck2_common::target_aliases::HasTargetAliasResolver;
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabel;
-use buck2_core::soft_error;
-use buck2_data::BxlEnsureArtifactsEnd;
-use buck2_data::BxlEnsureArtifactsStart;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::parse_import::ParseImportOptions;
-use buck2_interpreter::parse_import::RelativeImports;
-use buck2_interpreter::parse_import::parse_import_with_config;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_server_ctx::bxl::GetBxlStreamingTracker;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::build::build_report::BuildReportOpts;
+use bz_build_api::build::build_report::write_bxl_build_report;
+use bz_build_api::bxl::result::BxlResult;
+use bz_build_api::bxl::result::PendingStreamingOutput;
+use bz_build_api::bxl::types::BxlFunctionLabel;
+use bz_build_api::materialize::HasMaterializationQueueTracker;
+use bz_build_api::materialize::MaterializationAndUploadContext;
+use bz_build_api::materialize::materialize_and_upload_artifact_group;
+use bz_cli_proto::BxlRequest;
+use bz_cli_proto::BxlResponse;
+use bz_cli_proto::build_request::Materializations;
+use bz_cli_proto::build_request::Uploads;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::events::HasEvents;
+use bz_common::target_aliases::HasTargetAliasResolver;
+use bz_core::bxl::BxlFilePath;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabel;
+use bz_core::soft_error;
+use bz_data::BxlEnsureArtifactsEnd;
+use bz_data::BxlEnsureArtifactsStart;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::get_dispatcher;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::parse_import::ParseImportOptions;
+use bz_interpreter::parse_import::RelativeImports;
+use bz_interpreter::parse_import::parse_import_with_config;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_server_ctx::bxl::GetBxlStreamingTracker;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::DiceComputations;
 use dice::DiceTransaction;
 use dupe::Dupe;
@@ -78,9 +78,9 @@ use crate::bxl::streaming_output_writer::StreamingOutputWriter;
 
 pub(crate) async fn bxl_command(
     ctx: &dyn ServerCommandContextTrait,
-    partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+    partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
     req: BxlRequest,
-) -> buck2_error::Result<BxlResponse> {
+) -> bz_error::Result<BxlResponse> {
     run_server_command(BxlServerCommand { req }, ctx, partial_result_dispatcher).await
 }
 
@@ -90,19 +90,19 @@ struct BxlServerCommand {
 
 #[async_trait]
 impl ServerCommandTemplate for BxlServerCommand {
-    type StartEvent = buck2_data::BxlCommandStart;
-    type EndEvent = buck2_data::BxlCommandEnd;
-    type Response = buck2_cli_proto::BxlResponse;
-    type PartialResult = buck2_cli_proto::StdoutBytes;
+    type StartEvent = bz_data::BxlCommandStart;
+    type EndEvent = bz_data::BxlCommandEnd;
+    type Response = bz_cli_proto::BxlResponse;
+    type PartialResult = bz_cli_proto::StdoutBytes;
 
     fn start_event(&self) -> Self::StartEvent {
         let bxl_label = self.req.bxl_label.clone();
-        buck2_data::BxlCommandStart { bxl_label }
+        bz_data::BxlCommandStart { bxl_label }
     }
 
-    fn end_event(&self, _response: &buck2_error::Result<Self::Response>) -> Self::EndEvent {
+    fn end_event(&self, _response: &bz_error::Result<Self::Response>) -> Self::EndEvent {
         let bxl_label = self.req.bxl_label.clone();
-        buck2_data::BxlCommandEnd { bxl_label }
+        bz_data::BxlCommandEnd { bxl_label }
     }
 
     async fn command(
@@ -110,7 +110,7 @@ impl ServerCommandTemplate for BxlServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         mut partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         self.execute(server_ctx, partial_result_dispatcher.as_writer(), ctx)
             .await
     }
@@ -122,7 +122,7 @@ impl BxlServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         _stdout: impl Write + Send,
         mut dice_ctx: DiceTransaction,
-    ) -> buck2_error::Result<buck2_cli_proto::BxlResponse> {
+    ) -> bz_error::Result<bz_cli_proto::BxlResponse> {
         let bxl_cmd_ctx = self
             .parse_and_validate_request(server_ctx, &mut dice_ctx)
             .await?;
@@ -180,7 +180,7 @@ impl BxlServerCommand {
 
         let error_reports = errors
             .iter()
-            .map(buck2_data::ErrorReport::from)
+            .map(bz_data::ErrorReport::from)
             .unique_by(|e| e.message.clone())
             .collect();
 
@@ -199,7 +199,7 @@ impl BxlServerCommand {
         &self,
         server_ctx: &'a dyn ServerCommandContextTrait,
         dice_ctx: &mut DiceTransaction,
-    ) -> buck2_error::Result<BxlCommandContext<'a>> {
+    ) -> bz_error::Result<BxlCommandContext<'a>> {
         let cwd = server_ctx.working_dir();
         let cell_resolver = dice_ctx.get_cell_resolver().await?;
         let cell_alias_resolver = dice_ctx.get_cell_alias_resolver_for_dir(cwd).await?;
@@ -234,7 +234,7 @@ impl BxlServerCommand {
         &self,
         ctx: &BxlCommandContext<'_>,
         dice_ctx: &mut DiceTransaction,
-    ) -> buck2_error::Result<BxlResolvedCliArgs> {
+    ) -> bz_error::Result<BxlResolvedCliArgs> {
         let cur_package =
             PackageLabel::from_cell_path(ctx.cell_resolver.get_cell_path(ctx.cwd).as_ref())?;
         let cell_name = ctx.cell_resolver.find(ctx.cwd);
@@ -290,7 +290,7 @@ impl BxlServerCommand {
         dice_ctx: &mut DiceTransaction,
         bxl_result: Arc<BxlResult>,
         output: &mut (impl Write + Send),
-    ) -> Vec<buck2_error::Error> {
+    ) -> Vec<bz_error::Error> {
         let materialization_context = self.create_materialization_context();
 
         self.ensure_all_artifacts(dice_ctx, materialization_context, bxl_result, output)
@@ -322,7 +322,7 @@ impl BxlServerCommand {
         materialization_context: MaterializationAndUploadContext,
         bxl_result: Arc<BxlResult>,
         output: &mut (impl Write + Send),
-    ) -> Vec<buck2_error::Error> {
+    ) -> Vec<bz_error::Error> {
         if bxl_result.artifacts().is_empty() {
             return vec![];
         }
@@ -357,7 +357,7 @@ impl BxlServerCommand {
         materialization_context: MaterializationAndUploadContext,
         bxl_result: Arc<BxlResult>,
         output: &mut (impl Write + Send),
-    ) -> Result<(), Vec<buck2_error::Error>> {
+    ) -> Result<(), Vec<bz_error::Error>> {
         let artifacts_to_materialize: Vec<_> = bxl_result.artifacts().iter().duped().collect();
 
         let mut futs: FuturesUnordered<_> = ctx
@@ -386,7 +386,7 @@ impl BxlServerCommand {
         let mut pending_streaming =
             PendingStreaming::new(bxl_result.pending_streaming_outputs().iter().cloned());
 
-        let mut errors: Vec<buck2_error::Error> = Vec::new();
+        let mut errors: Vec<bz_error::Error> = Vec::new();
 
         while let Some(res) = tokio::task::unconstrained(futs.next()).await {
             match res {
@@ -418,7 +418,7 @@ impl BxlServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         bxl_result: Arc<BxlResult>,
         mut stdout: impl Write,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         stdout.write_all(bxl_result.output())?;
         server_ctx.stderr()?.write_all(bxl_result.error())?;
         Ok(())
@@ -431,7 +431,7 @@ impl BxlServerCommand {
         dice_ctx: &mut DiceTransaction,
         streaming_output: &[u8],
         stdout: &mut impl Write,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let bxl_streaming_tracker = dice_ctx
             .per_transaction_data()
             .get_bxl_streaming_tracker()
@@ -450,8 +450,8 @@ impl BxlServerCommand {
         ctx: &BxlCommandContext<'_>,
         dice_ctx: &mut DiceTransaction,
         server_ctx: &dyn ServerCommandContextTrait,
-        ensured_artifact_errors: Vec<buck2_error::Error>,
-    ) -> buck2_error::Result<Option<String>> {
+        ensured_artifact_errors: Vec<bz_error::Error>,
+    ) -> bz_error::Result<Option<String>> {
         let bxl_opts = self
             .req
             .build_opts
@@ -511,7 +511,7 @@ pub(crate) async fn get_bxl_cli_args(
     bxl_args: &Vec<String>,
     cell_resolver: &CellResolver,
     global_cfg_options: &GlobalCfgOptions,
-) -> buck2_error::Result<BxlResolvedCliArgs> {
+) -> bz_error::Result<BxlResolvedCliArgs> {
     let cur_package = PackageLabel::from_cell_path(cell_resolver.get_cell_path(&cwd).as_ref())?;
     let cell_name = cell_resolver.find(&cwd);
     let cell_alias_resolver = ctx.get_cell_alias_resolver(cell_name).await?;
@@ -535,7 +535,7 @@ pub(crate) async fn get_bxl_cli_args(
     resolve_cli_args(bxl_label, &cli_ctx, bxl_args, &frozen_callable).await
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BxlLabelError {
     #[error(
@@ -554,7 +554,7 @@ pub(crate) fn parse_bxl_label_from_cli(
     bxl_label: &str,
     cell_resolver: &CellResolver,
     cell_alias_resolver: &CellAliasResolver,
-) -> buck2_error::Result<BxlFunctionLabel> {
+) -> bz_error::Result<BxlFunctionLabel> {
     let current_cell = cell_resolver.get_cell_path(cwd);
 
     let (bxl_path, bxl_fn) = bxl_label
@@ -637,13 +637,13 @@ impl PendingStreaming {
 
 #[cfg(test)]
 mod tests {
-    use buck2_artifact::actions::key::ActionIndex;
-    use buck2_artifact::artifact::artifact_type::Artifact;
-    use buck2_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
-    use buck2_artifact::artifact::build_artifact::BuildArtifact;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-    use buck2_hash::BuckIndexSet;
+    use bz_artifact::actions::key::ActionIndex;
+    use bz_artifact::artifact::artifact_type::Artifact;
+    use bz_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
+    use bz_artifact::artifact::build_artifact::BuildArtifact;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_hash::BuckIndexSet;
 
     use super::*;
 

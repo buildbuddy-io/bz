@@ -71,7 +71,7 @@ impl RuleType {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::bzl::ImportPath;
+    use bz_core::bzl::ImportPath;
 
     use crate::bzl_or_bxl_path::BzlOrBxlPath;
     use crate::rule_type::StarlarkRuleType;

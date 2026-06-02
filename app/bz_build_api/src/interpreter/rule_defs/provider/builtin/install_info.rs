@@ -9,11 +9,11 @@
  */
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api_derive::internal_provider;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_error::BuckErrorContext;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api_derive::internal_provider;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_error::BuckErrorContext;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use starlark::any::ProvidesStaticType;
 use starlark::collections::SmallMap;
 use starlark::environment::GlobalsBuilder;
@@ -29,13 +29,13 @@ use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueIsInputArtifactAnnotation;
 
 // Provider that signals a rule is installable (ex. android_binary)
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum InstallInfoProviderErrors {
     #[error("expected a label, got `{0}` (type `{1}`)")]
@@ -60,7 +60,7 @@ pub struct InstallInfoGen<V: ValueLifetimeless> {
 }
 
 impl<'v, V: ValueLike<'v>> InstallInfoGen<V> {
-    pub fn get_installer(&self) -> buck2_error::Result<ConfiguredProvidersLabel> {
+    pub fn get_installer(&self) -> bz_error::Result<ConfiguredProvidersLabel> {
         let label = StarlarkConfiguredProvidersLabel::from_value(self.installer.get().to_value())
             .ok_or_else(|| {
                 InstallInfoProviderErrors::ExpectedLabel(
@@ -79,7 +79,7 @@ impl<'v, V: ValueLike<'v>> InstallInfoGen<V> {
 
     fn get_files_iter<'a>(
         files: &'a DictRef<'v>,
-    ) -> impl Iterator<Item = buck2_error::Result<(&'v str, ValueAsInputArtifactLike<'v>)>> + 'a
+    ) -> impl Iterator<Item = bz_error::Result<(&'v str, ValueAsInputArtifactLike<'v>)>> + 'a
     {
         files.iter().map(|(k, v)| {
             let k = k
@@ -97,7 +97,7 @@ impl<'v, V: ValueLike<'v>> InstallInfoGen<V> {
         })
     }
 
-    pub fn get_files(&self) -> buck2_error::Result<SmallMap<&'v str, Artifact>> {
+    pub fn get_files(&self) -> bz_error::Result<SmallMap<&'v str, Artifact>> {
         Self::get_files_iter(&self.get_files_dict())
             .map(|x| {
                 let (k, v) = x?;
@@ -126,7 +126,7 @@ fn install_info_creator(globals: &mut GlobalsBuilder) {
     }
 }
 
-fn validate_install_info<'v, V>(info: &InstallInfoGen<V>) -> buck2_error::Result<()>
+fn validate_install_info<'v, V>(info: &InstallInfoGen<V>) -> bz_error::Result<()>
 where
     V: ValueLike<'v>,
 {

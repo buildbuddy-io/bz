@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_events::dispatch::get_dispatcher;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_events::dispatch::get_dispatcher;
+use bz_wrapper_common::invocation_id::TraceId;
 
 use crate::execute::request::CommandExecutionPaths;
 use crate::execute::target::CommandExecutionTarget;
 
 fn configured_target_label_metadata(
-    label: &buck2_data::ConfiguredTargetLabel,
+    label: &bz_data::ConfiguredTargetLabel,
 ) -> (Option<String>, Option<String>) {
     let target_id = label
         .label
@@ -28,7 +28,7 @@ fn configured_target_label_metadata(
     (target_id, configuration_id)
 }
 
-fn anon_target_metadata(anon_target: &buck2_data::AnonTarget) -> (Option<String>, Option<String>) {
+fn anon_target_metadata(anon_target: &bz_data::AnonTarget) -> (Option<String>, Option<String>) {
     let target_id = anon_target
         .name
         .as_ref()
@@ -40,17 +40,17 @@ fn anon_target_metadata(anon_target: &buck2_data::AnonTarget) -> (Option<String>
     (target_id, configuration_id)
 }
 
-fn action_key_metadata(action_key: buck2_data::ActionKey) -> (Option<String>, Option<String>) {
+fn action_key_metadata(action_key: bz_data::ActionKey) -> (Option<String>, Option<String>) {
     match action_key.owner {
-        Some(buck2_data::action_key::Owner::TargetLabel(label))
-        | Some(buck2_data::action_key::Owner::TestTargetLabel(label))
-        | Some(buck2_data::action_key::Owner::LocalResourceSetup(label)) => {
+        Some(bz_data::action_key::Owner::TargetLabel(label))
+        | Some(bz_data::action_key::Owner::TestTargetLabel(label))
+        | Some(bz_data::action_key::Owner::LocalResourceSetup(label)) => {
             configured_target_label_metadata(&label)
         }
-        Some(buck2_data::action_key::Owner::AnonTarget(anon_target)) => {
+        Some(bz_data::action_key::Owner::AnonTarget(anon_target)) => {
             anon_target_metadata(&anon_target)
         }
-        Some(buck2_data::action_key::Owner::BxlKey(bxl_key)) => {
+        Some(bz_data::action_key::Owner::BxlKey(bxl_key)) => {
             let target_id = bxl_key
                 .label
                 .map(|label| format!("{}:{}", label.bxl_path, label.name));

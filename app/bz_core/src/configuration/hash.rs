@@ -11,7 +11,7 @@
 use allocative::Allocative;
 use pagable::Pagable;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ConfigurationHashError {
     #[error("Configuration hash must be 16 hex digits, got: `{0}`")]
@@ -41,7 +41,7 @@ impl ConfigurationHash {
         ConfigurationHash(format!("{value:0>16x}"))
     }
 
-    pub(crate) fn from_str(value: &str) -> buck2_error::Result<ConfigurationHash> {
+    pub(crate) fn from_str(value: &str) -> bz_error::Result<ConfigurationHash> {
         if value.len() != 16 {
             return Err(ConfigurationHashError::Invalid(value.to_owned()).into());
         }

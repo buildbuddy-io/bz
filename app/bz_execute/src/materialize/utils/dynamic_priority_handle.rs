@@ -82,7 +82,7 @@ impl DynamicPriorityHandle {
         &mut self,
         sem: &PrioritySemaphore,
         permits: u32,
-    ) -> buck2_error::Result<AcquirePermitResult> {
+    ) -> bz_error::Result<AcquirePermitResult> {
         let cancel_token = self.cancel_token().clone();
         loop {
             let priority = self.priority();

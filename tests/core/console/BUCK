@@ -1,8 +1,8 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_core_tests")
+load("@fbcode//bz/tests:buck_e2e.bzl", "bz_core_tests")
 
 oncall("build_infra")
 
-buck2_core_tests(
+bz_core_tests(
     target_extra_attrs = {
         "test_console": {
             "env": {
@@ -10,7 +10,7 @@ buck2_core_tests(
             },
         },
         "test_console_output_limit": {
-            "use_compiled_buck2_client_and_tpx": True,
+            "use_compiled_bz_client_and_tpx": True,
         },
     },
 )

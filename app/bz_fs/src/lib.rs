@@ -19,7 +19,7 @@
 //! - Filesystem utilities (fs_util, async_fs_util)
 //! - Working directory management (cwd, working_dir)
 //!
-//! For project-aware filesystem functionality, see the `buck2_core::fs` module.
+//! For project-aware filesystem functionality, see the `bz_core::fs` module.
 
 pub mod async_fs_util;
 pub mod cwd;

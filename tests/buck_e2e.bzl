@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//bz/app:modifier.bzl", "buck2_modifiers")
+load("@fbcode//bz/app:modifier.bzl", "bz_modifiers")
 load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup")
 load("@fbcode_macros//build_defs:python_pytest.bzl", "python_pytest")
 load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
@@ -64,7 +64,7 @@ def buck_e2e_test(
 
     # For autodeps
     read_package_value = getattr(native, "read_package_value", None)
-    e2e_flavor = read_package_value and read_package_value("buck2_e2e_test.flavor")
+    e2e_flavor = read_package_value and read_package_value("bz_e2e_test.flavor")
     if e2e_flavor == "isolated":
         env["BUCK2_E2E_TEST_FLAVOR"] = "isolated"
         serialize_test_cases = serialize_test_cases or False
@@ -149,10 +149,10 @@ def buck_e2e_test(
         compatible_with = compatible_with,
     )
 
-    if e2e_flavor == "buck2_non_isolated":
+    if e2e_flavor == "bz_non_isolated":
         # These are buck2's own non-isolated e2e tests. Add a ci hint indicating
         # that they depend on many of the macros in the repo. Intentionally
-        # don't do this for other users of `buck2_e2e_test` in the repo
+        # don't do this for other users of `bz_e2e_test` in the repo
         BUCK2_E2E_TEST_CI_SRCS = [
             "fbandroid/buck2/**",
             "fbcode/buck2/cfg/**",
@@ -179,12 +179,12 @@ def buck_e2e_test(
             compatible_with = compatible_with,
         )
 
-def buck2_e2e_test(
+def bz_e2e_test(
         name,
         test_with_compiled_buck2 = True,
         test_with_deployed_buck2 = False,
         test_with_reverted_buck2 = False,
-        use_compiled_buck2_client_and_tpx = False,
+        use_compiled_bz_client_and_tpx = False,
         skip_deployed_buck2_version_dep = False,
         deps = (),
         env = None,
@@ -221,7 +221,7 @@ def buck2_e2e_test(
         Should typically be set for tests of UDRs and other things that are not "core buck2 functionality"
     test_with_reverted_buck2:
         Like `test_with_deployed_buck2`, but for the previous version
-    use_compiled_buck2_client_and_tpx:
+    use_compiled_bz_client_and_tpx:
         A full prod archive is distinct from a normal build of buck2 in that it uses a client-only
         binary and additionally makes TPX available. Needed if you want to be able to `buck.test`
         Default is False.
@@ -266,7 +266,7 @@ def buck2_e2e_test(
         compiled_env["BUCK2_HARD_ERROR"] = "true"
         compiled_env["BUCK2_TPX"] = "$BUCK2_BINARY_DIR/buck2-tpx"
 
-        if use_compiled_buck2_client_and_tpx:
+        if use_compiled_bz_client_and_tpx:
             base_exe = "$(location fbcode//bz:symlinked_buck2_and_tpx)/buck2"
             exe = select({
                 "DEFAULT": base_exe,
@@ -284,7 +284,7 @@ def buck2_e2e_test(
             executable = exe,
             skip_for_os = skip_for_os,
             deps = deps,
-            cfg_modifiers = buck2_modifiers() + [
+            cfg_modifiers = bz_modifiers() + [
                 # Always run these tests under rust opt build
                 "ovr_config//build_mode:opt",
             ],
@@ -319,11 +319,11 @@ def buck2_e2e_test(
             **kwargs
         )
 
-def buck2_core_tests(
+def bz_core_tests(
         extra_attrs = {},
         target_extra_attrs = {}):
     """
-    A little wrapper that generates `buck2_e2e_test`s for core tests.
+    A little wrapper that generates `bz_e2e_test`s for core tests.
 
     extra_attrs:
         Extra attributes that are applied to all generated targets.
@@ -370,7 +370,7 @@ def buck2_core_tests(
             attrs["deps"] = list(attrs.get("deps") or [])
             attrs["deps"].extend(IMPLICIT_DEPS)
 
-            buck2_e2e_test(
+            bz_e2e_test(
                 name = target,
                 **attrs
             )

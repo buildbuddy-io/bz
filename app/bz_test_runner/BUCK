@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_test_runner",
+    name = "bz_test_runner",
     srcs = glob(
         ["src/**/*.rs"],
     ),
@@ -13,9 +13,9 @@ rust_library(
         "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:parking_lot",
         "fbsource//third-party/rust:tokio",
-        "//bz/app/bz_error:buck2_error",
-        "//bz/app/bz_grpc:buck2_grpc",
-        "//bz/app/bz_test_api:buck2_test_api",
+        "//bz/app/bz_error:bz_error",
+        "//bz/app/bz_grpc:bz_grpc",
+        "//bz/app/bz_test_api:bz_test_api",
         "//bz/host_sharing:host_sharing",
     ],
 )

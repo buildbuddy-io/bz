@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-use buck2_error::internal_error;
-use buck2_util::threads::thread_spawn;
+use bz_error::internal_error;
+use bz_util::threads::thread_spawn;
 use dupe::Dupe;
 use futures::stream::Stream;
 use futures::stream::StreamExt;
@@ -101,7 +101,7 @@ impl PrioritySemaphore {
         }
     }
 
-    pub async fn acquire(&self, priority: Priority) -> buck2_error::Result<PriorityPermit> {
+    pub async fn acquire(&self, priority: Priority) -> bz_error::Result<PriorityPermit> {
         self.acquire_many(1, priority).await
     }
 
@@ -109,7 +109,7 @@ impl PrioritySemaphore {
         &self,
         permits: u32,
         priority: Priority,
-    ) -> buck2_error::Result<PriorityPermit> {
+    ) -> bz_error::Result<PriorityPermit> {
         let (grant_tx, grant_rx) = oneshot::channel();
 
         let request = AcquireReq { permits, grant_tx };

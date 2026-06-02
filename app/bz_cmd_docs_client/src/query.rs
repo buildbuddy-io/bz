@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_query::query::syntax::simple::functions::description::QUERY_ENVIRONMENT_DESCRIPTION_BY_TYPE;
-use buck2_query::query::syntax::simple::functions::description::QueryType;
-use buck2_query::query::syntax::simple::functions::docs::MarkdownOptions;
-use buck2_query::query::syntax::simple::functions::docs::QueryEnvironmentDescription;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_query::query::syntax::simple::functions::description::QUERY_ENVIRONMENT_DESCRIPTION_BY_TYPE;
+use bz_query::query::syntax::simple::functions::description::QueryType;
+use bz_query::query::syntax::simple::functions::docs::MarkdownOptions;
+use bz_query::query::syntax::simple::functions::docs::QueryEnvironmentDescription;
 use dupe::Dupe;
 
 #[derive(Debug, Clone, Dupe, clap::ValueEnum)]
@@ -37,17 +37,17 @@ struct OutputFormatOptions {
 }
 
 impl OutputFormatOptions {
-    fn emit_markdown(&self, markdown: &str) -> buck2_error::Result<()> {
+    fn emit_markdown(&self, markdown: &str) -> bz_error::Result<()> {
         match self.format {
             OutputFormatArg::Markdown => {
-                buck2_client_ctx::println!("{}", markdown)?;
+                bz_client_ctx::println!("{}", markdown)?;
             }
             OutputFormatArg::Rendered => {
                 let skin = termimad::MadSkin::default();
                 let area = termimad::Area::full_screen();
                 let width = std::cmp::min(100, area.width) as usize;
                 let rendered = skin.text(markdown, Some(width));
-                buck2_client_ctx::println!("{}", rendered)?;
+                bz_client_ctx::println!("{}", rendered)?;
             }
         }
 

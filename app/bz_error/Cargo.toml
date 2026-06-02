@@ -4,7 +4,7 @@ Library providing an `anyhow` inspired error type for buck2
 """
 edition = "2024"
 license = { workspace = true }
-name = "buck2_error"
+name = "bz_error"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -43,8 +43,8 @@ superconsole = { version = "0.2.0", path = "../../superconsole" }
 # @oss-disable: watchman_client.path = "../../../watchman/rust/watchman_client"
 watchman_client.version = "0.9.0"
 
-buck2_data = { workspace = true }
-buck2_error_derive = { workspace = true }
+bz_data = { workspace = true }
+bz_error_derive = { workspace = true }
 
 starlark_syntax = { workspace = true }
 

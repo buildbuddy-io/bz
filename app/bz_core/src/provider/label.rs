@@ -13,8 +13,8 @@ use std::fmt::Formatter;
 use std::iter;
 
 use allocative::Allocative;
-use buck2_util::arc_str::ArcSlice;
-use buck2_util::arc_str::ArcStr;
+use bz_util::arc_str::ArcSlice;
+use bz_util::arc_str::ArcStr;
 use derive_more::Display;
 use dupe::Dupe;
 use pagable::Pagable;
@@ -54,7 +54,7 @@ use crate::target::label::label::TargetLabel;
 )]
 pub struct ProviderName(#[pagable(flatten_serde)] String);
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[error(
     "Invalid provider name `{}`. Inner providers names can only contain non-empty alpha numeric characters, and symbols `,`, `=`, `-`, `/`, `+` and `_`. No other characters are allowed.",
     _0
@@ -71,12 +71,12 @@ impl ProviderName {
         ProviderName(name)
     }
 
-    pub fn new(name: String) -> buck2_error::Result<ProviderName> {
+    pub fn new(name: String) -> bz_error::Result<ProviderName> {
         Self::verify(&name)?;
         Ok(ProviderName(name))
     }
 
-    fn verify(name: &str) -> buck2_error::Result<()> {
+    fn verify(name: &str) -> bz_error::Result<()> {
         const VALID_CHARS: &str =
             r"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_\\/.=,+-";
         const SET: AsciiCharSet = AsciiCharSet::new(VALID_CHARS);
@@ -226,7 +226,7 @@ impl ProvidersLabel {
         cell_name: CellName,
         cell_resolver: &CellResolver,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<ProvidersLabel> {
+    ) -> bz_error::Result<ProvidersLabel> {
         let providers_label = ParsedPattern::<ProvidersPatternExtra>::parse_precise(
             label,
             cell_name,

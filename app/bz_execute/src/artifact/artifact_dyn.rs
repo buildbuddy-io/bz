@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
 
 pub trait ArtifactDyn: Send + Sync + 'static {
     /// Returns the project relative path of the artifact.
@@ -20,7 +20,7 @@ pub trait ArtifactDyn: Send + Sync + 'static {
         &self,
         fs: &ArtifactFs,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf>;
+    ) -> bz_error::Result<ProjectRelativePathBuf>;
 
     /// This function will return the same project relative path as `resolve_path` except
     /// for content-based artifacts, where it will return a path that uses the configuration
@@ -28,7 +28,7 @@ pub trait ArtifactDyn: Send + Sync + 'static {
     fn resolve_configuration_hash_path(
         &self,
         fs: &ArtifactFs,
-    ) -> buck2_error::Result<ProjectRelativePathBuf>;
+    ) -> bz_error::Result<ProjectRelativePathBuf>;
     /// Build artifacts and source artifacts from external cells require materialization. Other
     /// source artifacts do not.
     fn requires_materialization(&self, fs: &ArtifactFs) -> bool;

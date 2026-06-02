@@ -13,40 +13,40 @@ use std::ops::ControlFlow;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::Action;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::UnregisteredAction;
-use buck2_build_api::actions::box_slice_set::BoxSliceSet;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::cas_digest::CasDigestData;
-use buck2_core::category::CategoryRef;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact_utils::ArtifactValueBuilder;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::new_symlink;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::request::LocalActionCacheKey;
-use buck2_execute::materialize::materializer::CopiedArtifact;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::buck_indexmap;
-use buck2_hash::buck_indexset;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::Action;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::UnregisteredAction;
+use bz_build_api::actions::box_slice_set::BoxSliceSet;
+use bz_build_api::actions::execute::action_executor::ActionExecutionKind;
+use bz_build_api::actions::execute::action_executor::ActionExecutionMetadata;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::actions::execute::error::ExecuteError;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use bz_build_signals::env::WaitingData;
+use bz_common::cas_digest::CasDigestData;
+use bz_core::category::CategoryRef;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact_utils::ArtifactValueBuilder;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::new_symlink;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::request::LocalActionCacheKey;
+use bz_execute::materialize::materializer::CopiedArtifact;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckIndexSet;
+use bz_hash::buck_indexmap;
+use bz_hash::buck_indexset;
 use dupe::Dupe;
 use gazebo::prelude::*;
 use pagable::Pagable;
@@ -59,7 +59,7 @@ use crate::actions::impls::run::compose_local_action_cache_fingerprint;
 use crate::actions::impls::run::finalize_action_cache_digest;
 use crate::actions::impls::run::fingerprint_command_execution_output;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum CopyActionValidationError {
     #[error("Exactly one output file must be specified for a copy action, got {0}")]
@@ -84,7 +84,7 @@ fn symlink_source_path(
     input: &Artifact,
     src: ProjectRelativePathBuf,
     use_exec_root_for_source: bool,
-) -> buck2_error::Result<ProjectRelativePathBuf> {
+) -> bz_error::Result<ProjectRelativePathBuf> {
     if !use_exec_root_for_source || !input.is_source() {
         return Ok(src);
     }
@@ -118,7 +118,7 @@ impl UnregisteredAction for UnregisteredCopyAction {
         outputs: BuckIndexSet<BuildArtifact>,
         _starlark_data: Option<OwnedFrozenValue>,
         _error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         Ok(Box::new(CopyAction::new(self.copy, self.src, outputs)?))
     }
 }
@@ -140,7 +140,7 @@ impl UnregisteredAction for UnregisteredSymlinkAction {
         outputs: BuckIndexSet<BuildArtifact>,
         _starlark_data: Option<OwnedFrozenValue>,
         _error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         Ok(Box::new(SymlinkAction::new(self.target_path, outputs)?))
     }
 }
@@ -157,7 +157,7 @@ impl CopyAction {
         copy: CopyMode,
         src: ArtifactGroup,
         outputs: BuckIndexSet<BuildArtifact>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         // TODO: Exclude other variants once they become available here. For now, this is a noop.
         match src {
             ArtifactGroup::Artifact(..) | ArtifactGroup::Promise(..) => {}
@@ -203,7 +203,7 @@ impl CopyAction {
         &self,
         ctx: &dyn ActionExecutionCtx,
         output: &CommandExecutionOutput,
-    ) -> buck2_error::Result<LocalActionCacheKey> {
+    ) -> bz_error::Result<LocalActionCacheKey> {
         let key = output
             .as_ref()
             .resolve(ctx.fs(), Some(&ContentBasedPathHash::for_output_artifact()))?
@@ -340,7 +340,7 @@ struct SymlinkAction {
 }
 
 impl SymlinkAction {
-    fn new(target_path: String, outputs: BuckIndexSet<BuildArtifact>) -> buck2_error::Result<Self> {
+    fn new(target_path: String, outputs: BuckIndexSet<BuildArtifact>) -> bz_error::Result<Self> {
         if outputs.len() != 1 {
             Err(CopyActionValidationError::WrongNumberOfOutputs(outputs.len()).into())
         } else {
@@ -401,7 +401,7 @@ impl SymlinkAction {
         &self,
         ctx: &dyn ActionExecutionCtx,
         output: &CommandExecutionOutput,
-    ) -> buck2_error::Result<LocalActionCacheKey> {
+    ) -> bz_error::Result<LocalActionCacheKey> {
         let key = output
             .as_ref()
             .resolve(ctx.fs(), Some(&ContentBasedPathHash::for_output_artifact()))?
@@ -449,11 +449,11 @@ impl SymlinkAction {
 
 #[async_trait]
 impl Action for CopyAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::Copy
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::Copy
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         Ok(Cow::Borrowed(self.inputs.as_slice()))
     }
 
@@ -506,7 +506,7 @@ impl Action for CopyAction {
                     false,
                     false,
                     None,
-                    buck2_data::IncrementalKind::NonIncremental,
+                    bz_data::IncrementalKind::NonIncremental,
                 )?;
                 let value = outputs
                     .get(self.output().get_path())
@@ -586,11 +586,11 @@ impl Action for CopyAction {
 
 #[async_trait]
 impl Action for SymlinkAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::Copy
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::Copy
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         Ok(Cow::Borrowed(&[]))
     }
 
@@ -635,7 +635,7 @@ impl Action for SymlinkAction {
                     false,
                     false,
                     None,
-                    buck2_data::IncrementalKind::NonIncremental,
+                    bz_data::IncrementalKind::NonIncremental,
                 )?;
                 let value = outputs
                     .get(self.output().get_path())

@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::QueryOutputFormat;
-use buck2_client_ctx::query_args::CommonAttributeArgs;
-use buck2_query_parser::placeholder::QUERY_PERCENT_SS_PLACEHOLDER;
+use bz_cli_proto::QueryOutputFormat;
+use bz_client_ctx::query_args::CommonAttributeArgs;
+use bz_query_parser::placeholder::QUERY_PERCENT_SS_PLACEHOLDER;
 use dupe::Dupe;
 
 #[derive(

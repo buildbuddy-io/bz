@@ -36,13 +36,13 @@ pub struct NetworkInterfaceTable<'a> {
 }
 
 impl NetworkInterfaceTable<'_> {
-    pub fn new() -> buck2_error::Result<Self> {
+    pub fn new() -> bz_error::Result<Self> {
         let (_guard, entries) = unsafe {
             let mut table: *mut MIB_IF_TABLE2 = std::ptr::null_mut();
 
             if GetIfTable2(&mut table) != NO_ERROR {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "Failed to retrieve MIB-II interface table: {}",
                     Error::last_os_error()
                 ));

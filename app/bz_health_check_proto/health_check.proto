@@ -96,7 +96,7 @@ message Report {
 }
 
 // A subset of the Snapshot data specifically for health check use.
-// This struct contains timing metrics extracted from buck2_data::Snapshot.
+// This struct contains timing metrics extracted from bz_data::Snapshot.
 message HealthCheckSnapshotData {
   // Timestamp when the snapshot was created
   google.protobuf.Timestamp timestamp = 1;

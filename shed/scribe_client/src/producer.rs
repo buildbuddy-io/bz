@@ -792,7 +792,7 @@ mod tests {
         client.WriteMessages.mock(|req| {
             assert_eq!(req.messages.len(), 1);
             let msg = &req.messages[0];
-            assert_eq!(msg.category, "buck2_events");
+            assert_eq!(msg.category, "bz_events");
             assert_eq!(msg.message, b"hello, world!".to_vec());
             assert_eq!(msg.metadata.messageKey, Some(42));
             WriteMessagesResponse {
@@ -807,7 +807,7 @@ mod tests {
         let producer = make_ScribeProducer(fb, client, 5);
 
         let message = Message {
-            category: "buck2_events".to_owned(),
+            category: "bz_events".to_owned(),
             message: b"hello, world!".to_vec(),
             message_key: Some(42),
         };
@@ -852,7 +852,7 @@ mod tests {
 
     fn message(contents: &'static str) -> Message {
         Message {
-            category: "buck2_events".to_owned(),
+            category: "bz_events".to_owned(),
             message: contents.as_bytes().to_vec(),
             ..Default::default()
         }

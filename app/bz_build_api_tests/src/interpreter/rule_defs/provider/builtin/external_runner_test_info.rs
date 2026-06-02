@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::register_rule_defs;
-use buck2_build_api::interpreter::rule_defs::required_test_local_resource::register_required_test_local_resource;
-use buck2_core::bzl::ImportPath;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_build_api::interpreter::rule_defs::register_rule_defs;
+use bz_build_api::interpreter::rule_defs::required_test_local_resource::register_required_test_local_resource;
+use bz_core::bzl::ImportPath;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
 
 fn tester() -> Tester {
@@ -22,7 +22,7 @@ fn tester() -> Tester {
 }
 
 #[test]
-fn test_construction() -> buck2_error::Result<()> {
+fn test_construction() -> bz_error::Result<()> {
     let test = indoc!(
         r#"
         def test():
@@ -48,7 +48,7 @@ fn test_construction() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_validation() -> buck2_error::Result<()> {
+fn test_validation() -> bz_error::Result<()> {
     let mut tester = tester();
     tester.run_starlark_bzl_test_expecting_error(
         indoc!(
@@ -234,7 +234,7 @@ fn test_validation() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_validation_at_freeze() -> buck2_error::Result<()> {
+fn test_validation_at_freeze() -> bz_error::Result<()> {
     let mut tester = tester();
 
     let res = tester.add_import(

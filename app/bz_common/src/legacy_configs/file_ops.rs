@@ -11,19 +11,19 @@
 use std::io::BufRead;
 
 use allocative::Allocative;
-use buck2_core::cells::CellResolver;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_fs::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::fs_util::IoError;
-use buck2_fs::paths::RelativePath;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_core::cells::CellResolver;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_fs::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::fs_util::IoError;
+use bz_fs::paths::RelativePath;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use dice::DiceComputations;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -62,7 +62,7 @@ impl ConfigPath {
     pub(crate) fn join_to_parent_normalized(
         &self,
         rel: &RelativePath,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         match self {
             ConfigPath::Project(path) => Ok(path
                 .parent()
@@ -96,20 +96,20 @@ pub trait ConfigParserFileOps: Send + Sync {
     async fn read_file_lines_if_exists(
         &mut self,
         path: &ConfigPath,
-    ) -> buck2_error::Result<Option<Vec<String>>>;
+    ) -> bz_error::Result<Option<Vec<String>>>;
 
-    async fn read_dir(&mut self, path: &ConfigPath) -> buck2_error::Result<Vec<ConfigDirEntry>>;
+    async fn read_dir(&mut self, path: &ConfigPath) -> bz_error::Result<Vec<ConfigDirEntry>>;
 
     fn resolve_project_relative_to_absolute(
         &self,
         _base: &ProjectRelativePath,
         _path: &RelativePath,
-    ) -> buck2_error::Result<Option<AbsPathBuf>> {
+    ) -> bz_error::Result<Option<AbsPathBuf>> {
         Ok(None)
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum ReadDirError {
     #[error("Non-utf8 entry `{0}` in directory `{1}`")]
@@ -125,7 +125,7 @@ impl ConfigParserFileOps for DefaultConfigParserFileOps {
     async fn read_file_lines_if_exists(
         &mut self,
         path: &ConfigPath,
-    ) -> buck2_error::Result<Option<Vec<String>>> {
+    ) -> bz_error::Result<Option<Vec<String>>> {
         let path = path.resolve_absolute(&self.project_fs);
         let Some(f) = fs_util::open_file_if_exists(&path)
             .with_buck_error_context(|| format!("Reading file `{path:?}`"))?
@@ -143,7 +143,7 @@ impl ConfigParserFileOps for DefaultConfigParserFileOps {
         Ok(Some(lines))
     }
 
-    async fn read_dir(&mut self, path: &ConfigPath) -> buck2_error::Result<Vec<ConfigDirEntry>> {
+    async fn read_dir(&mut self, path: &ConfigPath) -> bz_error::Result<Vec<ConfigDirEntry>> {
         let path = path.resolve_absolute(&self.project_fs);
         let read_dir = match std::fs::read_dir(path.as_path()) {
             Ok(read_dir) => read_dir,
@@ -188,7 +188,7 @@ impl ConfigParserFileOps for DefaultConfigParserFileOps {
         &self,
         base: &ProjectRelativePath,
         path: &RelativePath,
-    ) -> buck2_error::Result<Option<AbsPathBuf>> {
+    ) -> bz_error::Result<Option<AbsPathBuf>> {
         Ok(Some(
             self.project_fs
                 .resolve(base)
@@ -226,7 +226,7 @@ impl ConfigParserFileOps for DiceConfigFileOps<'_, '_> {
     async fn read_file_lines_if_exists(
         &mut self,
         path: &ConfigPath,
-    ) -> buck2_error::Result<Option<Vec<String>>> {
+    ) -> bz_error::Result<Option<Vec<String>>> {
         let ConfigPath::Project(path) = path else {
             return self.io_ops.read_file_lines_if_exists(path).await;
         };
@@ -239,7 +239,7 @@ impl ConfigParserFileOps for DiceConfigFileOps<'_, '_> {
         Ok(Some(lines))
     }
 
-    async fn read_dir(&mut self, path: &ConfigPath) -> buck2_error::Result<Vec<ConfigDirEntry>> {
+    async fn read_dir(&mut self, path: &ConfigPath) -> bz_error::Result<Vec<ConfigDirEntry>> {
         let ConfigPath::Project(path) = path else {
             return self.io_ops.read_dir(path).await;
         };
@@ -275,7 +275,7 @@ impl ConfigParserFileOps for DiceConfigFileOps<'_, '_> {
         &self,
         base: &ProjectRelativePath,
         path: &RelativePath,
-    ) -> buck2_error::Result<Option<AbsPathBuf>> {
+    ) -> bz_error::Result<Option<AbsPathBuf>> {
         self.io_ops.resolve_project_relative_to_absolute(base, path)
     }
 }
@@ -284,7 +284,7 @@ pub(crate) fn push_all_files_from_a_directory<'a>(
     buckconfig_paths: &'a mut Vec<ConfigPath>,
     folder_path: &'a ConfigPath,
     file_ops: &'a mut dyn ConfigParserFileOps,
-) -> BoxFuture<'a, buck2_error::Result<()>> {
+) -> BoxFuture<'a, bz_error::Result<()>> {
     async move {
         for entry in file_ops.read_dir(folder_path).await? {
             let entry_path = folder_path.join(&entry.name);
@@ -302,9 +302,9 @@ pub(crate) fn push_all_files_from_a_directory<'a>(
 
 #[cfg(test)]
 mod tests {
-    use buck2_fs::fs_util::uncategorized as fs_util;
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    use buck2_fs::paths::abs_path::AbsPath;
+    use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use bz_fs::paths::abs_path::AbsPath;
 
     use super::*;
 
@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn dir_with_file() -> buck2_error::Result<()> {
+    fn dir_with_file() -> bz_error::Result<()> {
         let mut v = vec![];
         let dir = tempfile::tempdir()?;
         let root = AbsPath::new(dir.path())?;
@@ -340,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_dir() -> buck2_error::Result<()> {
+    fn empty_dir() -> bz_error::Result<()> {
         let mut v = vec![];
         let dir = tempfile::tempdir()?;
         let dir = AbsPath::new(dir.path())?;
@@ -358,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn non_existent_dir() -> buck2_error::Result<()> {
+    fn non_existent_dir() -> bz_error::Result<()> {
         let mut v = vec![];
         let dir = tempfile::tempdir()?;
         let dir = dir.path().join("bad");
@@ -377,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn dir_in_dir() -> buck2_error::Result<()> {
+    fn dir_in_dir() -> bz_error::Result<()> {
         let mut v = vec![];
         let dir = tempfile::tempdir()?;
         let dir = AbsPath::new(dir.path())?;
@@ -396,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn file() -> buck2_error::Result<()> {
+    fn file() -> bz_error::Result<()> {
         let mut v = vec![];
         let file = tempfile::NamedTempFile::new()?;
         let file = AbsPath::new(file.path())?;
@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn dir_with_file_in_dir() -> buck2_error::Result<()> {
+    fn dir_with_file_in_dir() -> bz_error::Result<()> {
         let mut v = vec![];
         let dir = tempfile::tempdir()?;
         let dir = AbsPath::new(dir.path())?;

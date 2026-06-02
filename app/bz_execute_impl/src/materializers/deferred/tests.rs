@@ -10,26 +10,26 @@
 
 use std::sync::Arc;
 
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::init::RemoteDownloadOutputsMode;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_error::internal_error;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryBuilder;
-use buck2_execute::directory::insert_file;
-use buck2_execute::materialize::materializer::DeclareArtifactPayload;
-use buck2_execute::materialize::materializer::DeferredMaterializerSubscription;
-use buck2_execute::materialize::utils::dynamic_priority_handle::DynamicPriorityHandle;
-use buck2_execute::materialize::utils::priority_semaphore::Priority;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::StdBuckHashMap;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::init::RemoteDownloadOutputsMode;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_error::internal_error;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryBuilder;
+use bz_execute::directory::insert_file;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_execute::materialize::materializer::DeferredMaterializerSubscription;
+use bz_execute::materialize::utils::dynamic_priority_handle::DynamicPriorityHandle;
+use bz_execute::materialize::utils::priority_semaphore::Priority;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::StdBuckHashMap;
 use parking_lot::Mutex;
 
 use super::*;
 use crate::materializers::deferred::artifact_tree::MaterializingFuture;
 
 #[test]
-fn test_find_artifacts() -> buck2_error::Result<()> {
+fn test_find_artifacts() -> bz_error::Result<()> {
     let artifact1 = ProjectRelativePathBuf::unchecked_new("foo/bar/baz".to_owned());
     let artifact2 = ProjectRelativePathBuf::unchecked_new("foo/bar/bar/qux".to_owned());
     let artifact3 = ProjectRelativePathBuf::unchecked_new("foo/bar/bar/quux".to_owned());
@@ -103,23 +103,23 @@ mod state_machine {
     use std::thread;
 
     use assert_matches::assert_matches;
-    use buck2_common::file_ops::metadata::Symlink;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_error::BuckErrorContext;
-    use buck2_error::buck2_error;
-    use buck2_events::daemon_id::DaemonId;
-    use buck2_events::source::ChannelEventSource;
-    use buck2_execute::directory::ActionDirectoryEntry;
-    use buck2_execute::directory::ActionSharedDirectory;
-    use buck2_execute::directory::INTERNER;
-    use buck2_execute::execute::blocking::IoRequest;
-    use buck2_fs::fs_util::ReadDir;
-    use buck2_fs::fs_util::uncategorized as fs_util;
-    use buck2_fs::paths::RelativePathBuf;
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-    use buck2_util::threads::ignore_stack_overflow_checks_for_future;
-    use buck2_wrapper_common::invocation_id::TraceId;
+    use bz_common::file_ops::metadata::Symlink;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_error::BuckErrorContext;
+    use bz_error::bz_error;
+    use bz_events::daemon_id::DaemonId;
+    use bz_events::source::ChannelEventSource;
+    use bz_execute::directory::ActionDirectoryEntry;
+    use bz_execute::directory::ActionSharedDirectory;
+    use bz_execute::directory::INTERNER;
+    use bz_execute::execute::blocking::IoRequest;
+    use bz_fs::fs_util::ReadDir;
+    use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::paths::RelativePathBuf;
+    use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_util::threads::ignore_stack_overflow_checks_for_future;
+    use bz_wrapper_common::invocation_id::TraceId;
     use futures::StreamExt;
     use futures::future::BoxFuture;
     use futures::future::FutureExt;
@@ -253,8 +253,8 @@ mod state_machine {
 
         async fn immediate_write<'a>(
             self: &Arc<Self>,
-            _gen: Box<dyn FnOnce() -> buck2_error::Result<Vec<WriteRequest>> + Send + 'a>,
-        ) -> buck2_error::Result<Vec<ArtifactValue>> {
+            _gen: Box<dyn FnOnce() -> bz_error::Result<Vec<WriteRequest>> + Send + 'a>,
+        ) -> bz_error::Result<Vec<ArtifactValue>> {
             unimplemented!()
         }
 
@@ -264,7 +264,7 @@ mod state_machine {
             version: Version,
             command_sender: Arc<MaterializerSender<Self>>,
             _cancellations: &'a CancellationContext,
-        ) -> BoxFuture<'a, Result<(), buck2_error::Error>> {
+        ) -> BoxFuture<'a, Result<(), bz_error::Error>> {
             self.log.lock().push((Op::Clean, path.clone()));
 
             async move {
@@ -284,7 +284,7 @@ mod state_machine {
             self: &Arc<Self>,
             request: CleanInvalidatedPathRequest,
             _cancellations: &'a CancellationContext,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             if let Some(barriers) = self.clean_barriers.as_ref() {
                 // Allow tests to advance here, execute something and then continue
                 barriers.as_ref().0.wait();
@@ -309,8 +309,8 @@ mod state_machine {
 
             if (*self.fail_paths.lock()).contains(&path) || *self.fail.lock() {
                 self.log.lock().push((Op::MaterializeError, path));
-                Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::MaterializationError,
+                Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::MaterializationError,
                     "Injected error"
                 )
                 .into())
@@ -327,11 +327,11 @@ mod state_machine {
             self: &Arc<Self>,
             _tree: &ArtifactTree,
             _min_ttl: Duration,
-        ) -> Option<BoxFuture<'static, buck2_error::Result<()>>> {
+        ) -> Option<BoxFuture<'static, bz_error::Result<()>>> {
             unimplemented!()
         }
 
-        fn read_dir(&self, path: &AbsNormPathBuf) -> buck2_error::Result<ReadDir> {
+        fn read_dir(&self, path: &AbsNormPathBuf) -> bz_error::Result<ReadDir> {
             if let Some(barriers) = self.read_dir_barriers.as_ref() {
                 // Allow tests to advance here, execute something and then continue
                 barriers.as_ref().0.wait();
@@ -401,7 +401,7 @@ mod state_machine {
         contents: &'static [u8],
         handle: &mut SubscriptionHandle<StubIoHandler>,
         dm: &DeferredMaterializerAccessor<StubIoHandler>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         dm.declare_write(Box::new(|| {
             Ok(vec![WriteRequest {
                 path: path.clone(),
@@ -447,7 +447,7 @@ mod state_machine {
         let tree = ArtifactTree::initialize(sqlite_state);
 
         let (daemon_dispatcher_events, daemon_dispatcher_sink) =
-            buck2_events::create_source_sink_pair();
+            bz_events::create_source_sink_pair();
         let daemon_dispatcher =
             EventDispatcher::new(TraceId::null(), DaemonId::new(), daemon_dispatcher_sink);
 
@@ -542,7 +542,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_declare_reuse() -> buck2_error::Result<()> {
+    async fn test_declare_reuse() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let (mut dm, _) = make_processor(Default::default());
             let digest_config = dm.io.digest_config();
@@ -588,7 +588,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_declare_rejects_missing_materialized_path() -> buck2_error::Result<()> {
+    async fn test_declare_rejects_missing_materialized_path() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let (mut dm, _) = make_processor(Default::default());
             let digest_config = dm.io.digest_config();
@@ -620,7 +620,7 @@ mod state_machine {
         target_path: &ProjectRelativePathBuf,
         target_from_symlink: &RelativePathBuf,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<ArtifactValue> {
+    ) -> bz_error::Result<ArtifactValue> {
         let mut deps = ActionDirectoryBuilder::empty();
         let target = ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(FileMetadata::empty(
             digest_config.cas_digest_config(),
@@ -639,7 +639,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_materialize_symlink_and_target() -> buck2_error::Result<()> {
+    async fn test_materialize_symlink_and_target() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             // Construct a tree with a symlink and its target, materialize both at once
             let symlink_path = make_path("foo/bar_symlink");
@@ -674,8 +674,8 @@ mod state_machine {
                 .ok_or_else(|| internal_error!("Expected a future"))?
                 .await
                 .map_err(|_| {
-                    buck2_error!(
-                        buck2_error::ErrorTag::MaterializationError,
+                    bz_error!(
+                        bz_error::ErrorTag::MaterializationError,
                         "error materializing"
                     )
                 })?;
@@ -704,7 +704,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_materialize_symlink_first_then_target() -> buck2_error::Result<()> {
+    async fn test_materialize_symlink_first_then_target() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             // Materialize a symlink, then materialize the target. Test that we still
             // materialize deps if the main artifact has already been materialized.
@@ -756,8 +756,8 @@ mod state_machine {
                 .ok_or_else(|| internal_error!("Expected a future"))?
                 .await
                 .map_err(|_| {
-                    buck2_error!(
-                        buck2_error::ErrorTag::MaterializationError,
+                    bz_error!(
+                        bz_error::ErrorTag::MaterializationError,
                         "error materializing"
                     )
                 })?;
@@ -831,7 +831,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_subscription_subscribe_also_materializes() -> buck2_error::Result<()> {
+    async fn test_subscription_subscribe_also_materializes() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let (mut dm, mut channel) = make_processor(Default::default());
             let digest_config = dm.io.digest_config();
@@ -934,7 +934,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_invalidate_error() -> buck2_error::Result<()> {
+    async fn test_invalidate_error() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async{
             let (mut dm, _) = make_processor(Default::default());
             let digest_config = dm.io.digest_config();
@@ -968,7 +968,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_materialize_dep_error() -> buck2_error::Result<()> {
+    async fn test_materialize_dep_error() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             // Construct a tree with a symlink and its target, materialize both at once
             let symlink_path = make_path("foo/bar_symlink");
@@ -996,7 +996,7 @@ mod state_machine {
             dm.materialize_artifact(&symlink_path, EventDispatcher::null())
                 .ok_or_else(|| internal_error!("Expected a future"))?
                 .await
-                .map_err(|err| buck2_error!(buck2_error::ErrorTag::MaterializationError, "error materializing {:?}", err))?;
+                .map_err(|err| bz_error!(bz_error::ErrorTag::MaterializationError, "error materializing {:?}", err))?;
             assert_eq!(
                 dm.io.take_log(),
                 &[
@@ -1050,14 +1050,14 @@ mod state_machine {
             dm.materialize_artifact(&symlink_path, EventDispatcher::null())
                 .ok_or_else(|| internal_error!("Expected a future"))?
                 .await
-                .map_err(|err| buck2_error!(buck2_error::ErrorTag::MaterializationError, "error materializing 2 {:?}", err))?;
+                .map_err(|err| bz_error!(bz_error::ErrorTag::MaterializationError, "error materializing 2 {:?}", err))?;
             assert_eq!(dm.io.take_log(), &[(Op::Materialize, target_path.clone()), ]);
             Ok(())
         }).await
     }
 
     #[tokio::test]
-    async fn test_retry() -> buck2_error::Result<()> {
+    async fn test_retry() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let (mut dm, mut channel) = make_processor(Default::default());
             let digest_config = dm.io.digest_config();
@@ -1122,7 +1122,7 @@ mod state_machine {
     const SAMPLE_BUCK_OUT_PATH: &str = "buck-out/v2/art/foo/bar";
 
     #[tokio::test]
-    async fn test_clean_stale() -> buck2_error::Result<()> {
+    async fn test_clean_stale() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let path = make_path(SAMPLE_BUCK_OUT_PATH);
             let project_root = temp_root();
@@ -1138,7 +1138,7 @@ mod state_machine {
                 .clean_stale_artifacts(DateTime::<Utc>::MAX_UTC, false, false)
                 .await?;
 
-            let &buck2_data::CleanStaleStats {
+            let &bz_data::CleanStaleStats {
                 stale_artifact_count,
                 stale_bytes,
                 cleaned_artifact_count,
@@ -1163,7 +1163,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_clean_stale_interrupt() -> buck2_error::Result<()> {
+    async fn test_clean_stale_interrupt() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let path = make_path(SAMPLE_BUCK_OUT_PATH);
             let project_root = temp_root();
@@ -1193,7 +1193,7 @@ mod state_machine {
                 read_dir_barriers.1.wait();
             });
             let res = fut.await?;
-            let &buck2_data::CleanStaleStats {
+            let &bz_data::CleanStaleStats {
                 stale_artifact_count,
                 stale_bytes,
                 cleaned_artifact_count,
@@ -1231,7 +1231,7 @@ mod state_machine {
                 clean_barriers.1.wait();
             });
             let res = fut.await?;
-            let &buck2_data::CleanStaleStats {
+            let &bz_data::CleanStaleStats {
                 stale_artifact_count,
                 stale_bytes,
                 cleaned_artifact_count,
@@ -1254,7 +1254,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_clean_stale_schedule() -> buck2_error::Result<()> {
+    async fn test_clean_stale_schedule() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let path = make_path(SAMPLE_BUCK_OUT_PATH);
             let project_root = temp_root();
@@ -1275,8 +1275,8 @@ mod state_machine {
             let receive_clean_result = |events: &mut ChannelEventSource| {
                 let event = events.receive().unwrap();
                 match event.unpack_buck().unwrap().data() {
-                    buck2_data::buck_event::Data::Instant(instant) => match instant.data.as_ref() {
-                        Some(buck2_data::instant_event::Data::CleanStaleResult(res)) => {
+                    bz_data::buck_event::Data::Instant(instant) => match instant.data.as_ref() {
+                        Some(bz_data::instant_event::Data::CleanStaleResult(res)) => {
                             Some(res.clone())
                         }
                         _ => None,
@@ -1292,7 +1292,7 @@ mod state_machine {
             while i < 5 {
                 let res = receive_clean_result(&mut daemon_dispatcher_events);
                 let stats = res.stats.unwrap();
-                if let buck2_data::CleanStaleStats {
+                if let bz_data::CleanStaleStats {
                     retained_artifact_count: 0,
                     ..
                 } = stats
@@ -1303,14 +1303,14 @@ mod state_machine {
                 }
             }
             let res = receive_clean_result(&mut daemon_dispatcher_events);
-            let buck2_data::CleanStaleStats {
+            let bz_data::CleanStaleStats {
                 retained_artifact_count,
                 ..
             } = res.stats.unwrap();
             assert_eq!(retained_artifact_count, 1);
             // check it's scheduled more than once
             let res = receive_clean_result(&mut daemon_dispatcher_events);
-            let buck2_data::CleanStaleStats {
+            let bz_data::CleanStaleStats {
                 retained_artifact_count,
                 ..
             } = res.stats.unwrap();
@@ -1321,7 +1321,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_has_artifact_at() -> buck2_error::Result<()> {
+    async fn test_has_artifact_at() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let (mut dm, _) = make_processor(Default::default());
             let digest_config = dm.io.digest_config();
@@ -1345,7 +1345,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_get_artifact_entries_for_materialized_paths() -> buck2_error::Result<()> {
+    async fn test_get_artifact_entries_for_materialized_paths() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let (mut dm, _) = make_processor(Default::default());
             let digest_config = dm.io.digest_config();
@@ -1417,7 +1417,7 @@ mod state_machine {
     }
 
     #[tokio::test]
-    async fn test_get_artifact_entries_for_projected_paths() -> buck2_error::Result<()> {
+    async fn test_get_artifact_entries_for_projected_paths() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             let (mut dm, _) = make_processor(Default::default());
             let digest_config = dm.io.digest_config();

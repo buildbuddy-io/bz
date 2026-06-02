@@ -12,26 +12,26 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::analysis::registry::AnalysisRegistry;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::configuration::pair::Configuration;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::soft_error;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
-use buck2_error::buck2_error;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_node::configuration::calculation::CONFIGURATION_CALCULATION;
-use buck2_node::configuration::calculation::CellNameForConfigurationResolution;
-use buck2_node::configuration::resolved::ConfigurationSettingKey;
-use buck2_node::execution::GET_EXECUTION_PLATFORMS;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::analysis::registry::AnalysisRegistry;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_build_api::interpreter::rule_defs::provider::dependency::Dependency;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::configuration::pair::Configuration;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::soft_error;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
+use bz_error::bz_error;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_node::configuration::calculation::CONFIGURATION_CALCULATION;
+use bz_node::configuration::calculation::CellNameForConfigurationResolution;
+use bz_node::configuration::resolved::ConfigurationSettingKey;
+use bz_node::execution::GET_EXECUTION_PLATFORMS;
 use derivative::Derivative;
 use derive_more::Display;
 use dice::DiceComputations;
@@ -61,7 +61,7 @@ use strong_hash::StrongHash;
 
 use crate::bxl::starlark_defs::context::BxlContext;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BxlActionsError {
     #[error(
@@ -77,7 +77,7 @@ pub(crate) async fn resolve_bxl_execution_platform(
     toolchain_deps: Vec<ProvidersLabel>,
     target_platform: Option<TargetLabel>,
     exec_compatible_with: Arc<[ConfigurationSettingKey]>,
-) -> buck2_error::Result<BxlExecutionResolution> {
+) -> bz_error::Result<BxlExecutionResolution> {
     let target_cfg = match target_platform.as_ref() {
         Some(global_target_platform) => {
             CONFIGURATION_CALCULATION
@@ -118,7 +118,7 @@ pub(crate) async fn resolve_bxl_execution_platform(
     let exec_deps_configured = exec_deps.try_map(|e| {
         let label =
             e.configure_pair_no_exec(resolved_execution.platform()?.cfg_pair_no_exec().dupe());
-        buck2_error::Ok(label)
+        bz_error::Ok(label)
     })?;
 
     // Finalize the partial resolution with empty exec_dep_cfgs
@@ -163,7 +163,7 @@ impl BxlExecutionResolution {
 pub(crate) fn validate_action_instantiation(
     this: &BxlContext<'_>,
     bxl_execution_resolution: &BxlExecutionResolution,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut registry = this.state.state.borrow_mut();
 
     if (*registry).is_some() {
@@ -207,7 +207,7 @@ impl<'v> BxlActions<'v> {
         heap: Heap<'v>,
         frozen_heap: &FrozenHeap,
         ctx: &'c mut DiceComputations<'_>,
-    ) -> buck2_error::Result<BxlActions<'v>> {
+    ) -> bz_error::Result<BxlActions<'v>> {
         let exec_deps = alloc_deps(exec_deps, heap, frozen_heap, ctx).await?;
         let toolchains = alloc_deps(toolchains, heap, frozen_heap, ctx).await?;
         Ok(Self {
@@ -217,7 +217,7 @@ impl<'v> BxlActions<'v> {
         })
     }
 
-    fn is_anon_target_or_dyn_action(&self) -> buck2_error::Result<bool> {
+    fn is_anon_target_or_dyn_action(&self) -> bz_error::Result<bool> {
         let key = &self.actions.state()?.analysis_value_storage.self_key;
         Ok(match key {
             DeferredHolderKey::Base(base_deferred_key) => match base_deferred_key {
@@ -235,7 +235,7 @@ async fn alloc_deps<'v>(
     heap: Heap<'v>,
     frozen_heap: &FrozenHeap,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<ValueOfUnchecked<'v, DictType<StarlarkProvidersLabel, Dependency<'v>>>> {
+) -> bz_error::Result<ValueOfUnchecked<'v, DictType<StarlarkProvidersLabel, Dependency<'v>>>> {
     let analysis_results: Vec<_> = ctx
         .try_compute_join(deps, |ctx, target| {
             async move {
@@ -243,7 +243,7 @@ async fn alloc_deps<'v>(
                     .get_analysis_result(target.target())
                     .await?
                     .require_compatible()?;
-                buck2_error::Ok((target, res))
+                bz_error::Ok((target, res))
             }
             .boxed()
         })
@@ -262,7 +262,7 @@ async fn alloc_deps<'v>(
                 None,
             );
 
-            buck2_error::Ok((starlark_label, dependency))
+            bz_error::Ok((starlark_label, dependency))
         })
         .collect::<Result<_, _>>()?;
 
@@ -306,7 +306,7 @@ fn bxl_actions_methods(builder: &mut MethodsBuilder) {
         if this.is_anon_target_or_dyn_action()? {
             soft_error!(
                 "bxl_acessing_exec_platform",
-                buck2_error!(buck2_error::ErrorTag::Input, "Anon target or dynamic action accesses bxl.Actions.exec_deps."),
+                bz_error!(bz_error::ErrorTag::Input, "Anon target or dynamic action accesses bxl.Actions.exec_deps."),
                 quiet: true,
                 error_on_oss: true
             )?;
@@ -324,7 +324,7 @@ fn bxl_actions_methods(builder: &mut MethodsBuilder) {
         if this.is_anon_target_or_dyn_action()? {
             soft_error!(
                 "bxl_acessing_exec_platform",
-                buck2_error!(buck2_error::ErrorTag::Input, "Anon target or dynamic action accesses bxl.Actions.toolchains."),
+                bz_error!(bz_error::ErrorTag::Input, "Anon target or dynamic action accesses bxl.Actions.toolchains."),
                 quiet: true,
                 error_on_oss: true
             )?;

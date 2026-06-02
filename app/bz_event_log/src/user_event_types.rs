@@ -9,20 +9,20 @@
  */
 
 use allocative::Allocative;
-use buck2_common::convert::ProstDurationExt;
-use buck2_data::ActionExecutionKind;
-use buck2_data::ActionKind;
-use buck2_data::ActionName;
-use buck2_data::BuckEvent;
-use buck2_data::StarlarkUserEvent;
-use buck2_event_observer::display::TargetDisplayOptions;
-use buck2_event_observer::display::display_action_owner;
+use bz_common::convert::ProstDurationExt;
+use bz_data::ActionExecutionKind;
+use bz_data::ActionKind;
+use bz_data::ActionName;
+use bz_data::BuckEvent;
+use bz_data::StarlarkUserEvent;
+use bz_event_observer::display::TargetDisplayOptions;
+use bz_event_observer::display::display_action_owner;
 use serde::Deserialize;
 use serde::Serialize;
 
 use crate::stream_value::StreamValue;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = InvalidEvent)]
 pub(crate) enum SerializeUserEventError {
     #[error("Internal error: Missing `data` in `{0}`")]
@@ -74,14 +74,14 @@ pub struct BxlEnsureArtifactsEvent {
 
 pub fn try_get_user_event_for_read(
     stream_value: &StreamValue,
-) -> buck2_error::Result<Option<UserEvent>> {
+) -> bz_error::Result<Option<UserEvent>> {
     match stream_value {
         StreamValue::Event(buck_event) => try_get_user_event(buck_event.as_ref()),
         _ => Ok(None),
     }
 }
 
-pub(crate) fn try_get_user_event(buck_event: &BuckEvent) -> buck2_error::Result<Option<UserEvent>> {
+pub(crate) fn try_get_user_event(buck_event: &BuckEvent) -> bz_error::Result<Option<UserEvent>> {
     let timestamp = buck_event
         .timestamp
         .as_ref()
@@ -93,20 +93,20 @@ pub(crate) fn try_get_user_event(buck_event: &BuckEvent) -> buck2_error::Result<
         .as_ref()
         .ok_or_else(|| SerializeUserEventError::MissingData("BuckEvent".to_owned()))?
     {
-        buck2_data::buck_event::Data::Instant(instant) => {
+        bz_data::buck_event::Data::Instant(instant) => {
             match instant
                 .data
                 .as_ref()
                 .ok_or_else(|| SerializeUserEventError::MissingData("InstantEvent".to_owned()))?
             {
-                buck2_data::instant_event::Data::StarlarkUserEvent(event) => Ok(Some(UserEvent {
+                bz_data::instant_event::Data::StarlarkUserEvent(event) => Ok(Some(UserEvent {
                     data: UserEventData::StarlarkUserEvent(event.clone()),
                     epoch_millis,
                 })),
                 _ => Ok(None),
             }
         }
-        buck2_data::buck_event::Data::SpanEnd(span_end_event) => {
+        bz_data::buck_event::Data::SpanEnd(span_end_event) => {
             let duration_millis = span_end_event
                 .duration
                 .as_ref()
@@ -119,7 +119,7 @@ pub(crate) fn try_get_user_event(buck_event: &BuckEvent) -> buck2_error::Result<
                 .as_ref()
                 .ok_or_else(|| SerializeUserEventError::MissingData("SpanEndEvent".to_owned()))?
             {
-                buck2_data::span_end_event::Data::ActionExecution(action_execution) => {
+                bz_data::span_end_event::Data::ActionExecution(action_execution) => {
                     let mut input_materialization_duration_millis = 0;
 
                     // Take the last command report's input materialization duration
@@ -172,7 +172,7 @@ pub(crate) fn try_get_user_event(buck_event: &BuckEvent) -> buck2_error::Result<
                         epoch_millis,
                     }))
                 }
-                buck2_data::span_end_event::Data::BxlEnsureArtifacts(_) => {
+                bz_data::span_end_event::Data::BxlEnsureArtifacts(_) => {
                     let bxl_ensure_artifacts = BxlEnsureArtifactsEvent { duration_millis };
 
                     Ok(Some(UserEvent {
@@ -189,12 +189,12 @@ pub(crate) fn try_get_user_event(buck_event: &BuckEvent) -> buck2_error::Result<
 
 #[cfg(test)]
 mod tests {
-    use buck2_data::StarlarkUserEvent;
-    use buck2_data::StarlarkUserMetadataDictValue;
-    use buck2_data::StarlarkUserMetadataListValue;
-    use buck2_data::StarlarkUserMetadataValue;
-    use buck2_data::starlark_user_metadata_value::Value;
-    use buck2_hash::StdBuckHashMap;
+    use bz_data::StarlarkUserEvent;
+    use bz_data::StarlarkUserMetadataDictValue;
+    use bz_data::StarlarkUserMetadataListValue;
+    use bz_data::StarlarkUserMetadataValue;
+    use bz_data::starlark_user_metadata_value::Value;
+    use bz_hash::StdBuckHashMap;
     use maplit::hashmap;
 
     #[test]

@@ -9,23 +9,23 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::ConfiguredTargetsRequest;
-use buck2_cli_proto::ConfiguredTargetsResponse;
-use buck2_cli_proto::configured_targets_request::OutputFormat;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::target_cfg::TargetCfgOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::NoPartialResultHandler;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::query_args::CommonAttributeArgs;
-use buck2_client_ctx::streaming::StreamingCommand;
+use bz_cli_proto::ConfiguredTargetsRequest;
+use bz_cli_proto::ConfiguredTargetsResponse;
+use bz_cli_proto::configured_targets_request::OutputFormat;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::target_cfg::TargetCfgOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::NoPartialResultHandler;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::query_args::CommonAttributeArgs;
+use bz_client_ctx::streaming::StreamingCommand;
 
 /// Resolve target patterns to configured targets.
 #[derive(Debug, clap::Parser)]
@@ -64,7 +64,7 @@ pub struct ConfiguredTargetsCommand {
 }
 
 impl ConfiguredTargetsCommand {
-    fn output_format(&self) -> buck2_error::Result<OutputFormat> {
+    fn output_format(&self) -> bz_error::Result<OutputFormat> {
         if self.json_report {
             Ok(OutputFormat::JsonReport)
         } else if self.json || !self.attributes.get()?.is_empty() {
@@ -108,7 +108,7 @@ impl StreamingCommand for ConfiguredTargetsCommand {
             )
             .await??;
 
-        buck2_client_ctx::print!("{}", serialized_targets_output)?;
+        bz_client_ctx::print!("{}", serialized_targets_output)?;
 
         ExitResult::success()
     }

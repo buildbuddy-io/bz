@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_events",
+    name = "bz_events",
     srcs = glob(
         ["src/**/*.rs"],
     ),
@@ -24,16 +24,16 @@ rust_library(
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:uuid",
         "//bz/allocative/allocative:allocative",
-        "//bz/app/bz_build_info:buck2_build_info",
-        "//bz/app/bz_cli_proto:buck2_cli_proto",
-        "//bz/app/bz_core:buck2_core",
-        "//bz/app/bz_data:buck2_data",
-        "//bz/app/bz_error:buck2_error",
-        "//bz/app/bz_util:buck2_util",
-        "//bz/app/bz_wrapper_common:buck2_wrapper_common",
+        "//bz/app/bz_build_info:bz_build_info",
+        "//bz/app/bz_cli_proto:bz_cli_proto",
+        "//bz/app/bz_core:bz_core",
+        "//bz/app/bz_data:bz_data",
+        "//bz/app/bz_error:bz_error",
+        "//bz/app/bz_util:bz_util",
+        "//bz/app/bz_wrapper_common:bz_wrapper_common",
         "//bz/gazebo/dupe:dupe",
         "//bz/gazebo/gazebo:gazebo",
-        "//bz/shed/buck2_hash:buck2_hash",
+        "//bz/shed/bz_hash:bz_hash",
         # @oss-disable[end= ]: "//bz/shed/scribe_client:scribe_client",
         # @oss-disable[end= ]: "//common/rust/devserver_fingerprint/devserver_fingerprint:devserver_fingerprint",
         "//common/rust/shed/fbinit:fbinit",

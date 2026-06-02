@@ -13,33 +13,33 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use buck2_artifact::actions::key::ActionIndex;
-    use buck2_artifact::actions::key::ActionKey;
-    use buck2_artifact::artifact::build_artifact::BuildArtifact;
-    use buck2_artifact::artifact::source_artifact::SourceArtifact;
-    use buck2_build_api::actions::RegisteredAction;
-    use buck2_build_api::actions::registry::RecordedActions;
-    use buck2_build_api::analysis::AnalysisResult;
-    use buck2_build_api::analysis::registry::RecordedAnalysisValues;
-    use buck2_build_api::artifact_groups::ArtifactGroup;
-    use buck2_build_api::artifact_groups::deferred::TransitiveSetKey;
-    use buck2_build_api::build::detailed_aggregated_metrics::testing::traverse_partial_action_graph;
-    use buck2_build_api::deferred::calculation::DeferredHolder;
-    use buck2_build_api::dynamic::calculation::DynamicLambdaResult;
-    use buck2_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSet;
-    use buck2_core::category::Category;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-    use buck2_core::deferred::dynamic::DynamicLambdaIndex;
-    use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
-    use buck2_core::deferred::key::DeferredHolderKey;
-    use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-    use buck2_core::fs::buck_out_path::BuckOutPathKind;
-    use buck2_core::fs::buck_out_path::BuildArtifactPath;
-    use buck2_core::package::source_path::SourcePath;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-    use buck2_hash::buck_indexset;
+    use bz_artifact::actions::key::ActionIndex;
+    use bz_artifact::actions::key::ActionKey;
+    use bz_artifact::artifact::build_artifact::BuildArtifact;
+    use bz_artifact::artifact::source_artifact::SourceArtifact;
+    use bz_build_api::actions::RegisteredAction;
+    use bz_build_api::actions::registry::RecordedActions;
+    use bz_build_api::analysis::AnalysisResult;
+    use bz_build_api::analysis::registry::RecordedAnalysisValues;
+    use bz_build_api::artifact_groups::ArtifactGroup;
+    use bz_build_api::artifact_groups::deferred::TransitiveSetKey;
+    use bz_build_api::build::detailed_aggregated_metrics::testing::traverse_partial_action_graph;
+    use bz_build_api::deferred::calculation::DeferredHolder;
+    use bz_build_api::dynamic::calculation::DynamicLambdaResult;
+    use bz_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSet;
+    use bz_core::category::Category;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+    use bz_core::deferred::dynamic::DynamicLambdaIndex;
+    use bz_core::deferred::dynamic::DynamicLambdaResultsKey;
+    use bz_core::deferred::key::DeferredHolderKey;
+    use bz_core::execution_types::executor_config::CommandExecutorConfig;
+    use bz_core::fs::buck_out_path::BuckOutPathKind;
+    use bz_core::fs::buck_out_path::BuildArtifactPath;
+    use bz_core::package::source_path::SourcePath;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_hash::buck_indexset;
     use dupe::Dupe;
     use dupe::IterDupedExt;
     use starlark::values::OwnedFrozenValueTyped;
@@ -81,7 +81,7 @@ mod tests {
 
         fn add_to_state(
             self,
-            state: &mut buck2_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>,
+            state: &mut bz_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>,
         ) {
             let (key, holder) = self.build();
             state.insert(key, holder);
@@ -191,7 +191,7 @@ mod tests {
                     BuckOutPathKind::default(),
                 ),
                 key.dupe(),
-                buck2_execute::execute::request::OutputType::File,
+                bz_execute::execute::request::OutputType::File,
             )
             .unwrap()
         }
@@ -219,14 +219,14 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_set_eq(actions: buck2_hash::BuckHashSet<ActionKey>, expected: Vec<ActionKey>) {
-        let expected_set: buck2_hash::BuckHashSet<_> = expected.into_iter().collect();
+    fn assert_set_eq(actions: bz_hash::BuckHashSet<ActionKey>, expected: Vec<ActionKey>) {
+        let expected_set: bz_hash::BuckHashSet<_> = expected.into_iter().collect();
         assert_eq!(actions, expected_set)
     }
 
     #[test]
-    fn test_empty_graph() -> buck2_error::Result<()> {
-        let state = buck2_hash::BuckHashMap::default();
+    fn test_empty_graph() -> bz_error::Result<()> {
+        let state = bz_hash::BuckHashMap::default();
         let (complete, actions) = traverse_partial_action_graph(Vec::new(), &state)?;
         assert!(complete);
         assert!(actions.is_empty());
@@ -234,8 +234,8 @@ mod tests {
     }
 
     #[test]
-    fn test_single_action() -> buck2_error::Result<()> {
-        let mut state = buck2_hash::BuckHashMap::default();
+    fn test_single_action() -> bz_error::Result<()> {
+        let mut state = bz_hash::BuckHashMap::default();
 
         let mut builder = Builder::for_analysis(create_target("root//:lib").dupe());
         let (output, action_key) =
@@ -250,8 +250,8 @@ mod tests {
     }
 
     #[test]
-    fn test_diamond() -> buck2_error::Result<()> {
-        let mut state = buck2_hash::BuckHashMap::default();
+    fn test_diamond() -> bz_error::Result<()> {
+        let mut state = bz_hash::BuckHashMap::default();
 
         let mut builder1 = Builder::for_analysis(create_target("root//:lib").dupe());
         let mut builder2 = Builder::for_analysis(create_target("root//:bin"));
@@ -282,11 +282,11 @@ mod tests {
     }
 
     #[test]
-    fn test_cycle() -> buck2_error::Result<()> {
+    fn test_cycle() -> bz_error::Result<()> {
         // cycles can't actually occur in the action graph, but there may be bugs or races in our
         // state tracking that leads to us traversing an invalid graph. This test just ensures that
         // we still terminate if we encounter a cycle.
-        let mut state = buck2_hash::BuckHashMap::default();
+        let mut state = bz_hash::BuckHashMap::default();
 
         let mut builder1 = Builder::for_analysis(create_target("root//:lib").dupe());
 
@@ -309,8 +309,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "assertion `left == right` failed")] // We don't currently actually have the ability to traverse this edge.
     fn test_dynamic_input() {
-        fn go() -> buck2_error::Result<()> {
-            let mut state = buck2_hash::BuckHashMap::default();
+        fn go() -> bz_error::Result<()> {
+            let mut state = bz_hash::BuckHashMap::default();
 
             let mut builder1 = Builder::for_analysis(create_target("root//:lib").dupe());
 
@@ -338,8 +338,8 @@ mod tests {
 
     /// Checks that we can traverse a graph where some parts are missing.
     #[test]
-    fn test_dynamic_node_analysis_missing() -> buck2_error::Result<()> {
-        let mut state = buck2_hash::BuckHashMap::default();
+    fn test_dynamic_node_analysis_missing() -> bz_error::Result<()> {
+        let mut state = bz_hash::BuckHashMap::default();
 
         let mut builder1 = Builder::for_analysis(create_target("root//:lib").dupe());
 
@@ -365,8 +365,8 @@ mod tests {
     // TODO(cjhopman): Implement remaining stuff for this test. Creating tsets for tests is extremely difficult currently.
     /*
     #[test]
-    fn test_tset() -> buck2_error::Result<()> {
-        let mut state = buck2_hash::BuckHashMap::default();
+    fn test_tset() -> bz_error::Result<()> {
+        let mut state = bz_hash::BuckHashMap::default();
 
         let mut builder1 = Builder::for_analysis(create_target("root//:lib").dupe());
 

@@ -51,14 +51,14 @@ impl ArtifactFs {
         &self,
         path: &BuildArtifactPath,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         self.buck_out_path_resolver.resolve_gen(path, content_hash)
     }
 
     pub fn resolve_build_configuration_hash_path(
         &self,
         path: &BuildArtifactPath,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         self.buck_out_path_resolver
             .resolve_gen_configuration_hash_path(path)
     }
@@ -66,14 +66,14 @@ impl ArtifactFs {
     pub fn resolve_cell_path(
         &self,
         path: CellPathRef,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         self.cell_resolver.resolve_path(path)
     }
 
     pub fn resolve_source(
         &self,
         source_artifact_path: SourcePathRef,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let cell_resolver = self.cell_resolver();
         if let Some(origin) = cell_resolver
             .get(source_artifact_path.package().cell_name())?
@@ -93,7 +93,7 @@ impl ArtifactFs {
     pub fn resolve_offline_output_cache_path(
         &self,
         path: &BuildArtifactPath,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         self.buck_out_path_resolver.resolve_offline_cache(path)
     }
 

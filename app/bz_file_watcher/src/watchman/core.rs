@@ -16,14 +16,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use buck2_certs::validate::validate_certs;
-use buck2_common::manifold::Bucket;
-use buck2_common::manifold::ManifoldClient;
-use buck2_common::manifold::Ttl;
-use buck2_core::buck2_env;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::internal_error;
+use bz_certs::validate::validate_certs;
+use bz_common::manifold::Bucket;
+use bz_common::manifold::ManifoldClient;
+use bz_common::manifold::Ttl;
+use bz_core::bz_env;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::internal_error;
 use dupe::Dupe;
 use futures::future::Future;
 use serde::Deserialize;
@@ -56,7 +56,7 @@ fn watchman_error_tag(e: &watchman_client::Error) -> ErrorTag {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 enum WatchmanClientError {
     #[buck2(input)]
     #[error("Configured timeout is zero")]
@@ -174,8 +174,8 @@ impl Debug for WatchmanClient {
 
 async fn with_timeout<R>(
     fut: impl Future<Output = Result<R, watchman_client::Error>> + Send,
-) -> buck2_error::Result<R> {
-    let timeout = buck2_env!("BUCK2_WATCHMAN_TIMEOUT", type=u64, default=57)?;
+) -> bz_error::Result<R> {
+    let timeout = bz_env!("BUCK2_WATCHMAN_TIMEOUT", type=u64, default=57)?;
     if timeout == 0 {
         return Err(WatchmanClientError::ZeroTimeout.into());
     }
@@ -186,10 +186,10 @@ async fn with_timeout<R>(
                 .await
                 .buck_error_context("Watchman Request Failed")?;
 
-            let request_err: buck2_error::Error =
+            let request_err: bz_error::Error =
                 WatchmanClientError::RequestFailed { inner: e }.into();
 
-            if request_err.has_tag(buck2_error::ErrorTag::WatchmanServerError) {
+            if request_err.has_tag(bz_error::ErrorTag::WatchmanServerError) {
                 Err(
                     request_err.context(get_watchman_eden_error_logs().await.unwrap_or(
                         "Attempted to retrieve Watchman and Eden rage logs but failed".to_owned(),
@@ -231,7 +231,7 @@ async fn write_to_manifold(buf: &[u8], name: &str) -> Option<String> {
 }
 
 async fn cmd_logs_to_manifold(cmd: &str, args: Vec<&str>) -> Option<String> {
-    let async_cmd = buck2_util::process::async_background_command(cmd)
+    let async_cmd = bz_util::process::async_background_command(cmd)
         .args(args)
         .output()
         .await;
@@ -266,7 +266,7 @@ impl WatchmanClient {
     async fn connect(
         connector: &Connector,
         path: CanonicalPath,
-    ) -> buck2_error::Result<WatchmanClient> {
+    ) -> bz_error::Result<WatchmanClient> {
         let client = with_timeout(connector.connect())
             .await
             .buck_error_context("Connecting to watchman")?;
@@ -279,7 +279,7 @@ impl WatchmanClient {
     async fn query<F: serde::de::DeserializeOwned + std::fmt::Debug + Clone + QueryFieldList>(
         &self,
         query: QueryRequestCommon,
-    ) -> buck2_error::Result<QueryResult<F>> {
+    ) -> bz_error::Result<QueryResult<F>> {
         let fut = self.client().query(self.root(), query);
 
         with_timeout(fut).await
@@ -306,7 +306,7 @@ pub(crate) trait SyncableQueryProcessor: Send + Sync {
         events: Vec<WatchmanEvent>,
         mergebase: &Option<String>,
         watchman_version: Option<String>,
-    ) -> buck2_error::Result<(Self::Output, Self::Payload)>;
+    ) -> bz_error::Result<(Self::Output, Self::Payload)>;
 
     /// Indicates that all derived data should be invalidated. This could happen, for example, if the watchman server restarts.
     async fn on_fresh_instance(
@@ -315,12 +315,12 @@ pub(crate) trait SyncableQueryProcessor: Send + Sync {
         events: Vec<WatchmanEvent>,
         mergebase: &Option<String>,
         watchman_version: Option<String>,
-    ) -> buck2_error::Result<(Self::Output, Self::Payload)>;
+    ) -> bz_error::Result<(Self::Output, Self::Payload)>;
 }
 
 /// commands to be sent to the SyncableQueryHandler.
 enum SyncableQueryCommand<T, P> {
-    Sync(P, oneshot::Sender<buck2_error::Result<(T, P)>>),
+    Sync(P, oneshot::Sender<bz_error::Result<(T, P)>>),
 }
 
 /// A SyncableQuery is similar to a subscription. When created, it accepts a query expression
@@ -406,7 +406,7 @@ where
         &mut self,
         payload: P,
         client: &mut Option<WatchmanClient>,
-    ) -> buck2_error::Result<(T, P)> {
+    ) -> bz_error::Result<(T, P)> {
         let sync_res = match self.sync_query(client).await {
             Ok(res) => Ok(res),
             Err(e) => self
@@ -463,7 +463,7 @@ where
         Ok(res)
     }
 
-    async fn reconnect(&mut self, client: &mut Option<WatchmanClient>) -> buck2_error::Result<()> {
+    async fn reconnect(&mut self, client: &mut Option<WatchmanClient>) -> bz_error::Result<()> {
         self.last_clock = Default::default();
         self.last_mergebase = None;
         *client = Some(
@@ -477,7 +477,7 @@ where
     async fn reconnect_and_sync_query(
         &mut self,
         client: &mut Option<WatchmanClient>,
-    ) -> buck2_error::Result<WatchmanSyncResult> {
+    ) -> bz_error::Result<WatchmanSyncResult> {
         self.reconnect(client).await?;
 
         let out = self.sync_query(client).await?;
@@ -488,7 +488,7 @@ where
     async fn sync_query(
         &mut self,
         client: &mut Option<WatchmanClient>,
-    ) -> buck2_error::Result<WatchmanSyncResult> {
+    ) -> bz_error::Result<WatchmanSyncResult> {
         let client = client
             .as_mut()
             .ok_or_else(|| internal_error!("No Watchman connection"))?;
@@ -602,7 +602,7 @@ where
     pub(crate) fn sync(
         &self,
         dice: P,
-    ) -> impl Future<Output = buck2_error::Result<(T, P)>> + Send + 'static + use<T, P> {
+    ) -> impl Future<Output = bz_error::Result<(T, P)>> + Send + 'static + use<T, P> {
         let (sync_done_tx, sync_done_rx) = tokio::sync::oneshot::channel();
         let tx_res = self
             .control_tx
@@ -632,7 +632,7 @@ where
         mergebase_with: Option<String>,
         empty_on_fresh_instance: bool,
         dice_clear_on_mergebase_change: bool,
-    ) -> buck2_error::Result<SyncableQuery<T, P>> {
+    ) -> bz_error::Result<SyncableQuery<T, P>> {
         let path = path.as_ref();
         let path = CanonicalPath::canonicalize(path)
             .with_buck_error_context(|| format!("Error canonicalizing: `{}`", path.display()))?;

@@ -29,8 +29,8 @@ rust_library(
     edition = "2024",
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
-        "//app/bz_re_configuration:buck2_re_configuration",
-        "//app/bz_util:buck2_util",
+        "//app/bz_re_configuration:bz_re_configuration",
+        "//app/bz_util:bz_util",
         "//gazebo/dupe:dupe",
         "//gazebo/gazebo:gazebo",
         "//remote_execution/oss/re_grpc_proto:re_grpc_proto",

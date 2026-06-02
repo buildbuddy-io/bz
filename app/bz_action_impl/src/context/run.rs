@@ -11,48 +11,48 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::ArtifactErrors;
-use buck2_artifact::artifact::artifact_type::DeclaredArtifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_build_api::actions::impls::expanded_command_line::ExpandedCommandLineDigest;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
-use buck2_build_api::interpreter::rule_defs::bazel::depset::BazelDepset;
-use buck2_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
-use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueUnpack;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_build_api::interpreter::rule_defs::command_executor_config::parse_custom_re_image;
-use buck2_build_api::interpreter::rule_defs::command_executor_config::parse_meta_internal_extra_params;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileAction;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileCommandLine;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::java_info::BazelJavaRunAction;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_executable;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_runfiles;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_artifact_entries;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_run_info::WorkerRunInfo;
-use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
-use buck2_core::category::CategoryRef;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::execution_types::executor_config::ReGangWorker;
-use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::StdBuckHashMap;
-use buck2_util::thin_box::ThinBoxSlice;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::ArtifactErrors;
+use bz_artifact::artifact::artifact_type::DeclaredArtifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_build_api::actions::impls::expanded_command_line::ExpandedCommandLineDigest;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use bz_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use bz_build_api::interpreter::rule_defs::bazel::depset::BazelDepset;
+use bz_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use bz_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueUnpack;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_build_api::interpreter::rule_defs::command_executor_config::parse_custom_re_image;
+use bz_build_api::interpreter::rule_defs::command_executor_config::parse_meta_internal_extra_params;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileAction;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileCommandLine;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::java_info::BazelJavaRunAction;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_executable;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_runfiles;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_artifact_entries;
+use bz_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::worker_run_info::WorkerRunInfo;
+use bz_build_api::interpreter::rule_defs::provider::dependency::Dependency;
+use bz_core::category::CategoryRef;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RemoteExecutorDependency;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckIndexSet;
+use bz_hash::StdBuckHashMap;
+use bz_util::thin_box::ThinBoxSlice;
 use dupe::Dupe;
 use either::Either;
 use host_sharing::WeightClass;
@@ -95,7 +95,7 @@ use crate::actions::impls::run::new_executor_preference;
 use crate::actions::impls::run::precompute_bazel_local_action_cache_command_line_digest_for_cc_compile_command_line;
 use crate::actions::impls::run::precompute_bazel_local_action_cache_command_line_digest_for_cmd_args;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum RunActionError {
     #[error("expected at least one output artifact, did not get any")]
@@ -206,7 +206,7 @@ fn bazel_runfiles_artifact_entries_from_value<'v>(
         return Ok(None);
     }
     let runfiles = BazelRunfiles::from_value(runfiles).ok_or_else(|| {
-        buck2_error::internal_error!("Bazel files_to_run runfiles should be runfiles")
+        bz_error::internal_error!("Bazel files_to_run runfiles should be runfiles")
     })?;
     Ok(Some(bazel_runfiles_artifact_entries(
         eval.heap(),
@@ -339,7 +339,7 @@ fn bazel_push_tool_runfiles<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<()> {
     let Some(entries) = ListRef::from_value(runfiles) else {
-        return Err(buck2_error::internal_error!("Bazel tool runfiles should be a list").into());
+        return Err(bz_error::internal_error!("Bazel tool runfiles should be a list").into());
     };
     if entries.is_empty() {
         return Ok(());
@@ -464,8 +464,8 @@ fn bazel_resolve_env<'v>(
         return Ok(None);
     };
     let dict = DictRef::from_value(env.value).ok_or_else(|| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "`env` should be a dict, got `{}`",
             env.value.get_type()
         )
@@ -473,16 +473,16 @@ fn bazel_resolve_env<'v>(
     let mut entries = Vec::with_capacity(dict.len());
     for (key, value) in dict.iter() {
         let Some(key) = key.unpack_str() else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "`env` keys must be strings, got `{}`",
                 key.get_type()
             )
             .into());
         };
         let Some(value) = value.unpack_str() else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "`env` values must be strings, got `{}`",
                 value.get_type()
             )
@@ -539,7 +539,7 @@ impl<'v> CommandLineArtifactVisitor<'v> for BazelResourceSetInputVisitor {
         &mut self,
         declared_artifact: DeclaredArtifact<'v>,
         tags: Vec<&ArtifactTag>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Ok(artifact) = declared_artifact.ensure_bound() {
             self.visit_input(ArtifactGroup::Artifact(artifact.into_artifact()), tags);
         }
@@ -564,8 +564,8 @@ fn bazel_resource_number<'v>(dict: &DictRef<'v>, key: &str, default: f64) -> sta
         return Ok(default);
     };
     let Some(value) = UnpackFloat::unpack_value(value)? else {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Illegal resource value type for key `{}`: got `{}`, want int or float",
             key,
             value.get_type()
@@ -592,8 +592,8 @@ fn bazel_run_weight_from_resource_set<'v>(
     let input_count = eval.heap().alloc(input_count);
     let response = eval.eval_function(resource_set.0, &[os_name, input_count], &[])?;
     let dict = DictRef::from_value(response).ok_or_else(|| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "resource_set callback must return a dict, got `{}`",
             response.get_type()
         )
@@ -601,16 +601,16 @@ fn bazel_run_weight_from_resource_set<'v>(
 
     for (key, _) in dict.iter() {
         let Some(key) = key.unpack_str() else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "resource_set keys must be strings, got `{}`",
                 key.get_type()
             )
             .into());
         };
         if key != "cpu" && key != "memory" && key != "local_test" {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Illegal resource key `{}`",
                 key
             )
@@ -623,8 +623,8 @@ fn bazel_run_weight_from_resource_set<'v>(
     let _local_test = bazel_resource_number(&dict, "local_test", 1.0)?;
     let permits = cpu.max(1.0).ceil() as u32;
     Ok(WeightClass::Permits(permits.try_into().map_err(|e| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid resource_set cpu: {e}"
         )
     })?))
@@ -663,7 +663,7 @@ fn register_bazel_run_action<'v>(
 
     let outputs = bazel_run_outputs(outputs);
     if outputs.is_empty() {
-        return Err(buck2_error::Error::from(RunActionError::NoOutputsSpecified).into());
+        return Err(bz_error::Error::from(RunActionError::NoOutputsSpecified).into());
     }
     let should_precompute_bazel_run_command_line = mnemonic.as_ref().is_some_and(|mnemonic| {
         matches!(mnemonic.as_str(), "CppCompile" | "Javac" | "JavacTurbine")
@@ -895,7 +895,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         let mut shell_args = Vec::with_capacity(arguments.items.len() + 3);
         shell_args.push(heap.alloc_str("-c").to_value());
         shell_args.push(heap.alloc_str(command).to_value());
-        shell_args.push(heap.alloc_str("buck2_run_shell").to_value());
+        shell_args.push(heap.alloc_str("bz_run_shell").to_value());
         shell_args.extend(arguments.items);
         let args = StarlarkCmdArgs::from_values(shell_args)?;
         let env = bazel_resolve_env(env, eval)?;
@@ -1202,12 +1202,12 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             resource_set,
         );
         let arguments =
-            arguments.ok_or_else(|| buck2_error::Error::from(RunActionError::MissingArguments))?;
+            arguments.ok_or_else(|| bz_error::Error::from(RunActionError::MissingArguments))?;
         let category =
-            category.ok_or_else(|| buck2_error::Error::from(RunActionError::MissingCategory))?;
+            category.ok_or_else(|| bz_error::Error::from(RunActionError::MissingCategory))?;
         if incremental_remote_outputs && !no_outputs_cleanup {
             // Precaution to make sure content-based paths are not involved.
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 RunActionError::IncrementalRemoteOutputsWithoutNoOutputsCleanup,
             )
             .into());
@@ -1284,7 +1284,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                 self.inner.visit_frozen_output(artifact, tags)
             }
 
-            fn push_frame(&mut self) -> buck2_error::Result<()> {
+            fn push_frame(&mut self) -> bz_error::Result<()> {
                 self.depth += 1;
                 if self.depth > 1000 {
                     return Err(RunActionError::ArtifactVisitRecursionLimitExceeded.into());
@@ -1327,18 +1327,18 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             (None, None) => WeightClass::Permits(1),
             (Some(v), None) => {
                 if v == 0 {
-                    return Err(buck2_error::Error::from(RunActionError::InvalidWeight(v)).into());
+                    return Err(bz_error::Error::from(RunActionError::InvalidWeight(v)).into());
                 }
                 WeightClass::Permits(v.try_into().unwrap()) // We don't support < 32 bit platforms.
             }
             (None, Some(v)) => WeightClass::Percentage(
                 WeightPercentage::try_new(v)
-                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
                     .buck_error_context("Invalid `weight_percentage`")?,
             ),
             (Some(..), Some(..)) => {
                 return Err(
-                    buck2_error::Error::from(RunActionError::DuplicateWeightsSpecified).into(),
+                    bz_error::Error::from(RunActionError::DuplicateWeightsSpecified).into(),
                 );
             }
         };
@@ -1361,7 +1361,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         } = artifact_visitor;
 
         if let Some(frozen) = { artifacts.frozen_outputs }.pop() {
-            return Err(buck2_error::Error::from(ArtifactErrors::DuplicateBind(frozen)).into());
+            return Err(bz_error::Error::from(ArtifactErrors::DuplicateBind(frozen)).into());
         }
 
         let mut dep_files_configuration = RunActionDepFiles::new();
@@ -1373,7 +1373,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
                 if count != 1 {
                     return Err(
-                        buck2_error::Error::from(RunActionError::InvalidDepFileOutputs {
+                        bz_error::Error::from(RunActionError::InvalidDepFileOutputs {
                             key: (*key).to_owned(),
                             count,
                         })
@@ -1386,7 +1386,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                         v.insert(Arc::from(key));
                     }
                     small_map::Entry::Occupied(o) => {
-                        return Err(buck2_error::Error::from(
+                        return Err(bz_error::Error::from(
                             RunActionError::ConflictingDepFiles {
                                 first: (**o.get()).to_owned(),
                                 second: (*key).to_owned(),
@@ -1400,7 +1400,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
         if let Some((input, conflicting_tags)) = inputs_with_multiple_tags_for_dep_files.first() {
             return Err(
-                buck2_error::Error::from(RunActionError::ConflictingDepFileInputTags {
+                bz_error::Error::from(RunActionError::ConflictingDepFileInputTags {
                     input: input.dupe(),
                     tags: conflicting_tags
                         .iter()
@@ -1415,7 +1415,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             (Some(env_var), Some(path)) => {
                 let path: ForwardRelativePathBuf = path.try_into()?;
                 this.state()?.claim_output_path(eval, &path)?;
-                buck2_error::Ok(Some(Box::new(MetadataParameter {
+                bz_error::Ok(Some(Box::new(MetadataParameter {
                     env_var,
                     path,
                     ignore_tags: incremental_metadata_ignore_tags
@@ -1430,14 +1430,14 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         }?;
 
         if artifacts.declared_outputs.is_empty() {
-            return Err(buck2_error::Error::from(RunActionError::NoOutputsSpecified).into());
+            return Err(bz_error::Error::from(RunActionError::NoOutputsSpecified).into());
         }
         let heap = eval.heap();
 
         for o in outputs_for_error_handler.items.iter() {
             let to_materialize = o.artifact();
             if !artifacts.declared_outputs.contains(&to_materialize) {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     RunActionError::FailedActionArtifactNotDeclared {
                         path: o.to_string(),
                     },
@@ -1467,12 +1467,12 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         let re_dependencies = remote_execution_dependencies
             .into_iter()
             .map(RemoteExecutorDependency::parse)
-            .collect::<buck2_error::Result<ThinBoxSlice<RemoteExecutorDependency>>>()?;
+            .collect::<bz_error::Result<ThinBoxSlice<RemoteExecutorDependency>>>()?;
 
         let re_gang_workers = re_gang_workers
             .into_iter()
             .map(ReGangWorker::parse)
-            .collect::<buck2_error::Result<ThinBoxSlice<ReGangWorker>>>()?;
+            .collect::<bz_error::Result<ThinBoxSlice<ReGangWorker>>>()?;
 
         let re_custom_image = parse_custom_re_image(
             "remote_execution_dynamic_image",
@@ -1485,7 +1485,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         let timeout = match timeout_seconds.into_option() {
             Some(t) => {
                 if t == 0 {
-                    return Err(buck2_error::Error::from(RunActionError::InvalidTimeout(t)).into());
+                    return Err(bz_error::Error::from(RunActionError::InvalidTimeout(t)).into());
                 }
                 Some(Duration::from_secs(t.into()))
             }
@@ -1495,7 +1495,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         if incremental_remote_outputs {
             for o in artifacts.declared_outputs.iter() {
                 if o.has_content_based_path() {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         RunActionError::IncrementalRemoteOutputsWithContentBasedOutputs {
                             path: o.get_path().to_string(),
                         },
@@ -1543,7 +1543,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             };
             for o in artifacts.declared_outputs.iter() {
                 if !o.has_content_based_path() {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         RunActionError::ExpectEligibleForDedupeWithNonContentBasedOutput {
                             path: o.get_path().to_string(),
                         },
@@ -1554,9 +1554,9 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
 
             for i in artifacts.inputs.iter() {
                 if i.is_eligible_for_dedupe(target_platform)
-                    == buck2_data::EligibleForDedupe::IneligibleInput
+                    == bz_data::EligibleForDedupe::IneligibleInput
                 {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         RunActionError::ExpectEligibleForDedupeWithIneligibleInput {
                             input: i.dupe(),
                         },

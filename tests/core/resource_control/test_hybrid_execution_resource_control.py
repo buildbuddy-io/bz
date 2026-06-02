@@ -36,7 +36,7 @@ async def test_memory_pressure_telemetry(
     buck: Buck,
 ) -> None:
     with open(buck.cwd / ".buckconfig.local", "w") as f:
-        f.write("[buck2_resource_control]\n")
+        f.write("[bz_resource_control]\n")
         f.write("memory_high_per_action = 1048576\n")  # 1 MiB
 
     await buck.build(
@@ -67,7 +67,7 @@ async def test_resource_control_events_created(
     buck: Buck,
 ) -> None:
     with open(buck.cwd / ".buckconfig.local", "w") as f:
-        f.write("[buck2_resource_control]\n")
+        f.write("[bz_resource_control]\n")
         f.write("status = required\n")
         f.write("enable_action_cgroup_pool_v2 = true\n")
         f.write(f"memory_high_actions = {200 * 1024 * 1024}\n")  # 200 MiB

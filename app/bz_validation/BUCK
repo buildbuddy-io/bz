@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_validation",
+    name = "bz_validation",
     srcs = glob(
         ["src/**/*.rs"],
     ),
@@ -16,12 +16,12 @@ rust_library(
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:serde_json",
         "//bz/allocative/allocative:allocative",
-        "//bz/app/bz_artifact:buck2_artifact",
-        "//bz/app/bz_build_api:buck2_build_api",
-        "//bz/app/bz_core:buck2_core",
-        "//bz/app/bz_error:buck2_error",
-        "//bz/app/bz_execute:buck2_execute",
-        "//bz/app/bz_fs:buck2_fs",
+        "//bz/app/bz_artifact:bz_artifact",
+        "//bz/app/bz_build_api:bz_build_api",
+        "//bz/app/bz_core:bz_core",
+        "//bz/app/bz_error:bz_error",
+        "//bz/app/bz_execute:bz_execute",
+        "//bz/app/bz_fs:bz_fs",
         "//bz/dice/dice:dice",
         "//bz/dice/dice_error:dice_error",
         "//bz/gazebo/dupe:dupe",

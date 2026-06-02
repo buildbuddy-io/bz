@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 license = { workspace = true }
-name = "buck2_common"
+name = "bz_common"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -65,16 +65,16 @@ starlark_map = { workspace = true }
 starlark_syntax = { workspace = true }
 static_interner = { workspace = true }
 
-buck2_cli_proto = { workspace = true }
-buck2_core = { workspace = true }
-buck2_data = { workspace = true }
-buck2_error = { workspace = true }
-buck2_events = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_hash = { workspace = true }
-buck2_http = { workspace = true }
-buck2_util = { workspace = true }
-buck2_wrapper_common = { workspace = true }
+bz_cli_proto = { workspace = true }
+bz_core = { workspace = true }
+bz_data = { workspace = true }
+bz_error = { workspace = true }
+bz_events = { workspace = true }
+bz_fs = { workspace = true }
+bz_hash = { workspace = true }
+bz_http = { workspace = true }
+bz_util = { workspace = true }
+bz_wrapper_common = { workspace = true }
 dice_futures = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]

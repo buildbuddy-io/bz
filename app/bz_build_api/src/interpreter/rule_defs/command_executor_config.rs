@@ -12,29 +12,29 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_core::execution_types::executor_config::CacheUploadBehavior;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::execution_types::executor_config::CommandGenerationOptions;
-use buck2_core::execution_types::executor_config::Executor;
-use buck2_core::execution_types::executor_config::HybridExecutionLevel;
-use buck2_core::execution_types::executor_config::ImagePackageIdentifier;
-use buck2_core::execution_types::executor_config::LocalExecutorOptions;
-use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::execution_types::executor_config::ReGang;
-use buck2_core::execution_types::executor_config::ReGangLocality;
-use buck2_core::execution_types::executor_config::ReGangWorker;
-use buck2_core::execution_types::executor_config::RePlatformFields;
-use buck2_core::execution_types::executor_config::RemoteEnabledExecutor;
-use buck2_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
-use buck2_core::execution_types::executor_config::RemoteExecutionPolicy;
-use buck2_core::execution_types::executor_config::RemoteExecutorCafFbpkg;
-use buck2_core::execution_types::executor_config::RemoteExecutorCustomImage;
-use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
-use buck2_core::execution_types::executor_config::RemoteExecutorOptions;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
+use bz_core::execution_types::executor_config::CacheUploadBehavior;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::execution_types::executor_config::CommandGenerationOptions;
+use bz_core::execution_types::executor_config::Executor;
+use bz_core::execution_types::executor_config::HybridExecutionLevel;
+use bz_core::execution_types::executor_config::ImagePackageIdentifier;
+use bz_core::execution_types::executor_config::LocalExecutorOptions;
+use bz_core::execution_types::executor_config::MetaInternalExtraParams;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::execution_types::executor_config::ReGang;
+use bz_core::execution_types::executor_config::ReGangLocality;
+use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RePlatformFields;
+use bz_core::execution_types::executor_config::RemoteEnabledExecutor;
+use bz_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
+use bz_core::execution_types::executor_config::RemoteExecutionPolicy;
+use bz_core::execution_types::executor_config::RemoteExecutorCafFbpkg;
+use bz_core::execution_types::executor_config::RemoteExecutorCustomImage;
+use bz_core::execution_types::executor_config::RemoteExecutorDependency;
+use bz_core::execution_types::executor_config::RemoteExecutorOptions;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
 use derive_more::Display;
 use starlark::any::ProvidesStaticType;
 use starlark::collections::SmallMap;
@@ -52,7 +52,7 @@ use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark_map::sorted_map::SortedMap;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum CommandExecutorConfigErrors {
     #[error("expected a dict, got `{0}` (type `{1}`)")]
@@ -192,7 +192,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
             } else {
                 let re_properties = DictRef::from_value(remote_execution_properties.to_value())
                     .ok_or_else(|| {
-                        buck2_error::Error::from(CommandExecutorConfigErrors::RePropertiesNotADict(
+                        bz_error::Error::from(CommandExecutorConfigErrors::RePropertiesNotADict(
                             remote_execution_properties.to_value().to_repr(),
                             remote_execution_properties.to_value().get_type().to_owned(),
                         ))
@@ -211,12 +211,12 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
             let re_dependencies = remote_execution_dependencies
                 .into_iter()
                 .map(RemoteExecutorDependency::parse)
-                .collect::<buck2_error::Result<Vec<RemoteExecutorDependency>>>()?;
+                .collect::<bz_error::Result<Vec<RemoteExecutorDependency>>>()?;
 
             let re_gang_workers = remote_execution_gang_workers
                 .into_iter()
                 .map(ReGangWorker::parse)
-                .collect::<buck2_error::Result<Vec<ReGangWorker>>>()?;
+                .collect::<bz_error::Result<Vec<ReGangWorker>>>()?;
 
             let re_dynamic_image = parse_custom_re_image(
                 "remote_execution_custom_image",
@@ -227,7 +227,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                 parse_meta_internal_extra_params(meta_internal_extra_params.into_option())?;
 
             if extra_params.gang.is_some() && !re_gang_workers.is_empty() {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     CommandExecutorConfigErrors::GangAndGangWorkersExclusive,
                 )
                 .into());
@@ -267,7 +267,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                     .buck_error_context("remote_execution_max_input_files_mebibytes is negative")?
                     .map(|b| b * 1024 * 1024);
 
-                let re_max_queue_time = buck2_common::self_test_timeout::maybe_cap_timeout(
+                let re_max_queue_time = bz_common::self_test_timeout::maybe_cap_timeout(
                     remote_execution_queue_time_threshold_s.map(Duration::from_secs),
                 );
 
@@ -310,7 +310,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
             // FIXME: This should probably default to `remote_enabled` and not `true`, but
             // historically this has been `true`, so we should probably migrate our defs to set
             // `remote_cache_enabled = True` explicitly first.
-            let remote_cache_default = if buck2_core::is_open_source() {
+            let remote_cache_default = if bz_core::is_open_source() {
                 remote_enabled
             } else {
                 true
@@ -332,12 +332,12 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
 
                     Executor::RemoteEnabled(RemoteEnabledExecutorOptions {
                         executor,
-                        re_properties: re_properties.ok_or(buck2_error::Error::from(
+                        re_properties: re_properties.ok_or(bz_error::Error::from(
                             CommandExecutorConfigErrors::MissingField(
                                 "remote_execution_properties",
                             ),
                         ))?,
-                        re_use_case: re_use_case.ok_or(buck2_error::Error::from(
+                        re_use_case: re_use_case.ok_or(bz_error::Error::from(
                             CommandExecutorConfigErrors::MissingField("re_use_case"),
                         ))?,
                         re_action_key,
@@ -358,7 +358,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                         // remote_enabled first.
                         re_properties: re_properties.unwrap_or_default(),
                         re_use_case: re_use_case
-                            .unwrap_or_else(RemoteExecutorUseCase::buck2_default),
+                            .unwrap_or_else(RemoteExecutorUseCase::bz_default),
                         re_action_key,
                         cache_upload_behavior,
                         remote_cache_enabled: true,
@@ -405,7 +405,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
 pub fn parse_custom_re_image(
     field_name: &'static str,
     value: Value,
-) -> buck2_error::Result<Option<Box<RemoteExecutorCustomImage>>> {
+) -> bz_error::Result<Option<Box<RemoteExecutorCustomImage>>> {
     if value.is_none() {
         return Ok(None);
     }
@@ -413,7 +413,7 @@ pub fn parse_custom_re_image(
     fn dict_ref<'v>(
         field_name: &'static str,
         value: Value<'v>,
-    ) -> buck2_error::Result<DictRef<'v>> {
+    ) -> bz_error::Result<DictRef<'v>> {
         match DictRef::from_value(value) {
             Some(dict_ref) => Ok(dict_ref),
             None => Err(CommandExecutorConfigErrors::InvalidField(field_name).into()),
@@ -423,14 +423,14 @@ pub fn parse_custom_re_image(
     fn list_ref<'v>(
         field_name: &'static str,
         value: Value<'v>,
-    ) -> buck2_error::Result<&'v ListRef<'v>> {
+    ) -> bz_error::Result<&'v ListRef<'v>> {
         match ListRef::from_value(value) {
             Some(list_ref) => Ok(list_ref),
             None => Err(CommandExecutorConfigErrors::InvalidField(field_name).into()),
         }
     }
 
-    fn get_value<'v>(dict_ref: &DictRef<'v>, name: &'static str) -> buck2_error::Result<Value<'v>> {
+    fn get_value<'v>(dict_ref: &DictRef<'v>, name: &'static str) -> bz_error::Result<Value<'v>> {
         if let Some(value) = dict_ref.get_str(name) {
             if value.is_none() {
                 Err(CommandExecutorConfigErrors::InvalidField(name).into())
@@ -442,7 +442,7 @@ pub fn parse_custom_re_image(
         }
     }
 
-    fn get_string<'v>(dict_ref: &DictRef<'v>, name: &'static str) -> buck2_error::Result<String> {
+    fn get_string<'v>(dict_ref: &DictRef<'v>, name: &'static str) -> bz_error::Result<String> {
         let value = get_value(dict_ref, name)?;
         Ok(value.to_str())
     }
@@ -484,12 +484,12 @@ pub fn parse_custom_re_image(
 
 fn parse_remote_execution_policy(
     policy: Option<Value>,
-) -> buck2_error::Result<RemoteExecutionPolicy> {
+) -> bz_error::Result<RemoteExecutionPolicy> {
     match policy {
         None => Ok(RemoteExecutionPolicy::default()),
         Some(policy) => {
             let re_policy_dict = DictRef::from_value(policy.to_value()).ok_or_else(|| {
-                buck2_error::Error::from(CommandExecutorConfigErrors::RePolicyNotADict(
+                bz_error::Error::from(CommandExecutorConfigErrors::RePolicyNotADict(
                     policy.to_value().to_repr(),
                     policy.to_value().get_type().to_owned(),
                 ))
@@ -515,13 +515,13 @@ fn parse_remote_execution_policy(
 
 fn parse_remote_execution_caf_fbpkgs(
     caf_fbpkgs: Option<Value>,
-) -> buck2_error::Result<Vec<RemoteExecutorCafFbpkg>> {
+) -> bz_error::Result<Vec<RemoteExecutorCafFbpkg>> {
     match caf_fbpkgs {
         None => Ok(vec![]),
         Some(caf_fbpkgs) => {
             let re_caf_fbpkgs_list =
                 ListRef::from_value(caf_fbpkgs.to_value()).ok_or_else(|| {
-                    buck2_error::Error::from(CommandExecutorConfigErrors::ReCafFbpkgsNotAList(
+                    bz_error::Error::from(CommandExecutorConfigErrors::ReCafFbpkgsNotAList(
                         caf_fbpkgs.to_value().to_repr(),
                         caf_fbpkgs.to_value().get_type().to_owned(),
                     ))
@@ -542,21 +542,21 @@ fn parse_remote_execution_caf_fbpkgs(
                         tag: dict_ref.get_str("tag").map(|v| v.to_str()),
                         permissions: dict_ref.get_str("permissions").map(|v| v.to_str()),
                     }),
-                    None => Err(buck2_error::Error::from(
+                    None => Err(bz_error::Error::from(
                         CommandExecutorConfigErrors::ReCafFbpkgNotADict(
                             caf_fbpkg.to_repr(),
                             caf_fbpkg.get_type().to_owned(),
                         ),
                     )),
                 })
-                .collect::<buck2_error::Result<Vec<RemoteExecutorCafFbpkg>>>()?)
+                .collect::<bz_error::Result<Vec<RemoteExecutorCafFbpkg>>>()?)
         }
     }
 }
 
 pub fn parse_meta_internal_extra_params<'v>(
     params: Option<DictRef<'v>>,
-) -> buck2_error::Result<Arc<MetaInternalExtraParams>> {
+) -> bz_error::Result<Arc<MetaInternalExtraParams>> {
     let Some(params) = params else {
         return Ok(MetaInternalExtraParams::default_arc());
     };
@@ -592,7 +592,7 @@ pub fn parse_meta_internal_extra_params<'v>(
 }
 fn parse_remote_execution_gang<'v>(
     gang: Option<DictRef<'v>>,
-) -> buck2_error::Result<Option<ReGang>> {
+) -> bz_error::Result<Option<ReGang>> {
     let Some(gang) = gang else {
         return Ok(None);
     };
@@ -602,7 +602,7 @@ fn parse_remote_execution_gang<'v>(
         .get_str("capabilities")
         .ok_or(CommandExecutorConfigErrors::MissingField("capabilities"))?;
     let capabilities_dict = DictRef::from_value(capabilities_value).ok_or_else(|| {
-        buck2_error::Error::from(CommandExecutorConfigErrors::ReGangCapabilitiesNotADict(
+        bz_error::Error::from(CommandExecutorConfigErrors::ReGangCapabilitiesNotADict(
             capabilities_value.to_repr(),
             capabilities_value.get_type().to_owned(),
         ))
@@ -621,7 +621,7 @@ fn parse_remote_execution_gang<'v>(
         .get_str("num_of_workers")
         .ok_or(CommandExecutorConfigErrors::MissingField("num_of_workers"))?;
     let num_of_workers: i32 = num_of_workers_value.unpack_i32().ok_or_else(|| {
-        buck2_error::Error::from(CommandExecutorConfigErrors::ReGangNumOfWorkersNotAnInt(
+        bz_error::Error::from(CommandExecutorConfigErrors::ReGangNumOfWorkersNotAnInt(
             num_of_workers_value.to_repr(),
         ))
     })?;
@@ -636,7 +636,7 @@ fn parse_remote_execution_gang<'v>(
         .get_str("num_sub_groups")
         .map(|v| {
             v.unpack_i32().ok_or_else(|| {
-                buck2_error::Error::from(CommandExecutorConfigErrors::ReGangNumSubGroupsNotAnInt(
+                bz_error::Error::from(CommandExecutorConfigErrors::ReGangNumSubGroupsNotAnInt(
                     v.to_repr(),
                 ))
             })

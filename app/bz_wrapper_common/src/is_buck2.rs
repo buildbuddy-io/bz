@@ -22,7 +22,7 @@ pub enum WhoIsAsking {
     BuckWrapper,
 }
 
-pub(crate) fn is_buck2_exe(path: &Path, who_is_asking: WhoIsAsking) -> bool {
+pub(crate) fn is_bz_exe(path: &Path, who_is_asking: WhoIsAsking) -> bool {
     let Some(file_stem) = path.file_stem() else {
         return false;
     };
@@ -63,26 +63,26 @@ mod tests {
     use std::path::Path;
 
     use crate::is_buck2::WhoIsAsking;
-    use crate::is_buck2::is_buck2_exe;
+    use crate::is_buck2::is_bz_exe;
 
     #[test]
-    fn test_is_buck2_exe() {
+    fn test_is_bz_exe() {
         let (fake_buck, other_path) = if cfg!(windows) {
             ("C:\\dir\\buck2.exe", "C:\\dir\\other.exe")
         } else {
             ("/dir/buck2", "/dir/other")
         };
 
-        assert!(is_buck2_exe(Path::new(fake_buck), WhoIsAsking::Buck2));
-        assert!(is_buck2_exe(Path::new(fake_buck), WhoIsAsking::BuckWrapper));
+        assert!(is_bz_exe(Path::new(fake_buck), WhoIsAsking::Buck2));
+        assert!(is_bz_exe(Path::new(fake_buck), WhoIsAsking::BuckWrapper));
 
         let current_exe = env::current_exe().unwrap();
 
-        assert!(is_buck2_exe(&current_exe, WhoIsAsking::Buck2));
-        assert!(!is_buck2_exe(&current_exe, WhoIsAsking::BuckWrapper));
+        assert!(is_bz_exe(&current_exe, WhoIsAsking::Buck2));
+        assert!(!is_bz_exe(&current_exe, WhoIsAsking::BuckWrapper));
 
-        assert!(!is_buck2_exe(Path::new(other_path), WhoIsAsking::Buck2));
-        assert!(!is_buck2_exe(
+        assert!(!is_bz_exe(Path::new(other_path), WhoIsAsking::Buck2));
+        assert!(!is_bz_exe(
             Path::new(other_path),
             WhoIsAsking::BuckWrapper
         ));

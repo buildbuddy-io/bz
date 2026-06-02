@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::exit_result::ExitResult;
 
 /// Print buck2 daemon directory (`~/.buckd/xxx`).
 #[derive(Debug, clap::Parser)]
@@ -18,7 +18,7 @@ pub struct DaemonDirCommand {}
 
 impl DaemonDirCommand {
     pub fn exec(self, _matches: BuckArgMatches<'_>, ctx: ClientCommandContext<'_>) -> ExitResult {
-        buck2_client_ctx::println!("{}", ctx.paths()?.daemon_dir()?.path.display())?;
+        bz_client_ctx::println!("{}", ctx.paths()?.daemon_dir()?.path.display())?;
         ExitResult::success()
     }
 }

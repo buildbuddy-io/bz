@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use starlark::values::Value;
 
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
@@ -30,7 +30,7 @@ pub trait AttrTypeCoerce {
         configurable: AttrIsConfigurable,
         _ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr>;
+    ) -> bz_error::Result<CoercedAttr>;
 
     fn starlark_type(&self) -> TyMaybeSelect;
 }

@@ -10,9 +10,9 @@
 
 use std::sync::Arc;
 
-use buck2_common::dice::cycles::CycleAdapterDescriptor;
-use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
-use buck2_util::cycle_detector::CycleDescriptor;
+use bz_common::dice::cycles::CycleAdapterDescriptor;
+use bz_interpreter::paths::module::OwnedStarlarkModulePath;
+use bz_util::cycle_detector::CycleDescriptor;
 use derive_more::Display;
 use dice::DynKey;
 use gazebo::prelude::VecExt;
@@ -28,7 +28,7 @@ pub enum LoadCycleKey {
     Module(OwnedStarlarkModulePath),
 }
 
-#[derive(Debug, Clone, buck2_error::Error)]
+#[derive(Debug, Clone, bz_error::Error)]
 #[buck2(tag = Input)]
 pub struct LoadCycleError {
     cycle: Arc<Vec<OwnedStarlarkModulePath>>,

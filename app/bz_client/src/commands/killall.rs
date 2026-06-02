@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_wrapper_common::is_buck2::WhoIsAsking;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_wrapper_common::is_buck2::WhoIsAsking;
 
 #[derive(Debug, clap::Parser)]
 #[clap(about = "Kill all buck2 processes on the machine")]
@@ -32,12 +32,12 @@ impl BuckSubcommand for KillallCommand {
         _ctx: ClientCommandContext<'_>,
         _events_ctx: &mut EventsCtx,
     ) -> ExitResult {
-        buck2_wrapper_common::killall(WhoIsAsking::Buck2, |s| {
-            let _ignored = buck2_client_ctx::eprintln!("{}", s);
+        bz_wrapper_common::killall(WhoIsAsking::Buck2, |s| {
+            let _ignored = bz_client_ctx::eprintln!("{}", s);
         })
         .then_some(())
-        .ok_or(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::KillAll,
+        .ok_or(bz_error::bz_error!(
+            bz_error::ErrorTag::KillAll,
             "Killall command failed"
         ))
         .into()

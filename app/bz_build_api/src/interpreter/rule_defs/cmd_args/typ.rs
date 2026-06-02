@@ -20,11 +20,11 @@ use std::fmt::Formatter;
 use std::marker::PhantomData;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_error::internal_error;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_hash::BuckIndexSet;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_error::internal_error;
+use bz_fs::paths::RelativePathBuf;
+use bz_hash::BuckIndexSet;
 use display_container::display_pair;
 use display_container::fmt_container;
 use display_container::iter_display_chain;
@@ -128,7 +128,7 @@ fn bazel_directory_expander_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 pub enum CommandLineError {
     #[error("Artifact(s) {0:?} cannot be used with ignore_artifacts as they are content-based")]
     #[buck2(input)]
@@ -240,7 +240,7 @@ impl<'v, F: Fields<'v>> FieldsRef<'v, F> {
         &self,
         ctx: &C,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<Option<RelativePathBuf>>
+    ) -> bz_error::Result<Option<RelativePathBuf>>
     where
         C: CommandLineContext + ?Sized,
     {
@@ -263,7 +263,7 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self.0.options() {
             None => {
                 for item in self.0.items() {
@@ -374,12 +374,12 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if !self.ignore_artifacts() {
             fn visit_items<'a>(
                 visitor: &mut dyn CommandLineArtifactVisitor<'a>,
                 items: &[CommandLineArg<'a>],
-            ) -> buck2_error::Result<()> {
+            ) -> bz_error::Result<()> {
                 for item in items {
                     visitor.push_frame()?;
                     item.as_command_line_arg().visit_artifacts(visitor)?;
@@ -415,9 +415,9 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
 
                 fn visit_declared_artifact(
                     &mut self,
-                    declared_artifact: buck2_artifact::artifact::artifact_type::DeclaredArtifact,
+                    declared_artifact: bz_artifact::artifact::artifact_type::DeclaredArtifact,
                     _tags: Vec<&ArtifactTag>,
-                ) -> buck2_error::Result<()> {
+                ) -> bz_error::Result<()> {
                     if declared_artifact.has_content_based_path() {
                         self.content_based_artifacts
                             .insert(declared_artifact.to_string());
@@ -468,7 +468,7 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
         &self,
         visitor: &mut dyn WriteToFileMacroVisitor,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         visitor.set_current_relative_to_path(&|ctx| {
             self.relative_to_path(ctx, artifact_path_mapping)
         })?;
@@ -722,7 +722,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkCmdArgs<'v> {
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         FieldsRef(self.0.borrow(), PhantomData).add_to_command_line(
             cli,
             context,
@@ -733,7 +733,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkCmdArgs<'v> {
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         FieldsRef(self.0.borrow(), PhantomData).visit_artifacts(visitor)
     }
 
@@ -745,7 +745,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkCmdArgs<'v> {
         &self,
         visitor: &mut dyn WriteToFileMacroVisitor,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         FieldsRef(self.0.borrow(), PhantomData)
             .visit_write_to_file_macros(visitor, artifact_path_mapping)
     }
@@ -761,14 +761,14 @@ impl<'v> CommandLineArgLike<'v> for FrozenStarlarkCmdArgs {
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         FieldsRef(self, PhantomData).add_to_command_line(cli, context, artifact_path_mapping)
     }
 
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         FieldsRef(self, PhantomData).visit_artifacts(visitor)
     }
 
@@ -780,7 +780,7 @@ impl<'v> CommandLineArgLike<'v> for FrozenStarlarkCmdArgs {
         &self,
         visitor: &mut dyn WriteToFileMacroVisitor,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         FieldsRef(self, PhantomData).visit_write_to_file_macros(visitor, artifact_path_mapping)
     }
 }
@@ -823,7 +823,7 @@ impl<'v> StarlarkCmdArgs<'v> {
         Self::default()
     }
 
-    pub fn from_values(values: impl IntoIterator<Item = Value<'v>>) -> buck2_error::Result<Self> {
+    pub fn from_values(values: impl IntoIterator<Item = Value<'v>>) -> bz_error::Result<Self> {
         let mut builder = Self::new();
         builder.0.get_mut().add_from_iterator(values.into_iter())?;
         Ok(builder)
@@ -833,14 +833,14 @@ impl<'v> StarlarkCmdArgs<'v> {
         values: impl IntoIterator<Item = Value<'v>>,
         arg_format: StringValue<'v>,
         parameter_file_type: &str,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let format = match parameter_file_type {
             "GCC_QUOTED" => ParamFileFormat::GccQuoted,
             "UNQUOTED" => ParamFileFormat::Multiline,
             "WINDOWS" => ParamFileFormat::Windows,
             parameter_file_type => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Invalid Bazel parameter file type `{parameter_file_type}`"
                 ));
             }
@@ -855,7 +855,7 @@ impl<'v> StarlarkCmdArgs<'v> {
         Ok(builder)
     }
 
-    pub fn add_hidden_value(&mut self, value: Value<'v>) -> buck2_error::Result<()> {
+    pub fn add_hidden_value(&mut self, value: Value<'v>) -> bz_error::Result<()> {
         self.0
             .get_mut()
             .add_hidden(StarlarkCommandLineValueUnpack::unpack_value_err(value)?)
@@ -895,8 +895,8 @@ impl<'v> StarlarkCmdArgs<'v> {
         }
 
         let values = value.iterate(heap).map_err(|_| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected hidden action input/tool to be a command-line value, sequence, or depset, got `{}`",
                 value.get_type()
             )
@@ -907,13 +907,13 @@ impl<'v> StarlarkCmdArgs<'v> {
         Ok(())
     }
 
-    pub fn try_from_value(value: Value<'v>) -> buck2_error::Result<Self> {
+    pub fn try_from_value(value: Value<'v>) -> bz_error::Result<Self> {
         Self::try_from_value_typed(StarlarkCommandLineValueUnpack::unpack_value_err(value)?)
     }
 
     pub fn try_from_value_typed(
         value: StarlarkCommandLineValueUnpack<'v>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut builder = Self::new();
         builder.0.get_mut().add_value_typed(value)?;
         Ok(builder)
@@ -928,14 +928,14 @@ pub enum StarlarkCommandLineValueUnpack<'v> {
 }
 
 impl<'v> StarlarkCommandLineData<'v> {
-    fn add_value(&mut self, value: Value<'v>) -> buck2_error::Result<()> {
+    fn add_value(&mut self, value: Value<'v>) -> bz_error::Result<()> {
         self.add_value_typed(StarlarkCommandLineValueUnpack::unpack_value_err(value)?)
     }
 
     fn add_value_typed(
         &mut self,
         value: StarlarkCommandLineValueUnpack<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match value {
             StarlarkCommandLineValueUnpack::List(values) => self.add_values(values.content())?,
             StarlarkCommandLineValueUnpack::CommandLineArg(value) => self.items.push(value),
@@ -946,7 +946,7 @@ impl<'v> StarlarkCommandLineData<'v> {
     /// Check the types of a list of values, and modify `data` accordingly
     ///
     /// The values must be one of: CommandLineArgLike or a list thereof.
-    fn add_values(&mut self, values: &[Value<'v>]) -> buck2_error::Result<()> {
+    fn add_values(&mut self, values: &[Value<'v>]) -> bz_error::Result<()> {
         self.items.reserve(values.len());
         for value in values {
             self.add_value(*value)?
@@ -957,7 +957,7 @@ impl<'v> StarlarkCommandLineData<'v> {
     fn add_from_iterator(
         &mut self,
         values: impl Iterator<Item = Value<'v>>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let (lower, upper) = values.size_hint();
         self.items.reserve(upper.unwrap_or(lower));
         values
@@ -967,7 +967,7 @@ impl<'v> StarlarkCommandLineData<'v> {
     }
 
     /// Add values to the artifact that don't show up on the command line, but do for dependency
-    fn add_hidden(&mut self, value: StarlarkCommandLineValueUnpack<'v>) -> buck2_error::Result<()> {
+    fn add_hidden(&mut self, value: StarlarkCommandLineValueUnpack<'v>) -> bz_error::Result<()> {
         match value {
             StarlarkCommandLineValueUnpack::List(values) => {
                 for value in values.content() {
@@ -1009,8 +1009,8 @@ fn bazel_args_format_literal<'v>(
         let next = idx + next;
         converted.push_str(&format[idx..next]);
         let Some(escaped) = format[next + 1..].chars().next() else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
                 parameter,
                 format
@@ -1023,8 +1023,8 @@ fn bazel_args_format_literal<'v>(
                 found = true;
             }
             's' => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
                     parameter,
                     format
@@ -1033,8 +1033,8 @@ fn bazel_args_format_literal<'v>(
             }
             '%' => converted.push('%'),
             _ => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
                     parameter,
                     format
@@ -1046,8 +1046,8 @@ fn bazel_args_format_literal<'v>(
     }
     converted.push_str(&format[idx..]);
     if !found {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
             parameter,
             format
@@ -1069,8 +1069,8 @@ fn bazel_args_values<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<V
     Ok(value
         .iterate(heap)
         .map_err(|_| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected value of type `sequence or depset`, got `{}`",
                 value.get_type()
             )
@@ -1160,7 +1160,7 @@ fn bazel_args_nested<'v>(
     before_each: Option<StringValue<'v>>,
     join_with: Option<StringValue<'v>>,
     expand_directories: bool,
-) -> buck2_error::Result<StarlarkCmdArgs<'v>> {
+) -> bz_error::Result<StarlarkCmdArgs<'v>> {
     let mut nested = StarlarkCommandLineData::default();
     if format_each.is_some() || before_each.is_some() || join_with.is_some() || expand_directories {
         let opts = nested.options_mut();
@@ -1234,8 +1234,8 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
             match name.as_str() {
                 "format" => {
                     let Some(value) = value.unpack_str() else {
-                        return Err(buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        return Err(bz_error::bz_error!(
+                            bz_error::ErrorTag::Input,
                             "expected `format` to be a string, got `{}`",
                             value.get_type()
                         )
@@ -1244,8 +1244,8 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
                     format = Some(bazel_args_format_literal(value, heap, "format")?);
                 }
                 _ => {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "unexpected named argument `{}` for Args.add",
                         name.as_str()
                     )
@@ -1295,8 +1295,8 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         let (arg_name, values) = match values {
             Some(values) => {
                 let Some(arg_name) = arg_name_or_values.unpack_str() else {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "expected value of type `string` for arg name, got `{}`",
                         arg_name_or_values.get_type()
                     )
@@ -1355,8 +1355,8 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         let (arg_name, values) = match values {
             Some(values) => {
                 let Some(arg_name) = arg_name_or_values.unpack_str() else {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "expected value of type `string` for arg name, got `{}`",
                         arg_name_or_values.get_type()
                     )
@@ -1434,8 +1434,8 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
         let format = match ParamFileFormat::parse(format) {
             Ok(format) => format,
-            Err(_) => return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            Err(_) => return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid value for parameter `format`: expected one of `shell`, `multiline`, `flag_per_line`"
             )
             .into()),
@@ -1445,8 +1445,8 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
             .param_file
             .get_or_insert_with(|| Box::new(ParamFileOptions::default()));
         if param_file.format_set {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "set_param_file_format() may only be called once"
             )
             .into());

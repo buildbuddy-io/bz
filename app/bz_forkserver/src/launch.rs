@@ -14,10 +14,10 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_resource_control::buck_cgroup_tree::BuckCgroupTree;
-use buck2_util::process::background_command;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_resource_control::buck_cgroup_tree::BuckCgroupTree;
+use bz_util::process::background_command;
 use tokio::net::UnixStream;
 use tokio::process::Command;
 
@@ -28,7 +28,7 @@ pub async fn launch_forkserver(
     args: impl IntoIterator<Item = impl AsRef<OsStr>>,
     state_dir: &AbsNormPath,
     cgroup_tree: Option<&BuckCgroupTree>,
-) -> buck2_error::Result<ForkserverClient> {
+) -> bz_error::Result<ForkserverClient> {
     let (client_io, server_io) =
         UnixStream::pair().buck_error_context("Failed to create fork server channel")?;
 
@@ -81,7 +81,7 @@ pub async fn launch_forkserver(
         format!("Failed to start Forkserver `{}`", exe.to_string_lossy())
     })?;
 
-    let channel = buck2_grpc::make_channel(client_io, "forkserver")
+    let channel = bz_grpc::make_channel(client_io, "forkserver")
         .await
         .buck_error_context("Error connecting to Forkserver")?;
 

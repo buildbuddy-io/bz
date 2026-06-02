@@ -13,9 +13,9 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use allocative::Allocative;
-use buck2_data::ToProtoMessage;
-use buck2_hash::BuckHasher;
-use buck2_util::strong_hasher::Blake3StrongHasher;
+use bz_data::ToProtoMessage;
+use bz_hash::BuckHasher;
+use bz_util::strong_hasher::Blake3StrongHasher;
 use dupe::Dupe;
 use equivalent::Equivalent;
 use once_cell::sync::Lazy;
@@ -36,7 +36,7 @@ use crate::configuration::hash::ConfigurationHash;
 use crate::event::EVENT_DISPATCH;
 use crate::provider::label::ProvidersLabel;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ConfigurationError {
     #[error(
@@ -53,7 +53,7 @@ enum ConfigurationError {
     UnspecifiedExec,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ConfigurationLookupError {
     #[error("
@@ -68,12 +68,12 @@ enum ConfigurationLookupError {
     ConfigFoundByHashLabelMismatch(ConfigurationData, BoundConfigurationId),
 }
 
-fn emit_configuration_instant_event(cfg: &ConfigurationData) -> buck2_error::Result<()> {
-    let constraints: Vec<buck2_data::Constraint> = cfg
+fn emit_configuration_instant_event(cfg: &ConfigurationData) -> bz_error::Result<()> {
+    let constraints: Vec<bz_data::Constraint> = cfg
         .data()?
         .constraints
         .iter()
-        .map(|(k, v)| buck2_data::Constraint {
+        .map(|(k, v)| bz_data::Constraint {
             setting: k.to_string(),
             value: v.to_string(),
         })
@@ -84,8 +84,8 @@ fn emit_configuration_instant_event(cfg: &ConfigurationData) -> buck2_error::Res
     // production code paths.
     if let Ok(event_dispatch) = EVENT_DISPATCH.get() {
         event_dispatch.emit_instant_event_for_data(
-            buck2_data::ConfigurationCreated {
-                cfg: Some(buck2_data::ConfigurationWithConstraints {
+            bz_data::ConfigurationCreated {
+                cfg: Some(bz_data::ConfigurationWithConstraints {
                     full_name: cfg.full_name().to_owned(),
                     constraint: constraints,
                 }),
@@ -132,7 +132,7 @@ impl ConfigurationData {
         label: String,
         data: ConfigurationDataData,
         is_marked_as_exec_platform: bool,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let label = BoundConfigurationLabel::new(label)?;
         let (cfg, disposition) = Self::from_data(HashedConfigurationPlatform::new(
             ConfigurationPlatform::Bound(label, data, is_marked_as_exec_platform),
@@ -231,7 +231,7 @@ impl ConfigurationData {
     ///
     /// This can only find configurations that have otherwise already been encountered by
     /// the current daemon process.
-    pub fn lookup_bound(cfg: BoundConfigurationId) -> buck2_error::Result<Self> {
+    pub fn lookup_bound(cfg: BoundConfigurationId) -> bz_error::Result<Self> {
         match INTERNER.get(ConfigurationHashRef(cfg.hash.as_str())) {
             Some(found_cfg) => {
                 let found_cfg = ConfigurationData(found_cfg);
@@ -251,18 +251,18 @@ impl ConfigurationData {
     pub fn get_constraint_value(
         &self,
         key: &ConstraintKey,
-    ) -> buck2_error::Result<Option<&ConstraintValue>> {
+    ) -> bz_error::Result<Option<&ConstraintValue>> {
         Ok(self.data()?.constraints.get(key))
     }
 
-    pub fn label(&self) -> buck2_error::Result<&str> {
+    pub fn label(&self) -> bz_error::Result<&str> {
         match &self.0.configuration_platform {
             ConfigurationPlatform::Bound(label, _, _) => Ok(label.as_str()),
             _ => Err(ConfigurationError::NotBound(self.to_string()).into()),
         }
     }
 
-    pub fn data(&self) -> buck2_error::Result<&ConfigurationDataData> {
+    pub fn data(&self) -> bz_error::Result<&ConfigurationDataData> {
         match &self.0.configuration_platform {
             ConfigurationPlatform::Builtin(BuiltinPlatform::UnspecifiedExec) => {
                 Err(ConfigurationError::UnspecifiedExec.into())
@@ -333,10 +333,10 @@ impl Serialize for ConfigurationData {
 }
 
 impl ToProtoMessage for ConfigurationData {
-    type Message = buck2_data::Configuration;
+    type Message = bz_data::Configuration;
 
     fn as_proto(&self) -> Self::Message {
-        buck2_data::Configuration {
+        bz_data::Configuration {
             full_name: self.full_name().to_owned(),
         }
     }
@@ -575,7 +575,7 @@ mod tests {
     /// doesn't. If we have a legit reason to update the config hash, we can update the hash here,
     /// but this will ensure we a) know and b) don't do it by accident.
     #[test]
-    fn test_stable_output_hash() -> buck2_error::Result<()> {
+    fn test_stable_output_hash() -> bz_error::Result<()> {
         let configuration = ConfigurationData::from_platform(
             "cfg_for//:testing_exec".to_owned(),
             ConfigurationDataData {

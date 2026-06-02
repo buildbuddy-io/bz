@@ -16,28 +16,28 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use allocative::Allocative;
-    use buck2_artifact::deferred::key::DeferredHolderKey;
-    use buck2_build_api::actions::execute::dice_data::set_fallback_executor_config;
-    use buck2_build_api::bxl::calculation::BxlComputeResult;
-    use buck2_build_api::bxl::result::BxlResult;
-    use buck2_build_api::bxl::types::BxlFunctionLabel;
-    use buck2_build_api::deferred::calculation::DeferredCalculation;
-    use buck2_build_api::deferred::types::Deferred;
-    use buck2_build_api::deferred::types::DeferredCtx;
-    use buck2_build_api::deferred::types::DeferredInput;
-    use buck2_build_api::deferred::types::DeferredInputsRef;
-    use buck2_build_api::deferred::types::DeferredOutput;
-    use buck2_build_api::deferred::types::DeferredRegistry;
-    use buck2_build_api::deferred::types::DeferredValue;
-    use buck2_common::dice::data::testing::SetTestingIoProvider;
-    use buck2_core::base_deferred_key::BaseDeferredKey;
-    use buck2_core::bxl::BxlFilePath;
-    use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-    use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_core::global_cfg_options::GlobalCfgOptions;
-    use buck2_execute::digest_config::DigestConfig;
-    use buck2_execute::digest_config::SetDigestConfig;
+    use bz_artifact::deferred::key::DeferredHolderKey;
+    use bz_build_api::actions::execute::dice_data::set_fallback_executor_config;
+    use bz_build_api::bxl::calculation::BxlComputeResult;
+    use bz_build_api::bxl::result::BxlResult;
+    use bz_build_api::bxl::types::BxlFunctionLabel;
+    use bz_build_api::deferred::calculation::DeferredCalculation;
+    use bz_build_api::deferred::types::Deferred;
+    use bz_build_api::deferred::types::DeferredCtx;
+    use bz_build_api::deferred::types::DeferredInput;
+    use bz_build_api::deferred::types::DeferredInputsRef;
+    use bz_build_api::deferred::types::DeferredOutput;
+    use bz_build_api::deferred::types::DeferredRegistry;
+    use bz_build_api::deferred::types::DeferredValue;
+    use bz_common::dice::data::testing::SetTestingIoProvider;
+    use bz_core::base_deferred_key::BaseDeferredKey;
+    use bz_core::bxl::BxlFilePath;
+    use bz_core::execution_types::execution::ExecutionPlatformResolution;
+    use bz_core::execution_types::executor_config::CommandExecutorConfig;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_core::global_cfg_options::GlobalCfgOptions;
+    use bz_execute::digest_config::DigestConfig;
+    use bz_execute::digest_config::SetDigestConfig;
     use dice::DiceComputations;
     use dice::UserComputationData;
     use dice::testing::DiceBuilder;
@@ -71,14 +71,14 @@ mod tests {
             &self,
             _ctx: &mut dyn DeferredCtx,
             _dice: &mut DiceComputations<'_>,
-        ) -> buck2_error::Result<DeferredValue<Self::Output>> {
+        ) -> bz_error::Result<DeferredValue<Self::Output>> {
             self.2.store(true, Ordering::SeqCst);
             Ok(DeferredValue::Ready(FakeDeferredOutput(self.0)))
         }
     }
 
     #[tokio::test]
-    async fn lookup_deferred_from_bxl() -> buck2_error::Result<()> {
+    async fn lookup_deferred_from_bxl() -> bz_error::Result<()> {
         let bxl = BxlKey::new(
             BxlFunctionLabel {
                 bxl_path: BxlFilePath::testing_new("cell", "dir"),
@@ -111,7 +111,7 @@ mod tests {
             })
             .mock_and_return(
                 BxlComputeKey(bxl.dupe()),
-                buck2_error::Ok(BxlComputeResult(Arc::new(BxlResult::BuildsArtifacts {
+                bz_error::Ok(BxlComputeResult(Arc::new(BxlResult::BuildsArtifacts {
                     output_loc: mk_stream_cache("test", &bxl),
                     error_loc: mk_stream_cache("errortest", &bxl),
                     built: vec![],

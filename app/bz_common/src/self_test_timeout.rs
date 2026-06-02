@@ -12,7 +12,7 @@ use std::time::Duration;
 
 fn get() -> Option<u64> {
     // Only used in testing so unwrap is fine
-    buck2_core::buck2_env!("BUCK2_SELF_TEST_TIMEOUT_S", type=u64, applicability=testing).unwrap()
+    bz_core::bz_env!("BUCK2_SELF_TEST_TIMEOUT_S", type=u64, applicability=testing).unwrap()
 }
 
 /// If running in a self-test of buck2, returns a duration greater than the timeout of the test.

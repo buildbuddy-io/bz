@@ -37,7 +37,7 @@ pub struct StdoutPartialOutput<'a> {
 
 impl<'a> StdoutPartialOutput<'a> {
     pub fn new(
-        dispatcher: &'a mut PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        dispatcher: &'a mut PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         cancellation: CancellationPoller,
     ) -> Self {
         Self {
@@ -63,7 +63,7 @@ impl Write for StdoutPartialOutput<'_> {
 }
 
 struct WriterWrapper<'a> {
-    inner: &'a mut PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+    inner: &'a mut PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
     cancellation: CancellationPoller,
 }
 
@@ -79,7 +79,7 @@ impl Write for WriterWrapper<'_> {
             return Err(Self::cancelled());
         }
 
-        self.inner.emit(buck2_cli_proto::StdoutBytes {
+        self.inner.emit(bz_cli_proto::StdoutBytes {
             data: buf.to_owned(),
         });
 

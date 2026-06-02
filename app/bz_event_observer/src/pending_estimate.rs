@@ -52,11 +52,11 @@ mod tests {
     use std::sync::Arc;
     use std::time::UNIX_EPOCH;
 
-    use buck2_data::SpanStartEvent;
-    use buck2_events::BuckEvent;
-    use buck2_events::span::SpanId;
-    use buck2_hash::StdBuckHashMap;
-    use buck2_wrapper_common::invocation_id::TraceId;
+    use bz_data::SpanStartEvent;
+    use bz_events::BuckEvent;
+    use bz_events::span::SpanId;
+    use bz_hash::StdBuckHashMap;
+    use bz_wrapper_common::invocation_id::TraceId;
 
     use crate::dice_state::DiceState;
     use crate::pending_estimate::estimate_completion_percentage;
@@ -70,16 +70,16 @@ mod tests {
             None,
             SpanStartEvent {
                 data: Some(
-                    buck2_data::ActionExecutionStart {
-                        key: Some(buck2_data::ActionKey {
+                    bz_data::ActionExecutionStart {
+                        key: Some(bz_data::ActionKey {
                             id: Default::default(),
-                            owner: Some(buck2_data::action_key::Owner::TargetLabel(
-                                buck2_data::ConfiguredTargetLabel {
-                                    label: Some(buck2_data::TargetLabel {
+                            owner: Some(bz_data::action_key::Owner::TargetLabel(
+                                bz_data::ConfiguredTargetLabel {
+                                    label: Some(bz_data::TargetLabel {
                                         package: "pkg".into(),
                                         name: "target".into(),
                                     }),
-                                    configuration: Some(buck2_data::Configuration {
+                                    configuration: Some(bz_data::Configuration {
                                         full_name: "conf".into(),
                                     }),
                                     execution_configuration: None,
@@ -87,11 +87,11 @@ mod tests {
                             )),
                             key: "".to_owned(),
                         }),
-                        name: Some(buck2_data::ActionName {
+                        name: Some(bz_data::ActionName {
                             category: "category".into(),
                             identifier: "identifier".into(),
                         }),
-                        kind: buck2_data::ActionKind::NotSet as i32,
+                        kind: bz_data::ActionKind::NotSet as i32,
                     }
                     .into(),
                 ),
@@ -102,12 +102,12 @@ mod tests {
     }
 
     fn setup_dice_state(dice_state: &mut DiceState, finished: u32, total: u32) {
-        dice_state.update(&buck2_data::DiceStateSnapshot {
+        dice_state.update(&bz_data::DiceStateSnapshot {
             key_states: {
                 let mut map = StdBuckHashMap::default();
                 map.insert(
                     "BuildKey".to_owned(),
-                    buck2_data::DiceKeyState {
+                    bz_data::DiceKeyState {
                         started: total,
                         finished,
                         check_deps_started: 0,
@@ -122,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn test_completion_no_progress() -> buck2_error::Result<()> {
+    fn test_completion_no_progress() -> bz_error::Result<()> {
         let mut dice = DiceState::new();
         let mut tracker = BuckEventSpanTracker::new();
 
@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn test_completion_percentage_build_complete() -> buck2_error::Result<()> {
+    fn test_completion_percentage_build_complete() -> bz_error::Result<()> {
         let mut dice = DiceState::new();
         let mut tracker = BuckEventSpanTracker::new();
 
@@ -144,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn test_completion_percentage_intermediate_state() -> buck2_error::Result<()> {
+    fn test_completion_percentage_intermediate_state() -> bz_error::Result<()> {
         let mut dice = DiceState::new();
         let mut tracker = BuckEventSpanTracker::new();
 
@@ -156,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn test_completion_percentage_invalid_dice_state() -> buck2_error::Result<()> {
+    fn test_completion_percentage_invalid_dice_state() -> bz_error::Result<()> {
         let mut dice = DiceState::new();
         let mut tracker = BuckEventSpanTracker::new();
 
@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn test_completion_percentage_empty_span() -> buck2_error::Result<()> {
+    fn test_completion_percentage_empty_span() -> bz_error::Result<()> {
         let mut dice = DiceState::new();
         let tracker = BuckEventSpanTracker::new();
 

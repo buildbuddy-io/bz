@@ -11,32 +11,32 @@
 use std::borrow::Cow;
 use std::fmt::Debug;
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::DeclaredArtifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::BuckHashMap;
-use buck2_hash::BuckIndexSet;
-use buck2_interpreter::types::cell_root::CellRoot;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::project_root::StarlarkProjectRoot;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::DeclaredArtifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::BuckErrorContext;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_fs::paths::RelativePathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::BuckHashMap;
+use bz_hash::BuckIndexSet;
+use bz_interpreter::types::cell_root::CellRoot;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::project_root::StarlarkProjectRoot;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use starlark::any::ProvidesStaticType;
 use starlark::typing::Ty;
 use starlark::values::string::StarlarkStr;
@@ -50,7 +50,7 @@ use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command
 use crate::interpreter::rule_defs::cmd_args::param_file::bazel_param_file_content;
 use crate::interpreter::rule_defs::resolved_macro::ResolvedMacro;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum CommandLineContextError {
     #[error("param files are only supported when rendering run-action command lines")]
@@ -65,7 +65,7 @@ pub trait CommandLineArtifactVisitor<'v> {
     fn visit_frozen_output(&mut self, artifact: Artifact, tags: Vec<&ArtifactTag>);
 
     /// Those two functions can be used to keep track of recursion when visiting artifacts.
-    fn push_frame(&mut self) -> buck2_error::Result<()> {
+    fn push_frame(&mut self) -> bz_error::Result<()> {
         Ok(())
     }
 
@@ -75,7 +75,7 @@ pub trait CommandLineArtifactVisitor<'v> {
         &mut self,
         declared_artifact: DeclaredArtifact<'v>,
         tags: Vec<&ArtifactTag>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.visit_input(
             ArtifactGroup::Artifact(declared_artifact.ensure_bound()?.into_artifact()),
             tags,
@@ -128,13 +128,13 @@ pub trait WriteToFileMacroVisitor {
         &mut self,
         m: &ResolvedMacro,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     /// Generator produces a 'RelativePathBuf' relative to the directory which owning command will run in.
     fn set_current_relative_to_path(
         &mut self,
-        generate: &dyn Fn(&dyn CommandLineContext) -> buck2_error::Result<Option<RelativePathBuf>>,
-    ) -> buck2_error::Result<()>;
+        generate: &dyn Fn(&dyn CommandLineContext) -> bz_error::Result<Option<RelativePathBuf>>,
+    ) -> bz_error::Result<()>;
 }
 
 /// Used to provide a mapping from artifacts to the content-based hash that should be used when
@@ -214,21 +214,21 @@ pub trait CommandLineArgLike<'v> {
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 
     fn add_to_command_line_expanding_directories(
         &self,
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.add_to_command_line(cli, context, artifact_path_mapping)
     }
 
     fn visit_artifacts(
         &self,
         _visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
@@ -239,7 +239,7 @@ pub trait CommandLineArgLike<'v> {
         &self,
         visitor: &mut dyn WriteToFileMacroVisitor,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }
 
 unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn CommandLineArgLike<'v> {
@@ -256,7 +256,7 @@ impl<'v> CommandLineArgLike<'v> for &str {
         cli: &mut dyn CommandLineBuilder,
         _context: &mut dyn CommandLineContext,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         cli.push_arg((*self).to_owned());
         Ok(())
     }
@@ -269,7 +269,7 @@ impl<'v> CommandLineArgLike<'v> for &str {
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -284,7 +284,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkStr {
         cli: &mut dyn CommandLineBuilder,
         _context: &mut dyn CommandLineContext,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         cli.push_arg(self.as_str().to_owned());
         Ok(())
     }
@@ -297,7 +297,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkStr {
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -312,7 +312,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkTargetLabel {
         cli: &mut dyn CommandLineBuilder,
         _context: &mut dyn CommandLineContext,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         cli.push_arg(self.to_string());
         Ok(())
     }
@@ -325,7 +325,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkTargetLabel {
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -340,7 +340,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkConfiguredProvidersLabel {
         cli: &mut dyn CommandLineBuilder,
         _context: &mut dyn CommandLineContext,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         cli.push_arg(self.to_string());
         Ok(())
     }
@@ -353,7 +353,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkConfiguredProvidersLabel {
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -368,7 +368,7 @@ impl<'v> CommandLineArgLike<'v> for CellRoot {
         cli: &mut dyn CommandLineBuilder,
         ctx: &mut dyn CommandLineContext,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         cli.push_location(ctx.resolve_cell_path(self.cell_path())?);
         Ok(())
     }
@@ -381,7 +381,7 @@ impl<'v> CommandLineArgLike<'v> for CellRoot {
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -396,7 +396,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkProjectRoot {
         cli: &mut dyn CommandLineBuilder,
         ctx: &mut dyn CommandLineContext,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         cli.push_location(ctx.resolve_project_path(ProjectRelativePath::empty().to_owned())?);
         Ok(())
     }
@@ -409,7 +409,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkProjectRoot {
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -516,7 +516,7 @@ pub trait CommandLineContext {
     fn resolve_project_path(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<CommandLineLocation<'_>>;
+    ) -> bz_error::Result<CommandLineLocation<'_>>;
 
     fn fs(&self) -> &ExecutorFs<'_>;
 
@@ -525,7 +525,7 @@ pub trait CommandLineContext {
         &self,
         artifact: &Artifact,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         self.resolve_project_path(
             artifact.resolve_path(self.fs().fs(), artifact_path_mapping.get(artifact))?,
         )
@@ -538,7 +538,7 @@ pub trait CommandLineContext {
     fn resolve_output_artifact(
         &self,
         artifact: &Artifact,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         self.resolve_project_path(artifact.get_path().resolve(
             self.fs().fs(),
             Some(&ContentBasedPathHash::for_output_artifact()),
@@ -546,19 +546,19 @@ pub trait CommandLineContext {
         .with_buck_error_context(|| format!("Error resolving output artifact: {artifact}"))
     }
 
-    fn resolve_cell_path(&self, path: CellPathRef) -> buck2_error::Result<CommandLineLocation<'_>> {
+    fn resolve_cell_path(&self, path: CellPathRef) -> bz_error::Result<CommandLineLocation<'_>> {
         self.resolve_project_path(self.fs().fs().resolve_cell_path(path)?)
             .with_buck_error_context(|| format!("Error resolving cell path: {path}"))
     }
 
     /// Result is 'RelativePathBuf' relative to the directory this command will run in. The path points to the file containing expanded macro.
-    fn next_macro_file_path(&mut self) -> buck2_error::Result<RelativePathBuf>;
+    fn next_macro_file_path(&mut self) -> bz_error::Result<RelativePathBuf>;
 
     /// Register a generated parameter file and return the path to pass on the command line.
     fn add_param_file(
         &mut self,
         _content: Vec<u8>,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         Err(CommandLineContextError::ParamFileNotSupported.into())
     }
 
@@ -566,7 +566,7 @@ pub trait CommandLineContext {
         &mut self,
         args: Vec<String>,
         format: ParamFileFormat,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         self.add_param_file(bazel_param_file_content(args, format))
     }
 
@@ -592,7 +592,7 @@ pub fn add_artifact_to_command_line_expanding_directories(
     cli: &mut dyn CommandLineBuilder,
     ctx: &mut dyn CommandLineContext,
     artifact_path_mapping: &dyn ArtifactPathMapper,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(value) = artifact_path_mapping.artifact_value(artifact) {
         if let ActionDirectoryEntry::Dir(directory) = value.entry() {
             let base = ctx.resolve_artifact(artifact, artifact_path_mapping)?;

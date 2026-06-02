@@ -9,11 +9,11 @@
  */
 
 use allocative::Allocative;
-use buck2_build_api::query::oneshot::QUERY_FRONTEND;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
-use buck2_query::query::syntax::simple::eval::values::QueryValueDepth;
-use buck2_query::query::syntax::simple::functions::helpers::CapturedExpr;
+use bz_build_api::query::oneshot::QUERY_FRONTEND;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationResult;
+use bz_query::query::syntax::simple::eval::values::QueryValueDepth;
+use bz_query::query::syntax::simple::functions::helpers::CapturedExpr;
 use dice::DiceComputations;
 use gazebo::prelude::OptionExt;
 use starlark::values::Heap;
@@ -101,7 +101,7 @@ pub(crate) enum LazyUqueryResult {
 }
 
 impl LazyUqueryResult {
-    pub(crate) fn into_value<'v>(self, heap: Heap<'v>) -> buck2_error::Result<Value<'v>> {
+    pub(crate) fn into_value<'v>(self, heap: Heap<'v>) -> bz_error::Result<Value<'v>> {
         match self {
             LazyUqueryResult::TestsOf(target_set) => Ok(heap.alloc(target_set)),
             LazyUqueryResult::AllPaths(target_set) => Ok(heap.alloc(target_set)),
@@ -126,7 +126,7 @@ impl LazyUqueryOperation {
         &self,
         dice: &mut DiceComputations<'_>,
         core_data: &BxlContextCoreData,
-    ) -> buck2_error::Result<LazyUqueryResult> {
+    ) -> bz_error::Result<LazyUqueryResult> {
         match self {
             LazyUqueryOperation::TestsOf(expr) => {
                 let target_set = expr.to_unconfigured_target_set(core_data, dice).await?;
@@ -143,7 +143,7 @@ impl LazyUqueryOperation {
                 let to = to.to_unconfigured_target_set(core_data, dice).await?;
                 let filter = filter
                     .as_ref()
-                    .try_map(|s| buck2_query_parser::parse_expr(s.as_str()))?;
+                    .try_map(|s| bz_query_parser::parse_expr(s.as_str()))?;
                 let expr = filter.as_ref().map(|expr| CapturedExpr { expr });
 
                 let res = get_uquery_env(core_data)
@@ -158,7 +158,7 @@ impl LazyUqueryOperation {
                 let to = to.to_unconfigured_target_set(core_data, dice).await?;
                 let filter = filter
                     .as_ref()
-                    .try_map(|s| buck2_query_parser::parse_expr(s.as_str()))?;
+                    .try_map(|s| bz_query_parser::parse_expr(s.as_str()))?;
                 let expr = filter.as_ref().map(|expr| CapturedExpr { expr });
 
                 let res = get_uquery_env(core_data)
@@ -214,7 +214,7 @@ impl LazyUqueryOperation {
                 let target_set = universe.to_unconfigured_target_set(core_data, dice).await?;
                 let filter = filter
                     .as_ref()
-                    .try_map(|s| buck2_query_parser::parse_expr(s.as_str()))?;
+                    .try_map(|s| bz_query_parser::parse_expr(s.as_str()))?;
                 let expr = filter.as_ref().map(|expr| CapturedExpr { expr });
 
                 let res = get_uquery_env(core_data)
@@ -234,7 +234,7 @@ impl LazyUqueryOperation {
                 let from_set = from.to_unconfigured_target_set(core_data, dice).await?;
                 let filter = filter
                     .as_ref()
-                    .try_map(|s| buck2_query_parser::parse_expr(s.as_str()))?;
+                    .try_map(|s| bz_query_parser::parse_expr(s.as_str()))?;
                 let expr = filter.as_ref().map(|expr| CapturedExpr { expr });
 
                 let res = get_uquery_env(core_data)

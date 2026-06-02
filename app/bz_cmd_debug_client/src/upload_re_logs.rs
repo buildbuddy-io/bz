@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::upload_re_logs::upload_re_logs;
-use buck2_common::manifold::Bucket;
-use buck2_common::manifold::ManifoldClient;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::upload_re_logs::upload_re_logs;
+use bz_common::manifold::Bucket;
+use bz_common::manifold::ManifoldClient;
 
 #[derive(Debug, clap::Parser)]
 #[clap(about = "upload RE logs")]
@@ -30,9 +30,9 @@ impl BuckSubcommand for UploadReLogsCommand {
         self,
         _matches: BuckArgMatches<'_>,
         ctx: ClientCommandContext<'_>,
-        events_ctx: &mut buck2_client_ctx::events_ctx::EventsCtx,
+        events_ctx: &mut bz_client_ctx::events_ctx::EventsCtx,
     ) -> ExitResult {
-        buck2_core::facebook_only();
+        bz_core::facebook_only();
         events_ctx.log_invocation_record = false;
         let manifold = ManifoldClient::new().await?;
         // TODO: This should receive the path from the caller.

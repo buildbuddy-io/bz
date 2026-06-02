@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_certs::validate::validate_certs;
-use buck2_error::ErrorTag;
-use buck2_fs::paths::abs_path::AbsPathBuf;
+use bz_certs::validate::validate_certs;
+use bz_error::ErrorTag;
+use bz_fs::paths::abs_path::AbsPathBuf;
 use dupe::Dupe;
 use edenfs::BinaryHash;
 use edenfs::EdenErrorType;
@@ -23,14 +23,14 @@ use fbthrift::ApplicationException;
 use fbthrift::ApplicationExceptionErrorCode;
 use sorted_vector_map::SortedVectorMap;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = IoEdenMountNotReady)]
 #[error("Mount never became ready: `{mount}`")]
 pub struct MountNeverBecameReady {
     pub mount: AbsPathBuf,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 pub enum IsMountReadyError {
     #[error("Mount does not exist in Eden: `{mount}`")]
     #[buck2(tag = IoEdenMountDoesNotExist)]
@@ -40,11 +40,11 @@ pub enum IsMountReadyError {
     RequestError(ListMountsError),
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 pub enum ConnectAndRequestError<E> {
     #[error(transparent)]
     #[buck2(tag = IoEdenConnectionError)]
-    ConnectionError(buck2_error::Error),
+    ConnectionError(bz_error::Error),
     #[error("Eden Request Failed: {0:?}")]
     #[buck2(tag = IoEdenRequestError)]
     RequestError(E),
@@ -198,7 +198,7 @@ fn eden_service_error_tag(error: &edenfs::EdenError) -> ErrorTag {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = IoEden)]
 pub enum EdenError {
     #[error("Eden POSIX error (code = {code}): {0}", error.message)]

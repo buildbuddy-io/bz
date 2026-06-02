@@ -10,6 +10,6 @@ rust_protobuf_library(
     deps = [
         "fbsource//third-party/rust:prost-types",
         "fbsource//third-party/rust:serde",
-        "//bz/app/bz_data:buck2_data",
+        "//bz/app/bz_data:bz_data",
     ],
 )

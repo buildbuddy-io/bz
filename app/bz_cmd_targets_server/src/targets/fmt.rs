@@ -13,37 +13,37 @@ use std::fmt::Write;
 use std::iter;
 use std::sync::Arc;
 
-use buck2_build_api::configure_targets::ConfiguredTargetsWithErrors;
-use buck2_cli_proto::ConfiguredTargetsRequest;
-use buck2_cli_proto::HasClientContext;
-use buck2_cli_proto::TargetsRequest;
-use buck2_cli_proto::configured_targets_request::OutputFormat as ConfiguredOutputFormat;
-use buck2_cli_proto::targets_request;
-use buck2_cli_proto::targets_request::OutputFormat;
-use buck2_cli_proto::targets_request::TargetHashGraphType;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
-use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
-use buck2_core::package::PackageLabel;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_node::attrs::hacks::configured_value_to_json;
-use buck2_node::attrs::hacks::value_to_json;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::nodes::attributes::DEPS;
-use buck2_node::nodes::attributes::INPUTS;
-use buck2_node::nodes::attributes::ONCALL;
-use buck2_node::nodes::attributes::PACKAGE;
-use buck2_node::nodes::attributes::PACKAGE_VALUES;
-use buck2_node::nodes::attributes::TARGET_CALL_STACK;
-use buck2_node::nodes::attributes::TARGET_HASH;
-use buck2_node::nodes::attributes::TYPE;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::unconfigured::TargetNodeRef;
-use buck2_node::super_package::SuperPackage;
-use buck2_util::indent::indent;
+use bz_build_api::configure_targets::ConfiguredTargetsWithErrors;
+use bz_cli_proto::ConfiguredTargetsRequest;
+use bz_cli_proto::HasClientContext;
+use bz_cli_proto::TargetsRequest;
+use bz_cli_proto::configured_targets_request::OutputFormat as ConfiguredOutputFormat;
+use bz_cli_proto::targets_request;
+use bz_cli_proto::targets_request::OutputFormat;
+use bz_cli_proto::targets_request::TargetHashGraphType;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::configuration::compatibility::IncompatiblePlatformReason;
+use bz_core::configuration::compatibility::IncompatiblePlatformReasonCause;
+use bz_core::package::PackageLabel;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_node::attrs::hacks::configured_value_to_json;
+use bz_node::attrs::hacks::value_to_json;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::nodes::attributes::DEPS;
+use bz_node::nodes::attributes::INPUTS;
+use bz_node::nodes::attributes::ONCALL;
+use bz_node::nodes::attributes::PACKAGE;
+use bz_node::nodes::attributes::PACKAGE_VALUES;
+use bz_node::nodes::attributes::TARGET_CALL_STACK;
+use bz_node::nodes::attributes::TARGET_HASH;
+use bz_node::nodes::attributes::TYPE;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::unconfigured::TargetNodeRef;
+use bz_node::super_package::SuperPackage;
+use bz_util::indent::indent;
 use gazebo::prelude::SliceExt;
 use regex::RegexSet;
 
@@ -56,11 +56,11 @@ pub(crate) struct TargetInfo<'a> {
     pub(crate) super_package: &'a SuperPackage,
 }
 
-fn package_error_to_stderr(package: PackageLabel, error: &buck2_error::Error, stderr: &mut String) {
+fn package_error_to_stderr(package: PackageLabel, error: &bz_error::Error, stderr: &mut String) {
     writeln!(stderr, "Error parsing {package}\n{error:?}").unwrap();
 }
 
-fn target_error_to_stderr(error: &buck2_error::Error, stderr: &mut String) {
+fn target_error_to_stderr(error: &bz_error::Error, stderr: &mut String) {
     writeln!(stderr, "ERROR:{:#}\n", error).unwrap();
 }
 
@@ -82,7 +82,7 @@ pub(crate) trait TargetFormatter: Send + Sync {
     fn package_error(
         &self,
         package: PackageLabel,
-        error: &buck2_error::Error,
+        error: &bz_error::Error,
         stdout: &mut String,
         stderr: &mut String,
     ) {
@@ -99,19 +99,19 @@ pub trait ConfiguredTargetFormatter: Send + Sync {
         &self,
         target_node: &ConfiguredTargetNode,
         buffer: &mut String,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
     fn package_error(
         &self,
         package: PackageLabel,
-        error: &buck2_error::Error,
+        error: &bz_error::Error,
         stdout: &mut String,
         stderr: &mut String,
     ) {
         package_error_to_stderr(package, error, stderr);
     }
-    fn target_error(&self, error: &buck2_error::Error, stdout: &mut String, stderr: &mut String) {
+    fn target_error(&self, error: &bz_error::Error, stdout: &mut String, stderr: &mut String) {
         target_error_to_stderr(error, stderr);
     }
 }
@@ -330,7 +330,7 @@ impl TargetFormatter for JsonFormat {
     fn package_error(
         &self,
         package: PackageLabel,
-        error: &buck2_error::Error,
+        error: &bz_error::Error,
         stdout: &mut String,
         stderr: &mut String,
     ) {
@@ -373,7 +373,7 @@ impl ConfiguredTargetFormatter for JsonFormat {
         &self,
         target_node: &ConfiguredTargetNode,
         buffer: &mut String,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.writer.entry_start(buffer);
         let mut is_first_entry = true;
 
@@ -430,7 +430,7 @@ impl ConfiguredTargetFormatter for JsonFormat {
     fn package_error(
         &self,
         package: PackageLabel,
-        error: &buck2_error::Error,
+        error: &bz_error::Error,
         stdout: &mut String,
         stderr: &mut String,
     ) {
@@ -455,7 +455,7 @@ impl ConfiguredTargetFormatter for JsonFormat {
         self.writer.entry_end(stdout, first);
     }
 
-    fn target_error(&self, error: &buck2_error::Error, stdout: &mut String, stderr: &mut String) {
+    fn target_error(&self, error: &bz_error::Error, stdout: &mut String, stderr: &mut String) {
         // Similar to package_error, output to both stdout (JSON) and stderr (human readable).
         // Target-level errors don't have package context, so we only include the error field.
         target_error_to_stderr(error, stderr);
@@ -475,7 +475,7 @@ impl ConfiguredTargetFormatter for JsonFormat {
 #[derive(Debug, Default)]
 pub(crate) struct Stats {
     pub(crate) errors: u64,
-    error_tags: BTreeSet<buck2_error::ErrorTag>,
+    error_tags: BTreeSet<bz_error::ErrorTag>,
     pub(crate) success: u64,
     pub(crate) targets: u64,
 }
@@ -487,12 +487,12 @@ impl Stats {
         self.targets += stats.targets;
     }
 
-    pub(crate) fn add_error(&mut self, e: &buck2_error::Error) {
+    pub(crate) fn add_error(&mut self, e: &bz_error::Error) {
         self.error_tags.extend(e.tags());
         self.errors += 1;
     }
 
-    pub(crate) fn to_error(&self) -> Option<buck2_error::Error> {
+    pub(crate) fn to_error(&self) -> Option<bz_error::Error> {
         if self.errors == 0 {
             return None;
         }
@@ -503,14 +503,14 @@ impl Stats {
             "packages"
         };
 
-        #[derive(buck2_error::Error, Debug)]
+        #[derive(bz_error::Error, Debug)]
         #[buck2(tag = Input)]
         enum TargetsError {
             #[error("Failed to parse {0} {1}")]
             FailedToParse(u64, &'static str),
         }
 
-        let mut e = buck2_error::Error::from(TargetsError::FailedToParse(self.errors, package_str));
+        let mut e = bz_error::Error::from(TargetsError::FailedToParse(self.errors, package_str));
         e = e.tag(self.error_tags.iter().copied());
         Some(e)
     }
@@ -549,9 +549,9 @@ impl ConfiguredTargetFormatter for TargetNameFormat {
         &self,
         target_node: &ConfiguredTargetNode,
         buffer: &mut String,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         writeln!(buffer, "{}", target_node.label())
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?;
         if self.target_call_stacks {
             print_target_call_stack_after_target(buffer, target_node.call_stack().as_deref());
         };
@@ -592,7 +592,7 @@ impl JsonReportFormat {
         result: &ConfiguredTargetsWithErrors,
         output: &mut String,
         stderr: &mut String,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         output.push_str("{\n  \"compatible_targets\": [\n");
 
         // Format compatible targets
@@ -689,7 +689,7 @@ impl JsonReportFormat {
 pub(crate) fn create_formatter(
     request: &TargetsRequest,
     other: &targets_request::Other,
-) -> buck2_error::Result<Arc<dyn TargetFormatter>> {
+) -> bz_error::Result<Arc<dyn TargetFormatter>> {
     let output_format = OutputFormat::try_from(request.output_format)
         .internal_error("Invalid value of `output_format`")?;
 
@@ -746,7 +746,7 @@ pub enum ConfiguredOutputHandler {
 
 pub fn create_configured_formatter(
     request: &ConfiguredTargetsRequest,
-) -> buck2_error::Result<ConfiguredOutputHandler> {
+) -> bz_error::Result<ConfiguredOutputHandler> {
     let output_format = ConfiguredOutputFormat::try_from(request.output_format)?;
     let target_call_stacks = request.client_context()?.target_call_stacks;
 

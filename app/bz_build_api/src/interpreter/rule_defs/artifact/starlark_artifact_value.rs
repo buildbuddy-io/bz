@@ -13,13 +13,13 @@ use std::fmt::Display;
 use std::io::BufReader;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
 use gazebo::prelude::*;
 use starlark::any::ProvidesStaticType;
 use starlark::collections::SmallMap;
@@ -65,7 +65,7 @@ impl<'v> StarlarkValue<'v> for StarlarkArtifactValue {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum JsonError {
     #[error("JSON number is outside the bounds that Starlark supports, `{0}`")]
@@ -82,7 +82,7 @@ fn json_convert<'v>(v: serde_json::Value, heap: Heap<'v>) -> starlark::Result<Va
             } else if let Some(x) = x.as_f64() {
                 Ok(heap.alloc(x))
             } else {
-                Err(buck2_error::Error::from(JsonError::NumberOutOfBounds(x.to_string())).into())
+                Err(bz_error::Error::from(JsonError::NumberOutOfBounds(x.to_string())).into())
             }
         }
         serde_json::Value::String(x) => Ok(heap.alloc(x)),

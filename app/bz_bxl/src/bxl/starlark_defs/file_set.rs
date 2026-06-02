@@ -14,11 +14,11 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_common::file_ops::metadata::SimpleDirEntry;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_hash::BuckIndexSet;
-use buck2_query::query::syntax::simple::eval::file_set::FileNode;
-use buck2_query::query::syntax::simple::eval::file_set::FileSet;
+use bz_common::file_ops::metadata::SimpleDirEntry;
+use bz_core::cells::cell_path::CellPath;
+use bz_hash::BuckIndexSet;
+use bz_query::query::syntax::simple::eval::file_set::FileNode;
+use bz_query::query::syntax::simple::eval::file_set::FileSet;
 use derive_more::Display;
 use display_container::fmt_container;
 use gazebo::prelude::VecExt;
@@ -55,7 +55,7 @@ pub(crate) enum FileSetExpr<'v> {
 }
 
 impl<'a> FileSetExpr<'a> {
-    pub(crate) async fn get(self, bxl: &BxlContext<'_>) -> buck2_error::Result<Cow<'a, FileSet>> {
+    pub(crate) async fn get(self, bxl: &BxlContext<'_>) -> bz_error::Result<Cow<'a, FileSet>> {
         let set = match self {
             FileSetExpr::Literal(val) => Cow::Owned(FileSet::from_iter([FileNode(
                 bxl.parse_query_file_literal(val)?,
@@ -94,7 +94,7 @@ impl OwnedFileSetExpr {
     pub(crate) fn get<'a>(
         &'a self,
         core_data: &BxlContextCoreData,
-    ) -> buck2_error::Result<Cow<'a, FileSet>> {
+    ) -> bz_error::Result<Cow<'a, FileSet>> {
         let set = match self {
             OwnedFileSetExpr::Literal(val) => Cow::Owned(FileSet::from_iter([FileNode(
                 core_data.parse_query_file_literal(val)?,
@@ -235,7 +235,7 @@ pub(crate) struct StarlarkReadDirSet {
 starlark_simple_value!(StarlarkReadDirSet);
 
 impl StarlarkReadDirSet {
-    fn children(&self) -> buck2_error::Result<Vec<CellPath>> {
+    fn children(&self) -> bz_error::Result<Vec<CellPath>> {
         let mut result: Vec<CellPath> = Vec::with_capacity(self.included.len());
         result.extend(self.included.iter().filter_map(|e| {
             if !self.dirs_only || e.file_type.is_dir() {

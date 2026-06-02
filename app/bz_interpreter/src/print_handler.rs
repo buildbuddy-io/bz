@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_events::dispatch::EventDispatcher;
+use bz_events::dispatch::EventDispatcher;
 use starlark::PrintHandler;
 
 /// Print handler uses the `EventDispatcher` to emit messages from server to client.

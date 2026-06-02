@@ -26,91 +26,91 @@ use std::time::SystemTime;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_signals::env::WaitingCategory;
-use buck2_common::file_ops::metadata::FileDigestConfig;
-use buck2_common::liveliness_observer::LivelinessObserver;
-use buck2_common::liveliness_observer::LivelinessObserverExt;
-use buck2_common::liveliness_observer::NoopLivelinessObserver;
-use buck2_common::local_resource_state::LocalResourceHolder;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::soft_error;
-use buck2_core::tag_error;
-use buck2_core::tag_result;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_events::daemon_id::DaemonId;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::dispatch::get_dispatcher_opt;
-use buck2_execute::artifact_utils::ArtifactValueBuilder;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryBuilder;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::extract_artifact_value;
-use buck2_execute::directory::insert_entry;
-use buck2_execute::entry::HashingInfo;
-use buck2_execute::entry::build_entry_from_disk;
-use buck2_execute::execute::action_digest::ActionDigest;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
-use buck2_execute::execute::environment_inheritance::EnvironmentInheritance;
-use buck2_execute::execute::executor_stage_async;
-use buck2_execute::execute::inputs_directory::inputs_directory;
-use buck2_execute::execute::kind::CommandExecutionKind;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::manager::CommandExecutionManagerExt;
-use buck2_execute::execute::manager::CommandExecutionManagerWithClaim;
-use buck2_execute::execute::output::CommandStdStreams;
-use buck2_execute::execute::prepared::PreparedCommand;
-use buck2_execute::execute::prepared::PreparedCommandExecutor;
-use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
-use buck2_execute::execute::prepared::UnpreparedCommand;
-use buck2_execute::execute::request::CommandExecutionInput;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::CommandExecutionOutputRef;
-use buck2_execute::execute::request::CommandExecutionRequest;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::request::NetworkAccess;
-use buck2_execute::execute::request::WorkerProtocol;
-use buck2_execute::execute::result::CommandExecutionMetadata;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::knobs::ExecutorGlobalKnobs;
-use buck2_execute::materialize::materializer::CopiedArtifact;
-use buck2_execute::materialize::materializer::DeclareArtifactPayload;
-use buck2_execute::materialize::materializer::MaterializationError;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute_local::CommandResult;
-use buck2_execute_local::DefaultKillProcess;
-use buck2_execute_local::GatherOutputStatus;
-use buck2_execute_local::decode_command_event_stream;
-use buck2_execute_local::maybe_absolutize_exe;
-use buck2_execute_local::spawn_command_and_stream_events;
-use buck2_execute_local::status_decoder::DefaultStatusDecoder;
-use buck2_fs::IoResultExt;
-use buck2_fs::async_fs_util;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::BuckIndexSet;
-use buck2_resource_control::ActionFreezeEvent;
-use buck2_resource_control::ActionFreezeEventReceiver;
-use buck2_resource_control::CommandType;
-use buck2_resource_control::action_scene::ActionCgroupSession;
-use buck2_resource_control::memory_tracker::MemoryTrackerHandle;
-use buck2_resource_control::path::CgroupPathBuf;
-use buck2_util::process::background_command;
-use buck2_util::time_span::TimeSpan;
+use bz_build_signals::env::WaitingCategory;
+use bz_common::file_ops::metadata::FileDigestConfig;
+use bz_common::liveliness_observer::LivelinessObserver;
+use bz_common::liveliness_observer::LivelinessObserverExt;
+use bz_common::liveliness_observer::NoopLivelinessObserver;
+use bz_common::local_resource_state::LocalResourceHolder;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::soft_error;
+use bz_core::tag_error;
+use bz_core::tag_result;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_events::daemon_id::DaemonId;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::dispatch::get_dispatcher_opt;
+use bz_execute::artifact_utils::ArtifactValueBuilder;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryBuilder;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::extract_artifact_value;
+use bz_execute::directory::insert_entry;
+use bz_execute::entry::HashingInfo;
+use bz_execute::entry::build_entry_from_disk;
+use bz_execute::execute::action_digest::ActionDigest;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute::execute::clean_output_paths::CleanOutputPaths;
+use bz_execute::execute::environment_inheritance::EnvironmentInheritance;
+use bz_execute::execute::executor_stage_async;
+use bz_execute::execute::inputs_directory::inputs_directory;
+use bz_execute::execute::kind::CommandExecutionKind;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::manager::CommandExecutionManagerExt;
+use bz_execute::execute::manager::CommandExecutionManagerWithClaim;
+use bz_execute::execute::output::CommandStdStreams;
+use bz_execute::execute::prepared::PreparedCommand;
+use bz_execute::execute::prepared::PreparedCommandExecutor;
+use bz_execute::execute::prepared::PreparedCommandOptionalExecutor;
+use bz_execute::execute::prepared::UnpreparedCommand;
+use bz_execute::execute::request::CommandExecutionInput;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::CommandExecutionOutputRef;
+use bz_execute::execute::request::CommandExecutionRequest;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::request::NetworkAccess;
+use bz_execute::execute::request::WorkerProtocol;
+use bz_execute::execute::result::CommandExecutionMetadata;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::knobs::ExecutorGlobalKnobs;
+use bz_execute::materialize::materializer::CopiedArtifact;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_execute::materialize::materializer::MaterializationError;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute_local::CommandResult;
+use bz_execute_local::DefaultKillProcess;
+use bz_execute_local::GatherOutputStatus;
+use bz_execute_local::decode_command_event_stream;
+use bz_execute_local::maybe_absolutize_exe;
+use bz_execute_local::spawn_command_and_stream_events;
+use bz_execute_local::status_decoder::DefaultStatusDecoder;
+use bz_fs::IoResultExt;
+use bz_fs::async_fs_util;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckIndexMap;
+use bz_hash::BuckIndexSet;
+use bz_resource_control::ActionFreezeEvent;
+use bz_resource_control::ActionFreezeEventReceiver;
+use bz_resource_control::CommandType;
+use bz_resource_control::action_scene::ActionCgroupSession;
+use bz_resource_control::memory_tracker::MemoryTrackerHandle;
+use bz_resource_control::path::CgroupPathBuf;
+use bz_util::process::background_command;
+use bz_util::time_span::TimeSpan;
 use derive_more::From;
 use dice_futures::cancellation::CancellationContext;
 use dice_futures::cancellation::CancellationObserver;
@@ -146,7 +146,7 @@ fn bazel_local_tmpdir() -> OsString {
         .unwrap_or_else(|| OsString::from("/tmp"))
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum LocalExecutionError {
     #[error("Args list was empty")]
@@ -167,7 +167,7 @@ fn local_action_cache_outputs_from_stored_values(
     outputs: &BuckIndexSet<CommandExecutionOutput>,
     output_values: &[ArtifactValue],
     expected_fingerprint: &[u8],
-) -> buck2_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
+) -> bz_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
     if outputs.len() != output_values.len() {
         return Ok(None);
     }
@@ -197,7 +197,7 @@ fn local_action_cache_outputs_from_stored_values(
 fn local_action_cache_outputs_from_action_metadata_values(
     outputs: &BuckIndexSet<CommandExecutionOutput>,
     output_values: &[ArtifactValue],
-) -> buck2_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
+) -> bz_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
     if outputs.len() != output_values.len() {
         return Ok(None);
     }
@@ -312,7 +312,7 @@ impl BazelSharedActionTracker {
         build_id: String,
         output_set_key: String,
         equivalence_key: Vec<u8>,
-    ) -> buck2_error::Result<BazelSharedActionLease> {
+    ) -> bz_error::Result<BazelSharedActionLease> {
         let mut state = self.state.lock().expect("poisoned mutex");
         if state.build_id.as_ref() != Some(&build_id) {
             state.build_id = Some(build_id);
@@ -321,8 +321,8 @@ impl BazelSharedActionTracker {
 
         if let Some(entry) = state.actions.get(&output_set_key) {
             if entry.equivalence_key != equivalence_key {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Conflicting Bazel shared actions for output set `{}`: existing equivalence key `{}`, new equivalence key `{}`",
                     output_set_key,
                     String::from_utf8_lossy(&entry.equivalence_key),
@@ -551,7 +551,7 @@ fn bazel_shared_action_output_keys<'a>(
 pub enum ForkserverAccess {
     None,
     #[cfg(unix)]
-    Client(buck2_forkserver::client::ForkserverClient),
+    Client(bz_forkserver::client::ForkserverClient),
 }
 
 #[derive(Clone)]
@@ -620,7 +620,7 @@ impl LocalExecutor {
         cgroup: Option<CgroupPathBuf>,
         freeze_rx: impl ActionFreezeEventReceiver,
         network_access: Option<NetworkAccess>,
-    ) -> impl futures::future::Future<Output = buck2_error::Result<CommandResult>> + Send + 'a {
+    ) -> impl futures::future::Future<Output = bz_error::Result<CommandResult>> + Send + 'a {
         async move {
             let working_directory = self.root.join_cow(working_directory);
             prepare_bazel_execroot_working_directory(&self.root, &working_directory)?;
@@ -680,11 +680,11 @@ impl LocalExecutor {
             }?;
 
             if !result.orphan_processes.is_empty() {
-                buck2_events::dispatch::instant_event(buck2_data::OrphanProcessesKilled {
+                bz_events::dispatch::instant_event(bz_data::OrphanProcessesKilled {
                     orphan_processes: result
                         .orphan_processes
                         .iter()
-                        .map(|o| buck2_data::orphan_processes_killed::OrphanProcess {
+                        .map(|o| bz_data::orphan_processes_killed::OrphanProcess {
                             pid: o.pid,
                             comm: o.comm.clone(),
                         })
@@ -692,7 +692,7 @@ impl LocalExecutor {
                 });
             }
 
-            buck2_error::Ok(result)
+            bz_error::Ok(result)
         }
     }
 
@@ -720,8 +720,8 @@ impl LocalExecutor {
         CommandExecutionResult,
     > {
         let bazel_worker_sandbox = match executor_stage_async(
-            buck2_data::LocalStage {
-                stage: Some(buck2_data::LocalPrepareOutputDirs {}.into()),
+            bz_data::LocalStage {
+                stage: Some(bz_data::LocalPrepareOutputDirs {}.into()),
             },
             async {
                 let working_directory = self.root.join_cow(request.working_directory());
@@ -768,7 +768,7 @@ impl LocalExecutor {
                     None
                 };
 
-                buck2_error::Ok(bazel_worker_sandbox)
+                bz_error::Ok(bazel_worker_sandbox)
             },
         )
         .boxed()
@@ -783,23 +783,23 @@ impl LocalExecutor {
                 let env = env
                     .iter()
                     .copied()
-                    .map(|(k, v)| buck2_data::EnvironmentEntry {
+                    .map(|(k, v)| bz_data::EnvironmentEntry {
                         key: k.to_owned(),
                         value: v.into_string_lossy(),
                     })
                     .collect();
 
                 let stage = match worker {
-                    None => buck2_data::LocalExecute {
-                        command: Some(buck2_data::LocalCommand {
+                    None => bz_data::LocalExecute {
+                        command: Some(bz_data::LocalCommand {
                             action_digest: action_digest.to_string(),
                             argv: args.to_vec(),
                             env,
                         }),
                     }
                     .into(),
-                    Some(_) => buck2_data::WorkerExecute {
-                        command: Some(buck2_data::WorkerCommand {
+                    Some(_) => bz_data::WorkerExecute {
+                        command: Some(bz_data::WorkerCommand {
                             action_digest: action_digest.to_string(),
                             argv: request.args().to_vec(),
                             env,
@@ -808,7 +808,7 @@ impl LocalExecutor {
                     }
                     .into(),
                 };
-                buck2_data::LocalStage { stage: Some(stage) }
+                bz_data::LocalStage { stage: Some(stage) }
             },
             async move {
                 let execution_start = TimeSpan::start_now();
@@ -941,7 +941,7 @@ impl LocalExecutor {
             let retry_future = Arc::new(std::sync::Mutex::new(None));
 
             let kill_observer = if let Some(kill_future) = kill_future {
-                let kill_awaiter = buck2_util::async_move_clone!(retry_future, {
+                let kill_awaiter = bz_util::async_move_clone!(retry_future, {
                     if let Ok(r) = kill_future.0.await {
                         *retry_future.lock().unwrap() = Some(r);
                     } else {
@@ -1029,8 +1029,8 @@ impl LocalExecutor {
 
         manager.start_waiting_category(WaitingCategory::MaterializingInputs);
         let executor_stage_result = executor_stage_async(
-            buck2_data::LocalStage {
-                stage: Some(buck2_data::LocalMaterializeInputs {}.into()),
+            bz_data::LocalStage {
+                stage: Some(bz_data::LocalMaterializeInputs {}.into()),
             },
             async {
                 let start = Instant::now();
@@ -1066,7 +1066,7 @@ impl LocalExecutor {
                             self.prepare_content_based_incremental_actions(request, cancellations)
                                 .await?;
 
-                            buck2_error::Ok(())
+                            bz_error::Ok(())
                         } else {
                             Ok(())
                         }
@@ -1077,7 +1077,7 @@ impl LocalExecutor {
                 let materialized_inputs = r1?;
                 r2?;
 
-                buck2_error::Ok((materialized_inputs, Instant::now() - start))
+                bz_error::Ok((materialized_inputs, Instant::now() - start))
             },
         )
         .boxed()
@@ -1106,8 +1106,8 @@ impl LocalExecutor {
             None => {
                 return manager.error(
                     "no_dispatcher",
-                    buck2_error!(
-                        buck2_error::ErrorTag::DispatcherUnavailable,
+                    bz_error!(
+                        bz_error::ErrorTag::DispatcherUnavailable,
                         "No dispatcher available"
                     ),
                 );
@@ -1131,8 +1131,8 @@ impl LocalExecutor {
                 if scratch_path_abs.as_os_str().len() > MAX_PATH {
                     return manager.error(
                         "scratch_dir_too_long",
-                        buck2_error!(
-                            buck2_error::ErrorTag::Environment,
+                        bz_error!(
+                            bz_error::ErrorTag::Environment,
                             "Scratch directory path is longer than MAX_PATH: {}",
                             scratch_path_abs
                         ),
@@ -1255,7 +1255,7 @@ impl LocalExecutor {
                 };
 
                 let mut execution_stats =
-                    execution_stats.map(|s| buck2_data::CommandExecutionStats {
+                    execution_stats.map(|s| bz_data::CommandExecutionStats {
                         cpu_instructions_user: s.cpu_instructions_user,
                         cpu_instructions_kernel: s.cpu_instructions_kernel,
                         userspace_events: s.userspace_events,
@@ -1410,7 +1410,7 @@ impl LocalExecutor {
         digest_config: DigestConfig,
         declare_outputs: bool,
         promote_outputs: bool,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
         HashingInfo,
     )> {
@@ -1557,7 +1557,7 @@ impl LocalExecutor {
                 .map(|(p, _)| p.clone())
                 .collect();
             self.materializer.declare_existing(to_declare).await?;
-            buck2_util::future::try_join_all(
+            bz_util::future::try_join_all(
                 output_path_to_content_based_path_copies.into_iter().map(
                     |(path, value, copied_artifacts, cfg_path)| {
                         self.materializer
@@ -1566,7 +1566,7 @@ impl LocalExecutor {
                 ),
             )
             .await?;
-            buck2_util::future::try_join_all(
+            bz_util::future::try_join_all(
                 configuration_path_to_content_based_path_symlinks
                     .into_iter()
                     .map(|(path, value)| self.materializer.declare_copy(path, value, vec![], None)),
@@ -1591,7 +1591,7 @@ impl LocalExecutor {
         &self,
         outputs_to_check: Vec<CommandExecutionOutput>,
         expected_fingerprint: &[u8],
-    ) -> buck2_error::Result<LocalActionCacheMetadataLookup> {
+    ) -> bz_error::Result<LocalActionCacheMetadataLookup> {
         let mut output_paths = Vec::new();
         let mut output_keys = Vec::new();
         for output in outputs_to_check {
@@ -1653,7 +1653,7 @@ impl LocalExecutor {
         request: &CommandExecutionRequest,
         outputs_fingerprint: &[u8],
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(local_action_cache_key) = request.local_action_cache_key() {
             self.insert_local_action_cache_key_metadata(
                 local_action_cache_key,
@@ -1666,10 +1666,10 @@ impl LocalExecutor {
 
     fn insert_local_action_cache_key_metadata(
         &self,
-        local_action_cache_key: &buck2_execute::execute::request::LocalActionCacheKey,
+        local_action_cache_key: &bz_execute::execute::request::LocalActionCacheKey,
         outputs_fingerprint: &[u8],
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let output_values: Arc<[ArtifactValue]> =
             outputs.values().cloned().collect::<Vec<_>>().into();
         self.local_action_cache.insert_action_metadata(
@@ -1687,7 +1687,7 @@ impl LocalExecutor {
         &self,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut to_declare = Vec::new();
         let mut configuration_path_to_content_based_path_symlinks = Vec::new();
 
@@ -1737,7 +1737,7 @@ impl LocalExecutor {
         }
 
         self.materializer.declare_existing(to_declare).await?;
-        buck2_util::future::try_join_all(
+        bz_util::future::try_join_all(
             configuration_path_to_content_based_path_symlinks
                 .into_iter()
                 .map(|(path, value)| self.materializer.declare_copy(path, value, vec![], None)),
@@ -1750,7 +1750,7 @@ impl LocalExecutor {
         &self,
         shared_outputs: &BuckIndexMap<String, BazelSharedActionOutput>,
         request: &CommandExecutionRequest,
-    ) -> buck2_error::Result<BuckIndexMap<CommandExecutionOutput, ArtifactValue>> {
+    ) -> bz_error::Result<BuckIndexMap<CommandExecutionOutput, ArtifactValue>> {
         let mut outputs = BuckIndexMap::with_capacity(shared_outputs.len());
         let mut copied_outputs = Vec::new();
         let mut copied_output_paths = Vec::new();
@@ -1758,8 +1758,8 @@ impl LocalExecutor {
         for output in request.outputs() {
             let key = bazel_shared_action_output_key(&output);
             let Some(shared_output) = shared_outputs.get(&key) else {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Bazel shared action did not produce expected output `{}`",
                     key
                 ));
@@ -1796,15 +1796,15 @@ impl LocalExecutor {
         }
 
         if outputs.len() != shared_outputs.len() {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Bazel shared action output count mismatch: leader produced {}, follower expected {}",
                 shared_outputs.len(),
                 outputs.len()
             ));
         }
 
-        buck2_util::future::try_join_all(copied_outputs.into_iter().map(
+        bz_util::future::try_join_all(copied_outputs.into_iter().map(
             |(path, value, copied_artifacts, cfg_path)| {
                 self.materializer
                     .declare_copy(path, value, copied_artifacts, cfg_path)
@@ -1835,8 +1835,8 @@ impl LocalExecutor {
             if let Some(broker) = &worker_pool.get_worker_broker(worker_spec, worker_root) {
                 Some(
                     executor_stage_async(
-                        buck2_data::LocalStage {
-                            stage: Some(buck2_data::WorkerQueued {}.into()),
+                        bz_data::LocalStage {
+                            stage: Some(bz_data::WorkerQueued {}.into()),
                         },
                         broker.acquire(&HostSharingRequirements::default()),
                     )
@@ -1901,15 +1901,15 @@ impl LocalExecutor {
 
             // Might make more sense for the stage to always be `WorkerWait` and for `WorkerInit` to be a separate, top level event
             let stage = if new_worker {
-                buck2_data::LocalStage {
+                bz_data::LocalStage {
                     stage: Some(
-                        buck2_data::WorkerInit {
-                            command: Some(buck2_data::WorkerInitCommand {
+                        bz_data::WorkerInit {
+                            command: Some(bz_data::WorkerInitCommand {
                                 argv: worker_spec.exe.clone(),
                                 env: worker_spec
                                     .env
                                     .iter()
-                                    .map(|(k, v)| buck2_data::EnvironmentEntry {
+                                    .map(|(k, v)| bz_data::EnvironmentEntry {
                                         key: k.to_owned(),
                                         value: v.to_owned(),
                                     })
@@ -1920,8 +1920,8 @@ impl LocalExecutor {
                     ),
                 }
             } else {
-                buck2_data::LocalStage {
-                    stage: Some(buck2_data::WorkerWait {}.into()),
+                bz_data::LocalStage {
+                    stage: Some(bz_data::WorkerWait {}.into()),
                 }
             };
 
@@ -1951,7 +1951,7 @@ impl LocalExecutor {
         &self,
         request: &CommandExecutionRequest,
         cancellations: &CancellationContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let declared_content_based_outputs: Vec<BuildArtifactPath> = request
             .outputs()
             .filter_map(|output| match output {
@@ -1970,7 +1970,7 @@ impl LocalExecutor {
                 self.artifact_fs
                     .resolve_build(path, Some(&ContentBasedPathHash::OutputArtifact))
             })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
+            .collect::<bz_error::Result<Vec<_>>>()?;
 
         self.materializer
             .invalidate_many(outputs_to_delete.clone())
@@ -2119,8 +2119,8 @@ impl PreparedCommandExecutor for LocalExecutor {
                         BazelSharedActionResult::Failure => {
                             return manager.error(
                                 "bazel_shared_action_failed",
-                                buck2_error!(
-                                    buck2_error::ErrorTag::Input,
+                                bz_error!(
+                                    bz_error::ErrorTag::Input,
                                     "Bazel shared action `{}` failed for output set `{}`",
                                     action_digest,
                                     output_set_key
@@ -2155,8 +2155,8 @@ impl PreparedCommandExecutor for LocalExecutor {
 
         manager.start_waiting_category(WaitingCategory::LocalQueued);
         let local_resource_holders = executor_stage_async(
-            buck2_data::LocalStage {
-                stage: Some(buck2_data::AcquireLocalResource {}.into()),
+            bz_data::LocalStage {
+                stage: Some(bz_data::AcquireLocalResource {}.into()),
             },
             async move {
                 let mut holders = vec![];
@@ -2174,8 +2174,8 @@ impl PreparedCommandExecutor for LocalExecutor {
         .await;
 
         let _permit = executor_stage_async(
-            buck2_data::LocalStage {
-                stage: Some(buck2_data::LocalQueued {}.into()),
+            bz_data::LocalStage {
+                stage: Some(bz_data::LocalQueued {}.into()),
             },
             self.host_sharing_broker
                 .acquire(request.host_sharing_requirements()),
@@ -2220,9 +2220,9 @@ impl PreparedCommandExecutor for LocalExecutor {
 impl PreparedCommandOptionalExecutor for LocalExecutor {
     fn insert_unprepared_action_cache_metadata(
         &self,
-        local_action_cache_key: &buck2_execute::execute::request::LocalActionCacheKey,
+        local_action_cache_key: &bz_execute::execute::request::LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let outputs_fingerprint =
             local_action_cache_outputs_fingerprint(&self.artifact_fs, outputs)?;
         self.insert_local_action_cache_key_metadata(
@@ -2702,7 +2702,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     value.dupe(),
                 ))
             })
-            .collect::<buck2_error::Result<Vec<_>>>()
+            .collect::<bz_error::Result<Vec<_>>>()
         {
             Ok(output_matches) => output_matches,
             Err(e) => {
@@ -2789,7 +2789,7 @@ impl<'a> StrOrOsStr<'a> {
 fn prepare_bazel_execroot_working_directory(
     project_root: &AbsNormPathBuf,
     working_directory: &AbsNormPath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if !is_bazel_execroot_working_directory(working_directory) {
         return Ok(());
     }
@@ -2874,10 +2874,10 @@ async fn prepare_bazel_worker_sandbox(
     materialized_inputs: &MaterializedInputPaths,
     _action_digest: &ActionDigest,
     blocking_executor: &dyn BlockingExecutor,
-) -> buck2_error::Result<BazelWorkerSandbox> {
+) -> bz_error::Result<BazelWorkerSandbox> {
     let sandbox_id = BAZEL_WORKER_SANDBOX_COUNTER.fetch_add(1, Ordering::Relaxed);
     let relative_path = format!(
-        "__buck2_worker_sandbox/{}-{}",
+        "__bz_worker_sandbox/{}-{}",
         std::process::id(),
         sandbox_id
     );
@@ -2900,7 +2900,7 @@ async fn prepare_bazel_worker_sandbox(
                 let entry = entry?;
                 let file_name = entry.file_name();
                 let file_name = file_name.to_string_lossy();
-                if file_name == "buck-out" || file_name == "__buck2_worker_sandbox" {
+                if file_name == "buck-out" || file_name == "__bz_worker_sandbox" {
                     continue;
                 }
                 let source = entry.path();
@@ -2941,7 +2941,7 @@ async fn prepare_bazel_worker_sandbox(
                 let relative = output_path
                     .strip_prefix_opt(request.working_directory())
                     .ok_or_else(|| {
-                        buck2_error::internal_error!(
+                        bz_error::internal_error!(
                             "Bazel worker output path `{}` is outside working directory `{}`",
                             output_path,
                             request.working_directory()
@@ -2954,7 +2954,7 @@ async fn prepare_bazel_worker_sandbox(
                     let relative = path_to_create
                         .strip_prefix_opt(request.working_directory())
                         .ok_or_else(|| {
-                            buck2_error::internal_error!(
+                            bz_error::internal_error!(
                                 "Bazel worker output directory `{}` is outside working directory `{}`",
                                 path_to_create,
                                 request.working_directory()
@@ -2964,7 +2964,7 @@ async fn prepare_bazel_worker_sandbox(
                 }
             }
 
-            buck2_error::Ok(())
+            bz_error::Ok(())
         })
         .await?;
 
@@ -2979,7 +2979,7 @@ async fn promote_bazel_worker_sandbox_outputs(
     request: &CommandExecutionRequest,
     sandbox: &BazelWorkerSandbox,
     blocking_executor: &dyn BlockingExecutor,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     blocking_executor
         .execute_io_inline(|| {
             for output in request.outputs() {
@@ -2995,7 +2995,7 @@ async fn promote_bazel_worker_sandbox_outputs(
                 let relative = output_path
                     .strip_prefix_opt(request.working_directory())
                     .ok_or_else(|| {
-                        buck2_error::internal_error!(
+                        bz_error::internal_error!(
                             "Bazel worker output path `{}` is outside working directory `{}`",
                             output_path,
                             request.working_directory()
@@ -3012,7 +3012,7 @@ async fn promote_bazel_worker_sandbox_outputs(
         .await
 }
 
-fn create_or_replace_symlink(source: &Path, dest: &AbsNormPath) -> buck2_error::Result<()> {
+fn create_or_replace_symlink(source: &Path, dest: &AbsNormPath) -> bz_error::Result<()> {
     if fs_util::read_link(dest)
         .map(|target| target == source)
         .unwrap_or(false)
@@ -3161,7 +3161,7 @@ fn expand_bazel_worker_args(
     artifact_fs: &ArtifactFs,
     request: &CommandExecutionRequest,
     materialized_inputs: &MaterializedInputPaths,
-) -> buck2_error::Result<Vec<String>> {
+) -> bz_error::Result<Vec<String>> {
     if !request
         .worker()
         .as_ref()
@@ -3189,7 +3189,7 @@ fn expand_bazel_worker_arg(
     materialized_inputs: &MaterializedInputPaths,
     arg: &str,
     expanded: &mut Vec<String>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if !is_bazel_worker_flag_file_arg(arg) {
         expanded.push(arg.to_owned());
         return Ok(());
@@ -3214,7 +3214,7 @@ fn resolve_bazel_worker_flag_file_path(
     request: &CommandExecutionRequest,
     materialized_inputs: &MaterializedInputPaths,
     arg_path: &str,
-) -> buck2_error::Result<ProjectRelativePathBuf> {
+) -> bz_error::Result<ProjectRelativePathBuf> {
     let relative = ForwardRelativePathBuf::new(arg_path.to_owned())
         .buck_error_context("Invalid Bazel worker flag-file path")?;
     let execroot_path = request.working_directory().join(relative);
@@ -3231,7 +3231,7 @@ fn materialize_artifact_path_alias(
     source_path: &ProjectRelativePath,
     path: &ProjectRelativePath,
     value: &ArtifactValue,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let fs = artifact_fs.fs();
     let source = fs.resolve(source_path);
     let dest = fs.resolve(path);
@@ -3326,7 +3326,7 @@ fn materialize_artifact_path_alias(
 fn materialize_empty_input_file(
     artifact_fs: &ArtifactFs,
     path: &ProjectRelativePath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let fs = artifact_fs.fs();
     let dest = fs.resolve(path);
     if fs_util::symlink_metadata_if_exists(&dest)?
@@ -3351,7 +3351,7 @@ fn materialize_external_cell_root_alias(
     artifact_fs: &ArtifactFs,
     source_root: &ProjectRelativePath,
     alias_root: &ProjectRelativePath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let fs = artifact_fs.fs();
     let source = fs.resolve(source_root);
     let dest = fs.resolve(alias_root);
@@ -3364,7 +3364,7 @@ fn materialize_external_cell_root_alias(
 pub fn materialize_input_path_aliases(
     artifact_fs: &ArtifactFs,
     materialized_inputs: &MaterializedInputPaths,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for alias in &materialized_inputs.external_cell_root_aliases {
         materialize_external_cell_root_alias(
             artifact_fs,
@@ -3386,7 +3386,7 @@ pub fn materialize_input_path_aliases(
 fn create_artifact_path_alias_symlink(
     source: &AbsNormPathBuf,
     dest: &AbsNormPathBuf,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if artifact_path_alias_is_current(dest, source) {
         return Ok(());
     }
@@ -3422,7 +3422,7 @@ fn create_artifact_path_alias_symlink(
 fn artifact_path_alias_resolved_symlink_target(
     source: &AbsNormPathBuf,
     target: &str,
-) -> buck2_error::Result<PathBuf> {
+) -> bz_error::Result<PathBuf> {
     let target_path = Path::new(target);
     if target_path.is_absolute() {
         return Ok(target_path.to_owned());
@@ -3444,7 +3444,7 @@ fn artifact_path_alias_resolved_symlink_target(
 fn create_artifact_path_alias_file(
     source: &AbsNormPathBuf,
     dest: &AbsNormPathBuf,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if artifact_path_alias_file_is_current(dest, source) {
         return Ok(());
     }
@@ -3474,7 +3474,7 @@ fn create_artifact_path_alias_file(
 fn create_artifact_path_alias_file_tmp(
     source: &AbsNormPathBuf,
     tmp: &AbsNormPathBuf,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match clone_artifact_path_alias_file(source, tmp) {
         Ok(()) => Ok(()),
         Err(clone_error) => {
@@ -3494,7 +3494,7 @@ fn create_artifact_path_alias_file_tmp(
 fn create_artifact_path_alias_file_tmp(
     source: &AbsNormPathBuf,
     tmp: &AbsNormPathBuf,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match std::fs::hard_link(source.as_path(), tmp.as_path()) {
         Ok(()) => Ok(()),
         Err(hard_link_error) => {
@@ -3544,10 +3544,10 @@ fn clone_artifact_path_alias_file(
     }
 }
 
-fn artifact_path_alias_tmp_path(dest: &AbsNormPathBuf) -> buck2_error::Result<AbsNormPathBuf> {
+fn artifact_path_alias_tmp_path(dest: &AbsNormPathBuf) -> bz_error::Result<AbsNormPathBuf> {
     let parent = dest.parent().ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        bz_error!(
+            bz_error::ErrorTag::Tier0,
             "Artifact path alias has no parent directory"
         )
     })?;
@@ -3659,7 +3659,7 @@ fn artifact_path_alias_metadata_is_same_file(
 fn artifact_path_alias_file_contents_are_equivalent(
     target: &AbsNormPathBuf,
     source: &AbsNormPathBuf,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let mut target_file = fs_util::open_file(target).categorize_internal()?;
     let mut source_file = fs_util::open_file(source).categorize_internal()?;
     let mut target_buffer = [0u8; 64 * 1024];
@@ -3668,11 +3668,11 @@ fn artifact_path_alias_file_contents_are_equivalent(
     loop {
         let target_len = target_file
             .read(&mut target_buffer)
-            .map_err(buck2_error::Error::from)
+            .map_err(bz_error::Error::from)
             .with_buck_error_context(|| format!("Error reading `{}`", target.display()))?;
         let source_len = source_file
             .read(&mut source_buffer)
-            .map_err(buck2_error::Error::from)
+            .map_err(bz_error::Error::from)
             .with_buck_error_context(|| format!("Error reading `{}`", source.display()))?;
         if target_len != source_len {
             return Ok(false);
@@ -3690,7 +3690,7 @@ fn promote_produced_output_path(
     artifact_fs: &ArtifactFs,
     produced_path: &ProjectRelativePath,
     output_path: &ProjectRelativePath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if produced_path == output_path {
         return Ok(());
     }
@@ -3731,7 +3731,7 @@ pub async fn materialize_inputs(
     materializer: &dyn Materializer,
     request: &CommandExecutionRequest,
     digest_config: DigestConfig,
-) -> buck2_error::Result<MaterializedInputPaths> {
+) -> bz_error::Result<MaterializedInputPaths> {
     let mut paths = vec![];
     let mut scratch = ScratchPath(None);
     let mut configuration_path_to_content_based_path_symlinks = vec![];
@@ -3830,7 +3830,7 @@ pub async fn materialize_inputs(
                 let path = artifact_fs.buck_out_path_resolver().resolve_scratch(path)?;
 
                 if scratch.0.is_some() {
-                    return Err(buck2_error::internal_error!(
+                    return Err(bz_error::internal_error!(
                         "Multiple scratch paths for one action"
                     ));
                 }
@@ -3881,13 +3881,13 @@ pub async fn materialize_inputs(
         }
     }
 
-    buck2_util::future::try_join_all(
+    bz_util::future::try_join_all(
         configuration_path_to_content_based_path_symlinks
             .into_iter()
             .map(|(path, value)| materializer.declare_copy(path, value, vec![], None)),
     )
     .await?;
-    buck2_util::future::try_join_all(artifact_path_alias_copies.into_iter().map(
+    bz_util::future::try_join_all(artifact_path_alias_copies.into_iter().map(
         |(path, value, copied_artifacts, cfg_path)| {
             materializer.declare_copy(path, value, copied_artifacts, cfg_path)
         },
@@ -3961,7 +3961,7 @@ pub struct ScratchPath(Option<ProjectRelativePathBuf>);
 pub async fn prep_scratch_path(
     scratch_path: &ScratchPath,
     artifact_fs: &ArtifactFs,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let Some(path) = scratch_path.0.as_ref() else {
         return Ok(());
     };
@@ -4061,7 +4061,7 @@ async fn materialize_build_outputs(
     incremental_db_state: &Arc<IncrementalDbState>,
     materializer: &dyn Materializer,
     request: &CommandExecutionRequest,
-) -> buck2_error::Result<Vec<ProjectRelativePathBuf>> {
+) -> bz_error::Result<Vec<ProjectRelativePathBuf>> {
     let mut paths = vec![];
     let path_map = get_incremental_path_map(incremental_db_state, request.run_action_key());
     for output in request.outputs() {
@@ -4096,7 +4096,7 @@ pub async fn create_output_dirs(
     materializer: Arc<dyn Materializer>,
     blocking_executor: Arc<dyn BlockingExecutor>,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let outputs: Vec<_> = request
         .outputs()
         .map(|output| {
@@ -4110,7 +4110,7 @@ pub async fn create_output_dirs(
             )?;
             Ok((produced, declared))
         })
-        .collect::<buck2_error::Result<Vec<_>>>()?;
+        .collect::<bz_error::Result<Vec<_>>>()?;
 
     // Invalidate all the output paths this action might provide. Note that this is a bit
     // approximative: we might have previous instances of this action that declared
@@ -4220,7 +4220,7 @@ mod unix {
     use super::*;
 
     pub async fn exec_via_forkserver(
-        forkserver: &buck2_forkserver::client::ForkserverClient,
+        forkserver: &bz_forkserver::client::ForkserverClient,
         exe: impl AsRef<OsStr>,
         args: impl IntoIterator<Item = impl AsRef<OsStr>>,
         env: impl IntoIterator<Item = (impl AsRef<OsStr>, impl AsRef<OsStr>)>,
@@ -4232,16 +4232,16 @@ mod unix {
         cgroup_path: Option<CgroupPathBuf>,
         freeze_rx: impl ActionFreezeEventReceiver,
         network_access: Option<NetworkAccess>,
-    ) -> buck2_error::Result<CommandResult> {
+    ) -> bz_error::Result<CommandResult> {
         let exe = exe.as_ref();
 
-        let mut req = buck2_forkserver_proto::CommandRequest {
+        let mut req = bz_forkserver_proto::CommandRequest {
             exe: exe.as_bytes().to_vec(),
             argv: args
                 .into_iter()
                 .map(|s| s.as_ref().as_bytes().to_vec())
                 .collect(),
-            cwd: Some(buck2_forkserver_proto::WorkingDirectory {
+            cwd: Some(bz_forkserver_proto::WorkingDirectory {
                 path: working_directory.as_path().as_os_str().as_bytes().to_vec(),
             }),
             env: vec![],
@@ -4265,23 +4265,23 @@ mod unix {
     trait CommandRequestExt {
         fn push_env_directive<D>(&mut self, directive: D)
         where
-            D: Into<buck2_forkserver_proto::env_directive::Data>;
+            D: Into<bz_forkserver_proto::env_directive::Data>;
     }
 
-    impl CommandRequestExt for buck2_forkserver_proto::CommandRequest {
+    impl CommandRequestExt for bz_forkserver_proto::CommandRequest {
         fn push_env_directive<D>(&mut self, directive: D)
         where
-            D: Into<buck2_forkserver_proto::env_directive::Data>,
+            D: Into<bz_forkserver_proto::env_directive::Data>,
         {
-            self.env.push(buck2_forkserver_proto::EnvDirective {
+            self.env.push(bz_forkserver_proto::EnvDirective {
                 data: Some(directive.into()),
             });
         }
     }
 
-    impl EnvironmentBuilder for buck2_forkserver_proto::CommandRequest {
+    impl EnvironmentBuilder for bz_forkserver_proto::CommandRequest {
         fn clear(&mut self) {
-            self.push_env_directive(buck2_forkserver_proto::EnvClear {});
+            self.push_env_directive(bz_forkserver_proto::EnvClear {});
         }
 
         fn set<K, V>(&mut self, key: K, val: V)
@@ -4289,7 +4289,7 @@ mod unix {
             K: AsRef<OsStr>,
             V: AsRef<OsStr>,
         {
-            self.push_env_directive(buck2_forkserver_proto::EnvSet {
+            self.push_env_directive(bz_forkserver_proto::EnvSet {
                 key: key.as_ref().as_bytes().to_vec(),
                 value: val.as_ref().as_bytes().to_vec(),
             })
@@ -4299,7 +4299,7 @@ mod unix {
         where
             K: AsRef<OsStr>,
         {
-            self.push_env_directive(buck2_forkserver_proto::EnvRemove {
+            self.push_env_directive(bz_forkserver_proto::EnvRemove {
                 key: key.as_ref().as_bytes().to_vec(),
             })
         }
@@ -4311,29 +4311,29 @@ mod tests {
     use std::str;
 
     use assert_matches::assert_matches;
-    use buck2_common::liveliness_observer::NoopLivelinessObserver;
-    use buck2_core::cells::CellResolver;
-    use buck2_core::cells::cell_root_path::CellRootPathBuf;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-    use buck2_core::deferred::key::DeferredHolderKey;
-    use buck2_core::fs::buck_out_path::BazelOutputPathKind;
-    use buck2_core::fs::buck_out_path::BazelOutputRoot;
-    use buck2_core::fs::buck_out_path::BuckOutPathKind;
-    use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-    use buck2_core::fs::buck_out_path::BuildArtifactPath;
-    use buck2_core::fs::project::ProjectRoot;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-    use buck2_core::target::label::label::TargetLabel;
-    use buck2_execute::execute::blocking::testing::DummyBlockingExecutor;
-    use buck2_execute::execute::request::CommandExecutionPaths;
-    use buck2_execute::execute::request::OutputType;
-    use buck2_execute::materialize::nodisk::NoDiskMaterializer;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-    use buck2_hash::StdBuckHashMap;
-    use buck2_hash::buck_indexmap;
+    use bz_common::liveliness_observer::NoopLivelinessObserver;
+    use bz_core::cells::CellResolver;
+    use bz_core::cells::cell_root_path::CellRootPathBuf;
+    use bz_core::cells::name::CellName;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+    use bz_core::deferred::key::DeferredHolderKey;
+    use bz_core::fs::buck_out_path::BazelOutputPathKind;
+    use bz_core::fs::buck_out_path::BazelOutputRoot;
+    use bz_core::fs::buck_out_path::BuckOutPathKind;
+    use bz_core::fs::buck_out_path::BuckOutPathResolver;
+    use bz_core::fs::buck_out_path::BuildArtifactPath;
+    use bz_core::fs::project::ProjectRoot;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_core::target::label::label::TargetLabel;
+    use bz_execute::execute::blocking::testing::DummyBlockingExecutor;
+    use bz_execute::execute::request::CommandExecutionPaths;
+    use bz_execute::execute::request::OutputType;
+    use bz_execute::materialize::nodisk::NoDiskMaterializer;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_hash::StdBuckHashMap;
+    use bz_hash::buck_indexmap;
     use host_sharing::HostSharingStrategy;
 
     use super::*;
@@ -4350,7 +4350,7 @@ mod tests {
     }
 
     #[test]
-    fn test_external_cell_root_uses_isolation_dir() -> buck2_error::Result<()> {
+    fn test_external_cell_root_uses_isolation_dir() -> bz_error::Result<()> {
         let root = external_cell_root(ProjectRelativePath::new(
             "buck-out/debug/external_cells/bundled/bazel_tools/src/main/cpp/util/port.cc",
         )?)
@@ -4367,7 +4367,7 @@ mod tests {
     }
 
     #[test]
-    fn test_external_cell_root_alias_uses_isolation_dir() -> buck2_error::Result<()> {
+    fn test_external_cell_root_alias_uses_isolation_dir() -> bz_error::Result<()> {
         let (source_root, alias_root) = external_cell_root_alias(
             ProjectRelativePath::new(
                 "buck-out/debug/external_cells/bundled/bazel_tools/src/main/cpp/util/port.cc",
@@ -4390,7 +4390,7 @@ mod tests {
     }
 
     #[test]
-    fn test_buck_artifact_store_path_uses_isolation_dir() -> buck2_error::Result<()> {
+    fn test_buck_artifact_store_path_uses_isolation_dir() -> bz_error::Result<()> {
         assert!(buck_artifact_store_path(ProjectRelativePath::new(
             "buck-out/debug/art/protobuf+/cfg/external/protobuf+/file.pb.h"
         )?));
@@ -4404,7 +4404,7 @@ mod tests {
     }
 
     #[test]
-    fn test_artifact_path_alias_replaces_stale_symlink() -> buck2_error::Result<()> {
+    fn test_artifact_path_alias_replaces_stale_symlink() -> bz_error::Result<()> {
         let temp = ProjectRootTemp::new()?;
         temp.write_file("source", "new");
         temp.write_file("old_source", "old");
@@ -4424,7 +4424,7 @@ mod tests {
     }
 
     #[test]
-    fn test_artifact_path_alias_file_equivalence_uses_content() -> buck2_error::Result<()> {
+    fn test_artifact_path_alias_file_equivalence_uses_content() -> bz_error::Result<()> {
         let temp = ProjectRootTemp::new()?;
         let content = "a".repeat(70 * 1024);
         temp.write_file("source", &content);
@@ -4442,7 +4442,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_artifact_path_alias_file_copies_content() -> buck2_error::Result<()> {
+    fn test_create_artifact_path_alias_file_copies_content() -> bz_error::Result<()> {
         let temp = ProjectRootTemp::new()?;
         temp.write_file("source", "content");
         let source = temp.path().resolve(ProjectRelativePath::new("source")?);
@@ -4469,7 +4469,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_executor() -> buck2_error::Result<(LocalExecutor, AbsNormPathBuf, ProjectRootTemp)> {
+    fn test_executor() -> bz_error::Result<(LocalExecutor, AbsNormPathBuf, ProjectRootTemp)> {
         let temp = ProjectRootTemp::new().unwrap();
         let project_fs = temp.path();
         let artifact_fs = artifact_fs(project_fs.dupe());
@@ -4535,7 +4535,7 @@ mod tests {
         artifact_fs: &ArtifactFs,
         output: CommandExecutionOutput,
         arg: &str,
-    ) -> buck2_error::Result<CommandExecutionRequest> {
+    ) -> bz_error::Result<CommandExecutionRequest> {
         let paths = CommandExecutionPaths::new(
             Vec::new(),
             buck_indexset![output],
@@ -4556,7 +4556,7 @@ mod tests {
         output: CommandExecutionOutput,
         input: CommandExecutionInput,
         working_directory: &str,
-    ) -> buck2_error::Result<CommandExecutionRequest> {
+    ) -> bz_error::Result<CommandExecutionRequest> {
         let paths = CommandExecutionPaths::new(
             vec![input],
             buck_indexset![output],
@@ -4587,7 +4587,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bazel_shared_action_equivalence_key_uses_command_shape() -> buck2_error::Result<()> {
+    fn test_bazel_shared_action_equivalence_key_uses_command_shape() -> bz_error::Result<()> {
         let (executor, _, _tmpdir) = test_executor()?;
         let output_a = bazel_shared_test_output("cell//app:app", "cell//app:app");
         let output_b = bazel_shared_test_output("cell//app:app_bundle", "cell//app:app_bundle");
@@ -4610,7 +4610,7 @@ mod tests {
 
     #[test]
     fn test_bazel_shared_action_equivalence_key_ignores_buck_execroot_instance()
-    -> buck2_error::Result<()> {
+    -> bz_error::Result<()> {
         let (executor, _, _tmpdir) = test_executor()?;
         let output_a = bazel_shared_test_output("cell//app:app", "cell//app:app");
         let output_b = bazel_shared_test_output("cell//app:app_bundle", "cell//app:app_bundle");
@@ -4660,7 +4660,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unprepared_action_cache_outputs_require_materializer_metadata()
-    -> buck2_error::Result<()> {
+    -> bz_error::Result<()> {
         let (executor, _, _tmpdir) = test_executor()?;
         let outputs = buck_indexmap! {
             test_output("out") => ArtifactValue::file(DigestConfig::testing_default().empty_file()),
@@ -4680,7 +4680,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_exec_cmd_environment() -> buck2_error::Result<()> {
+    async fn test_exec_cmd_environment() -> bz_error::Result<()> {
         let (executor, root, _tmpdir) = test_executor()?;
 
         let interpreter = if cfg!(windows) { "powershell" } else { "sh" };
@@ -4718,7 +4718,7 @@ mod tests {
 
     #[cfg(fbcode_build)]
     #[tokio::test]
-    async fn test_exec_cmd_timeout() -> buck2_error::Result<()> {
+    async fn test_exec_cmd_timeout() -> bz_error::Result<()> {
         let (executor, _, _tmpdir) = test_executor()?;
 
         let interpreter = if cfg!(windows) { "powershell" } else { "sh" };
@@ -4749,8 +4749,8 @@ mod tests {
 
     #[cfg(unix)] // TODO: something similar on Windows: T123279320
     #[tokio::test]
-    async fn test_exec_cmd_environment_filtering() -> buck2_error::Result<()> {
-        use buck2_execute::execute::environment_inheritance::EnvironmentInheritance;
+    async fn test_exec_cmd_environment_filtering() -> bz_error::Result<()> {
+        use bz_execute::execute::environment_inheritance::EnvironmentInheritance;
 
         let (executor, _root, _tmpdir) = test_executor()?;
 

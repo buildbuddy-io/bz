@@ -19,11 +19,11 @@ pub trait StarlarkDebuggerHandle: Send + Sync + 'static {
     async fn start_eval(
         &self,
         description: &str,
-    ) -> buck2_error::Result<Box<dyn StarlarkDebugController>>;
+    ) -> bz_error::Result<Box<dyn StarlarkDebugController>>;
 }
 
 /// The StarlarkDebugController is used to setup a starlark Evaluator for debugging.
 pub trait StarlarkDebugController {
     /// Configures the Evaluator for debugging. Can only be used once.
-    fn initialize(&mut self, eval: &mut Evaluator) -> buck2_error::Result<()>;
+    fn initialize(&mut self, eval: &mut Evaluator) -> bz_error::Result<()>;
 }

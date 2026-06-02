@@ -13,71 +13,71 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_action_metadata_proto::DepFileInputs;
-use buck2_action_metadata_proto::RemoteDepFile;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::impls::expanded_command_line::ExpandedCommandLineDigest;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::cas_digest::CasDigestConfig;
-use buck2_common::cas_digest::CasDigestData;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::buck2_env;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::soft_error;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_hasher::DirectoryDigester;
-use buck2_directory::directory::directory_ref::DirectoryRef;
-use buck2_directory::directory::directory_selector::DirectorySelector;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_directory::directory::find::find;
-use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::span_async_simple;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest::CasDigestToReExt;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryBuilder;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionFingerprintedDirectoryRef;
-use buck2_execute::directory::ActionImmutableDirectory;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_execute::directory::INTERNER;
-use buck2_execute::directory::LazyActionDirectoryBuilder;
-use buck2_execute::directory::ReDirectorySerializer;
-use buck2_execute::directory::expand_selector_for_dependencies;
-use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
-use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobsBuilder;
-use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
-use buck2_execute::execute::dep_file_digest::DepFileDigest;
-use buck2_execute::execute::request::CommandExecutionPaths;
-use buck2_execute::execute::request::OutputType;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::materialize::materializer::MaterializationError;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_file_watcher::dep_files::FLUSH_DEP_FILES;
-use buck2_file_watcher::dep_files::FLUSH_NON_LOCAL_DEP_FILES;
-use buck2_fs::fs_util;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathNormalizer;
-use buck2_hash::BuckDashMap;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
+use bz_action_metadata_proto::DepFileInputs;
+use bz_action_metadata_proto::RemoteDepFile;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::execute::action_executor::ActionExecutionKind;
+use bz_build_api::actions::execute::action_executor::ActionExecutionMetadata;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::actions::impls::expanded_command_line::ExpandedCommandLineDigest;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use bz_build_signals::env::WaitingData;
+use bz_common::cas_digest::CasDigestConfig;
+use bz_common::cas_digest::CasDigestData;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::bz_env;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::soft_error;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_hasher::DirectoryDigester;
+use bz_directory::directory::directory_ref::DirectoryRef;
+use bz_directory::directory::directory_selector::DirectorySelector;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_directory::directory::find::find;
+use bz_directory::directory::fingerprinted_directory::FingerprintedDirectory;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::span_async_simple;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest::CasDigestToReExt;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryBuilder;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionFingerprintedDirectoryRef;
+use bz_execute::directory::ActionImmutableDirectory;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_execute::directory::INTERNER;
+use bz_execute::directory::LazyActionDirectoryBuilder;
+use bz_execute::directory::ReDirectorySerializer;
+use bz_execute::directory::expand_selector_for_dependencies;
+use bz_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
+use bz_execute::execute::action_digest_and_blobs::ActionDigestAndBlobsBuilder;
+use bz_execute::execute::cache_uploader::IntoRemoteDepFile;
+use bz_execute::execute::dep_file_digest::DepFileDigest;
+use bz_execute::execute::request::CommandExecutionPaths;
+use bz_execute::execute::request::OutputType;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::materialize::materializer::MaterializationError;
+use bz_execute::materialize::materializer::Materializer;
+use bz_file_watcher::dep_files::FLUSH_DEP_FILES;
+use bz_file_watcher::dep_files::FLUSH_NON_LOCAL_DEP_FILES;
+use bz_fs::fs_util;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathNormalizer;
+use bz_hash::BuckDashMap;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
 use derive_more::Display;
 use dupe::Dupe;
 use futures::StreamExt;
@@ -96,8 +96,8 @@ static DEP_FILES: Lazy<BuckDashMap<RunActionKey, Arc<DepFileState>>> = Lazy::new
 
 /// When this is set, we retain directories after fingerprinting, so that we can output them later
 /// for debugging via `buck2 audit dep-files`.
-fn keep_directories() -> buck2_error::Result<bool> {
-    buck2_env!("BUCK2_KEEP_DEP_FILE_DIRECTORIES", bool)
+fn keep_directories() -> bz_error::Result<bool> {
+    bz_env!("BUCK2_KEEP_DEP_FILE_DIRECTORIES", bool)
 }
 
 /// Forget about all dep files. This isn't really meant to be commonly used, but if an invalid dep
@@ -224,7 +224,7 @@ impl DepFileState {
         keep_directories: bool,
         digest_config: DigestConfig,
         fs: &ArtifactFs,
-    ) -> buck2_error::Result<MappedMutexGuard<'a, StoredFingerprints>> {
+    ) -> bz_error::Result<MappedMutexGuard<'a, StoredFingerprints>> {
         let input_signatures = &self
             .has_declared_dep_files
             .as_ref()
@@ -430,7 +430,7 @@ impl IntoRemoteDepFile for DepFileBundle {
         fs: &ArtifactFs,
         materializer: &dyn Materializer,
         result: &CommandExecutionResult,
-    ) -> buck2_error::Result<Option<RemoteDepFile>> {
+    ) -> bz_error::Result<Option<RemoteDepFile>> {
         let shared_declared_inputs = match &self.shared_declared_inputs {
             Some(shared_declared_inputs) => shared_declared_inputs,
             None => {
@@ -479,10 +479,10 @@ impl DepFileBundle {
         &self,
         ctx: &mut dyn ActionExecutionCtx,
         declared_outputs: &[BuildArtifact],
-    ) -> buck2_error::Result<(Option<(ActionOutputs, ActionExecutionMetadata)>, bool)> {
+    ) -> bz_error::Result<(Option<(ActionOutputs, ActionExecutionMetadata)>, bool)> {
         // Get the action outputs (if cache hit) and an indicator on whether a full lookup operation should be performed
         let (outputs, check_filtered_inputs) = span_async_simple(
-            buck2_data::MatchDepFilesStart {
+            bz_data::MatchDepFilesStart {
                 checking_filtered_inputs: false,
                 remote_cache: false,
             },
@@ -495,7 +495,7 @@ impl DepFileBundle {
                 declared_outputs,
                 &self.declared_dep_files,
             ),
-            buck2_data::MatchDepFilesEnd {},
+            bz_data::MatchDepFilesEnd {},
         )
         .await?;
         let outputs = outputs.map(|o| {
@@ -516,9 +516,9 @@ impl DepFileBundle {
         &self,
         ctx: &mut dyn ActionExecutionCtx,
         declared_outputs: &[BuildArtifact],
-    ) -> buck2_error::Result<Option<(ActionOutputs, ActionExecutionMetadata)>> {
+    ) -> bz_error::Result<Option<(ActionOutputs, ActionExecutionMetadata)>> {
         let matching_result = span_async_simple(
-            buck2_data::MatchDepFilesStart {
+            bz_data::MatchDepFilesStart {
                 checking_filtered_inputs: true,
                 remote_cache: false,
             },
@@ -532,7 +532,7 @@ impl DepFileBundle {
                 declared_outputs,
                 &self.declared_dep_files,
             ),
-            buck2_data::MatchDepFilesEnd {},
+            bz_data::MatchDepFilesEnd {},
         )
         .await?;
 
@@ -557,7 +557,7 @@ impl DepFileBundle {
         materializer: &dyn Materializer,
         found: &RemoteDepFile,
         result: &CommandExecutionResult,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         // Everything in the common digest structure is included in the remote dep file key,
         // so they should be the same but it's good to double check.
         let common = &self.common_digests;
@@ -633,7 +633,7 @@ impl DepFileBundle {
         let computed_filtered_fingerprints = self
             .shared_declared_inputs
             .clone()
-            .ok_or_else(|| buck2_error::internal_error!("Dep files should have been declared"))?
+            .ok_or_else(|| bz_error::internal_error!("Dep files should have been declared"))?
             .unshare()
             .filter(dep_files, fs)?
             .fingerprint(digest_config);
@@ -663,7 +663,7 @@ pub(crate) fn make_dep_file_bundle<'a>(
     expanded_command_line_digest: ExpandedCommandLineDigest,
     execution_paths: &'a CommandExecutionPaths,
     local_worker_execution_paths: Option<&'a CommandExecutionPaths>,
-) -> buck2_error::Result<DepFileBundle> {
+) -> bz_error::Result<DepFileBundle> {
     let input_directory_digest = execution_paths.input_directory().fingerprint();
     let dep_files_key = RunActionKey::from_action_execution_target(ctx.target());
 
@@ -730,7 +730,7 @@ pub(crate) async fn match_if_identical_action(
     cli_digest: &ExpandedCommandLineDigest,
     declared_outputs: &[BuildArtifact],
     declared_dep_files: &DeclaredDepFiles,
-) -> buck2_error::Result<(Option<ActionOutputs>, bool)> {
+) -> bz_error::Result<(Option<ActionOutputs>, bool)> {
     let previous_state = match get_dep_files(key) {
         Some(d) => d.dupe(),
         None => return Ok((None, false)),
@@ -772,7 +772,7 @@ pub(crate) async fn match_or_clear_dep_file(
     declared_inputs: &Option<PartitionedInputs<ActionSharedDirectory>>,
     declared_outputs: &[BuildArtifact],
     declared_dep_files: &DeclaredDepFiles,
-) -> buck2_error::Result<Option<ActionOutputs>> {
+) -> bz_error::Result<Option<ActionOutputs>> {
     let previous_state = match get_dep_files(key) {
         Some(d) => d.dupe(),
         None => return Ok(None),
@@ -811,7 +811,7 @@ enum InitialDepFileLookupResult {
 async fn outputs_match(
     ctx: &dyn ActionExecutionCtx,
     previous_state: &Arc<DepFileState>,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let fs = ctx.fs();
 
     // Finally, we need to make sure that the artifacts in the materializer actually
@@ -827,7 +827,7 @@ async fn outputs_match(
                 value.dupe(),
             ))
         })
-        .collect::<buck2_error::Result<Vec<(ProjectRelativePathBuf, ArtifactValue)>>>()?;
+        .collect::<bz_error::Result<Vec<(ProjectRelativePathBuf, ArtifactValue)>>>()?;
 
     let materializer_accepts = ctx
         .materializer()
@@ -890,7 +890,7 @@ async fn dep_files_match(
     declared_outputs: &[BuildArtifact],
     declared_dep_files: &DeclaredDepFiles,
     ctx: &dyn ActionExecutionCtx,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let initial_check = check_action(
         key,
         previous_state,
@@ -989,7 +989,7 @@ pub(crate) async fn read_dep_files(
     result: &ActionOutputs,
     fs: &ArtifactFs,
     materializer: &dyn Materializer,
-) -> buck2_error::Result<Option<ConcreteDepFiles>> {
+) -> bz_error::Result<Option<ConcreteDepFiles>> {
     // NOTE: We only materialize if we haven't computed our signatures yet, since we know we
     // can't have computed our signatures without having read the dep file already. In an ideal
     // world this wouldn't be necessary, but in practice contention on the materializer makes
@@ -1018,7 +1018,7 @@ fn compute_fingerprints(
     digest_config: DigestConfig,
     keep_directories: bool,
     fs: &ArtifactFs,
-) -> buck2_error::Result<StoredFingerprints> {
+) -> bz_error::Result<StoredFingerprints> {
     let filtered_directories = directories
         .filter(dep_files, fs)?
         .fingerprint(digest_config);
@@ -1038,7 +1038,7 @@ async fn eagerly_compute_fingerprints(
     shared_declared_inputs: &PartitionedInputs<ActionSharedDirectory>,
     declared_dep_files: &DeclaredDepFiles,
     result: &ActionOutputs,
-) -> buck2_error::Result<StoredFingerprints> {
+) -> bz_error::Result<StoredFingerprints> {
     let dep_files = read_dep_files(false, declared_dep_files, result, artifact_fs, materializer)
         .await?
         .ok_or_else(|| internal_error!("Dep file not found"))?;
@@ -1059,7 +1059,7 @@ pub(crate) async fn populate_dep_files(
     dep_file_bundle: DepFileBundle,
     result: &ActionOutputs,
     was_produced_locally: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let DepFileBundle {
         declared_dep_files,
         dep_files_key,
@@ -1181,11 +1181,11 @@ impl PartitionedInputs<Vec<ArtifactGroup>> {
     fn to_directories(
         &self,
         ctx: &dyn ActionExecutionCtx,
-    ) -> buck2_error::Result<PartitionedInputs<ActionDirectoryBuilder>> {
+    ) -> bz_error::Result<PartitionedInputs<ActionDirectoryBuilder>> {
         fn reduce(
             ctx: &dyn ActionExecutionCtx,
             inputs: &[ArtifactGroup],
-        ) -> buck2_error::Result<ActionDirectoryBuilder> {
+        ) -> bz_error::Result<ActionDirectoryBuilder> {
             let mut builder = LazyActionDirectoryBuilder::empty();
 
             for input in inputs {
@@ -1199,7 +1199,7 @@ impl PartitionedInputs<Vec<ArtifactGroup>> {
         fn untagged_reduce(
             ctx: &dyn ActionExecutionCtx,
             inputs: &[ArtifactGroup],
-        ) -> buck2_error::Result<ActionDirectoryBuilder> {
+        ) -> bz_error::Result<ActionDirectoryBuilder> {
             let mut builder = LazyActionDirectoryBuilder::empty();
 
             for input in inputs {
@@ -1215,7 +1215,7 @@ impl PartitionedInputs<Vec<ArtifactGroup>> {
             tagged: self
                 .tagged
                 .iter()
-                .map(|(tag, inputs)| buck2_error::Ok((tag.dupe(), reduce(ctx, inputs)?)))
+                .map(|(tag, inputs)| bz_error::Ok((tag.dupe(), reduce(ctx, inputs)?)))
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -1262,13 +1262,13 @@ impl PartitionedInputs<ActionDirectoryBuilder> {
         mut self,
         mut concrete_dep_files: ConcreteDepFiles,
         fs: &ArtifactFs,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         fn filter(
             label: &Arc<str>,
             builder: &mut ActionDirectoryBuilder,
             concrete_dep_files: &mut ConcreteDepFiles,
             fs: &ArtifactFs,
-        ) -> buck2_error::Result<()> {
+        ) -> bz_error::Result<()> {
             let mut matching_selector = match concrete_dep_files.get_selector(label, fs, builder)? {
                 Some(s) => s,
                 None => return Ok(()),
@@ -1418,7 +1418,7 @@ impl DeclaredDepFiles {
         &self,
         fs: &ArtifactFs,
         result: &ActionOutputs,
-    ) -> buck2_error::Result<Option<ConcreteDepFiles>> {
+    ) -> bz_error::Result<Option<ConcreteDepFiles>> {
         let mut contents =
             StdBuckHashMap::with_capacity_and_hasher(self.tagged.len(), Default::default());
 
@@ -1440,7 +1440,7 @@ impl DeclaredDepFiles {
                 .output
                 .resolve_path(fs, content_hash.as_ref())?;
 
-            let read_dep_file: buck2_error::Result<()> = try {
+            let read_dep_file: bz_error::Result<()> = try {
                 let dep_file_path = fs.fs().resolve(&dep_file);
                 let dep_file = fs_util::read_to_string_if_exists(&dep_file_path)?;
 
@@ -1449,8 +1449,8 @@ impl DeclaredDepFiles {
                     None => {
                         soft_error!(
                             "missing_dep_file",
-                            buck2_error::buck2_error!(
-                                buck2_error::ErrorTag::Input,
+                            bz_error::bz_error!(
+                                bz_error::ErrorTag::Input,
                                 "Dep file is missing at {}",
                                 dep_file_path
                             )
@@ -1488,13 +1488,13 @@ impl DeclaredDepFiles {
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum MaterializeDepFilesError {
     #[error("Error materializing dep file")]
     MaterializationFailed {
         #[source]
-        source: buck2_error::Error,
+        source: bz_error::Error,
     },
 
     #[error("A dep file was not found")]
@@ -1514,7 +1514,7 @@ impl ConcreteDepFiles {
         label: &Arc<str>,
         fs: &ArtifactFs,
         builder: &ActionDirectoryBuilder,
-    ) -> buck2_error::Result<Option<DirectorySelector>> {
+    ) -> bz_error::Result<Option<DirectorySelector>> {
         let dep_file = match self.contents.get(label) {
             Some(dep_file) => dep_file,
             None => return Ok(None),
@@ -1554,7 +1554,7 @@ impl ConcreteDepFiles {
         selector: &mut DirectorySelector,
         fs: &ArtifactFs,
         builder: &ActionDirectoryBuilder,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if !path.starts_with(fs.buck_out_path_resolver().root()) {
             // This path isn't in buck-out, no content-based hash to replace.
             selector.select(path.as_ref());
@@ -1595,7 +1595,7 @@ impl ConcreteDepFiles {
                 let after = path_iter.as_path();
                 for after_segment in after.iter() {
                     if is_hash(after_segment.as_str()) {
-                        return Err(buck2_error::internal_error!(
+                        return Err(bz_error::internal_error!(
                             "Path {} cannot be normalized for dep-files because it has two path segments that look like a content-based hash!",
                             path,
                         ));
@@ -1618,7 +1618,7 @@ impl ConcreteDepFiles {
                             }
                         }
                         DirectoryEntry::Leaf(..) => {
-                            return Err(buck2_error::internal_error!(
+                            return Err(bz_error::internal_error!(
                                 "Found content-based hash {} in path {} that was a leaf in the input directory!",
                                 segment,
                                 path,
@@ -1755,10 +1755,10 @@ impl DirectoryDigester<ActionDirectoryMember, TrackedFileDigest>
 #[cfg(test)]
 mod tests {
 
-    use buck2_artifact::actions::key::ActionIndex;
-    use buck2_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_artifact::actions::key::ActionIndex;
+    use bz_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 
     use super::*;
 

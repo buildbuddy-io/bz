@@ -10,7 +10,7 @@ use starlark::values::tuple::UnpackTuple;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::build_context::PerFileTypeContext;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BazelPackageError {
     #[error("visibility() can only be used during .bzl initialization")]
@@ -23,8 +23,8 @@ enum BazelPackageError {
     InvalidVisibilityRepositorySyntax(String),
 }
 
-fn parse_bzl_visibility(value: Value<'_>) -> buck2_error::Result<Vec<String>> {
-    fn validate(spec: &str) -> buck2_error::Result<String> {
+fn parse_bzl_visibility(value: Value<'_>) -> bz_error::Result<Vec<String>> {
+    fn validate(spec: &str) -> bz_error::Result<String> {
         if spec.starts_with('@') {
             return Err(
                 BazelPackageError::InvalidVisibilityRepositorySyntax(spec.to_owned()).into(),
@@ -70,7 +70,7 @@ pub(crate) fn register_bazel_package_globals(builder: &mut GlobalsBuilder) {
     ) -> starlark::Result<NoneType> {
         let build_context = BuildContext::from_context(eval)?;
         let PerFileTypeContext::Bzl(bzl) = &build_context.additional else {
-            return Err(buck2_error::Error::from(BazelPackageError::VisibilityOutsideBzl).into());
+            return Err(bz_error::Error::from(BazelPackageError::VisibilityOutsideBzl).into());
         };
         bzl.set_bzl_visibility(parse_bzl_visibility(value)?)?;
         Ok(NoneType)

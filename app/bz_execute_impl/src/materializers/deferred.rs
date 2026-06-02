@@ -33,45 +33,45 @@ use artifact_tree::ArtifactMaterializationStage;
 use artifact_tree::Processing;
 use artifact_tree::ProcessingFuture;
 use async_trait::async_trait;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_common::init::RemoteDownloadOutputsMode;
-use buck2_common::liveliness_observer::LivelinessGuard;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_directory::directory::walk::unordered_entry_walk;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::dispatch::current_span;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_events::dispatch::get_dispatcher_opt;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::materialize::materializer::ArtifactNotMaterializedReason;
-use buck2_execute::materialize::materializer::CasDownloadInfo;
-use buck2_execute::materialize::materializer::CasNotFoundError;
-use buck2_execute::materialize::materializer::CopiedArtifact;
-use buck2_execute::materialize::materializer::DeclareArtifactPayload;
-use buck2_execute::materialize::materializer::DeclareMatchOutcome;
-use buck2_execute::materialize::materializer::DeferredMaterializerExtensions;
-use buck2_execute::materialize::materializer::EagerMaterializationGuard;
-use buck2_execute::materialize::materializer::HttpDownloadInfo;
-use buck2_execute::materialize::materializer::MaterializationError;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::materialize::materializer::WriteRequest;
-use buck2_execute::re::manager::ReConnectionManager;
-use buck2_hash::BuckDashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_http::HttpClient;
-use buck2_util::threads::thread_spawn;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::init::RemoteDownloadOutputsMode;
+use bz_common::liveliness_observer::LivelinessGuard;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::directory_iterator::DirectoryIteratorPathStack;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_directory::directory::walk::unordered_entry_walk;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::dispatch::current_span;
+use bz_events::dispatch::get_dispatcher;
+use bz_events::dispatch::get_dispatcher_opt;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute::materialize::materializer::ArtifactNotMaterializedReason;
+use bz_execute::materialize::materializer::CasDownloadInfo;
+use bz_execute::materialize::materializer::CasNotFoundError;
+use bz_execute::materialize::materializer::CopiedArtifact;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_execute::materialize::materializer::DeclareMatchOutcome;
+use bz_execute::materialize::materializer::DeferredMaterializerExtensions;
+use bz_execute::materialize::materializer::EagerMaterializationGuard;
+use bz_execute::materialize::materializer::HttpDownloadInfo;
+use bz_execute::materialize::materializer::MaterializationError;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::materialize::materializer::WriteRequest;
+use bz_execute::re::manager::ReConnectionManager;
+use bz_hash::BuckDashMap;
+use bz_hash::StdBuckHashSet;
+use bz_http::HttpClient;
+use bz_util::threads::thread_spawn;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
@@ -183,7 +183,7 @@ pub enum AccessTimesUpdates {
     Disabled,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum AccessTimesUpdatesError {
     #[error(
@@ -193,7 +193,7 @@ pub enum AccessTimesUpdatesError {
 }
 
 impl AccessTimesUpdates {
-    pub fn try_new_from_config_value(config_value: Option<&str>) -> buck2_error::Result<Self> {
+    pub fn try_new_from_config_value(config_value: Option<&str>) -> bz_error::Result<Self> {
         match config_value {
             None | Some("") | Some("full") => Ok(AccessTimesUpdates::Full),
             Some("partial") => Ok(AccessTimesUpdates::Partial),
@@ -276,30 +276,30 @@ struct MaterializerReceiver<T: 'static> {
 
 struct TtlRefreshHistoryEntry {
     at: DateTime<Utc>,
-    outcome: Option<buck2_error::Result<()>>,
+    outcome: Option<bz_error::Result<()>>,
 }
 
 // NOTE: This doesn't derive `Error` and that's on purpose.  We don't want to make it easy (or
 // possible, in fact) to add  `context` to this SharedProcessingError and lose the variant.
 #[derive(Debug, Clone, Dupe)]
 pub enum SharedMaterializingError {
-    Error(buck2_error::Error),
+    Error(bz_error::Error),
     NotFound(CasNotFoundError),
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 pub enum MaterializeEntryError {
     #[error(transparent)]
-    Error(buck2_error::Error),
+    Error(bz_error::Error),
 
     /// The artifact wasn't found. This typically means it expired in the CAS.
     #[error(transparent)]
     NotFound(CasNotFoundError),
 }
 
-impl From<buck2_error::Error> for MaterializeEntryError {
-    fn from(e: buck2_error::Error) -> MaterializeEntryError {
+impl From<bz_error::Error> for MaterializeEntryError {
+    fn from(e: bz_error::Error) -> MaterializeEntryError {
         Self::Error(e)
     }
 }
@@ -322,7 +322,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
     async fn declare_existing(
         &self,
         artifacts: Vec<DeclareArtifactPayload>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let cmd = MaterializerCommand::DeclareExisting(
             artifacts,
             current_span(),
@@ -338,7 +338,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         value: ArtifactValue,
         srcs: Vec<CopiedArtifact>,
         configuration_path: Option<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // TODO(rafaelc): get rid of this tree; it'd save a lot of memory.
         let mut srcs_tree = FileTree::new();
         for copied_artifact in srcs.iter() {
@@ -379,7 +379,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         &self,
         info: Arc<CasDownloadInfo>,
         artifacts: Vec<DeclareArtifactPayload>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let materialize_paths = self
             .remote_download_outputs
             .materializes_remote_outputs_eagerly()
@@ -405,7 +405,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         path: ProjectRelativePathBuf,
         info: HttpDownloadInfo,
         configuration_path: Option<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let materialize_path = self
             .remote_download_outputs
             .materializes_remote_outputs_eagerly()
@@ -430,8 +430,8 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
 
     async fn declare_write<'a>(
         &self,
-        generate: Box<dyn FnOnce() -> buck2_error::Result<Vec<WriteRequest>> + Send + 'a>,
-    ) -> buck2_error::Result<Vec<ArtifactValue>> {
+        generate: Box<dyn FnOnce() -> bz_error::Result<Vec<WriteRequest>> + Send + 'a>,
+    ) -> bz_error::Result<Vec<ArtifactValue>> {
         if !self.defer_write_actions {
             return self.io.immediate_write(generate).await;
         }
@@ -498,7 +498,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
     async fn declare_match(
         &self,
         artifacts: Vec<(ProjectRelativePathBuf, ArtifactValue)>,
-    ) -> buck2_error::Result<DeclareMatchOutcome> {
+    ) -> bz_error::Result<DeclareMatchOutcome> {
         let (sender, recv) = oneshot::channel();
 
         self.command_sender
@@ -514,7 +514,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
     async fn get_declared_artifact_values(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<Vec<Option<ArtifactValue>>> {
+    ) -> bz_error::Result<Vec<Option<ArtifactValue>>> {
         let (sender, recv) = oneshot::channel();
         self.command_sender
             .send(MaterializerCommand::GetDeclaredArtifactValues(
@@ -526,7 +526,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
     async fn get_declared_artifact_values_and_match(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<(Vec<Option<ArtifactValue>>, DeclareMatchOutcome)> {
+    ) -> bz_error::Result<(Vec<Option<ArtifactValue>>, DeclareMatchOutcome)> {
         let (sender, recv) = oneshot::channel();
         self.command_sender
             .send(MaterializerCommand::GetDeclaredArtifactValuesAndMatch(
@@ -536,7 +536,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         Ok((values, is_match.into()))
     }
 
-    async fn has_artifact_at(&self, path: ProjectRelativePathBuf) -> buck2_error::Result<bool> {
+    async fn has_artifact_at(&self, path: ProjectRelativePathBuf) -> bz_error::Result<bool> {
         let (sender, recv) = oneshot::channel();
 
         self.command_sender
@@ -549,7 +549,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         Ok(has_artifact)
     }
 
-    async fn invalidate_many(&self, paths: Vec<ProjectRelativePathBuf>) -> buck2_error::Result<()> {
+    async fn invalidate_many(&self, paths: Vec<ProjectRelativePathBuf>) -> bz_error::Result<()> {
         let (sender, recv) = oneshot::channel();
 
         self.command_sender
@@ -568,7 +568,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
     async fn materialize_many(
         &self,
         artifact_paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<BoxStream<'static, Result<(), MaterializationError>>> {
+    ) -> bz_error::Result<BoxStream<'static, Result<(), MaterializationError>>> {
         // TODO: display [materializing] in superconsole
         let (sender, recv) = oneshot::channel();
         self.command_sender
@@ -588,7 +588,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
     async fn try_materialize_final_artifact(
         &self,
         artifact_path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         if self.remote_download_outputs.materializes_final_artifacts() {
             self.ensure_materialized(vec![artifact_path]).await?;
             Ok(true)
@@ -600,7 +600,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
     async fn get_materialized_file_paths(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<Vec<Result<ProjectRelativePathBuf, ArtifactNotMaterializedReason>>>
+    ) -> bz_error::Result<Vec<Result<ProjectRelativePathBuf, ArtifactNotMaterializedReason>>>
     {
         if paths.is_empty() {
             return Ok(Vec::new());
@@ -616,14 +616,14 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
     }
 
     fn log_materializer_state(&self, events: &EventDispatcher) {
-        events.instant_event(buck2_data::MaterializerStateInfo {
+        events.instant_event(bz_data::MaterializerStateInfo {
             num_entries_from_sqlite: self
                 .materializer_state_entries_from_sqlite
                 .load(Ordering::Relaxed),
         })
     }
 
-    fn add_snapshot_stats(&self, snapshot: &mut buck2_data::Snapshot) {
+    fn add_snapshot_stats(&self, snapshot: &mut bz_data::Snapshot) {
         snapshot.deferred_materializer_declares = self.stats.declares.load(Ordering::Relaxed);
         snapshot.deferred_materializer_declares_reused =
             self.stats.declares_reused.load(Ordering::Relaxed);
@@ -634,7 +634,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         &self,
         paths: Vec<ProjectRelativePathBuf>,
         fetch_root_artifact_entries_for_subpaths: bool,
-    ) -> buck2_error::Result<
+    ) -> bz_error::Result<
         Vec<
             Option<(
                 ProjectRelativePathBuf,
@@ -667,7 +667,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         &self,
         paths: Vec<ProjectRelativePathBuf>,
         event_dispatcher: EventDispatcher,
-    ) -> buck2_error::Result<Box<dyn EagerMaterializationGuard>> {
+    ) -> bz_error::Result<Box<dyn EagerMaterializationGuard>> {
         let (sender, receiver) = oneshot::channel();
         self.command_sender
             .send(MaterializerCommand::RegisterEagerPaths(
@@ -696,7 +696,7 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
         sqlite_db: Option<MaterializerStateSqliteDbDeferredLoad>,
         http_client: HttpClient,
         daemon_dispatcher: EventDispatcher,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let (high_priority_sender, high_priority_receiver) = mpsc::unbounded_channel();
         let (low_priority_sender, low_priority_receiver) = mpsc::unbounded_channel();
 
@@ -741,7 +741,7 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
             let io = io.dupe();
             let materializer_state_entries_from_sqlite =
                 materializer_state_entries_from_sqlite.dupe();
-            move |cancellations| -> buck2_error::Result<_> {
+            move |cancellations| -> bz_error::Result<_> {
                 let (sqlite_db, sqlite_state) = match sqlite_db {
                     Some(sqlite_db) => {
                         let (sqlite_db, sqlite_state) = sqlite_db.load()?;
@@ -830,7 +830,7 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
 /// in the Vec.
 async fn join_all_existing_futs(
     existing_futs: Vec<(ProjectRelativePathBuf, ProcessingFuture)>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // We can await inside a loop here because all ProcessingFuture's are spawned.
     for (path, fut) in existing_futs.into_iter() {
         match fut {

@@ -21,7 +21,7 @@ This is one of the most important concepts to understand when using Buck2. It is
 a precise way to identify any buildable unit in your codebase.
 
 In the tutorials, you encountered the following target label like
-[<FbInternalOnly> `fbcode//scripts/$USER/buck2_lab/greeter_bin:main` </FbInternalOnly> <OssOnly> `root//buck2_lab/greeter_bin:main` </OssOnly>](../tutorial_adding_dependencies/#step-5-run-the-binary).
+[<FbInternalOnly> `fbcode//scripts/$USER/bz_lab/greeter_bin:main` </FbInternalOnly> <OssOnly> `root//bz_lab/greeter_bin:main` </OssOnly>](../tutorial_adding_dependencies/#step-5-run-the-binary).
 
 Here is the anatomy of a target label:
 
@@ -29,7 +29,7 @@ Here is the anatomy of a target label:
 
 <TargetDiagram
     cell_name="fbcode"
-    pkg_name="scripts/$USER/buck2_lab/greeter_bin"
+    pkg_name="scripts/$USER/bz_lab/greeter_bin"
     target_name="main"
     cell_href="#cell"
     pkg_href="#package"
@@ -42,7 +42,7 @@ Here is the anatomy of a target label:
 
 <TargetDiagram
     cell_name="root"
-    pkg_name="buck2_lab/greeter_bin"
+    pkg_name="bz_lab/greeter_bin"
     target_name="main"
     cell_href="#cell"
     pkg_href="#package"
@@ -78,11 +78,11 @@ You can run `buck2 audit cell` to inspect the abs path of each cell root.
 ## Package
 
 The existence of a [BUCK file](#buck-file) ({ isInternal() ?
-<code>scripts/$USER/buck2_lab/greeter_bin/BUCK</code> :
-<code>buck2_lab/greeter_bin/BUCK</code> }) defines a buck
+<code>scripts/$USER/bz_lab/greeter_bin/BUCK</code> :
+<code>bz_lab/greeter_bin/BUCK</code> }) defines a buck
 [package](../../concepts/key_concepts/#packages) { isInternal() ?
-<code>scripts/$USER/buck2_lab/greeter_bin</code> :
-<code>buck2_lab/greeter_bin</code> } isn't just a directory. If a buck target
+<code>scripts/$USER/bz_lab/greeter_bin</code> :
+<code>bz_lab/greeter_bin</code> } isn't just a directory. If a buck target
 uses the source file as input, that target is regarded as the **owner** of the
 source.
 
@@ -157,12 +157,12 @@ these files as packages and targets.
 
 Here's the complete project structure you built through the tutorials:
 <FbInternalOnly> For simplicity, we show `logging_lib` as a subdirectory of
-`buck2_lab` in the diagram below. </FbInternalOnly>
+`bz_lab` in the diagram below. </FbInternalOnly>
 
 <TutorialMermaidDiagram>
 {`
 graph TD
-    A[buck2_lab] --> B[greeter_bin/]
+    A[bz_lab] --> B[greeter_bin/]
     A --> C[greeter_lib/]
     A --> D[logging_lib/]
 
@@ -235,7 +235,7 @@ form a cohesive build system:
 <TutorialMermaidDiagram>
 {`
 graph TD
-    A["📁 buck2_lab"] --> B["📁 greeter_bin/<br/>(Package)"]
+    A["📁 bz_lab"] --> B["📁 greeter_bin/<br/>(Package)"]
     A --> C["📁 greeter_lib/<br/>(Package)"]
     A --> D["📁 logging_lib/<br/>(Package)"]
 

@@ -51,7 +51,7 @@ async def test_success_install(buck: Buck, tmp_path: Path) -> None:
 
 
 @buck_test(write_invocation_record=True)
-@env("BUCK_LOG", "buck2_server_commands::commands::install=debug")
+@env("BUCK_LOG", "bz_server_commands::commands::install=debug")
 async def test_install_logging(buck: Buck, tmp_path: Path) -> None:
     _setup_sandbox(buck)
     tmp_dir = tmp_path / "install_test"

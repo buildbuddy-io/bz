@@ -11,7 +11,7 @@
 use std::fmt::Display;
 
 use allocative::Allocative;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ConfiguredProvidersLabel;
 use gazebo::variants::UnpackVariants;
 
 use crate::build::ConfiguredBuildTargetResult;

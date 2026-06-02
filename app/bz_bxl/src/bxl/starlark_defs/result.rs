@@ -31,11 +31,11 @@ use starlark::values::ValueTypedComplex;
 use starlark::values::starlark_value;
 use starlark::values::string::StarlarkStr;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BxlResultError {
     #[error("called `bxl.Result.unwrap()` on an `Err` value: {0}")]
-    UnwrapOnError(buck2_error::Error),
+    UnwrapOnError(bz_error::Error),
     #[error("called `bxl.Result.unwrap_err()` on an `Ok` value: {0}")]
     UnwrapErrOnOk(String),
 }
@@ -53,11 +53,11 @@ enum BxlResultError {
 )]
 #[display("bxl.Error({})", StarlarkStr::repr(&format!("{err:?}")))]
 pub(crate) struct StarlarkError {
-    err: buck2_error::Error,
+    err: bz_error::Error,
 }
 
 impl StarlarkError {
-    pub(crate) fn new(err: buck2_error::Error) -> Self {
+    pub(crate) fn new(err: bz_error::Error) -> Self {
         Self { err }
     }
 }
@@ -94,7 +94,7 @@ fn error_methods(builder: &mut MethodsBuilder) {
 #[repr(C)]
 pub(crate) enum StarlarkResultGen<T> {
     Ok(T),
-    Err(#[freeze(identity)] buck2_error::Error),
+    Err(#[freeze(identity)] bz_error::Error),
 }
 
 pub(crate) type StarlarkResult<'v> = StarlarkResultGen<Value<'v>>;
@@ -174,7 +174,7 @@ fn result_methods(builder: &mut MethodsBuilder) {
 }
 
 impl<T> StarlarkResultGen<T> {
-    pub(crate) fn from_result(res: buck2_error::Result<T>) -> Self {
+    pub(crate) fn from_result(res: bz_error::Result<T>) -> Self {
         match res {
             Ok(val) => Self::Ok(val),
             Err(err) => Self::Err(err),
@@ -190,7 +190,7 @@ impl<T> StarlarkResultGen<T> {
 }
 
 impl<'v, V: ValueLike<'v>> StarlarkResultGen<V> {
-    fn unwrap(&self) -> buck2_error::Result<Value<'v>> {
+    fn unwrap(&self) -> bz_error::Result<Value<'v>> {
         match self {
             StarlarkResultGen::Ok(val) => Ok(val.to_value()),
             StarlarkResultGen::Err(err) => Err(BxlResultError::UnwrapOnError(err.dupe()).into()),
@@ -204,7 +204,7 @@ impl<'v, V: ValueLike<'v>> StarlarkResultGen<V> {
         }
     }
 
-    fn unwrap_err(&self) -> buck2_error::Result<StarlarkError> {
+    fn unwrap_err(&self) -> bz_error::Result<StarlarkError> {
         match self {
             StarlarkResultGen::Ok(val) => {
                 let display_str = format!("{val}");

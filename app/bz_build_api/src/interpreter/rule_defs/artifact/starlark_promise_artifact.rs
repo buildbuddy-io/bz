@@ -14,11 +14,11 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use starlark::any::ProvidesStaticType;
@@ -61,7 +61,7 @@ use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::add_artifact_to_command_line_expanding_directories;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum PromiseArtifactError {
     #[error("cannot access {1} on unresolved promise artifact ({0})")]
@@ -148,13 +148,13 @@ impl StarlarkPromiseArtifact {
         }
     }
 
-    fn short_path_err(&self) -> buck2_error::Result<&ForwardRelativePath> {
+    fn short_path_err(&self) -> bz_error::Result<&ForwardRelativePath> {
         self.short_path
             .as_deref()
             .ok_or_else(|| PromiseArtifactError::NoShortPathPromised(self.clone()).into())
     }
 
-    fn file_name_err(&self) -> buck2_error::Result<&FileName> {
+    fn file_name_err(&self) -> bz_error::Result<&FileName> {
         self.short_path_err()?.file_name().ok_or_else(|| {
             PromiseArtifactError::PromisedShortPathHasNoFileName(self.clone()).into()
         })
@@ -165,18 +165,18 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkPromiseArtifact {
     fn with_filename(
         &self,
         f: &dyn for<'b> Fn(&'b FileName) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         match self.artifact.get() {
             Some(v) => v.get_path().with_filename(f),
             None => Ok(f(self.file_name_err()?)),
         }
     }
 
-    fn is_source(&'v self) -> buck2_error::Result<bool> {
+    fn is_source(&'v self) -> bz_error::Result<bool> {
         Ok(false)
     }
 
-    fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
+    fn owner(&'v self) -> bz_error::Result<Option<BaseDeferredKey>> {
         match self.artifact.get() {
             Some(v) => Ok(v.owner().duped()),
             None => Err(PromiseArtifactError::MethodUnsupported(self.clone(), "owner").into()),
@@ -186,7 +186,7 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkPromiseArtifact {
     fn with_short_path(
         &self,
         f: &dyn for<'b> Fn(&'b ForwardRelativePath) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         match self.artifact.get() {
             Some(v) => Ok(v.get_path().with_short_path(f)),
             None => Ok(f(self.short_path_err()?)),
@@ -196,7 +196,7 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkPromiseArtifact {
     fn with_bazel_short_path(
         &self,
         f: &dyn Fn(&str) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         match self.artifact.get() {
             Some(v) => {
                 let path = bazel_artifact_short_path(v.get_path());
@@ -209,7 +209,7 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkPromiseArtifact {
     fn with_bazel_path(
         &self,
         f: &dyn Fn(&str) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         match self.artifact.get() {
             Some(v) => {
                 let path = bazel_artifact_path(v.get_path());
@@ -229,7 +229,7 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkPromiseArtifact {
 }
 
 impl<'v> StarlarkInputArtifactLike<'v> for StarlarkPromiseArtifact {
-    fn get_bound_artifact(&self) -> buck2_error::Result<Artifact> {
+    fn get_bound_artifact(&self) -> bz_error::Result<Artifact> {
         match self.artifact.get() {
             Some(v) => Ok(v.dupe()),
             None => Err(PromiseArtifactError::MethodUnsupported(
@@ -249,18 +249,18 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkPromiseArtifact {
         self
     }
 
-    fn as_output_error(&self) -> buck2_error::Error {
+    fn as_output_error(&self) -> bz_error::Error {
         ArtifactError::PromiseArtifactAsOutput {
             artifact_repr: self.to_string(),
         }
         .into()
     }
 
-    fn get_artifact_group(&self) -> buck2_error::Result<ArtifactGroup> {
+    fn get_artifact_group(&self) -> bz_error::Result<ArtifactGroup> {
         Ok(self.as_artifact())
     }
 
-    fn as_output(&'v self, _this: Value<'v>) -> buck2_error::Result<StarlarkOutputArtifact<'v>> {
+    fn as_output(&'v self, _this: Value<'v>) -> bz_error::Result<StarlarkOutputArtifact<'v>> {
         Err(self.as_output_error())
     }
 
@@ -268,21 +268,21 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkPromiseArtifact {
         &'v self,
         path: &ForwardRelativePath,
         hide_prefix: bool,
-    ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
+    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>> {
         let _ = (path, hide_prefix);
         Err(PromiseArtifactError::CannotProject(self.clone()).into())
     }
 
     fn without_associated_artifacts(
         &'v self,
-    ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
+    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>> {
         Ok(EitherStarlarkInputArtifact::PromiseArtifact(self.clone()))
     }
 
     fn with_associated_artifacts(
         &'v self,
         artifacts: UnpackList<ValueAsInputArtifactLike<'v>>,
-    ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
+    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>> {
         let _unused = artifacts;
         Err(PromiseArtifactError::CannotAddAssociatedArtifacts.into())
     }
@@ -298,7 +298,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
         cli: &mut dyn CommandLineBuilder,
         ctx: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self.artifact.get() {
             Some(v) => {
                 cli.push_location(ctx.resolve_artifact(v, artifact_path_mapping)?);
@@ -313,7 +313,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
         cli: &mut dyn CommandLineBuilder,
         ctx: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self.artifact.get() {
             Some(v) => add_artifact_to_command_line_expanding_directories(
                 v,
@@ -328,7 +328,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         visitor.visit_input(self.as_artifact(), vec![]);
         Ok(())
     }
@@ -341,7 +341,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }

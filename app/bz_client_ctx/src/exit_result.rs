@@ -16,19 +16,19 @@ use std::io::Write;
 use std::ops::FromResidual;
 use std::process::Command;
 
-use buck2_data::ErrorReport;
-use buck2_error::ErrorTag;
-use buck2_error::ExitCode;
-use buck2_error::classify::ErrorLike;
-use buck2_error::classify::ErrorTagExtra;
-use buck2_error::classify::best_error;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_data::ErrorReport;
+use bz_error::ErrorTag;
+use bz_error::ExitCode;
+use bz_error::classify::ErrorLike;
+use bz_error::classify::ErrorTagExtra;
+use bz_error::classify::best_error;
+use bz_error::conversion::from_any_with_tag;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_wrapper_common::invocation_id::TraceId;
 
 #[derive(Debug)]
 pub struct ExecArgs {
@@ -41,7 +41,7 @@ pub struct ExecArgs {
 /// ExitResult represents the outcome of a process execution where we care to return a specific
 /// exit code. This is designed to be used as the return value from `main()`.
 ///
-/// We can easily turn a buck2_error::Result (or buck2_error::Error, or even a message) into a ExitResult,
+/// We can easily turn a bz_error::Result (or bz_error::Error, or even a message) into a ExitResult,
 /// but the reverse is not possible: once created, the only useful thing we can with a
 /// ExitResult is propagate it.
 #[must_use]
@@ -68,7 +68,7 @@ enum ExitResultVariant {
     Exec(ExecArgs),
     /// We failed (i.e. due to a Buck internal error).
     /// At this time, when execution does fail, we print out the error message to stderr.
-    StatusWithErr(ExitCode, buck2_error::Error),
+    StatusWithErr(ExitCode, bz_error::Error),
 }
 
 impl ExitResult {
@@ -81,7 +81,7 @@ impl ExitResult {
     }
 
     /// Return the stored error that hasn't been shown to the user yet, if there is one.
-    pub fn get_error(&self) -> Option<buck2_error::Error> {
+    pub fn get_error(&self) -> Option<bz_error::Error> {
         if let ExitResultVariant::StatusWithErr(_, err) = &self.variant {
             Some(err.clone())
         } else {
@@ -134,8 +134,8 @@ impl ExitResult {
     }
 
     pub fn bail(msg: impl Display) -> Self {
-        Self::err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Bail,
+        Self::err(bz_error::bz_error!(
+            bz_error::ErrorTag::Bail,
             "Command failed: {}",
             msg
         ))
@@ -149,7 +149,7 @@ impl ExitResult {
         Self::status(ExitCode::Timeout)
     }
 
-    pub fn err(err: buck2_error::Error) -> Self {
+    pub fn err(err: bz_error::Error) -> Self {
         Self {
             variant: ExitResultVariant::StatusWithErr(err.exit_code(), err),
             stdout: Vec::new(),
@@ -157,7 +157,7 @@ impl ExitResult {
         }
     }
 
-    pub fn err_with_exit_code(err: buck2_error::Error, exit_code: ExitCode) -> Self {
+    pub fn err_with_exit_code(err: bz_error::Error, exit_code: ExitCode) -> Self {
         Self {
             variant: ExitResultVariant::StatusWithErr(exit_code, err),
             stdout: Vec::new(),
@@ -206,8 +206,8 @@ impl ExitResult {
     /// when these commands are run, we have to retry them with the full build.
     ///
     /// This function is called in those cases. It returns `Some` only for client-only builds.
-    pub fn retry_command_with_full_binary() -> buck2_error::Result<Option<Self>> {
-        if buck2_core::client_only::is_client_only()? {
+    pub fn retry_command_with_full_binary() -> bz_error::Result<Option<Self>> {
+        if bz_core::client_only::is_client_only()? {
             let exe = crate::daemon::client::connect::get_daemon_exe()?;
             Ok(Some(ExitResult::exec(
                 exe.into_os_string(),
@@ -246,7 +246,7 @@ impl ExitResult {
         buck_log_dir: Option<AbsNormPathBuf>,
         command_report_path: Option<AbsPathBuf>,
         finalizing_error_messages: Vec<String>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let (path, copy_path) = if let Some(buck_log_dir) = buck_log_dir {
             let dir = buck_log_dir.join(ForwardRelativePath::new(&trace_id.to_string())?);
             fs_util::create_dir_all(&dir)?;
@@ -272,7 +272,7 @@ impl ExitResult {
         if let Some(exit_code) = self.exit_code() {
             serde_json::to_writer_pretty(
                 &mut file,
-                &buck2_data::CommandReport {
+                &bz_data::CommandReport {
                     trace_id: trace_id.to_string(),
                     exit_code: exit_code.exit_code(),
                     error_messages,
@@ -295,9 +295,9 @@ impl ExitResult {
     }
 }
 
-/// We can produce a ExitResult from a `buck2_error::Result` for convenience.
-impl From<buck2_error::Result<()>> for ExitResult {
-    fn from(e: buck2_error::Result<()>) -> Self {
+/// We can produce a ExitResult from a `bz_error::Result` for convenience.
+impl From<bz_error::Result<()>> for ExitResult {
+    fn from(e: bz_error::Result<()>) -> Self {
         match e {
             Ok(()) => Self::success(),
             Err(e) => Self::err(e),
@@ -305,8 +305,8 @@ impl From<buck2_error::Result<()>> for ExitResult {
     }
 }
 
-impl From<buck2_error::Result<ExitCode>> for ExitResult {
-    fn from(e: buck2_error::Result<ExitCode>) -> Self {
+impl From<bz_error::Result<ExitCode>> for ExitResult {
+    fn from(e: bz_error::Result<ExitCode>) -> Self {
         match e {
             Ok(code) => Self::status(code),
             Err(e) => Self::err(e),
@@ -314,24 +314,24 @@ impl From<buck2_error::Result<ExitCode>> for ExitResult {
     }
 }
 
-impl From<buck2_error::Error> for ExitResult {
-    fn from(e: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for ExitResult {
+    fn from(e: bz_error::Error) -> Self {
         Self::err(e)
     }
 }
 
-impl FromResidual<buck2_error::Error> for ExitResult {
+impl FromResidual<bz_error::Error> for ExitResult {
     #[track_caller]
-    fn from_residual(residual: buck2_error::Error) -> ExitResult {
+    fn from_residual(residual: bz_error::Error) -> ExitResult {
         Self::err(residual)
     }
 }
 
-impl<E: Into<::buck2_error::Error>> FromResidual<Result<Infallible, E>> for ExitResult {
+impl<E: Into<::bz_error::Error>> FromResidual<Result<Infallible, E>> for ExitResult {
     #[track_caller]
     fn from_residual(residual: Result<Infallible, E>) -> ExitResult {
         match residual {
-            // E -> buck2_error::Error -> ExitResult
+            // E -> bz_error::Error -> ExitResult
             Err(e) => Self::err(e.into()),
         }
     }
@@ -391,7 +391,7 @@ impl ExitResultVariant {
 /// A wrapper around an `io::Error` which indicates that the error came from "client IO".
 ///
 /// We use this to inform the exit code generation
-#[derive(buck2_error::Error, derivative::Derivative)]
+#[derive(bz_error::Error, derivative::Derivative)]
 #[derivative(Debug = "transparent")]
 #[error(transparent)]
 pub enum ClientIoError {
@@ -403,11 +403,11 @@ pub enum ClientIoError {
     #[buck2(tier0)]
     OtherIo(io::Error),
     #[buck2(tier0)]
-    Other(buck2_error::Error),
+    Other(bz_error::Error),
 }
 
-impl From<buck2_error::Error> for ClientIoError {
-    fn from(error: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for ClientIoError {
+    fn from(error: bz_error::Error) -> Self {
         ClientIoError::Other(error)
     }
 }
@@ -444,7 +444,7 @@ impl From<io::Error> for ClientIoError {
 }
 
 #[cfg(windows)]
-fn do_exec(command: &mut Command) -> buck2_error::Error {
+fn do_exec(command: &mut Command) -> bz_error::Error {
     let status = match command.status() {
         Ok(status) => status,
         Err(e) => return e.into(),
@@ -454,7 +454,7 @@ fn do_exec(command: &mut Command) -> buck2_error::Error {
 }
 
 #[cfg(unix)]
-fn do_exec(command: &mut Command) -> buck2_error::Error {
+fn do_exec(command: &mut Command) -> bz_error::Error {
     use std::os::unix::process::CommandExt;
 
     command.exec().into()

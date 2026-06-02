@@ -10,22 +10,22 @@
 
 use std::fmt::Debug;
 
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::alias::NonEmptyCellAlias;
-use buck2_core::cells::cell_root_path::CellRootPath;
-use buck2_core::cells::cell_root_path::CellRootPathBuf;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::instance;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::nested::NestedCells;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_error::internal_error;
-use buck2_hash::StdBuckHashMap;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::alias::NonEmptyCellAlias;
+use bz_core::cells::cell_root_path::CellRootPath;
+use bz_core::cells::cell_root_path::CellRootPathBuf;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::instance;
+use bz_core::cells::name::CellName;
+use bz_core::cells::nested::NestedCells;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_error::internal_error;
+use bz_hash::StdBuckHashMap;
 use instance::CellInstance;
 
 /// Errors from cell creation
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum CellError {
     #[error(
@@ -62,7 +62,7 @@ impl CellsAggregator {
         // This is order sensitive
         cells: Vec<(CellName, CellRootPathBuf)>,
         root_aliases: StdBuckHashMap<NonEmptyCellAlias, NonEmptyCellAlias>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut path_rmap = StdBuckHashMap::default();
         let mut infos = StdBuckHashMap::default();
         let mut combined_aliases = StdBuckHashMap::default();
@@ -107,7 +107,7 @@ impl CellsAggregator {
     pub(crate) fn resolve_root_alias(
         &self,
         alias: NonEmptyCellAlias,
-    ) -> buck2_error::Result<CellName> {
+    ) -> bz_error::Result<CellName> {
         self.root_aliases
             .get(&alias)
             .copied()
@@ -118,7 +118,7 @@ impl CellsAggregator {
         &mut self,
         cell: CellName,
         origin: ExternalCellOrigin,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let info = self
             .cell_infos
             .get_mut(&cell)
@@ -130,7 +130,7 @@ impl CellsAggregator {
         Ok(())
     }
 
-    pub(crate) fn make_cell_resolver(self) -> buck2_error::Result<CellResolver> {
+    pub(crate) fn make_cell_resolver(self) -> bz_error::Result<CellResolver> {
         let all_cell_roots_for_nested_cells: Vec<_> = self
             .cell_infos
             .iter()
@@ -150,7 +150,7 @@ impl CellsAggregator {
                     nested_cells,
                 )
             })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
+            .collect::<bz_error::Result<Vec<_>>>()?;
 
         let root_cell_alias_resolver = CellAliasResolver::new(self.root_cell, self.root_aliases)?;
 
@@ -163,7 +163,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_duplicate_paths() -> buck2_error::Result<()> {
+    fn test_duplicate_paths() -> bz_error::Result<()> {
         let root = CellName::testing_new("root");
         let root_path = CellRootPathBuf::new(ProjectRelativePath::empty().to_owned());
         let other1 = CellName::testing_new("other1");

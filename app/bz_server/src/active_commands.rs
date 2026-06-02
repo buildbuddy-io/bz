@@ -10,17 +10,17 @@
 
 use std::sync::Arc;
 
-use buck2_event_observer::dice_state::DiceState;
-use buck2_event_observer::pending_estimate::pending_estimate;
-use buck2_event_observer::span_tracker;
-use buck2_event_observer::span_tracker::RootData;
-use buck2_event_observer::span_tracker::Roots;
-use buck2_events::BuckEvent;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::span::SpanId;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_event_observer::dice_state::DiceState;
+use bz_event_observer::pending_estimate::pending_estimate;
+use bz_event_observer::span_tracker;
+use bz_event_observer::span_tracker::RootData;
+use bz_event_observer::span_tracker::Roots;
+use bz_events::BuckEvent;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::span::SpanId;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -41,7 +41,7 @@ pub fn active_commands() -> MutexGuard<'static, StdBuckHashMap<TraceId, ActiveCo
 }
 
 /// Broadcasts an instant event, returns whether any subscribers were connected.
-pub fn broadcast_instant_event<E: Into<buck2_data::instant_event::Data> + Clone>(
+pub fn broadcast_instant_event<E: Into<bz_data::instant_event::Data> + Clone>(
     event: &E,
 ) -> bool {
     let mut has_subscribers = false;
@@ -54,7 +54,7 @@ pub fn broadcast_instant_event<E: Into<buck2_data::instant_event::Data> + Clone>
     has_subscribers
 }
 
-pub fn broadcast_shutdown(shutdown: &buck2_data::DaemonShutdown) {
+pub fn broadcast_shutdown(shutdown: &bz_data::DaemonShutdown) {
     for cmd in ACTIVE_COMMANDS.lock().values() {
         cmd.notify_shutdown(shutdown.clone());
     }
@@ -68,14 +68,14 @@ pub struct ActiveCommandHandle {
 
     /// A separate channel to broadcast shutdown events. This is separate from the EventDispatcher
     /// because we want to allow shutdown events to jump the queue.
-    daemon_shutdown_channel: Arc<Mutex<Option<oneshot::Sender<buck2_data::DaemonShutdown>>>>,
+    daemon_shutdown_channel: Arc<Mutex<Option<oneshot::Sender<bz_data::DaemonShutdown>>>>,
 
     /// State for this command. This is used to expose what this command is doing to other clients.
     state: Arc<ActiveCommandState>,
 }
 
 impl ActiveCommandHandle {
-    fn notify_shutdown(&self, shutdown: buck2_data::DaemonShutdown) {
+    fn notify_shutdown(&self, shutdown: bz_data::DaemonShutdown) {
         let channel = self.daemon_shutdown_channel.lock().take();
 
         if let Some(channel) = channel {
@@ -148,7 +148,7 @@ impl ActiveCommandStateWriter {
     }
 
     pub fn peek_event(&mut self, buck_event: &BuckEvent) {
-        use buck2_data::buck_event::Data::*;
+        use bz_data::buck_event::Data::*;
 
         let mut changed = false;
 
@@ -189,7 +189,7 @@ impl ActiveCommandStateWriter {
                 }
             }
             Instant(instant) => {
-                use buck2_data::instant_event::Data::*;
+                use bz_data::instant_event::Data::*;
 
                 if let Some(DiceStateSnapshot(snapshot)) = instant.data.as_ref() {
                     self.dice_state.update(snapshot);
@@ -215,7 +215,7 @@ impl ActiveCommandStateWriter {
 pub struct ActiveCommand {
     pub guard: ActiveCommandDropGuard,
     pub state: ActiveCommandStateWriter,
-    pub daemon_shutdown_channel: oneshot::Receiver<buck2_data::DaemonShutdown>,
+    pub daemon_shutdown_channel: oneshot::Receiver<bz_data::DaemonShutdown>,
 }
 
 impl ActiveCommand {
@@ -249,14 +249,14 @@ impl ActiveCommand {
 
         if let Some(commands) = result {
             // Notify our command it is running concurrently with others.
-            event_dispatcher.instant_event(buck2_data::ConcurrentCommands {
+            event_dispatcher.instant_event(bz_data::ConcurrentCommands {
                 trace_ids: commands.keys().map(|cmd| cmd.to_string()).collect(),
             });
 
             // Notify other commands that they are concurrent with ours.
             for cmd in commands.values() {
                 cmd.dispatcher
-                    .instant_event(buck2_data::ConcurrentCommands {
+                    .instant_event(bz_data::ConcurrentCommands {
                         trace_ids: vec![trace_id.to_string()],
                     });
             }
@@ -275,9 +275,9 @@ mod tests {
     use std::time::SystemTime;
 
     use assert_matches::assert_matches;
-    use buck2_events::Event;
-    use buck2_events::daemon_id::DaemonId;
-    use buck2_events::source::ChannelEventSource;
+    use bz_events::Event;
+    use bz_events::daemon_id::DaemonId;
+    use bz_events::source::ChannelEventSource;
 
     use super::*;
 
@@ -295,8 +295,8 @@ mod tests {
             trace.clone(),
             Some(root),
             None,
-            buck2_data::SpanStartEvent {
-                data: Some(buck2_data::AnalysisStart::default().into()),
+            bz_data::SpanStartEvent {
+                data: Some(bz_data::AnalysisStart::default().into()),
             }
             .into(),
         ));
@@ -315,8 +315,8 @@ mod tests {
             trace.clone(),
             Some(child),
             Some(root),
-            buck2_data::SpanStartEvent {
-                data: Some(buck2_data::AnalysisStageStart::default().into()),
+            bz_data::SpanStartEvent {
+                data: Some(bz_data::AnalysisStageStart::default().into()),
             }
             .into(),
         ));
@@ -335,8 +335,8 @@ mod tests {
             trace.clone(),
             Some(child),
             Some(root),
-            buck2_data::SpanEndEvent {
-                data: Some(buck2_data::AnalysisStageEnd::default().into()),
+            bz_data::SpanEndEvent {
+                data: Some(bz_data::AnalysisStageEnd::default().into()),
                 ..Default::default()
             }
             .into(),
@@ -356,8 +356,8 @@ mod tests {
             trace.clone(),
             Some(root),
             None,
-            buck2_data::SpanEndEvent {
-                data: Some(buck2_data::AnalysisEnd::default().into()),
+            bz_data::SpanEndEvent {
+                data: Some(bz_data::AnalysisEnd::default().into()),
                 ..Default::default()
             }
             .into(),
@@ -377,14 +377,14 @@ mod tests {
             trace,
             None,
             None,
-            buck2_data::InstantEvent {
+            bz_data::InstantEvent {
                 data: Some(
-                    buck2_data::DiceStateSnapshot {
+                    bz_data::DiceStateSnapshot {
                         key_states: {
                             let mut map = StdBuckHashMap::default();
                             map.insert(
                                 "BuildKey".to_owned(),
-                                buck2_data::DiceKeyState {
+                                bz_data::DiceKeyState {
                                     started: 4,
                                     finished: 2,
                                     check_deps_started: 0,
@@ -414,7 +414,7 @@ mod tests {
 
     fn create_dispatcher() -> (EventDispatcher, ChannelEventSource, TraceId) {
         let (daemon_dispatcher_events, daemon_dispatcher_sink) =
-            buck2_events::create_source_sink_pair();
+            bz_events::create_source_sink_pair();
         let trace_id = TraceId::new();
         let dispatcher =
             EventDispatcher::new(trace_id.dupe(), DaemonId::new(), daemon_dispatcher_sink);
@@ -426,9 +426,9 @@ mod tests {
         assert_matches!(event, Some(Event::Buck(event)) => {
             assert_matches!(
                 event.data(),
-                buck2_data::buck_event::Data::Instant(buck2_data::InstantEvent {
-                    data: Some(buck2_data::instant_event::Data::ConcurrentCommands(
-                        buck2_data::ConcurrentCommands {
+                bz_data::buck_event::Data::Instant(bz_data::InstantEvent {
+                    data: Some(bz_data::instant_event::Data::ConcurrentCommands(
+                        bz_data::ConcurrentCommands {
                             trace_ids,
                         }
                     ))

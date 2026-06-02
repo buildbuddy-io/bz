@@ -14,12 +14,12 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use allocative::Allocative;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathIter;
-use buck2_util::arc_str::ArcS;
-use buck2_util::arc_str::StringInside;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathIter;
+use bz_util::arc_str::ArcS;
+use bz_util::arc_str::StringInside;
 use gazebo::transmute;
 use pagable::Pagable;
 use pagable::PagableBoxDeserialize;
@@ -179,7 +179,7 @@ impl PackageRelativePath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
     ///
     /// assert!(PackageRelativePath::new("foo/bar").is_ok());
     /// assert!(PackageRelativePath::new("").is_ok());
@@ -194,7 +194,7 @@ impl PackageRelativePath {
     /// assert!(PackageRelativePath::new(Path::new("normalize/../bar")).is_err());
     /// ```
     #[inline]
-    pub fn new<P: ?Sized + AsRef<Path>>(p: &P) -> buck2_error::Result<&PackageRelativePath> {
+    pub fn new<P: ?Sized + AsRef<Path>>(p: &P) -> bz_error::Result<&PackageRelativePath> {
         Ok(PackageRelativePath::ref_cast(ForwardRelativePath::new(
             p.as_ref(),
         )?))
@@ -220,9 +220,9 @@ impl PackageRelativePath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_core::package::package_relative_path::PackageRelativePathBuf;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePathBuf;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// let path = PackageRelativePath::new("foo/bar")?;
     /// let other = ForwardRelativePath::new("baz")?;
@@ -231,7 +231,7 @@ impl PackageRelativePath {
     ///     path.join(other)
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn join<P: AsRef<ForwardRelativePath>>(&self, path: P) -> PackageRelativePathBuf {
@@ -241,14 +241,14 @@ impl PackageRelativePath {
     /// Returns a relative path of the parent directory
     ///
     /// ```
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
     ///
     /// assert_eq!(
     ///     Some(PackageRelativePath::new("foo")?),
     ///     PackageRelativePath::new("foo/bar")?.parent()
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn parent(&self) -> Option<&PackageRelativePath> {
@@ -262,15 +262,15 @@ impl PackageRelativePath {
     /// a directory, this is the directory name.
     ///
     /// ```
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_fs::paths::file_name::FileName;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_fs::paths::file_name::FileName;
     ///
     /// assert_eq!(
     ///     Some(FileName::unchecked_new("bin")),
     ///     PackageRelativePath::new("usr/bin")?.file_name()
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn file_name(&self) -> Option<&FileName> {
@@ -282,8 +282,8 @@ impl PackageRelativePath {
     /// path is not a 'ForwardRelativePath'
     ///
     /// ```
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// let path = PackageRelativePath::new("test/haha/foo.txt")?;
     ///
@@ -297,13 +297,13 @@ impl PackageRelativePath {
     ///     true
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn strip_prefix<'a, P>(
         &'a self,
         base: &'a P,
-    ) -> buck2_error::Result<&'a ForwardRelativePath>
+    ) -> bz_error::Result<&'a ForwardRelativePath>
     where
         P: ?Sized + AsRef<PackageRelativePath>,
     {
@@ -313,13 +313,13 @@ impl PackageRelativePath {
     /// Determines whether `base` is a prefix of `self`.
     ///
     /// ```
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
     ///
     /// let path = PackageRelativePath::new("some/foo")?;
     ///
     /// assert!(path.starts_with(PackageRelativePath::new("some")?));
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn starts_with<P: AsRef<PackageRelativePath>>(&self, base: P) -> bool {
@@ -332,14 +332,14 @@ impl PackageRelativePath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// let path = PackageRelativePath::new("some/foo")?;
     ///
     /// assert!(path.ends_with(ForwardRelativePath::new("foo").unwrap()));
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn ends_with<P: AsRef<ForwardRelativePath>>(&self, child: P) -> bool {
@@ -357,13 +357,13 @@ impl PackageRelativePath {
     /// * Otherwise, the portion of the file name before the final `.`
     ///
     /// ```
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
     ///
     /// let path = PackageRelativePath::new("foo.rs")?;
     ///
     /// assert_eq!(Some("foo"), path.file_stem());
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn file_stem(&self) -> Option<&str> {
@@ -373,14 +373,14 @@ impl PackageRelativePath {
     /// Extracts the extension of `self.file_name`, if possible.
     ///
     /// ```
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
     ///
     /// assert_eq!(
     ///     Some("rs"),
     ///     PackageRelativePath::new("hi/foo.rs")?.extension()
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn extension(&self) -> Option<&str> {
@@ -390,8 +390,8 @@ impl PackageRelativePath {
     /// Iterator over the components of this path
     ///
     /// ```
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_fs::paths::file_name::FileName;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_fs::paths::file_name::FileName;
     ///
     /// let p = PackageRelativePath::new("foo/bar/baz")?;
     /// let mut it = p.iter();
@@ -401,7 +401,7 @@ impl PackageRelativePath {
     /// assert_eq!(it.next(), Some(FileName::unchecked_new("baz")));
     /// assert_eq!(it.next(), None);
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     pub fn iter(&self) -> ForwardRelativePathIter<'_> {
@@ -429,8 +429,8 @@ impl<'a> From<&'a ForwardRelativePath> for &'a PackageRelativePath {
     /// ```
     /// use std::convert::From;
     ///
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// let f = ForwardRelativePath::new("foo")?;
     ///
@@ -439,7 +439,7 @@ impl<'a> From<&'a ForwardRelativePath> for &'a PackageRelativePath {
     ///     PackageRelativePath::new("foo")?
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     #[inline]
     fn from(p: &'a ForwardRelativePath) -> &'a PackageRelativePath {
@@ -497,7 +497,7 @@ impl PackageRelativePathBuf {
 
     /// Pushes a `RelativePath` to the existing buffer, normalizing it
     #[inline]
-    pub fn push_normalized<P: AsRef<RelativePath>>(&mut self, path: P) -> buck2_error::Result<()> {
+    pub fn push_normalized<P: AsRef<RelativePath>>(&mut self, path: P) -> bz_error::Result<()> {
         self.0.push_normalized(path)
     }
 
@@ -531,15 +531,15 @@ impl From<PackageRelativePathBuf> for ForwardRelativePathBuf {
 }
 
 impl<'a> TryFrom<&'a str> for &'a PackageRelativePath {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion
     ///
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// assert!(<&PackageRelativePath>::try_from("foo/bar").is_ok());
     /// assert!(<&PackageRelativePath>::try_from("").is_ok());
@@ -548,21 +548,21 @@ impl<'a> TryFrom<&'a str> for &'a PackageRelativePath {
     /// assert!(<&PackageRelativePath>::try_from("normalize/../bar").is_err());
     /// ```
     #[inline]
-    fn try_from(s: &'a str) -> buck2_error::Result<&'a PackageRelativePath> {
+    fn try_from(s: &'a str) -> bz_error::Result<&'a PackageRelativePath> {
         Ok(PackageRelativePath::ref_cast(ForwardRelativePath::new(s)?))
     }
 }
 
 impl<'a> TryFrom<&'a RelativePath> for &'a PackageRelativePath {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion
     ///
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_fs::paths::RelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_fs::paths::RelativePath;
     ///
     /// assert!(<&PackageRelativePath>::try_from(RelativePath::new("foo/bar")).is_ok());
     /// assert!(<&PackageRelativePath>::try_from(RelativePath::new("")).is_ok());
@@ -570,7 +570,7 @@ impl<'a> TryFrom<&'a RelativePath> for &'a PackageRelativePath {
     /// assert!(<&PackageRelativePath>::try_from(RelativePath::new("normalize/../bar")).is_err());
     /// ```
     #[inline]
-    fn try_from(s: &'a RelativePath) -> buck2_error::Result<&'a PackageRelativePath> {
+    fn try_from(s: &'a RelativePath) -> bz_error::Result<&'a PackageRelativePath> {
         Ok(PackageRelativePath::ref_cast(ForwardRelativePath::new(
             s.as_str(),
         )?))
@@ -578,15 +578,15 @@ impl<'a> TryFrom<&'a RelativePath> for &'a PackageRelativePath {
 }
 
 impl TryFrom<String> for PackageRelativePathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion
     ///
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_core::package::package_relative_path::PackageRelativePathBuf;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePathBuf;
     ///
     /// assert!(PackageRelativePathBuf::try_from("foo/bar".to_owned()).is_ok());
     /// assert!(PackageRelativePathBuf::try_from("".to_owned()).is_ok());
@@ -595,7 +595,7 @@ impl TryFrom<String> for PackageRelativePathBuf {
     /// assert!(PackageRelativePathBuf::try_from("normalize/../bar".to_owned()).is_err());
     /// ```
     #[inline]
-    fn try_from(s: String) -> buck2_error::Result<PackageRelativePathBuf> {
+    fn try_from(s: String) -> bz_error::Result<PackageRelativePathBuf> {
         Ok(PackageRelativePathBuf::from(
             ForwardRelativePathBuf::try_from(s)?,
         ))
@@ -603,7 +603,7 @@ impl TryFrom<String> for PackageRelativePathBuf {
 }
 
 impl TryFrom<RelativePathBuf> for PackageRelativePathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion (TODO make ForwardRelativePath a no allocation
     /// conversion)
@@ -611,9 +611,9 @@ impl TryFrom<RelativePathBuf> for PackageRelativePathBuf {
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_core::package::package_relative_path::PackageRelativePathBuf;
-    /// use buck2_fs::paths::RelativePathBuf;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePathBuf;
+    /// use bz_fs::paths::RelativePathBuf;
     ///
     /// assert!(PackageRelativePathBuf::try_from(RelativePathBuf::from("foo/bar")).is_ok());
     /// assert!(PackageRelativePathBuf::try_from(RelativePathBuf::from("")).is_ok());
@@ -621,7 +621,7 @@ impl TryFrom<RelativePathBuf> for PackageRelativePathBuf {
     /// assert!(PackageRelativePathBuf::try_from(RelativePathBuf::from("normalize/../bar")).is_err());
     /// ```
     #[inline]
-    fn try_from(p: RelativePathBuf) -> buck2_error::Result<PackageRelativePathBuf> {
+    fn try_from(p: RelativePathBuf) -> bz_error::Result<PackageRelativePathBuf> {
         Ok(PackageRelativePathBuf::from(
             ForwardRelativePathBuf::try_from(p)?,
         ))
@@ -629,7 +629,7 @@ impl TryFrom<RelativePathBuf> for PackageRelativePathBuf {
 }
 
 impl TryFrom<PathBuf> for PackageRelativePathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion
     ///
@@ -637,8 +637,8 @@ impl TryFrom<PathBuf> for PackageRelativePathBuf {
     /// use std::convert::TryFrom;
     /// use std::path::PathBuf;
     ///
-    /// use buck2_core::package::package_relative_path::PackageRelativePath;
-    /// use buck2_core::package::package_relative_path::PackageRelativePathBuf;
+    /// use bz_core::package::package_relative_path::PackageRelativePath;
+    /// use bz_core::package::package_relative_path::PackageRelativePathBuf;
     ///
     /// assert!(PackageRelativePathBuf::try_from(PathBuf::from("foo/bar")).is_ok());
     /// assert!(PackageRelativePathBuf::try_from(PathBuf::from("")).is_ok());
@@ -647,7 +647,7 @@ impl TryFrom<PathBuf> for PackageRelativePathBuf {
     /// assert!(PackageRelativePathBuf::try_from(PathBuf::from("normalize/../bar")).is_err());
     /// ```
     #[inline]
-    fn try_from(p: PathBuf) -> buck2_error::Result<PackageRelativePathBuf> {
+    fn try_from(p: PathBuf) -> bz_error::Result<PackageRelativePathBuf> {
         Ok(PackageRelativePathBuf::from(
             ForwardRelativePathBuf::try_from(p)?,
         ))
@@ -695,13 +695,13 @@ impl Deref for PackageRelativePathBuf {
 
 #[cfg(test)]
 mod tests {
-    use buck2_hash::StdBuckHashMap;
+    use bz_hash::StdBuckHashMap;
 
     use crate::package::package_relative_path::PackageRelativePath;
     use crate::package::package_relative_path::PackageRelativePathBuf;
 
     #[test]
-    fn paths_work_in_maps() -> buck2_error::Result<()> {
+    fn paths_work_in_maps() -> bz_error::Result<()> {
         let mut map = StdBuckHashMap::default();
 
         let p1 = PackageRelativePath::new("foo")?;
@@ -715,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn path_is_comparable() -> buck2_error::Result<()> {
+    fn path_is_comparable() -> bz_error::Result<()> {
         let path1_buf = PackageRelativePathBuf::unchecked_new("foo".into());
         let path2_buf = PackageRelativePathBuf::unchecked_new("foo".into());
         let path3_buf = PackageRelativePathBuf::unchecked_new("bar".into());

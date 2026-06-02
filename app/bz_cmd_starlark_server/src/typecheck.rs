@@ -12,23 +12,23 @@ use std::io::Write;
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_starlark_client::typecheck::StarlarkTypecheckCommand;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_common::io::IoProvider;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::file_type::StarlarkFileType;
-use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
-use buck2_interpreter::paths::path::OwnedStarlarkPath;
-use buck2_interpreter_for_build::interpreter::dice_calculation_delegate::HasCalculationDelegate;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_starlark_client::typecheck::StarlarkTypecheckCommand;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::dice::data::HasIoProvider;
+use bz_common::io::IoProvider;
+use bz_core::cells::CellResolver;
+use bz_core::cells::name::CellName;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::file_type::StarlarkFileType;
+use bz_interpreter::paths::module::OwnedStarlarkModulePath;
+use bz_interpreter::paths::path::OwnedStarlarkPath;
+use bz_interpreter_for_build::interpreter::dice_calculation_delegate::HasCalculationDelegate;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use dice::DiceTransaction;
 use dupe::Dupe;
 use starlark::environment::Globals;
@@ -53,7 +53,7 @@ struct Cache<'a> {
 }
 
 impl Cache<'_> {
-    async fn typecheck(&mut self, path: OwnedStarlarkPath) -> buck2_error::Result<()> {
+    async fn typecheck(&mut self, path: OwnedStarlarkPath) -> bz_error::Result<()> {
         self.run(path).await?;
         Ok(())
     }
@@ -62,7 +62,7 @@ impl Cache<'_> {
         &mut self,
         cell: CellName,
         path_type: StarlarkFileType,
-    ) -> buck2_error::Result<Globals> {
+    ) -> bz_error::Result<Globals> {
         match self.oracle.get(&(cell, path_type)) {
             Some(g) => Ok(g.dupe()),
             None => {
@@ -75,7 +75,7 @@ impl Cache<'_> {
         }
     }
 
-    async fn get(&mut self, path: OwnedStarlarkModulePath) -> buck2_error::Result<Interface> {
+    async fn get(&mut self, path: OwnedStarlarkModulePath) -> bz_error::Result<Interface> {
         match self.cache.get(&path) {
             Some(x) => Ok(x.dupe()),
             None => {
@@ -87,7 +87,7 @@ impl Cache<'_> {
     }
 
     #[async_recursion]
-    async fn run(&mut self, path: OwnedStarlarkPath) -> buck2_error::Result<Interface> {
+    async fn run(&mut self, path: OwnedStarlarkPath) -> bz_error::Result<Interface> {
         let path_ref = path.borrow();
         writeln!(self.stderr, "Type checking: {path_ref}")?;
         let proj_path = self
@@ -134,8 +134,8 @@ impl Cache<'_> {
             for x in errors {
                 writeln!(self.stdout, "{x}")?;
             }
-            Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Detected {errors_count} errors"
             ))
         }
@@ -147,9 +147,9 @@ impl StarlarkServerSubcommand for StarlarkTypecheckCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(server_ctx
             .with_dice_ctx(|server_ctx, mut dice| async move {
                 let cell_resolver = &dice.get_cell_resolver().await?;

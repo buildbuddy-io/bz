@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
 use dupe::Dupe;
 use pagable::Pagable;
 
@@ -23,7 +23,7 @@ impl LabelAttrType {
     pub(crate) fn configure(
         ctx: &dyn AttrConfigurationContext,
         label: &ProvidersLabel,
-    ) -> buck2_error::Result<ConfiguredAttr> {
+    ) -> bz_error::Result<ConfiguredAttr> {
         Ok(ConfiguredAttr::Label(ctx.configure_target(label)))
     }
 }

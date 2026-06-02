@@ -12,23 +12,23 @@ use std::collections::BTreeSet;
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::config::AuditConfigCommand;
-use buck2_cmd_audit_client::config::LocationStyle;
-use buck2_cmd_audit_client::config::OutputFormat;
-use buck2_cmd_audit_client::config::ValueStyle;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::configs::LegacyBuckConfigLocation;
-use buck2_common::legacy_configs::configs::LegacyBuckConfigValue;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::name::CellName;
-use buck2_hash::StdBuckHashMap;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::stdout_partial_output::StdoutPartialOutput;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::config::AuditConfigCommand;
+use bz_cmd_audit_client::config::LocationStyle;
+use bz_cmd_audit_client::config::OutputFormat;
+use bz_cmd_audit_client::config::ValueStyle;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::configs::LegacyBuckConfigLocation;
+use bz_common::legacy_configs::configs::LegacyBuckConfigValue;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::name::CellName;
+use bz_hash::StdBuckHashMap;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::stdout_partial_output::StdoutPartialOutput;
 use gazebo::prelude::*;
 use serde_json::json;
 
@@ -38,7 +38,7 @@ fn print_location_string(
     writer: &mut impl Write,
     location: &LegacyBuckConfigLocation,
     keyword: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     writeln!(writer, "  ({keyword} {location})")?;
     Ok(())
 }
@@ -47,7 +47,7 @@ fn print_location(
     writer: &mut impl Write,
     value: &LegacyBuckConfigValue,
     style: LocationStyle,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match style {
         LocationStyle::None => {}
         LocationStyle::Direct => {
@@ -76,7 +76,7 @@ fn print_value(
     key: &str,
     value: &LegacyBuckConfigValue,
     style: ValueStyle,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let (prefix, sep) = match inline_section {
         Some(section) => (section, "."),
         None => ("    ", ""),
@@ -117,7 +117,7 @@ struct Match<'a> {
 }
 
 impl<'a> Match<'a> {
-    fn parse(resolver: &CellAliasResolver, spec: &'a str) -> buck2_error::Result<Self> {
+    fn parse(resolver: &CellAliasResolver, spec: &'a str) -> bz_error::Result<Self> {
         let (cell, config) = match spec.split_once("//") {
             Some((cell, config)) => (Some(resolver.resolve(cell)?), config),
             None => (None, spec),
@@ -157,7 +157,7 @@ struct Matches<'a> {
 }
 
 impl<'a> Matches<'a> {
-    fn parse(resolver: &CellAliasResolver, specs: &'a [String]) -> buck2_error::Result<Self> {
+    fn parse(resolver: &CellAliasResolver, specs: &'a [String]) -> bz_error::Result<Self> {
         Ok(Self {
             matches: specs.try_map(|x| Match::parse(resolver, x))?,
         })
@@ -189,8 +189,8 @@ impl<'a> Matches<'a> {
 }
 
 trait CellConfigRenderer {
-    fn render_cell_header(&mut self, cell: CellName) -> buck2_error::Result<()>;
-    fn render_section_header(&mut self, section: &str) -> buck2_error::Result<()>;
+    fn render_cell_header(&mut self, cell: CellName) -> bz_error::Result<()>;
+    fn render_section_header(&mut self, section: &str) -> bz_error::Result<()>;
     fn render_config_key(
         &mut self,
         spec: &str,
@@ -198,8 +198,8 @@ trait CellConfigRenderer {
         section: &str,
         key: &str,
         value: LegacyBuckConfigValue<'_>,
-    ) -> buck2_error::Result<()>;
-    fn flush(&mut self) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
+    fn flush(&mut self) -> bz_error::Result<()>;
 }
 
 struct SimpleCellConfigRenderer<'a> {
@@ -211,7 +211,7 @@ struct SimpleCellConfigRenderer<'a> {
 }
 
 impl CellConfigRenderer for SimpleCellConfigRenderer<'_> {
-    fn render_cell_header(&mut self, cell: CellName) -> buck2_error::Result<()> {
+    fn render_cell_header(&mut self, cell: CellName) -> bz_error::Result<()> {
         if self.render_cell_headers {
             writeln!(&mut self.stdout, "# Cell: {cell}")?;
         }
@@ -219,7 +219,7 @@ impl CellConfigRenderer for SimpleCellConfigRenderer<'_> {
         Ok(())
     }
 
-    fn render_section_header(&mut self, section: &str) -> buck2_error::Result<()> {
+    fn render_section_header(&mut self, section: &str) -> bz_error::Result<()> {
         if !self.inline_section {
             writeln!(&mut self.stdout, "[{section}]")?;
         }
@@ -234,7 +234,7 @@ impl CellConfigRenderer for SimpleCellConfigRenderer<'_> {
         section: &str,
         key: &str,
         value: LegacyBuckConfigValue<'_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let inline_section = if self.inline_section {
             Some(section)
         } else {
@@ -252,7 +252,7 @@ impl CellConfigRenderer for SimpleCellConfigRenderer<'_> {
         Ok(())
     }
 
-    fn flush(&mut self) -> buck2_error::Result<()> {
+    fn flush(&mut self) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -264,11 +264,11 @@ struct JsonCellConfigRenderer<'a> {
 }
 
 impl CellConfigRenderer for JsonCellConfigRenderer<'_> {
-    fn render_cell_header(&mut self, _cell: CellName) -> buck2_error::Result<()> {
+    fn render_cell_header(&mut self, _cell: CellName) -> bz_error::Result<()> {
         Ok(())
     }
 
-    fn render_section_header(&mut self, _section: &str) -> buck2_error::Result<()> {
+    fn render_section_header(&mut self, _section: &str) -> bz_error::Result<()> {
         Ok(())
     }
 
@@ -279,7 +279,7 @@ impl CellConfigRenderer for JsonCellConfigRenderer<'_> {
         _section: &str,
         _key: &str,
         value: LegacyBuckConfigValue<'_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let key = if self.scope_keys_to_cell && !spec.contains("//") {
             format!("{cell}//{spec}")
         } else {
@@ -291,7 +291,7 @@ impl CellConfigRenderer for JsonCellConfigRenderer<'_> {
         Ok(())
     }
 
-    fn flush(&mut self) -> buck2_error::Result<()> {
+    fn flush(&mut self) -> bz_error::Result<()> {
         writeln!(&mut self.stdout, "{}", json!(self.json_output))?;
 
         Ok(())
@@ -304,7 +304,7 @@ fn render_cell_config(
     cell: CellName,
     cell_config: LegacyBuckConfig,
     specs: &Matches<'_>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut rendered_cell_header = false;
     for (section, values) in cell_config.all_sections() {
         let mut rendered_section_header = false;
@@ -333,9 +333,9 @@ impl ServerAuditSubcommand for AuditConfigCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(server_ctx
             .with_dice_ctx(|server_ctx, mut ctx| async move {
                 let cwd = server_ctx.working_dir();

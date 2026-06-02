@@ -6,9 +6,9 @@
 %% of this source tree.
 
 %% @format
--module(shell_buck2_utils).
+-module(shell_bz_utils).
 -moduledoc """
-Documentation for shell_buck2_utils, ways to use
+Documentation for shell_bz_utils, ways to use
   it, ways to break it, etc. etc
 """.
 
@@ -19,7 +19,7 @@ Documentation for shell_buck2_utils, ways to use
     project_root/0,
     cell_root/0,
     rebuild_modules/1,
-    buck2_build_targets/1,
+    bz_build_targets/1,
     bz_query/1, bz_query/2, bz_query/3,
     run_command/1, run_command/2,
     no_stderr/1,
@@ -61,26 +61,26 @@ rebuild_modules(Modules) ->
         Missing -> error({non_existing, Missing})
     end,
     RelSources = [proplists:get_value(source, Module:module_info(compile)) || Module <- Modules],
-    {ok, RawQueryResult} = buck2_query(~"owner(\%s)", RelSources),
+    {ok, RawQueryResult} = bz_query(~"owner(\%s)", RelSources),
     Targets = string:split(string:trim(RawQueryResult), "\n", all),
     case Targets of
         [[]] ->
             io:format(~"ERROR: couldn't find targets for ~w~n", [Modules]),
             error;
         _ ->
-            buck2_build_targets(Targets)
+            bz_build_targets(Targets)
     end.
 
--spec buck2_build_targets(Targets) -> ok | error when
+-spec bz_build_targets(Targets) -> ok | error when
     Targets :: [string() | binary()].
-buck2_build_targets(Targets) ->
+bz_build_targets(Targets) ->
     case
         run_command([
             ~"buck2",
             ~"build",
             ~"--reuse-current-config",
             ~"--console=super",
-            get_buck2_args_from_env()
+            get_bz_args_from_env()
             | Targets
         ])
     of
@@ -88,28 +88,28 @@ buck2_build_targets(Targets) ->
         error -> error
     end.
 
--spec buck2_query(Query) -> {ok, binary()} | error when
+-spec bz_query(Query) -> {ok, binary()} | error when
     Query :: string() | binary().
-buck2_query(Query) ->
-    buck2_query(Query, []).
+bz_query(Query) ->
+    bz_query(Query, []).
 
--spec buck2_query(Query, Args) -> {ok, binary()} | error when
+-spec bz_query(Query, Args) -> {ok, binary()} | error when
     Query :: string() | binary(),
     Args :: [string() | binary()].
-buck2_query(Query, Args) ->
-    buck2_query(Query, [], Args).
+bz_query(Query, Args) ->
+    bz_query(Query, [], Args).
 
--spec buck2_query(Query, BuckArgs, Args) -> {ok, binary()} | error when
+-spec bz_query(Query, BuckArgs, Args) -> {ok, binary()} | error when
     Query :: string() | binary(),
     BuckArgs :: [string() | binary()],
     Args :: [string() | binary()].
-buck2_query(Query, BuckArgs, Args) ->
+bz_query(Query, BuckArgs, Args) ->
     run_command(
         no_stderr([
             ~"buck2",
             ~"uquery",
             ~"--reuse-current-config",
-            get_buck2_args_from_env(),
+            get_bz_args_from_env(),
             BuckArgs,
             Query,
             Args
@@ -184,7 +184,7 @@ get_additional_paths(Path) ->
             ~"bxl",
             ~"--reuse-current-config",
             ~"--console=super",
-            get_buck2_args_from_env(),
+            get_bz_args_from_env(),
             ~"prelude//erlang/shell/shell.bxl:ebin_paths",
             ~"--",
             ~"--source",
@@ -219,9 +219,9 @@ get_additional_paths(Path) ->
 filter_escape_chars(String) ->
     unicode_characters_to_binary(re:replace(String, ?ANSI_ESCAPE_REGEX, "", [global])).
 
--spec get_buck2_args_from_env() -> [binary()].
-get_buck2_args_from_env() ->
-    case get_app_env(buck2_args) of
+-spec get_bz_args_from_env() -> [binary()].
+get_bz_args_from_env() ->
+    case get_app_env(bz_args) of
         undefined -> [];
         {ok, Buck2Args} when is_list(Buck2Args) -> Buck2Args
     end.
@@ -230,6 +230,6 @@ get_buck2_args_from_env() ->
     Key :: atom(),
     Value :: dynamic().
 get_app_env(Key) ->
-    _ = application:load(buck2_shell_utils),
+    _ = application:load(bz_shell_utils),
     % elp:ignore W0011 (application_get_env)
-    application:get_env(buck2_shell_utils, Key).
+    application:get_env(bz_shell_utils, Key).

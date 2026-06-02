@@ -10,12 +10,12 @@
 
 use std::time::Duration;
 
-use buck2_event_observer::action_stats::ActionStats;
-use buck2_event_observer::fmt_duration;
-use buck2_event_observer::humanized::CommaSeparatedCount;
-use buck2_event_observer::pending_estimate::pending_estimate;
-use buck2_event_observer::progress::BuildProgressPhaseStats;
-use buck2_event_observer::progress::BuildProgressStats;
+use bz_event_observer::action_stats::ActionStats;
+use bz_event_observer::fmt_duration;
+use bz_event_observer::humanized::CommaSeparatedCount;
+use bz_event_observer::pending_estimate::pending_estimate;
+use bz_event_observer::progress::BuildProgressPhaseStats;
+use bz_event_observer::progress::BuildProgressStats;
 use superconsole::Component;
 use superconsole::Dimensions;
 use superconsole::DrawMode;
@@ -40,9 +40,9 @@ impl<'s> TasksHeader<'s> {
 }
 
 impl Component for TasksHeader<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         if self.state.config.expanded_progress {
             let mut phase_stats = self.state.extra().progress_state().phase_stats();
             if let DrawMode::Final = mode {
@@ -110,9 +110,9 @@ impl<'s> SimpleHeader<'s> {
 }
 
 impl Component for SimpleHeader<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         match mode {
             DrawMode::Normal => HeaderLineComponent::new(
                 StaticStringComponent {
@@ -140,13 +140,13 @@ struct CountComponent<'s> {
 }
 
 impl Component for CountComponent<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         _dimensions: Dimensions,
         mode: DrawMode,
-    ) -> buck2_error::Result<Lines> {
+    ) -> bz_error::Result<Lines> {
         match mode {
             DrawMode::Normal => {
                 let remaining = CommaSeparatedCount::new(self.data.remaining);
@@ -478,9 +478,9 @@ impl ProgressHeader<'_> {
 }
 
 impl Component for ProgressHeader<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         fn count_len(v: u64) -> usize {
             format_count(v).len()
         }
@@ -655,8 +655,8 @@ impl Component for ProgressHeader<'_> {
 mod tests {
     use std::fmt::Write;
 
-    use buck2_error::conversion::from_any_with_tag;
-    use buck2_event_observer::progress::BuildProgressPhaseStatsItem;
+    use bz_error::conversion::from_any_with_tag;
+    use bz_event_observer::progress::BuildProgressPhaseStatsItem;
     use itertools::Itertools;
 
     use super::*;
@@ -714,7 +714,7 @@ mod tests {
     }
 
     #[test]
-    fn test_different_sizes_dont_fail() -> buck2_error::Result<()> {
+    fn test_different_sizes_dont_fail() -> bz_error::Result<()> {
         let phase_stats = &phase_stats();
         let progress_stats = &progress_stats();
         let action_stats = &action_stats();
@@ -746,14 +746,14 @@ mod tests {
     }
 
     #[test]
-    fn test_rendering_golden() -> buck2_error::Result<()> {
+    fn test_rendering_golden() -> bz_error::Result<()> {
         let mut all_output = String::new();
 
         fn draw(
             width: usize,
             normal: bool,
             phase_stats: &BuildProgressPhaseStats,
-        ) -> buck2_error::Result<Lines> {
+        ) -> bz_error::Result<Lines> {
             ProgressHeader {
                 header: "header",
                 phase_stats,
@@ -778,7 +778,7 @@ mod tests {
                 "{}",
                 draw(width, true, &phase_stats())?.fmt_for_test()
             )
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::SuperConsole))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::SuperConsole))?;
         }
 
         for width in [60, 140] {
@@ -787,7 +787,7 @@ mod tests {
                 "{}",
                 draw(width, false, &phase_stats())?.fmt_for_test()
             )
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::SuperConsole))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::SuperConsole))?;
         }
 
         let expected = indoc::indoc!(
@@ -877,7 +877,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_line_not_shown_when_not_started() -> buck2_error::Result<()> {
+    fn test_validation_line_not_shown_when_not_started() -> bz_error::Result<()> {
         let mut stats = phase_stats();
         stats.validations = BuildProgressPhaseStatsItem {
             started: 0,
@@ -910,7 +910,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remote_cache_check_line() -> buck2_error::Result<()> {
+    fn test_remote_cache_check_line() -> bz_error::Result<()> {
         let mut progress_stats = progress_stats();
         progress_stats.remote_cache_checks_started = 1234;
         progress_stats.remote_cache_checks_finished = 100;
@@ -961,7 +961,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining() -> buck2_error::Result<()> {
+    fn test_remaining() -> bz_error::Result<()> {
         let action_stats = ActionStats {
             local_actions: 0,
             remote_actions: 0,
@@ -992,7 +992,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining_with_pending() -> buck2_error::Result<()> {
+    fn test_remaining_with_pending() -> bz_error::Result<()> {
         let action_stats = ActionStats {
             local_actions: 0,
             remote_actions: 0,
@@ -1024,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn test_children() -> buck2_error::Result<()> {
+    fn test_children() -> bz_error::Result<()> {
         let action_stats = ActionStats {
             local_actions: 0,
             remote_actions: 0,
@@ -1057,7 +1057,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_header_final() -> buck2_error::Result<()> {
+    fn test_simple_header_final() -> bz_error::Result<()> {
         let action_stats = ActionStats {
             local_actions: 0,
             remote_actions: 0,

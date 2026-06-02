@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_core::buck2_env;
+use bz_core::bz_env;
 
 /// Result of attempting to emit output through the limit tracker.
 pub(crate) enum EmitResult {
@@ -30,7 +30,7 @@ pub(crate) struct ConsoleOutputLimit {
 
 impl ConsoleOutputLimit {
     pub(crate) fn new() -> Self {
-        let limit = buck2_env!("BUCK2_CONSOLE_OUTPUT_LIMIT", type=u64).unwrap_or(None);
+        let limit = bz_env!("BUCK2_CONSOLE_OUTPUT_LIMIT", type=u64).unwrap_or(None);
         Self {
             limit,
             bytes_emitted: 0,

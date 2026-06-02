@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_core::plugins::PluginKind;
+use bz_core::plugins::PluginKind;
 use dupe::Dupe;
 use pagable::Pagable;
 

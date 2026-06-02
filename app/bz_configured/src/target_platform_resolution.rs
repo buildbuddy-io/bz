@@ -12,23 +12,23 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_node::cfg_constructor::CFG_CONSTRUCTOR_CALCULATION_IMPL;
-use buck2_node::configuration::target_platform_detector::TargetPlatformDetector;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::nodes::unconfigured::RuleKind;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_node::super_package::SuperPackage;
-use buck2_node::target_calculation::CONFIGURED_TARGET_CALCULATION;
-use buck2_node::target_calculation::ConfiguredTargetCalculationImpl;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
+use bz_error::BuckErrorContext;
+use bz_node::cfg_constructor::CFG_CONSTRUCTOR_CALCULATION_IMPL;
+use bz_node::configuration::target_platform_detector::TargetPlatformDetector;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::nodes::unconfigured::RuleKind;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_node::super_package::SuperPackage;
+use bz_node::target_calculation::CONFIGURED_TARGET_CALCULATION;
+use bz_node::target_calculation::ConfiguredTargetCalculationImpl;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::Key;
@@ -45,7 +45,7 @@ use crate::execution::get_execution_platform_toolchain_dep;
 
 async fn get_target_platform_detector(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<Arc<TargetPlatformDetector>> {
+) -> bz_error::Result<Arc<TargetPlatformDetector>> {
     // This requires a bit of computation so cache it on the graph.
     // TODO(cjhopman): Should we construct this (and similar buckconfig-derived objects) as part of the buck config itself?
     #[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative, Pagable)]
@@ -55,7 +55,7 @@ async fn get_target_platform_detector(
 
     #[async_trait]
     impl Key for TargetPlatformDetectorKey {
-        type Value = buck2_error::Result<Arc<TargetPlatformDetector>>;
+        type Value = bz_error::Result<Arc<TargetPlatformDetector>>;
         async fn compute(
             &self,
             ctx: &mut DiceComputations,
@@ -108,7 +108,7 @@ async fn get_default_platform(
     ctx: &mut DiceComputations<'_>,
     target: &TargetLabel,
     use_bazel_host_platform_default: bool,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     let detector = get_target_platform_detector(ctx).await?;
     if let Some(target) = detector.detect(target) {
         return get_platform_configuration(ctx, target).await;
@@ -123,7 +123,7 @@ async fn get_default_platform(
 
 async fn get_bazel_host_platform_configuration(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     let cell_resolver = ctx.get_cell_resolver().await?;
     let root_cell = cell_resolver.root_cell();
     let cell_alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
@@ -149,7 +149,7 @@ impl ConfiguredTargetCalculationImpl for ConfiguredTargetCalculationInstance {
         ctx: &mut DiceComputations<'_>,
         target: &TargetLabel,
         global_cfg_options: &GlobalCfgOptions,
-    ) -> buck2_error::Result<ConfiguredTargetLabel> {
+    ) -> bz_error::Result<ConfiguredTargetLabel> {
         let (node, super_package) = ctx.get_target_node_with_super_package(target).await?;
 
         async fn get_platform_configuration_from_options(
@@ -158,7 +158,7 @@ impl ConfiguredTargetCalculationImpl for ConfiguredTargetCalculationInstance {
             target: &TargetLabel,
             node: &TargetNode,
             super_package: &SuperPackage,
-        ) -> buck2_error::Result<ConfigurationData> {
+        ) -> bz_error::Result<ConfigurationData> {
             let current_cfg = match global_cfg_options.target_platform.as_ref() {
                 Some(global_target_platform) => {
                     get_platform_configuration(ctx, global_target_platform).await?

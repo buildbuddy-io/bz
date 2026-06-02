@@ -11,7 +11,7 @@
 use std::hash::Hash;
 
 use allocative::Allocative;
-use buck2_core::package::PackageLabel;
+use bz_core::package::PackageLabel;
 use derive_more::Display;
 use derive_more::From;
 use dupe::Dupe;

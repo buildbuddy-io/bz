@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_data::error::ErrorTag;
+use bz_data::error::ErrorTag;
 
 use crate::ExitCode;
 
@@ -511,7 +511,7 @@ pub trait ErrorLike {
     fn category(&self) -> Tier;
 }
 
-impl ErrorLike for buck2_data::ErrorReport {
+impl ErrorLike for bz_data::ErrorReport {
     fn best_tag(&self) -> Option<ErrorTag> {
         best_tag(self.tags.iter().filter_map(|t| {
             // This should never be `None`, but with weak prost types,
@@ -520,7 +520,7 @@ impl ErrorLike for buck2_data::ErrorReport {
         }))
     }
 
-    fn error_rank(self: &buck2_data::ErrorReport) -> u32 {
+    fn error_rank(self: &bz_data::ErrorReport) -> u32 {
         self.best_tag().map_or(u32::MAX, tag_rank)
     }
 
@@ -533,8 +533,8 @@ impl ErrorLike for buck2_data::ErrorReport {
 
 /// Pick the most interesting error by best tag.
 pub fn best_error<'a>(
-    tags: impl IntoIterator<Item = &'a buck2_data::ErrorReport>,
-) -> Option<&'a buck2_data::ErrorReport> {
+    tags: impl IntoIterator<Item = &'a bz_data::ErrorReport>,
+) -> Option<&'a bz_data::ErrorReport> {
     tags.into_iter().min_by_key(|e| e.error_rank())
 }
 
@@ -569,8 +569,8 @@ pub fn source_area(tags: impl IntoIterator<Item = ErrorTag>) -> ErrorSourceArea 
 
 #[cfg(test)]
 mod tests {
-    use buck2_data::ErrorReport;
-    use buck2_data::error::ErrorTag;
+    use bz_data::ErrorReport;
+    use bz_data::error::ErrorTag;
 
     use super::*;
     use crate::classify::best_tag;

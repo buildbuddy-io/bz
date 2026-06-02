@@ -9,34 +9,34 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::TraceIoRequest;
-use buck2_cli_proto::TraceIoResponse;
-use buck2_cli_proto::trace_io_request;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::command_outcome::CommandOutcome;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::NoPartialResultHandler;
-use buck2_client_ctx::daemon::client::connect::DesiredTraceIoState;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_offline_archive::ExternalSymlink;
-use buck2_offline_archive::OfflineArchiveManifest;
-use buck2_offline_archive::RelativeSymlink;
-use buck2_offline_archive::RepositoryMetadata;
+use bz_cli_proto::TraceIoRequest;
+use bz_cli_proto::TraceIoResponse;
+use bz_cli_proto::trace_io_request;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::command_outcome::CommandOutcome;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::NoPartialResultHandler;
+use bz_client_ctx::daemon::client::connect::DesiredTraceIoState;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::path_arg::PathArg;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_offline_archive::ExternalSymlink;
+use bz_offline_archive::OfflineArchiveManifest;
+use bz_offline_archive::RelativeSymlink;
+use bz_offline_archive::RepositoryMetadata;
 
 /// Enable I/O tracing in the buck daemon so we keep track of which files
 /// go into a build.
@@ -69,7 +69,7 @@ impl TraceIoCommand {
         buckd: &mut BuckdClientConnector,
         events_ctx: &mut EventsCtx,
         ctx: &mut ClientCommandContext<'_>,
-    ) -> buck2_error::Result<CommandOutcome<TraceIoResponse>> {
+    ) -> bz_error::Result<CommandOutcome<TraceIoResponse>> {
         buckd
             .with_flushing()
             .trace_io(
@@ -101,7 +101,7 @@ impl StreamingCommand for TraceIoCommand {
                     read_state: Some(trace_io_request::ReadIoTracingState { with_trace: false }),
                 };
                 let resp = self.send_request(req, buckd, events_ctx, ctx).await??;
-                buck2_client_ctx::println!("I/O tracing status: {}", resp.enabled)?;
+                bz_client_ctx::println!("I/O tracing status: {}", resp.enabled)?;
             }
             Subcommand::ExportManifest { out } => {
                 let req = TraceIoRequest {
@@ -156,7 +156,7 @@ impl StreamingCommand for TraceIoCommand {
                         .categorize_input()
                         .buck_error_context("writing offline archive manifest")?;
                 } else {
-                    buck2_client_ctx::println!("{}", serialized)?;
+                    bz_client_ctx::println!("{}", serialized)?;
                 }
             }
             // Subcommand::{Enable, Disable} handled by StreamingCommand::trace_io()

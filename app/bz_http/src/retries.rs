@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures::future::Future;
 use http::StatusCode;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Http)]
 pub enum HttpError {
     #[error(transparent)]
@@ -55,7 +55,7 @@ pub trait HttpErrorForRetry {
 }
 
 pub trait IntoBuck2Error {
-    fn into_buck2_error(self) -> buck2_error::Error;
+    fn into_bz_error(self) -> bz_error::Error;
 }
 
 pub async fn http_retry<Exec, F, T, E>(exec: Exec, mut intervals: Vec<Duration>) -> Result<T, E>
@@ -83,8 +83,8 @@ where
                 tracing::warn!(
                     "Retrying a HTTP error after {} seconds: {:#}",
                     b.as_secs(),
-                    // Print as a buck2_error to make sure we get the source
-                    err.into_buck2_error()
+                    // Print as a bz_error to make sure we get the source
+                    err.into_bz_error()
                 );
                 continue;
             }
@@ -119,7 +119,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, buck2_error::Error)]
+    #[derive(Debug, bz_error::Error)]
     #[buck2(tag = Http)]
     enum HttpTestError {
         #[error("Error in test")]
@@ -141,14 +141,14 @@ mod tests {
     }
 
     impl IntoBuck2Error for HttpTestError {
-        fn into_buck2_error(self) -> buck2_error::Error {
-            buck2_error::Error::from(self)
+        fn into_bz_error(self) -> bz_error::Error {
+            bz_error::Error::from(self)
         }
     }
 
     fn ok_response() -> Result<String, HttpTestError> {
         Ok("Success".to_owned())
-            .map_err(|_: buck2_error::Error| test_error(StatusCode::IM_A_TEAPOT))
+            .map_err(|_: bz_error::Error| test_error(StatusCode::IM_A_TEAPOT))
     }
 
     fn retryable() -> Result<String, HttpTestError> {

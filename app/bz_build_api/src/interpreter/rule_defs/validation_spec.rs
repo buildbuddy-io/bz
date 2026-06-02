@@ -37,7 +37,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInp
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueIsInputArtifactAnnotation;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum ValidationSpecError {
     #[error("Name of validation spec should not be empty")]
@@ -140,7 +140,7 @@ where
     }
 }
 
-fn validate_validation_spec<'v, V>(spec: &StarlarkValidationSpecGen<V>) -> buck2_error::Result<()>
+fn validate_validation_spec<'v, V>(spec: &StarlarkValidationSpecGen<V>) -> bz_error::Result<()>
 where
     V: ValueLike<'v>,
 {

@@ -8,24 +8,24 @@
  * above-listed licenses.
  */
 
-use buck2_data::ActionExecutionStart;
-use buck2_data::AnalysisEnd;
-use buck2_data::AnalysisStageStart;
-use buck2_data::AnalysisStart;
-use buck2_data::ExecutorStageStart;
-use buck2_data::LoadBuildFileEnd;
-use buck2_data::LocalStage;
-use buck2_data::ReStage;
-use buck2_data::analysis_stage_start;
-use buck2_data::executor_stage_start;
-use buck2_data::instant_event;
-use buck2_data::local_stage;
-use buck2_data::re_stage;
-use buck2_data::span_end_event;
-use buck2_data::span_start_event;
-use buck2_events::BuckEvent;
-use buck2_events::span::SpanId;
-use buck2_hash::StdBuckHashMap;
+use bz_data::ActionExecutionStart;
+use bz_data::AnalysisEnd;
+use bz_data::AnalysisStageStart;
+use bz_data::AnalysisStart;
+use bz_data::ExecutorStageStart;
+use bz_data::LoadBuildFileEnd;
+use bz_data::LocalStage;
+use bz_data::ReStage;
+use bz_data::analysis_stage_start;
+use bz_data::executor_stage_start;
+use bz_data::instant_event;
+use bz_data::local_stage;
+use bz_data::re_stage;
+use bz_data::span_end_event;
+use bz_data::span_start_event;
+use bz_events::BuckEvent;
+use bz_events::span::SpanId;
+use bz_hash::StdBuckHashMap;
 
 use crate::last_command_execution_kind::get_last_command_execution_time;
 use crate::unpack_event::UnpackedBuckEvent;
@@ -190,7 +190,7 @@ impl BuildProgressStateTracker {
         }
     }
 
-    pub fn handle_event(&mut self, event: &BuckEvent) -> buck2_error::Result<()> {
+    pub fn handle_event(&mut self, event: &BuckEvent) -> bz_error::Result<()> {
         let ev = unpack_event(event)?;
 
         self.handle_load(&ev)?;
@@ -258,7 +258,7 @@ impl BuildProgressStateTracker {
         Ok(())
     }
 
-    fn handle_load(&mut self, ev: &UnpackedBuckEvent) -> buck2_error::Result<()> {
+    fn handle_load(&mut self, ev: &UnpackedBuckEvent) -> bz_error::Result<()> {
         match ev {
             UnpackedBuckEvent::SpanStart(
                 BuckEvent {
@@ -290,7 +290,7 @@ impl BuildProgressStateTracker {
         Ok(())
     }
 
-    fn handle_analysis(&mut self, ev: &UnpackedBuckEvent) -> buck2_error::Result<()> {
+    fn handle_analysis(&mut self, ev: &UnpackedBuckEvent) -> bz_error::Result<()> {
         match ev {
             UnpackedBuckEvent::SpanStart(
                 BuckEvent {
@@ -357,7 +357,7 @@ impl BuildProgressStateTracker {
         }
     }
 
-    fn handle_remote_cache_checks(&mut self, ev: &UnpackedBuckEvent) -> buck2_error::Result<()> {
+    fn handle_remote_cache_checks(&mut self, ev: &UnpackedBuckEvent) -> bz_error::Result<()> {
         match ev {
             UnpackedBuckEvent::SpanStart(
                 BuckEvent {
@@ -369,7 +369,7 @@ impl BuildProgressStateTracker {
                     stage: Some(executor_stage_start::Stage::CacheQuery(cache_query)),
                 }),
             ) => {
-                if buck2_data::CacheType::try_from(cache_query.cache_type).is_ok() {
+                if bz_data::CacheType::try_from(cache_query.cache_type).is_ok() {
                     self.remote_cache_check_started(*span_id);
                 }
             }
@@ -398,7 +398,7 @@ impl BuildProgressStateTracker {
         }
     }
 
-    fn handle_actions(&mut self, ev: &UnpackedBuckEvent) -> buck2_error::Result<()> {
+    fn handle_actions(&mut self, ev: &UnpackedBuckEvent) -> bz_error::Result<()> {
         match ev {
             UnpackedBuckEvent::SpanStart(
                 BuckEvent {
@@ -479,7 +479,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_span_map() -> buck2_error::Result<()> {
+    fn test_span_map() -> bz_error::Result<()> {
         let mut map: SpanMap<u64> = SpanMap::default();
 
         assert_eq!(

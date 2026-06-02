@@ -123,7 +123,7 @@ impl NamedEventLogWriter {
         }
     }
 
-    pub(crate) async fn flush(&mut self) -> buck2_error::Result<()> {
+    pub(crate) async fn flush(&mut self) -> bz_error::Result<()> {
         match self.file.flush().await {
             Ok(_) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
@@ -131,7 +131,7 @@ impl NamedEventLogWriter {
                 // here we just ignore it.
                 Ok(())
             }
-            Err(e) => Err(buck2_error::Error::from(e).context(format!(
+            Err(e) => Err(bz_error::Error::from(e).context(format!(
                 "Error flushing log file at {}",
                 self.path.path.display()
             ))),
@@ -148,7 +148,7 @@ impl NamedEventLogWriter {
         self.process_to_wait_for.take()
     }
 
-    fn serialize_event<'b, T>(&self, buf: &mut Vec<u8>, event: &T) -> buck2_error::Result<()>
+    fn serialize_event<'b, T>(&self, buf: &mut Vec<u8>, event: &T) -> bz_error::Result<()>
     where
         T: SerializeForLog + 'b,
     {
@@ -171,7 +171,7 @@ impl NamedEventLogWriter {
         Ok(())
     }
 
-    async fn write_all(&mut self, buf: &[u8]) -> buck2_error::Result<()> {
+    async fn write_all(&mut self, buf: &[u8]) -> bz_error::Result<()> {
         match self.file.write_all(buf).await {
             Ok(_) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
@@ -179,7 +179,7 @@ impl NamedEventLogWriter {
                 // here we just ignore it.
                 Ok(())
             }
-            Err(e) => Err(buck2_error::Error::from(e).context("Failed to write event")),
+            Err(e) => Err(bz_error::Error::from(e).context("Failed to write event")),
         }
     }
 
@@ -187,7 +187,7 @@ impl NamedEventLogWriter {
         &mut self,
         buf: &mut Vec<u8>,
         events: &I,
-    ) -> Result<(), buck2_error::Error>
+    ) -> Result<(), bz_error::Error>
     where
         T: SerializeForLog + 'b,
         I: IntoIterator<Item = &'b T> + Clone + 'b,
@@ -200,7 +200,7 @@ impl NamedEventLogWriter {
 }
 
 pub(crate) trait SerializeForLog {
-    fn serialize_to_json(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()>;
-    fn serialize_to_protobuf_length_delimited(&self, buf: &mut Vec<u8>) -> buck2_error::Result<()>;
-    fn maybe_serialize_user_event(&self, buf: &mut Vec<u8>) -> buck2_error::Result<bool>;
+    fn serialize_to_json(&self, buf: &mut Vec<u8>) -> bz_error::Result<()>;
+    fn serialize_to_protobuf_length_delimited(&self, buf: &mut Vec<u8>) -> bz_error::Result<()>;
+    fn maybe_serialize_user_event(&self, buf: &mut Vec<u8>) -> bz_error::Result<bool>;
 }

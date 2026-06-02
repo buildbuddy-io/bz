@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_error::internal_error;
-use buck2_event_observer::test_state::TestState;
+use bz_error::internal_error;
+use bz_event_observer::test_state::TestState;
 use crossterm::style::Color;
 use crossterm::style::ContentStyle;
 use superconsole::Component;
@@ -29,8 +29,8 @@ pub struct TestCounterColumn {
     color: Option<Color>,
     get_from_test_state: fn(&TestState) -> u64,
     get_from_test_statues: fn(
-        &buck2_cli_proto::test_response::TestStatuses,
-    ) -> &Option<buck2_cli_proto::CounterWithExamples>,
+        &bz_cli_proto::test_response::TestStatuses,
+    ) -> &Option<bz_cli_proto::CounterWithExamples>,
 }
 
 impl TestCounterColumn {
@@ -101,8 +101,8 @@ impl TestCounterColumn {
 
     pub fn to_span_from_test_statuses(
         &self,
-        test_statuses: &buck2_cli_proto::test_response::TestStatuses,
-    ) -> buck2_error::Result<Span> {
+        test_statuses: &bz_cli_proto::test_response::TestStatuses,
+    ) -> bz_error::Result<Span> {
         StylizedCount {
             label: self.label,
             count: (self.get_from_test_statues)(test_statuses)
@@ -122,7 +122,7 @@ impl TestCounterComponent {
         test_state: &TestState,
         _dimensions: Dimensions,
         mode: DrawMode,
-    ) -> buck2_error::Result<Lines> {
+    ) -> bz_error::Result<Lines> {
         if matches!(mode, DrawMode::Final) {
             return Ok(Lines::new());
         }
@@ -160,13 +160,13 @@ pub(crate) struct TestHeader<'a> {
 }
 
 impl Component for TestHeader<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         dimensions: superconsole::Dimensions,
         mode: superconsole::DrawMode,
-    ) -> buck2_error::Result<superconsole::Lines> {
+    ) -> bz_error::Result<superconsole::Lines> {
         if self.session_info.test_session.is_some() {
             TestCounterComponent.draw_unchecked(self.test_state, dimensions, mode)
         } else {

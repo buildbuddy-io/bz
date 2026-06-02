@@ -2,7 +2,7 @@
 description = "`buck2 completion` command client implementation"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_cmd_completion_client"
+name = "bz_cmd_completion_client"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -13,13 +13,13 @@ clap_complete = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
 
-buck2_cli_proto = { workspace = true }
-buck2_client_ctx = { workspace = true }
-buck2_common = { workspace = true }
-buck2_core = { workspace = true }
-buck2_error = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_hash = { workspace = true }
+bz_cli_proto = { workspace = true }
+bz_client_ctx = { workspace = true }
+bz_common = { workspace = true }
+bz_core = { workspace = true }
+bz_error = { workspace = true }
+bz_fs = { workspace = true }
+bz_hash = { workspace = true }
 
 [dev-dependencies]
 paste = { workspace = true }

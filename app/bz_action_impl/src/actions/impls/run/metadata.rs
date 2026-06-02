@@ -8,23 +8,23 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::artifact_groups::ArtifactGroupValues;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::LazyActionDirectoryBuilder;
-use buck2_execute::execute::paths_with_digest::PathsWithDigestBlobData;
-use buck2_execute::execute::paths_with_digest::PathsWithDigestBuilder;
+use bz_build_api::artifact_groups::ArtifactGroupValues;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::directory_iterator::DirectoryIteratorPathStack;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::LazyActionDirectoryBuilder;
+use bz_execute::execute::paths_with_digest::PathsWithDigestBlobData;
+use bz_execute::execute::paths_with_digest::PathsWithDigestBuilder;
 
 pub(crate) fn metadata_content(
     fs: &ArtifactFs,
     inputs: &[&ArtifactGroupValues],
     digest_config: DigestConfig,
-) -> buck2_error::Result<(PathsWithDigestBlobData, TrackedFileDigest)> {
+) -> bz_error::Result<(PathsWithDigestBlobData, TrackedFileDigest)> {
     let mut blob_builder = PathsWithDigestBuilder::default();
 
     let mut builder = LazyActionDirectoryBuilder::empty();
@@ -48,7 +48,7 @@ pub(crate) fn metadata_content(
                 blob_builder.add(path.get(), metadata.digest.data());
             }
             ActionDirectoryMember::SourceFile(_) => {
-                return Err(buck2_error::internal_error!(
+                return Err(bz_error::internal_error!(
                     "source file proxy must be resolved before action metadata"
                 ));
             }
@@ -69,7 +69,7 @@ pub(crate) fn metadata_digest(
     fs: &ArtifactFs,
     inputs: &[&ArtifactGroupValues],
     digest_config: DigestConfig,
-) -> buck2_error::Result<TrackedFileDigest> {
+) -> bz_error::Result<TrackedFileDigest> {
     let mut blob_builder = PathsWithDigestBuilder::default();
 
     let mut builder = LazyActionDirectoryBuilder::empty();
@@ -93,7 +93,7 @@ pub(crate) fn metadata_digest(
                 blob_builder.add(path.get(), metadata.digest.data());
             }
             ActionDirectoryMember::SourceFile(_) => {
-                return Err(buck2_error::internal_error!(
+                return Err(bz_error::internal_error!(
                     "source file proxy must be resolved before action metadata"
                 ));
             }

@@ -1,12 +1,12 @@
 [package]
 edition = "2024"
 license = { workspace = true }
-name = "buck2_grpc"
+name = "bz_grpc"
 repository = { workspace = true }
 version = "0.1.0"
 
 [dependencies]
-buck2_error = { workspace = true }
+bz_error = { workspace = true }
 futures = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }

@@ -9,9 +9,9 @@
  */
 
 use async_trait::async_trait;
-use buck2_action_metadata_proto::RemoteDepFile;
-use buck2_core::buck2_env;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_action_metadata_proto::RemoteDepFile;
+use bz_core::bz_env;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use remote_execution::TActionResult2;
 
 use crate::digest_config::DigestConfig;
@@ -44,7 +44,7 @@ pub trait IntoRemoteDepFile: Send {
         fs: &ArtifactFs,
         materializer: &dyn Materializer,
         result: &CommandExecutionResult,
-    ) -> buck2_error::Result<Option<RemoteDepFile>>;
+    ) -> bz_error::Result<Option<RemoteDepFile>>;
 }
 
 pub struct CacheUploadResults {
@@ -54,8 +54,8 @@ pub struct CacheUploadResults {
 }
 
 // This is for quick testing of cache upload without configuring executors.
-pub fn force_cache_upload() -> buck2_error::Result<bool> {
-    buck2_env!(
+pub fn force_cache_upload() -> bz_error::Result<bool> {
+    bz_env!(
         "BUCK2_TEST_FORCE_CACHE_UPLOAD",
         bool,
         applicability = testing
@@ -76,7 +76,7 @@ pub trait UploadCache: Send + Sync {
         dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
         action_digest_and_blobs: &ActionDigestAndBlobs,
         identity: Option<&ReActionIdentity<'_>>,
-    ) -> buck2_error::Result<CacheUploadResults>;
+    ) -> bz_error::Result<CacheUploadResults>;
 }
 
 /// A no-op cache uploader for when cache uploading is disabled
@@ -92,7 +92,7 @@ impl UploadCache for NoOpCacheUploader {
         _dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
         _action_digest_and_blobs: &ActionDigestAndBlobs,
         _identity: Option<&ReActionIdentity<'_>>,
-    ) -> buck2_error::Result<CacheUploadResults> {
+    ) -> bz_error::Result<CacheUploadResults> {
         Ok(CacheUploadResults {
             did_cache_upload: false,
             did_dep_file_cache_upload: false,

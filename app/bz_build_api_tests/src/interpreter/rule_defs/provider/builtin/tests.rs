@@ -10,14 +10,14 @@
 
 #![cfg(test)]
 
-use buck2_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
-use buck2_interpreter_for_build::label::testing::label_creator;
+use bz_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
+use bz_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::label::testing::label_creator;
 use indoc::indoc;
 
 /// Test `equals` in generated code for providers.
 #[test]
-fn test_equals() -> buck2_error::Result<()> {
+fn test_equals() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
 
     tester.additional_globals(register_builtin_providers);
@@ -40,7 +40,7 @@ fn test_equals() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_builtin_provider_callables_are_hashable() -> buck2_error::Result<()> {
+fn test_builtin_provider_callables_are_hashable() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
 
     tester.additional_globals(register_builtin_providers);
@@ -62,7 +62,7 @@ fn test_builtin_provider_callables_are_hashable() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_output_group_info_supports_group_indexing() -> buck2_error::Result<()> {
+fn test_output_group_info_supports_group_indexing() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
 
     tester.additional_globals(register_builtin_providers);
@@ -86,7 +86,7 @@ fn test_output_group_info_supports_group_indexing() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_run_environment_info() -> buck2_error::Result<()> {
+fn test_run_environment_info() -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
 
     tester.additional_globals(register_builtin_providers);

@@ -12,15 +12,15 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::legacy_configs::view::LegacyBuckConfigView;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::paths::CellRelativePathBuf;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::legacy_configs::view::LegacyBuckConfigView;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::paths::CellRelativePathBuf;
 use dice::DiceComputations;
 use dice::Key;
 use dice::OkPagableValueSerialize;
@@ -43,7 +43,7 @@ impl ImplicitImportPaths {
         mut config: impl LegacyBuckConfigView,
         cell_name: BuildFileCell,
         cell_alias_resolver: &CellAliasResolver,
-    ) -> buck2_error::Result<ImplicitImportPaths> {
+    ) -> bz_error::Result<ImplicitImportPaths> {
         // Oddly, the root import is defined to use a more path-like representation than
         // normal imports. e.g. it uses `cell//path/to/file.bzl` instead of
         // `cell//path/to:file.bzl`.
@@ -61,7 +61,7 @@ impl ImplicitImportPaths {
                 // are defined, so we can set the build_file_cell early.
                 ImportPath::new_with_build_file_cells(path, cell_name)
             })
-            .map_or(Ok(None), |e: buck2_error::Result<ImportPath>| e.map(Some))?;
+            .map_or(Ok(None), |e: bz_error::Result<ImportPath>| e.map(Some))?;
         let package_imports = PackageImplicitImports::new(
             cell_name,
             cell_alias_resolver.dupe(),
@@ -88,7 +88,7 @@ pub trait HasImportPaths {
     async fn import_paths_for_cell(
         &mut self,
         cell_name: BuildFileCell,
-    ) -> buck2_error::Result<Arc<ImplicitImportPaths>>;
+    ) -> bz_error::Result<Arc<ImplicitImportPaths>>;
 }
 
 #[async_trait]
@@ -96,7 +96,7 @@ impl HasImportPaths for DiceComputations<'_> {
     async fn import_paths_for_cell(
         &mut self,
         cell_name: BuildFileCell,
-    ) -> buck2_error::Result<Arc<ImplicitImportPaths>> {
+    ) -> bz_error::Result<Arc<ImplicitImportPaths>> {
         #[derive(
             Debug,
             Eq,
@@ -115,7 +115,7 @@ impl HasImportPaths for DiceComputations<'_> {
 
         #[async_trait]
         impl Key for ImportPathsKey {
-            type Value = buck2_error::Result<Arc<ImplicitImportPaths>>;
+            type Value = bz_error::Result<Arc<ImplicitImportPaths>>;
 
             async fn compute(
                 &self,

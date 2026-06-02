@@ -20,80 +20,80 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::context::HasBuildContextData;
-use buck2_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapperImpl;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::install_info::FrozenInstallInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
-use buck2_build_api::materialize::HasMaterializationQueueTracker;
-use buck2_build_api::materialize::MaterializationAndUploadContext;
-use buck2_build_api::materialize::materialize_and_upload_artifact_group;
-use buck2_build_api::validation::validation_impl::VALIDATION_IMPL;
-use buck2_cli_proto::InstallRequest;
-use buck2_cli_proto::InstallResponse;
-use buck2_common::client_utils::get_channel_tcp;
-use buck2_common::client_utils::retrying;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::manifold::Bucket;
-use buck2_common::manifold::ManifoldClient;
-use buck2_common::manifold::Ttl;
-use buck2_common::pattern::parse_from_cli::parse_patterns_with_modifiers_from_cli_args;
-use buck2_common::pattern::resolve::ResolveTargetPatterns;
-use buck2_core::buck2_env;
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::PackageLabelWithModifiers;
-use buck2_core::pattern::pattern::ModifiersError;
-use buck2_core::pattern::pattern::PackageSpec;
-use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::soft_error;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::name::TargetName;
-use buck2_data::BuildResult;
-use buck2_data::InstallEventInfoEnd;
-use buck2_data::InstallEventInfoStart;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::internal_error;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_events::dispatch::span_async;
-use buck2_events::dispatch::span_async_simple;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckDefaultHasher;
-use buck2_install_proto::DeviceMetadata;
-use buck2_install_proto::FileReadyRequest;
-use buck2_install_proto::InstallInfoRequest;
-use buck2_install_proto::ShutdownRequest;
-use buck2_install_proto::installer_client::InstallerClient;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
-use buck2_util::future::try_join_all;
-use buck2_util::process::background_command;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::context::HasBuildContextData;
+use bz_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapperImpl;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::provider::builtin::install_info::FrozenInstallInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
+use bz_build_api::materialize::HasMaterializationQueueTracker;
+use bz_build_api::materialize::MaterializationAndUploadContext;
+use bz_build_api::materialize::materialize_and_upload_artifact_group;
+use bz_build_api::validation::validation_impl::VALIDATION_IMPL;
+use bz_cli_proto::InstallRequest;
+use bz_cli_proto::InstallResponse;
+use bz_common::client_utils::get_channel_tcp;
+use bz_common::client_utils::retrying;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::manifold::Bucket;
+use bz_common::manifold::ManifoldClient;
+use bz_common::manifold::Ttl;
+use bz_common::pattern::parse_from_cli::parse_patterns_with_modifiers_from_cli_args;
+use bz_common::pattern::resolve::ResolveTargetPatterns;
+use bz_core::bz_env;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabel;
+use bz_core::package::PackageLabelWithModifiers;
+use bz_core::pattern::pattern::ModifiersError;
+use bz_core::pattern::pattern::PackageSpec;
+use bz_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::soft_error;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::name::TargetName;
+use bz_data::BuildResult;
+use bz_data::InstallEventInfoEnd;
+use bz_data::InstallEventInfoStart;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::internal_error;
+use bz_events::dispatch::get_dispatcher;
+use bz_events::dispatch::span_async;
+use bz_events::dispatch::span_async_simple;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckDefaultHasher;
+use bz_install_proto::DeviceMetadata;
+use bz_install_proto::FileReadyRequest;
+use bz_install_proto::InstallInfoRequest;
+use bz_install_proto::ShutdownRequest;
+use bz_install_proto::installer_client::InstallerClient;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
+use bz_util::future::try_join_all;
+use bz_util::process::background_command;
 use chrono::DateTime;
 use chrono::Utc;
 use dice::DiceComputations;
@@ -108,7 +108,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::transport::Channel;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Install)]
 pub(crate) enum InstallError {
     /// Input errors from installer definition
@@ -150,7 +150,7 @@ pub(crate) enum InstallError {
 async fn get_installer_log_directory(
     server_ctx: &dyn ServerCommandContextTrait,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<AbsNormPathBuf> {
+) -> bz_error::Result<AbsNormPathBuf> {
     let out_path = ctx.get_buck_out_path().await?;
     let filesystem = server_ctx.project_root();
     let buck_out_path = filesystem
@@ -167,7 +167,7 @@ pub(crate) async fn install_command(
     ctx: &dyn ServerCommandContextTrait,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
     req: InstallRequest,
-) -> buck2_error::Result<InstallResponse> {
+) -> bz_error::Result<InstallResponse> {
     run_server_command(InstallServerCommand { req }, ctx, partial_result_dispatcher).await
 }
 
@@ -177,18 +177,18 @@ struct InstallServerCommand {
 
 #[async_trait]
 impl ServerCommandTemplate for InstallServerCommand {
-    type StartEvent = buck2_data::InstallCommandStart;
-    type EndEvent = buck2_data::InstallCommandEnd;
+    type StartEvent = bz_data::InstallCommandStart;
+    type EndEvent = bz_data::InstallCommandEnd;
     type Response = InstallResponse;
     type PartialResult = NoPartialResult;
 
-    fn end_event(&self, _response: &buck2_error::Result<Self::Response>) -> Self::EndEvent {
-        buck2_data::InstallCommandEnd {
+    fn end_event(&self, _response: &bz_error::Result<Self::Response>) -> Self::EndEvent {
+        bz_data::InstallCommandEnd {
             unresolved_target_patterns: self
                 .req
                 .target_patterns
                 .iter()
-                .map(|p| buck2_data::TargetPattern { value: p.clone() })
+                .map(|p| bz_data::TargetPattern { value: p.clone() })
                 .collect(),
         }
     }
@@ -198,7 +198,7 @@ impl ServerCommandTemplate for InstallServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         install(server_ctx, ctx, &self.req).await
     }
 
@@ -223,7 +223,7 @@ async fn install(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
     request: &InstallRequest,
-) -> buck2_error::Result<InstallResponse> {
+) -> bz_error::Result<InstallResponse> {
     let install_request_data_vec =
         collect_install_request_data(server_ctx, &mut ctx, request).await?;
 
@@ -258,7 +258,7 @@ async fn collect_install_request_data<'a>(
     server_ctx: &dyn ServerCommandContextTrait,
     ctx: &mut DiceTransaction,
     request: &InstallRequest,
-) -> buck2_error::Result<impl IntoIterator<Item = InstallRequestData<'a>> + use<'a>> {
+) -> bz_error::Result<impl IntoIterator<Item = InstallRequestData<'a>> + use<'a>> {
     let cwd = server_ctx.working_dir();
 
     let global_cfg_options = global_cfg_options_from_client_context(
@@ -382,14 +382,14 @@ fn parse_install_timeout(installer_run_args: &[String]) -> u64 {
     300
 }
 
-fn get_random_tcp_port() -> buck2_error::Result<u16> {
+fn get_random_tcp_port() -> bz_error::Result<u16> {
     let bind_address = std::net::Ipv4Addr::LOCALHOST.into();
     let socket_addr = SocketAddr::new(bind_address, 0);
     let tcp_port = TcpListener::bind(socket_addr)?.local_addr()?.port();
     Ok(tcp_port)
 }
 
-fn get_timestamp_as_string() -> buck2_error::Result<String> {
+fn get_timestamp_as_string() -> bz_error::Result<String> {
     let dt = DateTime::from_timestamp(Utc::now().timestamp(), 0).unwrap();
     Ok(dt.format("%Y%m%d-%H%M%S").to_string())
 }
@@ -404,7 +404,7 @@ struct InstallResult {
     installer_ready: Instant,
     installer_finished: Instant,
     device_metadata: Arc<Mutex<Vec<DeviceMetadata>>>,
-    result: buck2_error::Result<()>,
+    result: bz_error::Result<()>,
 }
 
 struct ConnectedInstaller<'a> {
@@ -423,18 +423,18 @@ impl<'a> ConnectedInstaller<'a> {
         artifact_fs: ArtifactFs,
         install_request_data: &'a InstallRequestData<'a>,
         installer_run_args: &[String],
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let initial_delay = Duration::from_millis(100);
         let max_delay = Duration::from_millis(500);
         let timeout =
-            Duration::from_secs(buck2_env!("BUCK2_INSTALLER_TIMEOUT_S", type=u64)?.unwrap_or(120));
+            Duration::from_secs(bz_env!("BUCK2_INSTALLER_TIMEOUT_S", type=u64)?.unwrap_or(120));
         let send_timeout = Duration::from_secs(
-            buck2_env!("BUCK2_INSTALLER_SEND_TIMEOUT_S", type=u64)?
+            bz_env!("BUCK2_INSTALLER_SEND_TIMEOUT_S", type=u64)?
                 .unwrap_or_else(|| parse_install_timeout(installer_run_args)),
         );
 
-        let client: buck2_error::Result<InstallerClient<Channel>> = span_async_simple(
-            buck2_data::ConnectToInstallerStart {
+        let client: bz_error::Result<InstallerClient<Channel>> = span_async_simple(
+            bz_data::ConnectToInstallerStart {
                 tcp_port: tcp_port.into(),
             },
             async move {
@@ -448,7 +448,7 @@ impl<'a> ConnectedInstaller<'a> {
                     .max_encoding_message_size(usize::MAX)
                     .max_decoding_message_size(usize::MAX))
             },
-            buck2_data::ConnectToInstallerEnd {},
+            bz_data::ConnectToInstallerEnd {},
         )
         .await;
 
@@ -481,7 +481,7 @@ impl<'a> ConnectedInstaller<'a> {
         )
     }
 
-    fn install_result(self, result: buck2_error::Result<()>) -> InstallResult {
+    fn install_result(self, result: bz_error::Result<()>) -> InstallResult {
         InstallResult {
             installer_ready: self.installer_ready,
             installer_finished: Instant::now(),
@@ -490,7 +490,7 @@ impl<'a> ConnectedInstaller<'a> {
         }
     }
 
-    async fn send_install_info(&mut self) -> buck2_error::Result<()> {
+    async fn send_install_info(&mut self) -> bz_error::Result<()> {
         for (installed_target, install_files) in &self.install_request_data.installed_targets {
             let file_names: Vec<String> = install_files
                 .keys()
@@ -524,8 +524,8 @@ impl<'a> ConnectedInstaller<'a> {
 
             if install_info_response.install_id != install_id {
                 self.send_shutdown_command().await?;
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::InstallIdMismatch,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::InstallIdMismatch,
                     "Received install id: {} doesn't match with the sent one: {}",
                     install_info_response.install_id,
                     &install_id
@@ -535,7 +535,7 @@ impl<'a> ConnectedInstaller<'a> {
         Ok(())
     }
 
-    async fn send_shutdown_command(&self) -> buck2_error::Result<()> {
+    async fn send_shutdown_command(&self) -> bz_error::Result<()> {
         let response_result = tokio::time::timeout(
             self.timeout,
             self.client
@@ -560,14 +560,14 @@ impl<'a> ConnectedInstaller<'a> {
     async fn send_files(
         &mut self,
         files_rx: mpsc::UnboundedReceiver<FileResult>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         UnboundedReceiverStream::new(files_rx)
-            .map(buck2_error::Ok)
+            .map(bz_error::Ok)
             .try_for_each_concurrent(None, |file| self.send_file(file))
             .await
     }
 
-    async fn send_file(&self, file: FileResult) -> buck2_error::Result<()> {
+    async fn send_file(&self, file: FileResult) -> bz_error::Result<()> {
         let install_id = file.install_id;
         let name = file.name;
         let artifact = file.artifact;
@@ -583,7 +583,7 @@ impl<'a> ConnectedInstaller<'a> {
                 Data::Digest(file.digest.data())
             }
             DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(_)) => {
-                return Err(buck2_error::internal_error!(
+                return Err(bz_error::internal_error!(
                     "source file proxy must be resolved before install"
                 ));
             }
@@ -625,7 +625,7 @@ impl<'a> ConnectedInstaller<'a> {
         };
         let end = InstallEventInfoEnd {};
         span_async(start, async {
-            let mut outcome: buck2_error::Result<()> = Ok(());
+            let mut outcome: bz_error::Result<()> = Ok(());
 
             let response_result = match tokio::time::timeout(
                 self.send_timeout,
@@ -669,7 +669,7 @@ impl<'a> ConnectedInstaller<'a> {
                 .append(&mut response.device_metadata);
 
             if let Some(error_detail) = response.error_detail {
-                let mut error: buck2_error::Error = InstallError::ProcessingFileReadyFailure {
+                let mut error: bz_error::Error = InstallError::ProcessingFileReadyFailure {
                     install_id: install_id.to_owned(),
                     artifact: name.to_owned(),
                     path: path.to_owned(),
@@ -677,15 +677,15 @@ impl<'a> ConnectedInstaller<'a> {
                 }
                 .into();
                 let category_tag = if let Ok(category) =
-                    buck2_install_proto::ErrorCategory::try_from(error_detail.category)
+                    bz_install_proto::ErrorCategory::try_from(error_detail.category)
                 {
                     match category {
-                        buck2_install_proto::ErrorCategory::Unspecified => {
+                        bz_install_proto::ErrorCategory::Unspecified => {
                             ErrorTag::InstallerUnknown
                         }
-                        buck2_install_proto::ErrorCategory::Tier0 => ErrorTag::InstallerTier0,
-                        buck2_install_proto::ErrorCategory::Input => ErrorTag::InstallerInput,
-                        buck2_install_proto::ErrorCategory::Environment => {
+                        bz_install_proto::ErrorCategory::Tier0 => ErrorTag::InstallerTier0,
+                        bz_install_proto::ErrorCategory::Input => ErrorTag::InstallerInput,
+                        bz_install_proto::ErrorCategory::Environment => {
                             ErrorTag::InstallerEnvironment
                         }
                     }
@@ -712,7 +712,7 @@ async fn handle_install_request(
     install_request_data: &InstallRequestData<'_>,
     initial_installer_run_args: &[String],
     installer_debug: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let (files_tx, files_rx) = mpsc::unbounded_channel();
 
     let timestamp = get_timestamp_as_string()?;
@@ -730,7 +730,7 @@ async fn handle_install_request(
             |ctx| {
                 async move {
                     build_files(ctx, &install_request_data.installed_targets, files_tx).await?;
-                    buck2_error::Ok(Instant::now())
+                    bz_error::Ok(Instant::now())
                 }
                 .boxed()
             },
@@ -772,7 +772,7 @@ async fn handle_install_request(
                     )
                     .await?;
 
-                    buck2_error::Ok(installer.install(files_rx).await)
+                    bz_error::Ok(installer.install(files_rx).await)
                 }
                 .boxed()
             },
@@ -788,15 +788,15 @@ async fn handle_install_request(
                 result,
             } = install_result;
 
-            let device_metadata: Vec<buck2_data::DeviceMetadata> = device_metadata
+            let device_metadata: Vec<bz_data::DeviceMetadata> = device_metadata
                 .lock()
                 .await
                 .iter()
-                .map(|metadata| buck2_data::DeviceMetadata {
+                .map(|metadata| bz_data::DeviceMetadata {
                     entry: metadata
                         .entry
                         .iter()
-                        .map(|e| buck2_data::device_metadata::Entry {
+                        .map(|e| bz_data::device_metadata::Entry {
                             key: e.key.clone(),
                             value: e.value.clone(),
                         })
@@ -825,7 +825,7 @@ async fn handle_install_request(
 
     result = result.map_err(|err| append_installer_context(err, &stderr_log_path, &log_location));
 
-    get_dispatcher().instant_event(buck2_data::InstallFinished {
+    get_dispatcher().instant_event(bz_data::InstallFinished {
         duration: install_duration.and_then(|d| d.try_into().ok()),
         device_metadata,
         log_url,
@@ -833,7 +833,7 @@ async fn handle_install_request(
     result
 }
 
-async fn upload_installer_logs(log_path: &AbsNormPathBuf) -> buck2_error::Result<String> {
+async fn upload_installer_logs(log_path: &AbsNormPathBuf) -> bz_error::Result<String> {
     let manifold = ManifoldClient::new().await?;
     let trace_id: &str = &get_dispatcher().trace_id().to_string();
     let manifold_filename = format!("flat/{trace_id}.log");
@@ -853,7 +853,7 @@ async fn build_launch_installer(
     installer_run_args: &[String],
     installer_log_console: bool,
     stderr_log_path: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let frozen_providers = ctx
         .get_providers(providers_label)
         .await?
@@ -928,10 +928,10 @@ async fn build_launch_installer(
 }
 
 fn append_installer_context(
-    err: buck2_error::Error,
+    err: bz_error::Error,
     stderr_log_path: &AbsNormPathBuf,
     log_location: &str,
-) -> buck2_error::Error {
+) -> bz_error::Error {
     const MAX_STDERR_BYTES: usize = 16384;
     let stderr_context = match std::fs::File::open(stderr_log_path.as_path()) {
         Ok(mut file) => {
@@ -976,7 +976,7 @@ async fn build_files(
     ctx: &mut DiceComputations<'_>,
     install_files_slice: &[(ConfiguredTargetLabel, SmallMap<&str, Artifact>)],
     tx: mpsc::UnboundedSender<FileResult>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut file_outputs = Vec::with_capacity(install_files_slice.len());
     for (install_id, file_info) in install_files_slice {
         for (name, artifact) in file_info.into_iter() {
@@ -1029,7 +1029,7 @@ async fn build_files(
                     };
                     tx_clone.send(file_result)?;
                 }
-                buck2_error::Ok(())
+                bz_error::Ok(())
             }
             .boxed()
         },

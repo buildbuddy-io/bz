@@ -8,22 +8,22 @@
  * above-listed licenses.
  */
 
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::internal_error;
-use buck2_execute::directory::ActionDirectory;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionDirectoryRef;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_execute::execute::blocking::IoRequest;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_hash::StdBuckHashMap;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::internal_error;
+use bz_execute::directory::ActionDirectory;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionDirectoryRef;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_execute::execute::blocking::IoRequest;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_hash::StdBuckHashMap;
 
 pub struct MaterializeTreeStructure {
     pub path: ProjectRelativePathBuf,
@@ -31,7 +31,7 @@ pub struct MaterializeTreeStructure {
 }
 
 impl IoRequest for MaterializeTreeStructure {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         materialize_dirs_and_syms(self.entry.as_ref(), project_fs.root().join(&self.path))?;
 
         Ok(())
@@ -51,7 +51,7 @@ fn materialize<F, D>(
     materialize_dirs_and_syms: bool,
     mut file_src: F,
     executable_bit_override: Option<bool>,
-) -> buck2_error::Result<()>
+) -> bz_error::Result<()>
 where
     F: FnMut(&AbsNormPath) -> Option<AbsNormPathBuf>,
     D: ActionDirectory,
@@ -77,7 +77,7 @@ where
 pub(crate) fn materialize_dirs_and_syms<P, D>(
     entry: DirectoryEntry<&D, &ActionDirectoryMember>,
     dest: P,
-) -> buck2_error::Result<()>
+) -> bz_error::Result<()>
 where
     P: AsRef<AbsNormPath>,
     D: ActionDirectory,
@@ -94,7 +94,7 @@ pub(crate) fn materialize_files<P, D>(
     src: P,
     dest: P,
     executable_bit_override: Option<bool>,
-) -> buck2_error::Result<()>
+) -> bz_error::Result<()>
 where
     P: AsRef<AbsNormPath>,
     D: ActionDirectory,
@@ -124,7 +124,7 @@ fn _materialize_files_from_map<P, D>(
     entry: DirectoryEntry<&D, &ActionDirectoryMember>,
     srcs: &mut StdBuckHashMap<AbsNormPathBuf, AbsNormPathBuf>,
     dest: P,
-) -> buck2_error::Result<()>
+) -> bz_error::Result<()>
 where
     P: AsRef<AbsNormPath>,
     D: ActionDirectory,
@@ -139,7 +139,7 @@ fn materialize_recursively<'a, F, D>(
     materialize_dirs_and_syms: bool,
     file_src: &mut F,
     executable_bit_override: Option<bool>,
-) -> buck2_error::Result<()>
+) -> bz_error::Result<()>
 where
     F: FnMut(&AbsNormPath) -> Option<AbsNormPathBuf>,
     D: ActionDirectoryRef<'a>,

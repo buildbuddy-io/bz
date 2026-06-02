@@ -8,15 +8,15 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_data::GlobalExternalConfig;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_event_log::stream_value::StreamValue;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_data::GlobalExternalConfig;
+use bz_error::conversion::from_any_with_tag;
+use bz_event_log::stream_value::StreamValue;
 use serde::Serialize;
 use tokio_stream::StreamExt;
 
@@ -52,15 +52,15 @@ impl BuckSubcommand for ExternalConfigsCommand {
         let log_path = event_log.get(&ctx).await?;
 
         let (invocation, mut events) = log_path.unpack_stream().await?;
-        buck2_client_ctx::eprintln!(
+        bz_client_ctx::eprintln!(
             "Showing external configs from: {}",
             invocation.display_command_line()
         )?;
 
         while let Some(event) = events.try_next().await? {
             if let StreamValue::Event(event) = event
-                && let Some(buck2_data::buck_event::Data::Instant(instant)) = event.data
-                && let Some(buck2_data::instant_event::Data::BuckconfigInputValues(configs)) =
+                && let Some(bz_data::buck_event::Data::Instant(instant)) = event.data
+                && let Some(bz_data::instant_event::Data::BuckconfigInputValues(configs)) =
                     instant.data
             {
                 log_external_configs(&configs.components, format.clone()).await?;
@@ -89,10 +89,10 @@ struct ExternalConfigFileEntry<'a> {
 }
 
 fn write_config_value<'a>(
-    config_value: &'a buck2_data::ConfigValue,
+    config_value: &'a bz_data::ConfigValue,
     origin_path: &'a str,
     mut log_writer: &mut LogCommandOutputFormatWithWriter,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let external_config = ExternalConfigValueEntry {
         section: &config_value.section,
         key: &config_value.key,
@@ -123,7 +123,7 @@ fn write_config_value<'a>(
         LogCommandOutputFormatWithWriter::Csv(writer) => {
             writer
                 .serialize(external_config)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogCmd))?;
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::LogCmd))?;
         }
     }
     Ok(())
@@ -132,7 +132,7 @@ fn write_config_value<'a>(
 fn write_config_values(
     global_external_config: &GlobalExternalConfig,
     log_writer: &mut LogCommandOutputFormatWithWriter,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     global_external_config
         .values
         .iter()
@@ -148,7 +148,7 @@ fn write_config_values(
 fn write_config_file(
     path: &str,
     mut log_writer: &mut LogCommandOutputFormatWithWriter,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let origin = "config-file";
     let config_file = ExternalConfigFileEntry { path, origin };
     match &mut log_writer {
@@ -163,22 +163,22 @@ fn write_config_file(
         LogCommandOutputFormatWithWriter::Csv(writer) => {
             writer
                 .serialize(config_file)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::LogCmd))?;
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::LogCmd))?;
         }
     }
     Ok(())
 }
 
 async fn log_external_configs(
-    components: &[buck2_data::BuckconfigComponent],
+    components: &[bz_data::BuckconfigComponent],
     format: LogCommandOutputFormat,
-) -> buck2_error::Result<()> {
-    buck2_client_ctx::stdio::print_with_writer::<buck2_error::Error, _>(async move |w| {
+) -> bz_error::Result<()> {
+    bz_client_ctx::stdio::print_with_writer::<bz_error::Error, _>(async move |w| {
         let mut log_writer = transform_format(format, w);
 
         for component in components {
-            use buck2_data::buckconfig_component::Data;
-            use buck2_data::config_file::Data as CData;
+            use bz_data::buckconfig_component::Data;
+            use bz_data::config_file::Data as CData;
             match &component.data {
                 Some(Data::ConfigValue(config_value)) => {
                     assert!(

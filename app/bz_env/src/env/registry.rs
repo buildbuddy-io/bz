@@ -40,15 +40,15 @@ pub static ENV_INFO: [EnvInfoEntry];
 
 #[cfg(test)]
 mod tests {
-    use crate::env::buck2_env;
+    use crate::env::bz_env;
     use crate::env::registry::Applicability;
     use crate::env::registry::ENV_INFO;
     use crate::env::registry::EnvInfoEntry;
 
     #[test]
     fn test_env_info() {
-        let _ignore = buck2_env!("TEST_VAR_1", applicability = internal);
-        let _ignore = buck2_env!("TEST_VAR_2", type = u32, default=20);
+        let _ignore = bz_env!("TEST_VAR_1", applicability = internal);
+        let _ignore = bz_env!("TEST_VAR_2", type = u32, default=20);
         let var_1 = ENV_INFO.iter().find(|e| e.name == "TEST_VAR_1").unwrap();
         let var_2 = ENV_INFO.iter().find(|e| e.name == "TEST_VAR_2").unwrap();
         assert_eq!(
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_ty_short() {
-        let _ignore = buck2_env!("TEST_VAR_TY_SHORT");
+        let _ignore = bz_env!("TEST_VAR_TY_SHORT");
         let var = ENV_INFO
             .iter()
             .find(|e| e.name == "TEST_VAR_TY_SHORT")

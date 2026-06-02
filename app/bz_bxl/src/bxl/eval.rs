@@ -12,35 +12,35 @@ use std::future::Future;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_build_api::bxl::result::BxlResult;
-use buck2_build_api::bxl::types::BxlFunctionLabel;
-use buck2_common::events::HasEvents;
-use buck2_common::scope::scope_and_collect_with_dice;
-use buck2_common::target_aliases::BuckConfigTargetAliasResolver;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabel;
-use buck2_data::BxlExecutionEnd;
-use buck2_data::BxlExecutionStart;
-use buck2_data::StarlarkFailNoStacktrace;
-use buck2_error::buck2_error;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::starlark_error::from_starlark_with_options;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::dispatch::console_message;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_events::dispatch::with_dispatcher;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_interpreter::factory::BuckStarlarkModule;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::file_loader::LoadedModule;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
-use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
-use buck2_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
+use bz_build_api::bxl::result::BxlResult;
+use bz_build_api::bxl::types::BxlFunctionLabel;
+use bz_common::events::HasEvents;
+use bz_common::scope::scope_and_collect_with_dice;
+use bz_common::target_aliases::BuckConfigTargetAliasResolver;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabel;
+use bz_data::BxlExecutionEnd;
+use bz_data::BxlExecutionStart;
+use bz_data::StarlarkFailNoStacktrace;
+use bz_error::bz_error;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::starlark_error::from_starlark_with_options;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::dispatch::console_message;
+use bz_events::dispatch::get_dispatcher;
+use bz_events::dispatch::with_dispatcher;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_interpreter::factory::BuckStarlarkModule;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::file_loader::LoadedModule;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_interpreter::print_handler::EventDispatcherPrintHandler;
+use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
 use clap::error::ErrorKind;
 use dice::DiceComputations;
 use dice::DiceTransaction;
@@ -97,13 +97,13 @@ impl LimitedExecutor {
 #[derive(Debug, Allocative, Clone, Dupe)]
 pub(crate) struct BxlEvalError {
     pub(crate) output_stream_state: Option<Arc<OutputStreamOutcome>>,
-    pub(crate) error: buck2_error::Error,
+    pub(crate) error: bz_error::Error,
 }
 
 pub(crate) type Result<T> = std::result::Result<T, BxlEvalError>;
 
-impl From<buck2_error::Error> for BxlEvalError {
-    fn from(value: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for BxlEvalError {
+    fn from(value: bz_error::Error) -> Self {
         Self {
             output_stream_state: None,
             error: value,
@@ -155,7 +155,7 @@ pub(crate) async fn eval(
         scope_and_collect_with_dice(ctx, |ctx, s| {
             s.spawn_cancellable(
                 limited_executor.execute(eval_bxl_inner(ctx, dispatcher, key, liveness)),
-                || Err(buck2_error!(buck2_error::ErrorTag::Tier0, "cancelled").into()),
+                || Err(bz_error!(bz_error::ErrorTag::Tier0, "cancelled").into()),
             )
         })
     }
@@ -326,7 +326,7 @@ fn eval_bxl<'v>(
     frozen_callable: OwnedFrozenValueTyped<FrozenBxlFunction>,
     ctx: ValueTyped<'v, BxlContext<'v>>,
     force_print_stacktrace: bool,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let bxl_impl = frozen_callable.implementation();
     let result = eval.eval_function(bxl_impl.to_value(), &[ctx.to_value()], &[]);
 
@@ -351,7 +351,7 @@ fn eval_bxl<'v>(
 
     let e = from_starlark_with_options(
         e,
-        buck2_error::starlark_error::NativeErrorHandling::Unknown,
+        bz_error::starlark_error::NativeErrorHandling::Unknown,
         should_skip_backtrace,
     );
     if should_skip_backtrace {
@@ -369,11 +369,11 @@ fn eval_bxl<'v>(
 pub(crate) fn get_bxl_callable(
     spec: &BxlFunctionLabel,
     bxl_module: &LoadedModule,
-) -> buck2_error::Result<OwnedFrozenValueTyped<FrozenBxlFunction>> {
+) -> bz_error::Result<OwnedFrozenValueTyped<FrozenBxlFunction>> {
     let callable = bxl_module
         .env()
         .get_any_visibility(&spec.name)
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?
         .0;
 
     Ok(callable.downcast_starlark::<FrozenBxlFunction>()?)
@@ -398,7 +398,7 @@ pub(crate) async fn resolve_cli_args<'a>(
     cli_ctx: &CliResolutionCtx<'a>,
     bxl_args: &Vec<String>,
     frozen_callable: &'a FrozenBxlFunction,
-) -> buck2_error::Result<BxlResolvedCliArgs> {
+) -> bz_error::Result<BxlResolvedCliArgs> {
     match frozen_callable
         .to_clap(clap::Command::new(&spec.name).no_binary_name(true)) // patternlint-disable-line buck2-no-command-new
         .try_get_matches_from(bxl_args)
@@ -425,7 +425,7 @@ pub(crate) async fn resolve_cli_args<'a>(
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[error("Expected `NoneType` to be returned from bxl. Got return value `{0}`")]
 #[buck2(tag = Input)]
 struct NotAValidReturnType(&'static str);

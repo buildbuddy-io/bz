@@ -12,24 +12,24 @@ use std::fmt::Display;
 use std::fmt::Formatter;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::source_path::SourcePath;
-use buck2_error::starlark_error::from_starlark_with_options;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::select_fail::StarlarkSelectFail;
-use buck2_interpreter::types::select_incompatible::StarlarkSelectIncompatible;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coerced_path::CoercedPath;
-use buck2_node::attrs::display::AttrDisplayWithContext;
-use buck2_node::attrs::fmt_context::AttrFmtContext;
-use buck2_node::attrs::serialize::AttrSerializeWithContext;
-use buck2_node::visibility::VisibilityPatternList;
-use buck2_node::visibility::VisibilitySpecification;
-use buck2_node::visibility::WithinViewSpecification;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_core::package::PackageLabel;
+use bz_core::package::source_path::SourcePath;
+use bz_error::starlark_error::from_starlark_with_options;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::select_fail::StarlarkSelectFail;
+use bz_interpreter::types::select_incompatible::StarlarkSelectIncompatible;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coerced_path::CoercedPath;
+use bz_node::attrs::display::AttrDisplayWithContext;
+use bz_node::attrs::fmt_context::AttrFmtContext;
+use bz_node::attrs::serialize::AttrSerializeWithContext;
+use bz_node::visibility::VisibilityPatternList;
+use bz_node::visibility::VisibilitySpecification;
+use bz_node::visibility::WithinViewSpecification;
 use derive_more::From;
 use dupe::Dupe;
 use gazebo::prelude::SliceExt;
@@ -129,12 +129,12 @@ fn coerced_attr_methods(builder: &mut MethodsBuilder) {
 }
 
 pub trait CoercedAttrExt {
-    fn to_value<'v>(&self, pkg: PackageLabel, heap: Heap<'v>) -> buck2_error::Result<Value<'v>>;
+    fn to_value<'v>(&self, pkg: PackageLabel, heap: Heap<'v>) -> bz_error::Result<Value<'v>>;
 }
 
 impl CoercedAttrExt for CoercedAttr {
     /// Converts the coerced attr to a starlark value
-    fn to_value<'v>(&self, pkg: PackageLabel, heap: Heap<'v>) -> buck2_error::Result<Value<'v>> {
+    fn to_value<'v>(&self, pkg: PackageLabel, heap: Heap<'v>) -> bz_error::Result<Value<'v>> {
         Ok(match &self {
             CoercedAttr::Bool(v) => heap.alloc(v.0),
             CoercedAttr::Int(v) => heap.alloc(*v),
@@ -151,7 +151,7 @@ impl CoercedAttrExt for CoercedAttr {
                         k.to_value(pkg.dupe(), heap)?.get_hashed().map_err(|e| {
                             from_starlark_with_options(
                                 e,
-                                buck2_error::starlark_error::NativeErrorHandling::Unknown,
+                                bz_error::starlark_error::NativeErrorHandling::Unknown,
                                 false,
                             )
                         })?,

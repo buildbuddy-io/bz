@@ -14,15 +14,15 @@ use std::future::Future;
 use std::pin::Pin;
 
 use async_trait::async_trait;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::configuration::pair::ConfigurationNoExec;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured_ref::ConfiguredGraphNodeRef;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_util::late_binding::LateBinding;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::configuration::pair::ConfigurationNoExec;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured_ref::ConfiguredGraphNodeRef;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 use dupe::Dupe;
 
@@ -39,7 +39,7 @@ pub static EVAL_ANALYSIS_QUERY: LateBinding<
         HashMap<String, ConfiguredTargetNode>,
     ) -> Pin<
         Box<
-            dyn Future<Output = buck2_error::Result<TargetSet<ConfiguredGraphNodeRef>>> + Send + 'a,
+            dyn Future<Output = bz_error::Result<TargetSet<ConfiguredGraphNodeRef>>> + Send + 'a,
         >,
     >,
 > = LateBinding::new("EVAL_ANALYSIS_QUERY");
@@ -50,7 +50,7 @@ pub trait RuleAnalysisCalculationImpl: Send + Sync + 'static {
         &self,
         ctx: &mut DiceComputations<'_>,
         target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<AnalysisResult>>;
+    ) -> bz_error::Result<MaybeCompatible<AnalysisResult>>;
 }
 
 pub static RULE_ANALYSIS_CALCULATION: LateBinding<&'static dyn RuleAnalysisCalculationImpl> =
@@ -63,26 +63,26 @@ pub trait RuleAnalysisCalculation {
     async fn get_analysis_result(
         &mut self,
         target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<AnalysisResult>>;
+    ) -> bz_error::Result<MaybeCompatible<AnalysisResult>>;
 
     /// Return the analysis result for a configuration rule `TargetLabel`
     /// (e. g. `constraint_value`).
     async fn get_configuration_analysis_result(
         &mut self,
         target: &ProvidersLabel,
-    ) -> buck2_error::Result<FrozenProviderCollectionValue>;
+    ) -> bz_error::Result<FrozenProviderCollectionValue>;
 
     /// Returns the provider collection for a ConfiguredProvidersLabel. This is the full set of Providers
     /// returned by the target's rule implementation function.
     async fn get_providers(
         &mut self,
         target: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<MaybeCompatible<FrozenProviderCollectionValue>>;
+    ) -> bz_error::Result<MaybeCompatible<FrozenProviderCollectionValue>>;
 
     async fn get_validations(
         &mut self,
         target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<Option<TransitiveValidations>>>;
+    ) -> bz_error::Result<MaybeCompatible<Option<TransitiveValidations>>>;
 }
 
 #[async_trait]
@@ -90,7 +90,7 @@ impl RuleAnalysisCalculation for DiceComputations<'_> {
     async fn get_analysis_result(
         &mut self,
         target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<AnalysisResult>> {
+    ) -> bz_error::Result<MaybeCompatible<AnalysisResult>> {
         self.per_transaction_data()
             .record_analysis_started_for_overlap();
         let result = RULE_ANALYSIS_CALCULATION
@@ -110,7 +110,7 @@ impl RuleAnalysisCalculation for DiceComputations<'_> {
     async fn get_configuration_analysis_result(
         &mut self,
         target: &ProvidersLabel,
-    ) -> buck2_error::Result<FrozenProviderCollectionValue> {
+    ) -> bz_error::Result<FrozenProviderCollectionValue> {
         // Analysis for configuration nodes is always done with the unbound configuration.
         let target = target.configure_pair(ConfigurationNoExec::unbound().cfg_pair().dupe());
         Ok(self.get_providers(&target).await?.require_compatible()?)
@@ -119,7 +119,7 @@ impl RuleAnalysisCalculation for DiceComputations<'_> {
     async fn get_providers(
         &mut self,
         target: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<MaybeCompatible<FrozenProviderCollectionValue>> {
+    ) -> bz_error::Result<MaybeCompatible<FrozenProviderCollectionValue>> {
         let analysis = self.get_analysis_result(target.target()).await?;
 
         analysis.try_map(|analysis| analysis.lookup_inner(target))
@@ -128,7 +128,7 @@ impl RuleAnalysisCalculation for DiceComputations<'_> {
     async fn get_validations(
         &mut self,
         target: &ConfiguredTargetLabel,
-    ) -> buck2_error::Result<MaybeCompatible<Option<TransitiveValidations>>> {
+    ) -> bz_error::Result<MaybeCompatible<Option<TransitiveValidations>>> {
         let analysis = self.get_analysis_result(target).await?;
         Ok(analysis.map(|x| x.validations))
     }

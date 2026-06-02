@@ -12,9 +12,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_util::late_binding::LateBinding;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 use dice_futures::cancellation::CancellationObserver;
 
@@ -30,5 +30,5 @@ pub static EVAL_BXL_FOR_ANON_TARGET: LateBinding<
         dependents_analyses: AnonTargetDependentAnalysisResults<'v>,
         execution_platform: ExecutionPlatformResolution,
         liveness: CancellationObserver,
-    ) -> Pin<Box<dyn Future<Output = buck2_error::Result<AnalysisResult>> + 'v>>,
+    ) -> Pin<Box<dyn Future<Output = bz_error::Result<AnalysisResult>> + 'v>>,
 > = LateBinding::new("EVAL_BXL_FOR_ANON_TARGET");

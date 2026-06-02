@@ -17,119 +17,119 @@ use std::time::Duration;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::Action;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::UnregisteredAction;
-use buck2_build_api::actions::box_slice_set::BoxSliceSet;
-use buck2_build_api::actions::execute::action_execution_target::ActionExecutionTarget;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
-use buck2_build_api::actions::impls::expanded_command_line::ExpandedCommandLine;
-use buck2_build_api::actions::impls::expanded_command_line::ExpandedCommandLineDigest;
-use buck2_build_api::actions::impls::expanded_command_line::ExpandedCommandLineFingerprinter;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::artifact_groups::ArtifactGroupValues;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_normalize_buck_owned_exec_paths;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
-use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
-use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapperImpl;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineLocation;
-use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
-use buck2_build_api::interpreter::rule_defs::cmd_args::ParamFileFormat;
-use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
-use buck2_build_api::interpreter::rule_defs::cmd_args::param_file::bazel_param_file_content;
-use buck2_build_api::interpreter::rule_defs::cmd_args::param_file::visit_bazel_param_file_content;
-use buck2_build_api::interpreter::rule_defs::cmd_args::space_separated::SpaceSeparatedCommandLineBuilder;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_build_api::interpreter::rule_defs::context::bazel_runfiles_prefix;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileCommandLine;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::FrozenBazelCcCompileCommandLine;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::FrozenWorkerInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
-use buck2_build_signals::env::WaitingCategory;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::cas_digest::CasDigestConfig;
-use buck2_common::cas_digest::CasDigestData;
-use buck2_common::cas_digest::DataDigester;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_common::io::trace::TracingIoProvider;
-use buck2_core::category::Category;
-use buck2_core::category::CategoryRef;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::execution_types::executor_config::ReGangWorker;
-use buck2_core::execution_types::executor_config::RemoteExecutorCustomImage;
-use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_events::dispatch::span_async_simple;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_execute::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::execute::action_digest::ActionDigest;
-use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
-use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
-use buck2_execute::execute::cache_uploader::force_cache_upload;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::execute::dep_file_digest::DepFileDigest;
-use buck2_execute::execute::environment_inheritance::EnvironmentInheritance;
-use buck2_execute::execute::request::ActionMetadataBlob;
-use buck2_execute::execute::request::CommandExecutionInput;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::CommandExecutionPaths;
-use buck2_execute::execute::request::CommandExecutionRequest;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::request::LocalActionCacheKey;
-use buck2_execute::execute::request::OutputCreationBehavior;
-use buck2_execute::execute::request::OutputType;
-use buck2_execute::execute::request::RemoteWorkerSpec;
-use buck2_execute::execute::request::WorkerId;
-use buck2_execute::execute::request::WorkerProtocol;
-use buck2_execute::execute::request::WorkerSpec;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::materialize::materializer::WriteRequest;
-use buck2_fs::fs_util;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::buck_indexmap;
-use buck2_util::thin_box::ThinBoxSlice;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::BaseArtifactKind;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::Action;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::UnregisteredAction;
+use bz_build_api::actions::box_slice_set::BoxSliceSet;
+use bz_build_api::actions::execute::action_execution_target::ActionExecutionTarget;
+use bz_build_api::actions::execute::action_executor::ActionExecutionKind;
+use bz_build_api::actions::execute::action_executor::ActionExecutionMetadata;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::actions::execute::error::ExecuteError;
+use bz_build_api::actions::impls::expanded_command_line::ExpandedCommandLine;
+use bz_build_api::actions::impls::expanded_command_line::ExpandedCommandLineDigest;
+use bz_build_api::actions::impls::expanded_command_line::ExpandedCommandLineFingerprinter;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::artifact_groups::ArtifactGroupValues;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_normalize_buck_owned_exec_paths;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use bz_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapperImpl;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineLocation;
+use bz_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
+use bz_build_api::interpreter::rule_defs::cmd_args::ParamFileFormat;
+use bz_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use bz_build_api::interpreter::rule_defs::cmd_args::param_file::bazel_param_file_content;
+use bz_build_api::interpreter::rule_defs::cmd_args::param_file::visit_bazel_param_file_content;
+use bz_build_api::interpreter::rule_defs::cmd_args::space_separated::SpaceSeparatedCommandLineBuilder;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_build_api::interpreter::rule_defs::context::bazel_runfiles_prefix;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileCommandLine;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::FrozenBazelCcCompileCommandLine;
+use bz_build_api::interpreter::rule_defs::provider::builtin::worker_info::FrozenWorkerInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
+use bz_build_signals::env::WaitingCategory;
+use bz_build_signals::env::WaitingData;
+use bz_common::cas_digest::CasDigestConfig;
+use bz_common::cas_digest::CasDigestData;
+use bz_common::cas_digest::DataDigester;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::io::trace::TracingIoProvider;
+use bz_core::category::Category;
+use bz_core::category::CategoryRef;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::execution_types::executor_config::MetaInternalExtraParams;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RemoteExecutorCustomImage;
+use bz_core::execution_types::executor_config::RemoteExecutorDependency;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_events::dispatch::span_async_simple;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_execute::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::execute::action_digest::ActionDigest;
+use bz_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
+use bz_execute::execute::cache_uploader::IntoRemoteDepFile;
+use bz_execute::execute::cache_uploader::force_cache_upload;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::execute::dep_file_digest::DepFileDigest;
+use bz_execute::execute::environment_inheritance::EnvironmentInheritance;
+use bz_execute::execute::request::ActionMetadataBlob;
+use bz_execute::execute::request::CommandExecutionInput;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::CommandExecutionPaths;
+use bz_execute::execute::request::CommandExecutionRequest;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::request::LocalActionCacheKey;
+use bz_execute::execute::request::OutputCreationBehavior;
+use bz_execute::execute::request::OutputType;
+use bz_execute::execute::request::RemoteWorkerSpec;
+use bz_execute::execute::request::WorkerId;
+use bz_execute::execute::request::WorkerProtocol;
+use bz_execute::execute::request::WorkerSpec;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::materialize::materializer::WriteRequest;
+use bz_fs::fs_util;
+use bz_fs::paths::RelativePathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckIndexMap;
+use bz_hash::BuckIndexSet;
+use bz_hash::buck_indexmap;
+use bz_util::thin_box::ThinBoxSlice;
 use derive_more::Display;
 use dupe::Dupe;
 use either::Either;
@@ -245,7 +245,7 @@ impl RunActionKey {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum LocalPreferenceError {
     #[error("cannot have `local_only = True` and `prefer_local = True` at the same time")]
@@ -264,7 +264,7 @@ pub(crate) fn new_executor_preference(
     local_only: bool,
     prefer_local: bool,
     prefer_remote: bool,
-) -> buck2_error::Result<ExecutorPreference> {
+) -> bz_error::Result<ExecutorPreference> {
     match (local_only, prefer_local, prefer_remote) {
         (true, false, false) => Ok(ExecutorPreference::LocalRequired),
         (true, false, true) => Err(LocalPreferenceError::LocalOnlyAndPreferRemote.into()),
@@ -317,7 +317,7 @@ impl UnregisteredAction for UnregisteredRunAction {
         outputs: BuckIndexSet<BuildArtifact>,
         starlark_data: Option<OwnedFrozenValue>,
         error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         let starlark_values =
             starlark_data.ok_or_else(|| internal_error!("module data to be present"))?;
         let run_action = RunAction::new(*self, starlark_values, outputs, error_handler)?;
@@ -423,23 +423,23 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
 impl FrozenStarlarkRunActionValues {
     pub(crate) fn worker<'v>(
         &'v self,
-    ) -> buck2_error::Result<Option<ValueOf<'v, &'v WorkerInfo<'v>>>> {
+    ) -> bz_error::Result<Option<ValueOf<'v, &'v WorkerInfo<'v>>>> {
         let Some(worker) = self.worker else {
             return Ok(None);
         };
         ValueOf::unpack_value_err(worker.to_value())
-            .map_err(buck2_error::Error::from)
+            .map_err(bz_error::Error::from)
             .map(Some)
     }
 
     pub(crate) fn remote_worker<'v>(
         &'v self,
-    ) -> buck2_error::Result<Option<ValueOf<'v, &'v WorkerInfo<'v>>>> {
+    ) -> bz_error::Result<Option<ValueOf<'v, &'v WorkerInfo<'v>>>> {
         let Some(remote_worker) = self.remote_worker else {
             return Ok(None);
         };
         ValueOf::unpack_value_err(remote_worker.to_value())
-            .map_err(buck2_error::Error::from)
+            .map_err(bz_error::Error::from)
             .map(Some)
     }
 }
@@ -664,7 +664,7 @@ impl ArtifactPathMapper for DepFilesPlaceholderArtifactPathMapperWithValues<'_> 
     fn artifact_value(
         &self,
         artifact: &Artifact,
-    ) -> Option<&buck2_execute::artifact_value::ArtifactValue> {
+    ) -> Option<&bz_execute::artifact_value::ArtifactValue> {
         self.values.artifact_value(artifact)
     }
 }
@@ -717,7 +717,7 @@ impl ArtifactPathMapper for RunActionOutputArtifactPathMapper<'_> {
     fn artifact_value(
         &self,
         artifact: &Artifact,
-    ) -> Option<&buck2_execute::artifact_value::ArtifactValue> {
+    ) -> Option<&bz_execute::artifact_value::ArtifactValue> {
         if artifact_is_run_action_output(self.outputs, artifact) {
             None
         } else {
@@ -806,7 +806,7 @@ impl CommandLineContext for BazelCommandLineContext<'_> {
     fn resolve_project_path(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         self.inner.resolve_project_path(path)
     }
 
@@ -818,7 +818,7 @@ impl CommandLineContext for BazelCommandLineContext<'_> {
         &self,
         artifact: &Artifact,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         Ok(CommandLineLocation::from_relative_path(
             RelativePathBuf::from(bazel_artifact_path(artifact.get_path())),
             self.fs().path_separator(),
@@ -828,14 +828,14 @@ impl CommandLineContext for BazelCommandLineContext<'_> {
     fn resolve_output_artifact(
         &self,
         artifact: &Artifact,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         Ok(CommandLineLocation::from_relative_path(
             RelativePathBuf::from(bazel_artifact_path(artifact.get_path())),
             self.fs().path_separator(),
         ))
     }
 
-    fn next_macro_file_path(&mut self) -> buck2_error::Result<buck2_fs::paths::RelativePathBuf> {
+    fn next_macro_file_path(&mut self) -> bz_error::Result<bz_fs::paths::RelativePathBuf> {
         self.inner.next_macro_file_path()
     }
 }
@@ -853,7 +853,7 @@ struct RunActionParamFile {
     digest: TrackedFileDigest,
     content_hash: ContentBasedPathHash,
     content: Vec<u8>,
-    command_line_path: buck2_fs::paths::RelativePathBuf,
+    command_line_path: bz_fs::paths::RelativePathBuf,
     bazel_exec_path: Option<String>,
 }
 
@@ -903,7 +903,7 @@ impl RunActionParamFilesRef {
         fs: &ExecutorFs<'_>,
         mode: RunActionParamFileMode,
         content: Vec<u8>,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         let mut state = self.0.borrow_mut();
         match mode {
             RunActionParamFileMode::Record | RunActionParamFileMode::RecordDigestOnly => {
@@ -923,7 +923,7 @@ impl RunActionParamFilesRef {
                 let content_hash = ContentBasedPathHash::new(digest.raw_digest().as_bytes())?;
                 let command_line_path =
                     if let Some(base_bazel_exec_path) = &state.base_bazel_exec_path {
-                        buck2_fs::paths::RelativePathBuf::from(derive_param_file_exec_path(
+                        bz_fs::paths::RelativePathBuf::from(derive_param_file_exec_path(
                             base_bazel_exec_path,
                             index,
                         ))
@@ -979,7 +979,7 @@ impl RunActionParamFilesRef {
         mode: RunActionParamFileMode,
         args: Vec<String>,
         format: ParamFileFormat,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         match mode {
             RunActionParamFileMode::RecordDigestOnly => {
                 let mut state = self.0.borrow_mut();
@@ -1003,7 +1003,7 @@ impl RunActionParamFilesRef {
                 let content_hash = ContentBasedPathHash::new(digest.raw_digest().as_bytes())?;
                 let command_line_path =
                     if let Some(base_bazel_exec_path) = &state.base_bazel_exec_path {
-                        buck2_fs::paths::RelativePathBuf::from(derive_param_file_exec_path(
+                        bz_fs::paths::RelativePathBuf::from(derive_param_file_exec_path(
                             base_bazel_exec_path,
                             index,
                         ))
@@ -1036,7 +1036,7 @@ impl RunActionParamFilesRef {
         }
     }
 
-    fn files(&self, require_replay: bool) -> buck2_error::Result<Vec<RunActionParamFile>> {
+    fn files(&self, require_replay: bool) -> bz_error::Result<Vec<RunActionParamFile>> {
         let state = self.0.borrow();
         if require_replay && state.replay_cursor != state.files.len() {
             return Err(internal_error!(
@@ -1050,9 +1050,9 @@ impl RunActionParamFilesRef {
 }
 
 fn derive_param_file_path(
-    base_path: &buck2_fs::paths::forward_rel_path::ForwardRelativePath,
+    base_path: &bz_fs::paths::forward_rel_path::ForwardRelativePath,
     index: usize,
-) -> buck2_error::Result<ForwardRelativePathBuf> {
+) -> bz_error::Result<ForwardRelativePathBuf> {
     let file_name = base_path
         .file_name()
         .ok_or_else(|| internal_error!("cannot derive param-file path from empty output path"))?;
@@ -1080,7 +1080,7 @@ fn derive_param_file_exec_path(base_exec_path: &str, index: usize) -> String {
     }
 }
 
-fn bazel_param_file_base_path(base_exec_path: &str) -> buck2_error::Result<ForwardRelativePathBuf> {
+fn bazel_param_file_base_path(base_exec_path: &str) -> bz_error::Result<ForwardRelativePathBuf> {
     let rest = base_exec_path
         .strip_prefix("buck-out/bin/")
         .or_else(|| base_exec_path.strip_prefix("buck-out/genfiles/"))
@@ -1135,7 +1135,7 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
     fn resolve_project_path(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         match self {
             Self::Default { inner, .. } => inner.resolve_project_path(path),
             Self::Bazel { inner, .. } => inner.resolve_project_path(path),
@@ -1153,7 +1153,7 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
         &self,
         artifact: &Artifact,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         match self {
             Self::Default { inner, .. } => inner.resolve_artifact(artifact, artifact_path_mapping),
             Self::Bazel { inner, .. } => inner.resolve_artifact(artifact, artifact_path_mapping),
@@ -1163,21 +1163,21 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
     fn resolve_output_artifact(
         &self,
         artifact: &Artifact,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         match self {
             Self::Default { inner, .. } => inner.resolve_output_artifact(artifact),
             Self::Bazel { inner, .. } => inner.resolve_output_artifact(artifact),
         }
     }
 
-    fn next_macro_file_path(&mut self) -> buck2_error::Result<buck2_fs::paths::RelativePathBuf> {
+    fn next_macro_file_path(&mut self) -> bz_error::Result<bz_fs::paths::RelativePathBuf> {
         match self {
             Self::Default { inner, .. } => inner.next_macro_file_path(),
             Self::Bazel { inner, .. } => inner.next_macro_file_path(),
         }
     }
 
-    fn add_param_file(&mut self, content: Vec<u8>) -> buck2_error::Result<CommandLineLocation<'_>> {
+    fn add_param_file(&mut self, content: Vec<u8>) -> bz_error::Result<CommandLineLocation<'_>> {
         match self {
             Self::Default {
                 inner,
@@ -1196,7 +1196,7 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
         &mut self,
         args: Vec<String>,
         format: ParamFileFormat,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         match self {
             Self::Default {
                 inner,
@@ -1325,13 +1325,13 @@ pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cc_com
 
 fn expand_bazel_cc_compile_command_line(
     command_line: &FrozenBazelCcCompileCommandLine,
-) -> buck2_error::Result<(Vec<String>, Vec<(String, String)>)> {
+) -> bz_error::Result<(Vec<String>, Vec<(String, String)>)> {
     Heap::temp(|heap| {
         let args = command_line.argument_strings(heap)?;
         let env = command_line.environment_strings(heap)?;
         starlark::Result::Ok((args, env))
     })
-    .map_err(buck2_error::Error::from)
+    .map_err(bz_error::Error::from)
 }
 
 struct EmptyArtifactPathMapper;
@@ -1360,7 +1360,7 @@ impl BazelLocalActionCachePrecomputeContext {
     fn add_param_file_digest(
         &mut self,
         digest: TrackedFileDigest,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         let index = self.param_file_digests.len();
         let command_line_path = RelativePathBuf::from(derive_param_file_exec_path(
             &self.base_bazel_exec_path,
@@ -1378,7 +1378,7 @@ impl CommandLineContext for BazelLocalActionCachePrecomputeContext {
     fn resolve_project_path(
         &self,
         _path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         Err(internal_error!(
             "project-relative paths are not supported in Bazel local action cache precompute"
         ))
@@ -1392,7 +1392,7 @@ impl CommandLineContext for BazelLocalActionCachePrecomputeContext {
         &self,
         artifact: &Artifact,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         Ok(CommandLineLocation::from_relative_path(
             RelativePathBuf::from(bazel_artifact_path(artifact.get_path())),
             PathSeparatorKind::system_default(),
@@ -1402,26 +1402,26 @@ impl CommandLineContext for BazelLocalActionCachePrecomputeContext {
     fn resolve_output_artifact(
         &self,
         artifact: &Artifact,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         self.resolve_artifact(artifact, &EmptyArtifactPathMapper)
     }
 
     fn resolve_cell_path(
         &self,
         _path: CellPathRef,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         Err(internal_error!(
             "cell paths are not supported in Bazel local action cache precompute"
         ))
     }
 
-    fn next_macro_file_path(&mut self) -> buck2_error::Result<RelativePathBuf> {
+    fn next_macro_file_path(&mut self) -> bz_error::Result<RelativePathBuf> {
         Err(internal_error!(
             "write-to-file macros are not supported in Bazel local action cache precompute"
         ))
     }
 
-    fn add_param_file(&mut self, content: Vec<u8>) -> buck2_error::Result<CommandLineLocation<'_>> {
+    fn add_param_file(&mut self, content: Vec<u8>) -> bz_error::Result<CommandLineLocation<'_>> {
         let digest =
             TrackedFileDigest::from_content(&content, self.digest_config.cas_digest_config());
         self.add_param_file_digest(digest)
@@ -1431,7 +1431,7 @@ impl CommandLineContext for BazelLocalActionCachePrecomputeContext {
         &mut self,
         args: Vec<String>,
         format: ParamFileFormat,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         let mut digester = FileDigest::digester(self.digest_config.cas_digest_config());
         visit_bazel_param_file_content(args.iter(), format, |bytes| {
             digester.update(bytes);
@@ -1622,7 +1622,7 @@ pub(crate) fn fingerprint_artifact_group_values(
     fingerprint: &mut DataDigester,
     fs: &ArtifactFs,
     values: &dyn ArtifactGroupValuesDyn,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(bytes) = values.action_cache_fingerprint() {
         fingerprint.update(bytes);
         return Ok(());
@@ -1657,7 +1657,7 @@ fn fingerprint_command_execution_input(
     fingerprint: &mut DataDigester,
     fs: &ArtifactFs,
     input: &CommandExecutionInput,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match input {
         CommandExecutionInput::Artifact(values) => {
             fingerprint_artifact_group_values(fingerprint, fs, values.as_ref())?;
@@ -1707,7 +1707,7 @@ pub(crate) fn fingerprint_command_execution_output(
     fingerprint: &mut DataDigester,
     fs: &ArtifactFs,
     output: &CommandExecutionOutput,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let resolved_path = output
         .as_ref()
         .resolve(fs, Some(&ContentBasedPathHash::for_output_artifact()))?
@@ -1784,7 +1784,7 @@ impl<'v> CommandLineArtifactVisitor<'v> for RunActionOutputFilteringArtifactVisi
         }
     }
 
-    fn push_frame(&mut self) -> buck2_error::Result<()> {
+    fn push_frame(&mut self) -> bz_error::Result<()> {
         self.inner.push_frame()
     }
 
@@ -1839,7 +1839,7 @@ impl<'a> BazelOutputExecPathVisitor<'a> {
         Self { outputs, paths }
     }
 
-    fn record_path(&mut self, path: buck2_execute::path::artifact_path::ArtifactPath<'_>) {
+    fn record_path(&mut self, path: bz_execute::path::artifact_path::ArtifactPath<'_>) {
         let build_path = match path.base_path.as_ref() {
             Either::Left(build_path) => (**build_path).dupe(),
             Either::Right(_) => return,
@@ -1869,7 +1869,7 @@ fn visit_run_action_command_line_artifacts<'v>(
     outputs: &BoxSliceSet<BuildArtifact>,
     command_line: &dyn CommandLineArgLike<'v>,
     artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut artifact_visitor =
         RunActionOutputFilteringArtifactVisitor::new(outputs, artifact_visitor);
     command_line.visit_artifacts(&mut artifact_visitor)
@@ -1887,7 +1887,7 @@ struct BazelToolRunfiles<'v> {
 
 fn bazel_runfiles_entries<'v>(
     runfiles: Value<'v>,
-) -> buck2_error::Result<impl Iterator<Item = buck2_error::Result<BazelRunfilesEntry<'v>>> + 'v> {
+) -> bz_error::Result<impl Iterator<Item = bz_error::Result<BazelRunfilesEntry<'v>>> + 'v> {
     let entries = ListRef::from_value(runfiles)
         .ok_or_else(|| internal_error!("Bazel executable runfiles should be a list"))?;
     Ok(entries.iter().map(|entry| {
@@ -1914,7 +1914,7 @@ fn bazel_runfiles_entries<'v>(
 
 fn bazel_tool_runfiles<'v>(
     tool_runfiles: Value<'v>,
-) -> buck2_error::Result<impl Iterator<Item = buck2_error::Result<BazelToolRunfiles<'v>>> + 'v> {
+) -> bz_error::Result<impl Iterator<Item = bz_error::Result<BazelToolRunfiles<'v>>> + 'v> {
     let tools = ListRef::from_value(tool_runfiles)
         .ok_or_else(|| internal_error!("Bazel tool runfiles should be a list"))?;
     Ok(tools.iter().map(|tool| {
@@ -1943,7 +1943,7 @@ fn bazel_tool_runfiles<'v>(
 fn visit_bazel_runfiles_artifacts<'v>(
     runfiles: Value<'v>,
     artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if artifact_visitor.skip_hidden() {
         return Ok(());
     }
@@ -1961,7 +1961,7 @@ fn visit_bazel_runfiles_artifacts<'v>(
 fn visit_bazel_tool_runfiles_artifacts<'v>(
     tool_runfiles: Value<'v>,
     artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if artifact_visitor.skip_hidden() {
         return Ok(());
     }
@@ -2003,7 +2003,7 @@ impl RunAction {
         &self,
         fs: &ExecutorFs,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<String> {
+    ) -> bz_error::Result<String> {
         let mut cli_rendered = Vec::<String>::new();
         let values = Self::unpack(&self.starlark_values)?;
         let uses_bazel_execroot_paths =
@@ -2069,7 +2069,7 @@ impl RunAction {
         &self,
         fs: &ArtifactFs,
         target: ActionExecutionTarget<'_>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let values = Self::unpack(&self.starlark_values)?;
         if values.worker.is_some() || values.remote_worker.is_some() {
             return Ok(Self::bazel_execroot(fs));
@@ -2090,7 +2090,7 @@ impl RunAction {
     fn bazel_execroot_path(
         bazel_execroot: &ProjectRelativePath,
         path: String,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let path = ForwardRelativePathBuf::try_from(path)
             .buck_error_context("Invalid Bazel execroot path")?;
         Ok(bazel_execroot.join(path))
@@ -2100,7 +2100,7 @@ impl RunAction {
         inner: &UnregisteredRunAction,
         starlark_values: &OwnedFrozenValueTyped<FrozenStarlarkRunActionValues>,
         outputs: &BoxSliceSet<BuildArtifact>,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         Box<[ArtifactGroup]>,
         Box<[ArtifactGroup]>,
         Box<[ArtifactGroup]>,
@@ -2153,7 +2153,7 @@ impl RunAction {
         starlark_values: &'a OwnedFrozenValueTyped<FrozenStarlarkRunActionValues>,
         outputs: &'a BoxSliceSet<BuildArtifact>,
         artifact_visitor: &mut dyn CommandLineArtifactVisitor<'a>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let values = Self::unpack(starlark_values)?;
         if Self::values_use_bazel_execroot_paths(inner, &values, outputs) {
             if let Some(bazel_inputs) = values.bazel_inputs {
@@ -2191,7 +2191,7 @@ impl RunAction {
         starlark_values: &'a OwnedFrozenValueTyped<FrozenStarlarkRunActionValues>,
         outputs: &'a BoxSliceSet<BuildArtifact>,
         artifact_visitor: &mut dyn CommandLineArtifactVisitor<'a>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let values = Self::unpack(starlark_values)?;
         visit_run_action_command_line_artifacts(outputs, values.exe, artifact_visitor)?;
         visit_run_action_command_line_artifacts(outputs, values.args, artifact_visitor)?;
@@ -2214,7 +2214,7 @@ impl RunAction {
 
     fn unpack<'v>(
         values: &'v OwnedFrozenValueTyped<FrozenStarlarkRunActionValues>,
-    ) -> buck2_error::Result<UnpackedRunActionValues<'v>> {
+    ) -> bz_error::Result<UnpackedRunActionValues<'v>> {
         let exe: &dyn CommandLineArgLike = &*values.exe;
         let args: &dyn CommandLineArgLike = &*values.args;
         let env = match values.env {
@@ -2287,7 +2287,7 @@ impl RunAction {
         action_execution_ctx: &dyn ActionExecutionCtx,
         artifact_visitor: &mut RunActionVisitor<'v>,
         collect_action_inputs: bool,
-    ) -> buck2_error::Result<(ExpandedCommandLineDigest, Vec<RunActionParamFile>)> {
+    ) -> bz_error::Result<(ExpandedCommandLineDigest, Vec<RunActionParamFile>)> {
         let values = Self::unpack(&self.starlark_values)?;
         let bazel_cc_command_line = values
             .bazel_cc_command_line
@@ -2443,7 +2443,7 @@ impl RunAction {
             visit_bazel_tool_runfiles_artifacts(tool_runfiles, artifact_visitor)?;
         }
 
-        let cli_env: buck2_error::Result<SortedVectorMap<_, _>> = values
+        let cli_env: bz_error::Result<SortedVectorMap<_, _>> = values
             .env
             .into_iter()
             .map(|(k, v)| {
@@ -2492,7 +2492,7 @@ impl RunAction {
         artifact_visitor: &mut RunActionVisitor<'v>,
         collect_dep_file_digest: bool,
         collect_action_inputs: bool,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         ExpandedCommandLine,
         Option<ExpandedCommandLineDigestForDepFiles>,
         Option<WorkerSpec>,
@@ -2650,7 +2650,7 @@ impl RunAction {
                 worker.exe,
                 &mut local_worker_visitor,
             )?;
-            let worker_env: buck2_error::Result<SortedVectorMap<_, _>> = worker
+            let worker_env: bz_error::Result<SortedVectorMap<_, _>> = worker
                 .env
                 .into_iter()
                 .map(|(k, v)| {
@@ -2723,8 +2723,8 @@ impl RunAction {
                     && !worker_visitor.frozen_outputs.is_empty()
                 {
                     // TODO[AH] create appropriate error enum value.
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::ActionMismatchedOutputs,
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::ActionMismatchedOutputs,
                         "Remote persistent worker command should not produce outputs."
                     ));
                 }
@@ -2785,7 +2785,7 @@ impl RunAction {
                 &mut remote_worker_init_visitor,
             )?;
 
-            let remote_worker_env: buck2_error::Result<SortedVectorMap<_, _>> = remote_worker
+            let remote_worker_env: bz_error::Result<SortedVectorMap<_, _>> = remote_worker
                 .env
                 .into_iter()
                 .map(|(k, v)| {
@@ -2915,7 +2915,7 @@ impl RunAction {
             .as_ref()
             .map_or(0, |(_, env)| env.len());
         let env_len = values.env.len() + bazel_cc_env_len;
-        let cli_env: buck2_error::Result<SortedVectorMap<_, _>> = values
+        let cli_env: bz_error::Result<SortedVectorMap<_, _>> = values
             .env
             .into_iter()
             .map(|(k, v)| {
@@ -3007,7 +3007,7 @@ impl RunAction {
         &'v self,
         action_execution_ctx: &dyn ActionExecutionCtx,
         values: &UnpackedRunActionValues<'v>,
-    ) -> buck2_error::Result<
+    ) -> bz_error::Result<
         Option<(
             Option<LocalActionCacheWorkerRef<'static>>,
             Option<LocalActionCacheRemoteWorkerRef<'static>>,
@@ -3089,7 +3089,7 @@ impl RunAction {
                 worker.exe,
                 &mut local_worker_visitor,
             )?;
-            let worker_env: buck2_error::Result<SortedVectorMap<_, _>> = worker
+            let worker_env: bz_error::Result<SortedVectorMap<_, _>> = worker
                 .env
                 .iter()
                 .map(|(k, v)| {
@@ -3171,7 +3171,7 @@ impl RunAction {
                 &mut remote_worker_init_visitor,
             )?;
 
-            let remote_worker_env: buck2_error::Result<SortedVectorMap<_, _>> = remote_worker
+            let remote_worker_env: bz_error::Result<SortedVectorMap<_, _>> = remote_worker
                 .env
                 .iter()
                 .map(|(k, v)| {
@@ -3241,7 +3241,7 @@ impl RunAction {
         starlark_values: OwnedFrozenValue,
         outputs: BuckIndexSet<BuildArtifact>,
         error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let starlark_values = starlark_values
             .downcast_starlark()
             .internal_error("Must be `RunActionValues`")?;
@@ -3294,7 +3294,7 @@ impl RunAction {
         artifact_inputs: &[&ArtifactGroupValues],
         artifact_fs: &ArtifactFs,
         bazel_execroot: Option<&ProjectRelativePath>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let Some(bazel_execroot) = bazel_execroot else {
             return Ok(());
         };
@@ -3341,7 +3341,7 @@ impl RunAction {
         artifact: &Artifact,
         value: &ArtifactValue,
         artifact_fs: &ArtifactFs,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         if artifact.has_content_based_path() && !artifact.is_projected() {
             return artifact.resolve_configuration_hash_path(artifact_fs);
         }
@@ -3361,7 +3361,7 @@ impl RunAction {
         bazel_execroot: &ProjectRelativePath,
         executable_path: &str,
         runfiles_path: &str,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let runfiles_path = runfiles_path.strip_prefix("../").unwrap_or(runfiles_path);
         Self::bazel_execroot_path(
             bazel_execroot,
@@ -3372,7 +3372,7 @@ impl RunAction {
     fn artifact_value_for<'a>(
         artifact_inputs: &'a [&ArtifactGroupValues],
         artifact: &Artifact,
-    ) -> buck2_error::Result<&'a ArtifactValue> {
+    ) -> bz_error::Result<&'a ArtifactValue> {
         for artifact_group_values in artifact_inputs {
             for (input_artifact, value) in artifact_group_values.iter() {
                 if input_artifact == artifact {
@@ -3393,7 +3393,7 @@ impl RunAction {
         bazel_execroot: Option<&ProjectRelativePath>,
         executable_path: Option<&str>,
         runfiles: Option<Value<'_>>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let (Some(bazel_execroot), Some(executable_path), Some(runfiles)) =
             (bazel_execroot, executable_path, runfiles)
         else {
@@ -3459,7 +3459,7 @@ impl RunAction {
         artifact_fs: &ArtifactFs,
         bazel_execroot: Option<&ProjectRelativePath>,
         tool_runfiles: Option<Value<'_>>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let (Some(bazel_execroot), Some(tool_runfiles)) = (bazel_execroot, tool_runfiles) else {
             return Ok(());
         };
@@ -3488,7 +3488,7 @@ impl RunAction {
         &'v self,
         visitor: &mut RunActionVisitor<'v>,
         ctx: &mut dyn ActionExecutionCtx,
-    ) -> buck2_error::Result<Option<(LocalActionCacheKey, BuckIndexSet<CommandExecutionOutput>)>>
+    ) -> bz_error::Result<Option<(LocalActionCacheKey, BuckIndexSet<CommandExecutionOutput>)>>
     {
         let collect_action_inputs =
             !self.inner.dep_files.is_empty() || self.inner.metadata_param.is_some();
@@ -3594,7 +3594,7 @@ impl RunAction {
                     produced_path,
                 })
             })
-            .collect::<buck2_error::Result<BuckIndexSet<_>>>()?;
+            .collect::<bz_error::Result<BuckIndexSet<_>>>()?;
         let outputs = CommandExecutionPaths::sort_outputs_for_execution(outputs, ctx.fs());
 
         Ok(self
@@ -3617,7 +3617,7 @@ impl RunAction {
         &'v self,
         visitor: &mut RunActionVisitor<'v>,
         ctx: &mut dyn ActionExecutionCtx,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         UnpreparedRunAction,
         Option<ExpandedCommandLineDigestForDepFiles>,
         HostSharingRequirements,
@@ -3787,7 +3787,7 @@ impl RunAction {
                     produced_path,
                 })
             })
-            .collect::<buck2_error::Result<BuckIndexSet<_>>>()?;
+            .collect::<bz_error::Result<BuckIndexSet<_>>>()?;
         let outputs = CommandExecutionPaths::sort_outputs_for_execution(outputs, ctx.fs());
 
         // TODO(ianc) Only do this if we're actually going to run the action?
@@ -3842,7 +3842,7 @@ impl RunAction {
         inputs: &mut Vec<CommandExecutionInput>,
         bazel_execroot: Option<&ProjectRelativePath>,
         pending_action_metadata_writes: &mut Vec<PendingActionMetadataWrite>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for param_file in param_files {
             let project_rel_path = fs
                 .buck_out_path_resolver()
@@ -3892,7 +3892,7 @@ impl RunAction {
         extra_env: &mut Vec<(String, String)>,
         pending_action_metadata_writes: &mut Vec<PendingActionMetadataWrite>,
         write_metadata: bool,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(metadata_param) = &self.inner.metadata_param {
             let path = BuildArtifactPath::new(
                 ctx.target().owner().dupe(),
@@ -3954,7 +3954,7 @@ impl RunAction {
         inputs: &mut Vec<CommandExecutionInput>,
         shared_content_based_paths: &mut Vec<String>,
         extra_env: &mut Vec<(String, String)>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let scratch = ctx.target().scratch_path();
         let scratch_path = cli_ctx
             .resolve_project_path(fs.buck_out_path_resolver().resolve_scratch(&scratch)?)?
@@ -3979,7 +3979,7 @@ impl RunAction {
         outputs: &BuckIndexSet<CommandExecutionOutput>,
         worker: Option<LocalActionCacheWorkerRef<'_>>,
         remote_worker: Option<LocalActionCacheRemoteWorkerRef<'_>>,
-    ) -> buck2_error::Result<Option<LocalActionCacheKey>> {
+    ) -> bz_error::Result<Option<LocalActionCacheKey>> {
         let Some(_) = outputs.iter().next() else {
             return Ok(None);
         };
@@ -4101,7 +4101,7 @@ impl RunAction {
         result: CommandExecutionResult,
         dep_file_bundle: &DepFileBundle,
         remote_dep_file_key: &DepFileDigest,
-    ) -> buck2_error::Result<ControlFlow<CommandExecutionResult, ()>> {
+    ) -> bz_error::Result<ControlFlow<CommandExecutionResult, ()>> {
         // If it's served by the regular action cache no need to verify anything here.
         if !result.was_served_by_remote_dep_file_cache() {
             return Ok(ControlFlow::Break(result));
@@ -4109,7 +4109,7 @@ impl RunAction {
 
         if let Some(found_dep_file_entry) = &result.dep_file_metadata {
             let can_use = span_async_simple(
-                buck2_data::MatchDepFilesStart {
+                bz_data::MatchDepFilesStart {
                     checking_filtered_inputs: true,
                     remote_cache: true,
                 },
@@ -4120,7 +4120,7 @@ impl RunAction {
                     found_dep_file_entry,
                     &result,
                 ),
-                buck2_data::MatchDepFilesEnd {},
+                bz_data::MatchDepFilesEnd {},
             )
             .await?;
 
@@ -4364,7 +4364,7 @@ impl RunAction {
     async fn output_paths_as_inputs(
         &self,
         ctx: &dyn ActionExecutionCtx,
-    ) -> buck2_error::Result<Vec<CommandExecutionInput>> {
+    ) -> bz_error::Result<Vec<CommandExecutionInput>> {
         let executor_fs = ctx.executor_fs();
         let fs = executor_fs.fs();
         let output_paths = {
@@ -4393,7 +4393,7 @@ impl RunAction {
         ctx: &mut dyn ActionExecutionCtx,
         prepared_run_action: PreparedRunAction,
         host_sharing_requirements: HostSharingRequirements,
-    ) -> buck2_error::Result<CommandExecutionRequest> {
+    ) -> bz_error::Result<CommandExecutionRequest> {
         let outputs_for_error_handler = self.outputs_for_error_handler()?;
         let local_environment_inheritance = match self.inner.bazel_use_default_shell_env {
             None | Some(true) => EnvironmentInheritance::local_command_exclusions(),
@@ -4444,7 +4444,7 @@ impl RunAction {
         Ok(req)
     }
 
-    fn outputs_for_error_handler(&self) -> buck2_error::Result<Vec<BuildArtifactPath>> {
+    fn outputs_for_error_handler(&self) -> bz_error::Result<Vec<BuildArtifactPath>> {
         self.starlark_values
             .outputs_for_error_handler
             .iter()
@@ -4452,8 +4452,8 @@ impl RunAction {
                 let a = artifact.inner().artifact();
 
                 match a.as_parts().0 {
-                    BaseArtifactKind::Source(s) => Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    BaseArtifactKind::Source(s) => Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Cannot use source artifact `{}` as output for error handler",
                         s.get_path()
                     )),
@@ -4481,7 +4481,7 @@ impl UnpreparedRunAction {
     async fn declare_action_metadata_writes(
         &self,
         ctx: &dyn ActionExecutionCtx,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let fs = ctx.fs();
         for write in &self.pending_action_metadata_writes {
             let path = fs
@@ -4511,7 +4511,7 @@ impl UnpreparedRunAction {
         fs: &ArtifactFs,
         digest_config: DigestConfig,
         interner: Option<&DashMapDirectoryInterner<ActionDirectoryMember, TrackedFileDigest>>,
-    ) -> buck2_error::Result<PreparedRunAction> {
+    ) -> bz_error::Result<PreparedRunAction> {
         let Self {
             expanded,
             extra_env,
@@ -4644,7 +4644,7 @@ impl RunAction {
     async fn execute_for_offline(
         &self,
         ctx: &mut dyn ActionExecutionCtx,
-    ) -> buck2_error::Result<Option<(ActionOutputs, ActionExecutionMetadata)>> {
+    ) -> bz_error::Result<Option<(ActionOutputs, ActionExecutionMetadata)>> {
         // Collect references to all outputs
         let output_refs: Vec<&BuildArtifact> = self.outputs.iter().collect();
 
@@ -4669,15 +4669,15 @@ impl RunAction {
 
 #[async_trait]
 impl Action for RunAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::Run
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::Run
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         Ok(Cow::Borrowed(&self.inputs))
     }
 
-    fn local_action_cache_inputs(&self) -> buck2_error::Result<Option<Cow<'_, [ArtifactGroup]>>> {
+    fn local_action_cache_inputs(&self) -> bz_error::Result<Option<Cow<'_, [ArtifactGroup]>>> {
         if self.local_action_cache_inputs.is_empty() {
             Ok(None)
         } else {
@@ -4765,7 +4765,7 @@ impl Action for RunAction {
         artifact_fs: &ArtifactFs,
         heap: Heap<'v>,
         outputs: Option<&ActionOutputs>,
-    ) -> buck2_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>>
+    ) -> bz_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>>
     {
         let mut artifact_value_dict =
             Vec::with_capacity(self.starlark_values.outputs_for_error_handler.len());
@@ -4775,16 +4775,16 @@ impl Action for RunAction {
 
             let content_based_path_hash = if artifact.path_resolution_requires_artifact_value() {
                 let outputs = outputs.ok_or_else(|| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Action failed with no outputs available"
                     )
                 })?;
                 let artifact_value = outputs
                     .get_from_artifact_path(&artifact.get_path())
                     .ok_or_else(|| {
-                        buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        bz_error::bz_error!(
+                            bz_error::ErrorTag::Input,
                             "ArtifactValue for artifact `{}` was not found in action outputs",
                             artifact.get_path()
                         )
@@ -4801,8 +4801,8 @@ impl Action for RunAction {
             let abs = artifact_fs.fs().resolve(&path);
             // Check if the output file specified exists. We will return an error if it doesn't
             if !fs_util::try_exists(&abs)? {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Output '{}' defined for error handler does not exist. This is likely due to file not being created, please ensure the action would produce an output",
                     &path
                 ));
@@ -4846,10 +4846,10 @@ impl Action for RunAction {
             self.inner.no_outputs_cleanup,
             self.inner.incremental_remote_outputs,
         ) {
-            (true, true) => buck2_data::IncrementalKind::IncrementalLocalAndRemote,
-            (false, true) => buck2_data::IncrementalKind::IncrementalRemote,
-            (true, false) => buck2_data::IncrementalKind::IncrementalLocal,
-            (false, false) => buck2_data::IncrementalKind::NonIncremental,
+            (true, true) => bz_data::IncrementalKind::IncrementalLocalAndRemote,
+            (false, true) => bz_data::IncrementalKind::IncrementalRemote,
+            (true, false) => bz_data::IncrementalKind::IncrementalLocal,
+            (false, false) => bz_data::IncrementalKind::NonIncremental,
         };
 
         let (
@@ -5007,10 +5007,10 @@ impl Action for RunAction {
                     self.inner.no_outputs_cleanup,
                     self.inner.incremental_remote_outputs,
                 ) {
-                    (true, true) => buck2_data::IncrementalKind::IncrementalLocalAndRemote,
-                    (false, true) => buck2_data::IncrementalKind::IncrementalRemote,
-                    (true, false) => buck2_data::IncrementalKind::IncrementalLocal,
-                    (false, false) => buck2_data::IncrementalKind::NonIncremental,
+                    (true, true) => bz_data::IncrementalKind::IncrementalLocalAndRemote,
+                    (false, true) => bz_data::IncrementalKind::IncrementalRemote,
+                    (true, false) => bz_data::IncrementalKind::IncrementalLocal,
+                    (false, false) => bz_data::IncrementalKind::NonIncremental,
                 };
 
                 ctx.unpack_command_execution_result(

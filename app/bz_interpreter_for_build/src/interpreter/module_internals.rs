@@ -18,38 +18,38 @@ use std::fmt::Debug;
 use std::mem;
 use std::sync::Arc;
 
-use buck2_common::package_listing::PackageListingStrategy;
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::TargetName;
-use buck2_core::target::name::TargetNameRef;
-use buck2_events::dispatch::console_message;
-use buck2_interpreter::package_imports::ImplicitImport;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::attrs::traversal::CoercedAttrTraversal;
-use buck2_node::nodes::eval_result::EvaluationResult;
-use buck2_node::nodes::targets_map::TargetsMap;
-use buck2_node::nodes::targets_map::TargetsMapRecordError;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_node::nodes::unconfigured::TargetNodeRef;
-use buck2_node::oncall::Oncall;
-use buck2_node::package::Package;
-use buck2_node::package::PackageGroup;
-use buck2_node::package::PackageGroupContents;
-use buck2_node::package::PackageGroupSpec;
-use buck2_node::super_package::SuperPackage;
-use buck2_node::visibility::VisibilitySpecification;
+use bz_common::package_listing::PackageListingStrategy;
+use bz_common::package_listing::listing::PackageListing;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::package::PackageLabel;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetName;
+use bz_core::target::name::TargetNameRef;
+use bz_events::dispatch::console_message;
+use bz_interpreter::package_imports::ImplicitImport;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::attrs::traversal::CoercedAttrTraversal;
+use bz_node::nodes::eval_result::EvaluationResult;
+use bz_node::nodes::targets_map::TargetsMap;
+use bz_node::nodes::targets_map::TargetsMapRecordError;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_node::nodes::unconfigured::TargetNodeRef;
+use bz_node::oncall::Oncall;
+use bz_node::package::Package;
+use bz_node::package::PackageGroup;
+use bz_node::package::PackageGroupContents;
+use bz_node::package::PackageGroupSpec;
+use bz_node::super_package::SuperPackage;
+use bz_node::visibility::VisibilitySpecification;
 use dupe::Dupe;
 use starlark::environment::FrozenModule;
 use starlark::values::OwnedFrozenValue;
@@ -173,7 +173,7 @@ struct BazelInputFileLabelCollector {
 }
 
 impl<'a> CoercedAttrTraversal<'a> for BazelInputFileLabelCollector {
-    fn dep(&mut self, dep: &ProvidersLabel) -> buck2_error::Result<()> {
+    fn dep(&mut self, dep: &ProvidersLabel) -> bz_error::Result<()> {
         self.collect(dep);
         Ok(())
     }
@@ -181,23 +181,23 @@ impl<'a> CoercedAttrTraversal<'a> for BazelInputFileLabelCollector {
     fn configuration_dep(
         &mut self,
         _dep: &ProvidersLabel,
-        _kind: buck2_node::attrs::attr_type::configuration_dep::ConfigurationDepKind,
-    ) -> buck2_error::Result<()> {
+        _kind: bz_node::attrs::attr_type::configuration_dep::ConfigurationDepKind,
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
     fn plugin_dep(
         &mut self,
-        _dep: &'a buck2_core::target::label::label::TargetLabel,
-        _kind: &buck2_core::plugins::PluginKind,
-    ) -> buck2_error::Result<()> {
+        _dep: &'a bz_core::target::label::label::TargetLabel,
+        _kind: &bz_core::plugins::PluginKind,
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
     fn input(
         &mut self,
-        input: buck2_core::package::source_path::SourcePathRef,
-    ) -> buck2_error::Result<()> {
+        input: bz_core::package::source_path::SourcePathRef,
+    ) -> bz_error::Result<()> {
         if input.package() == self.package
             && let Ok(name) = TargetName::new_bazel(input.path().as_str())
         {
@@ -206,7 +206,7 @@ impl<'a> CoercedAttrTraversal<'a> for BazelInputFileLabelCollector {
         Ok(())
     }
 
-    fn label(&mut self, label: &'a ProvidersLabel) -> buck2_error::Result<()> {
+    fn label(&mut self, label: &'a ProvidersLabel) -> bz_error::Result<()> {
         self.collect(label);
         Ok(())
     }
@@ -223,7 +223,7 @@ impl BazelInputFileLabelCollector {
 fn collect_bazel_package_group_patterns(
     package: &Package,
     node: TargetNodeRef<'_>,
-) -> buck2_error::Result<PackageGroup> {
+) -> bz_error::Result<PackageGroup> {
     let mut packages = PackageGroupContents::default();
     for package_spec in string_list_attr(node, "packages")? {
         if let Some((negative, pattern)) = parse_bazel_package_group_spec(package, &package_spec)? {
@@ -240,7 +240,7 @@ fn collect_bazel_package_group_patterns(
     })
 }
 
-fn string_list_attr(node: TargetNodeRef<'_>, attr: &str) -> buck2_error::Result<Vec<String>> {
+fn string_list_attr(node: TargetNodeRef<'_>, attr: &str) -> bz_error::Result<Vec<String>> {
     let Some(attr) = node.attr_or_none(attr, AttrInspectOptions::All) else {
         return Ok(Vec::new());
     };
@@ -249,16 +249,16 @@ fn string_list_attr(node: TargetNodeRef<'_>, attr: &str) -> buck2_error::Result<
             .iter()
             .map(|value| match value {
                 CoercedAttr::String(value) => Ok(value.0.to_string()),
-                value => Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                value => Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Expected package_group `{}` item to be a string, got `{:?}`",
                     attr.name,
                     value
                 )),
             })
             .collect(),
-        value => Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        value => Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Expected package_group `{}` to be a string list, got `{:?}`",
             attr.name,
             value
@@ -269,7 +269,7 @@ fn string_list_attr(node: TargetNodeRef<'_>, attr: &str) -> buck2_error::Result<
 fn target_label_list_attr(
     node: TargetNodeRef<'_>,
     attr: &str,
-) -> buck2_error::Result<Vec<TargetLabel>> {
+) -> bz_error::Result<Vec<TargetLabel>> {
     let Some(attr) = node.attr_or_none(attr, AttrInspectOptions::All) else {
         return Ok(Vec::new());
     };
@@ -280,16 +280,16 @@ fn target_label_list_attr(
                 CoercedAttr::Label(value)
                 | CoercedAttr::Dep(value)
                 | CoercedAttr::SourceLabel(value) => Ok(value.target().dupe()),
-                value => Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                value => Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Expected package_group `{}` item to be a label, got `{:?}`",
                     attr.name,
                     value
                 )),
             })
             .collect(),
-        value => Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        value => Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Expected package_group `{}` to be a label list, got `{:?}`",
             attr.name,
             value
@@ -300,7 +300,7 @@ fn target_label_list_attr(
 fn parse_bazel_package_group_spec(
     package: &Package,
     spec: &str,
-) -> buck2_error::Result<Option<(bool, PackageGroupSpec)>> {
+) -> bz_error::Result<Option<(bool, PackageGroupSpec)>> {
     let (negative, spec) = match spec.strip_prefix('-') {
         Some(spec) => (true, spec),
         None => (false, spec),
@@ -309,8 +309,8 @@ fn parse_bazel_package_group_spec(
     match spec {
         "public" => {
             if negative {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Cannot negate `public` package specification"
                 ));
             }
@@ -318,8 +318,8 @@ fn parse_bazel_package_group_spec(
         }
         "private" => {
             if negative {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Cannot negate `private` package specification"
                 ));
             }
@@ -329,8 +329,8 @@ fn parse_bazel_package_group_spec(
     }
 
     let Some(package_path) = spec.strip_prefix("//") else {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid package_group package specification `{}`: must start with `//` or be `public` or `private`",
             spec
         ));
@@ -430,7 +430,7 @@ impl PackageImplicits {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum OncallErrors {
     #[error("Called `oncall` after one or more targets were declared, `oncall` must be first.")]
@@ -441,19 +441,19 @@ enum OncallErrors {
     AfterReadOncall,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum BazelPackageError {
     #[error("'package' can only be used once per BUILD file")]
     AtMostOnce,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 #[error("BUILD file package listing needs to be expanded before evaluation can continue")]
 struct PackageListingNeedsExpansion;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 #[error("BUILD file Bazel package data needs to be evaluated before evaluation can continue")]
 struct BazelPackageDataNeedsEvaluation;
@@ -495,7 +495,7 @@ impl ModuleInternals {
         &self.attr_coercion_context
     }
 
-    pub fn record(&self, target_node: TargetNode) -> buck2_error::Result<()> {
+    pub fn record(&self, target_node: TargetNode) -> bz_error::Result<()> {
         match self.recording_targets().recorder.record(target_node) {
             Ok(()) => Ok(()),
             Err(e @ TargetsMapRecordError::RegisteredTargetTwice { .. }) => {
@@ -509,7 +509,7 @@ impl ModuleInternals {
         }
     }
 
-    pub(crate) fn set_oncall(&self, name: &str) -> buck2_error::Result<()> {
+    pub(crate) fn set_oncall(&self, name: &str) -> bz_error::Result<()> {
         match &mut *self.state.borrow_mut() {
             State::BeforeTargets(x) => match x.oncall {
                 _ if x.has_read_oncall => Err(OncallErrors::AfterReadOncall.into()),
@@ -581,7 +581,7 @@ impl ModuleInternals {
         &self,
         visibility: Option<VisibilitySpecification>,
         default_testonly: Option<bool>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut declared = self.bazel_package_declared.borrow_mut();
         if *declared {
             return Err(BazelPackageError::AtMostOnce.into());
@@ -640,7 +640,7 @@ impl ModuleInternals {
     pub(crate) fn resolve_bazel_glob(
         &self,
         request: BazelGlobRequest,
-    ) -> buck2_error::Result<Option<Arc<Vec<String>>>> {
+    ) -> bz_error::Result<Option<Arc<Vec<String>>>> {
         let Some(data) = &self.bazel_package_data else {
             return Ok(None);
         };
@@ -655,7 +655,7 @@ impl ModuleInternals {
     pub(crate) fn require_package_listing_strategy(
         &self,
         required: PackageListingStrategy,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if self.package_listing_strategy.covers(&required) {
             return Ok(());
         }
@@ -684,7 +684,7 @@ impl ModuleInternals {
         }
     }
 
-    pub(crate) fn sub_packages(&self) -> buck2_error::Result<Vec<String>> {
+    pub(crate) fn sub_packages(&self) -> bz_error::Result<Vec<String>> {
         if let Some(data) = &self.bazel_package_data {
             let request = BazelPackageDataRequest::Subpackages;
             if let Some(result) = data.get(&request) {

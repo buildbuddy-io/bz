@@ -13,16 +13,16 @@ fn truncate(s: &str, max_bytes: usize) -> String {
     // to a reasonable length unconditionally
     const MAX_STRING_BYTES: usize = 20 * 1024;
 
-    buck2_util::truncate::truncate(s, max_bytes.min(MAX_STRING_BYTES))
+    bz_util::truncate::truncate(s, max_bytes.min(MAX_STRING_BYTES))
 }
 
 #[cfg_attr(not(fbcode_build), allow(dead_code))]
-pub(crate) fn smart_truncate_event(d: &mut buck2_data::buck_event::Data) {
-    use buck2_data::buck_event::Data;
+pub(crate) fn smart_truncate_event(d: &mut bz_data::buck_event::Data) {
+    use bz_data::buck_event::Data;
 
     match d {
         Data::SpanEnd(s) => {
-            use buck2_data::span_end_event::Data;
+            use bz_data::span_end_event::Data;
 
             match &mut s.data {
                 Some(Data::ActionExecution(action_execution)) => {
@@ -41,13 +41,13 @@ pub(crate) fn smart_truncate_event(d: &mut buck2_data::buck_event::Data) {
             };
         }
         Data::Instant(inst) => {
-            use buck2_data::instant_event::Data;
+            use bz_data::instant_event::Data;
             if let Some(Data::TargetPatterns(target_patterns)) = &mut inst.data {
                 truncate_target_patterns(&mut target_patterns.target_patterns);
             }
         }
         Data::Record(rec) => {
-            if let Some(buck2_data::record_event::Data::InvocationRecord(invocation_record)) =
+            if let Some(bz_data::record_event::Data::InvocationRecord(invocation_record)) =
                 &mut rec.data
             {
                 truncate_invocation_record(invocation_record)
@@ -57,7 +57,7 @@ pub(crate) fn smart_truncate_event(d: &mut buck2_data::buck_event::Data) {
     };
 }
 
-fn truncate_invocation_record(invocation_record: &mut buck2_data::InvocationRecord) {
+fn truncate_invocation_record(invocation_record: &mut bz_data::InvocationRecord) {
     // FIXME(JakobDegen): The sum of the per-field limits adds up to more than the 1MB scribe limits
     if let Some(ref mut file_watcher_stats) = invocation_record.file_watcher_stats {
         truncate_file_watcher_stats(file_watcher_stats);
@@ -97,10 +97,10 @@ fn truncate_invocation_record(invocation_record: &mut buck2_data::InvocationReco
     }
 }
 
-fn truncate_action_execution_end(action_execution_end: &mut buck2_data::ActionExecutionEnd) {
+fn truncate_action_execution_end(action_execution_end: &mut bz_data::ActionExecutionEnd) {
     let per_command_size_budget = (500 * 1024) / action_execution_end.commands.len().max(1);
 
-    let truncate_cmd = |cmd: &mut buck2_data::CommandExecution, truncate_all: bool| {
+    let truncate_cmd = |cmd: &mut bz_data::CommandExecution, truncate_all: bool| {
         if let Some(details) = &mut cmd.details {
             details.cmd_stderr = if truncate_all {
                 "<<omitted>>".to_owned()
@@ -123,8 +123,8 @@ fn truncate_action_execution_end(action_execution_end: &mut buck2_data::ActionEx
     }
 }
 
-fn truncate_command_end(command_end: &mut buck2_data::CommandEnd, clear_target_patterns: bool) {
-    use buck2_data::command_end::Data;
+fn truncate_command_end(command_end: &mut bz_data::CommandEnd, clear_target_patterns: bool) {
+    use bz_data::command_end::Data;
 
     if let Some(ref mut target_patterns) = match &mut command_end.data {
         Some(Data::Build(build_command_end)) => {
@@ -149,7 +149,7 @@ fn truncate_command_end(command_end: &mut buck2_data::CommandEnd, clear_target_p
     }
 }
 
-fn truncate_file_watcher_stats(file_watcher_stats: &mut buck2_data::FileWatcherStats) {
+fn truncate_file_watcher_stats(file_watcher_stats: &mut bz_data::FileWatcherStats) {
     const MAX_FILE_CHANGE_BYTES: usize = 100 * 1024;
     let mut bytes: usize = 0;
     for (index, ev) in file_watcher_stats.events.iter().enumerate() {
@@ -164,7 +164,7 @@ fn truncate_file_watcher_stats(file_watcher_stats: &mut buck2_data::FileWatcherS
     }
 }
 
-fn truncate_test_end(test_end: &mut buck2_data::TestRunEnd) {
+fn truncate_test_end(test_end: &mut bz_data::TestRunEnd) {
     const MAX_TEST_NAMES_BYTES: usize = 512 * 1024;
     if let Some(ref mut suite) = test_end.suite {
         let orig_len = suite.test_names.len();
@@ -193,7 +193,7 @@ fn truncate_test_end(test_end: &mut buck2_data::TestRunEnd) {
     }
 }
 
-fn truncate_test_discovery_end(test_discovery_end: &mut buck2_data::TestDiscoveryEnd) {
+fn truncate_test_discovery_end(test_discovery_end: &mut bz_data::TestDiscoveryEnd) {
     // Scribe tailer logs neither stdout nor stderr of test discovery, so don't send these.
     if let Some(ref mut command_report) = test_discovery_end.command_report {
         if let Some(ref mut details) = command_report.details {
@@ -207,7 +207,7 @@ fn truncate_test_discovery_end(test_discovery_end: &mut buck2_data::TestDiscover
     }
 }
 
-fn truncate_target_patterns(target_patterns: &mut Vec<buck2_data::TargetPattern>) {
+fn truncate_target_patterns(target_patterns: &mut Vec<bz_data::TargetPattern>) {
     const MAX_TARGET_PATTERNS_BYTES: usize = 512 * 1024;
     let orig_len = target_patterns.len();
     let mut bytes: usize = 0;
@@ -216,7 +216,7 @@ fn truncate_target_patterns(target_patterns: &mut Vec<buck2_data::TargetPattern>
         if bytes > MAX_TARGET_PATTERNS_BYTES {
             target_patterns.truncate(index);
             let warn = format!("<<Truncated (reported {index} / {orig_len})>>");
-            target_patterns.push(buck2_data::TargetPattern { value: warn });
+            target_patterns.push(bz_data::TargetPattern { value: warn });
             break;
         }
     }
@@ -226,38 +226,38 @@ fn truncate_target_patterns(target_patterns: &mut Vec<buck2_data::TargetPattern>
 mod tests {
     use crate::sink::smart_truncate_event::smart_truncate_event;
 
-    fn make_invocation_record(data: buck2_data::InvocationRecord) -> buck2_data::buck_event::Data {
-        buck2_data::buck_event::Data::Record(buck2_data::RecordEvent {
-            data: Some(buck2_data::record_event::Data::InvocationRecord(Box::new(
+    fn make_invocation_record(data: bz_data::InvocationRecord) -> bz_data::buck_event::Data {
+        bz_data::buck_event::Data::Record(bz_data::RecordEvent {
+            data: Some(bz_data::record_event::Data::InvocationRecord(Box::new(
                 data,
             ))),
         })
     }
 
     fn make_action_execution_end(
-        data: buck2_data::ActionExecutionEnd,
-    ) -> buck2_data::buck_event::Data {
-        buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
-            data: Some(buck2_data::span_end_event::Data::ActionExecution(Box::new(
+        data: bz_data::ActionExecutionEnd,
+    ) -> bz_data::buck_event::Data {
+        bz_data::buck_event::Data::SpanEnd(bz_data::SpanEndEvent {
+            data: Some(bz_data::span_end_event::Data::ActionExecution(Box::new(
                 data,
             ))),
             ..Default::default()
         })
     }
 
-    fn make_command_end(data: buck2_data::CommandEnd) -> buck2_data::buck_event::Data {
-        buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
-            data: Some(buck2_data::span_end_event::Data::Command(data)),
+    fn make_command_end(data: bz_data::CommandEnd) -> bz_data::buck_event::Data {
+        bz_data::buck_event::Data::SpanEnd(bz_data::SpanEndEvent {
+            data: Some(bz_data::span_end_event::Data::Command(data)),
             ..Default::default()
         })
     }
 
     fn make_build_command_end(
-        unresolved_target_patterns: Vec<buck2_data::TargetPattern>,
-    ) -> buck2_data::CommandEnd {
-        buck2_data::CommandEnd {
-            data: Some(buck2_data::command_end::Data::Build(
-                buck2_data::BuildCommandEnd {
+        unresolved_target_patterns: Vec<bz_data::TargetPattern>,
+    ) -> bz_data::CommandEnd {
+        bz_data::CommandEnd {
+            data: Some(bz_data::command_end::Data::Build(
+                bz_data::BuildCommandEnd {
                     unresolved_target_patterns,
                 },
             )),
@@ -265,23 +265,23 @@ mod tests {
         }
     }
 
-    fn make_test_end(data: buck2_data::TestRunEnd) -> buck2_data::buck_event::Data {
-        buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
-            data: Some(buck2_data::span_end_event::Data::TestEnd(data)),
+    fn make_test_end(data: bz_data::TestRunEnd) -> bz_data::buck_event::Data {
+        bz_data::buck_event::Data::SpanEnd(bz_data::SpanEndEvent {
+            data: Some(bz_data::span_end_event::Data::TestEnd(data)),
             ..Default::default()
         })
     }
 
-    fn make_test_discovery_end(data: buck2_data::TestDiscoveryEnd) -> buck2_data::buck_event::Data {
-        buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
-            data: Some(buck2_data::span_end_event::Data::TestDiscovery(data)),
+    fn make_test_discovery_end(data: bz_data::TestDiscoveryEnd) -> bz_data::buck_event::Data {
+        bz_data::buck_event::Data::SpanEnd(bz_data::SpanEndEvent {
+            data: Some(bz_data::span_end_event::Data::TestDiscovery(data)),
             ..Default::default()
         })
     }
 
-    fn make_command_execution_with_stderr(stderr: String) -> buck2_data::CommandExecution {
-        buck2_data::CommandExecution {
-            details: Some(buck2_data::CommandExecutionDetails {
+    fn make_command_execution_with_stderr(stderr: String) -> bz_data::CommandExecution {
+        bz_data::CommandExecution {
+            details: Some(bz_data::CommandExecutionDetails {
                 cmd_stderr: stderr,
                 ..Default::default()
             }),
@@ -291,21 +291,21 @@ mod tests {
 
     #[test]
     fn smart_truncate_resolved_target_patterns_clears_unresolved_one() {
-        let mut record = buck2_data::InvocationRecord::default();
+        let mut record = bz_data::InvocationRecord::default();
         let mut record_expected = record.clone();
 
-        let resolved_target_patterns = vec![buck2_data::TargetPattern {
+        let resolved_target_patterns = vec![bz_data::TargetPattern {
             value: "some_resolved_target".to_owned(),
         }];
-        record.parsed_target_patterns = Some(buck2_data::ParsedTargetPatterns {
+        record.parsed_target_patterns = Some(bz_data::ParsedTargetPatterns {
             target_patterns: resolved_target_patterns.clone(),
         });
         // resolved_target_patterns is expected to be unchanged.
-        record_expected.parsed_target_patterns = Some(buck2_data::ParsedTargetPatterns {
+        record_expected.parsed_target_patterns = Some(bz_data::ParsedTargetPatterns {
             target_patterns: resolved_target_patterns,
         });
 
-        let unresolved_target_patterns = vec![buck2_data::TargetPattern {
+        let unresolved_target_patterns = vec![bz_data::TargetPattern {
             value: "some_unresolved_target".to_owned(),
         }];
         record.command_end = Some(make_build_command_end(unresolved_target_patterns));
@@ -323,13 +323,13 @@ mod tests {
 
     #[test]
     fn smart_truncate_unresolved_target_used_when_resolved_one_unavailable() {
-        let mut record = buck2_data::InvocationRecord::default();
+        let mut record = bz_data::InvocationRecord::default();
         let mut record_expected = record.clone();
 
         record.parsed_target_patterns = None;
         record_expected.parsed_target_patterns = None;
 
-        let unresolved_target_patterns = vec![buck2_data::TargetPattern {
+        let unresolved_target_patterns = vec![bz_data::TargetPattern {
             value: "some_unresolved_target".to_owned(),
         }];
         let command_end = make_build_command_end(unresolved_target_patterns);
@@ -353,11 +353,11 @@ mod tests {
         let command_execution_stderr_omitted =
             make_command_execution_with_stderr("<<omitted>>".to_owned());
 
-        let action_execution_end_with_stderrs = buck2_data::ActionExecutionEnd {
+        let action_execution_end_with_stderrs = bz_data::ActionExecutionEnd {
             commands: vec![command_execution_with_stderr],
             ..Default::default()
         };
-        let action_execution_end_last_stderr_omitted = buck2_data::ActionExecutionEnd {
+        let action_execution_end_last_stderr_omitted = bz_data::ActionExecutionEnd {
             commands: vec![command_execution_stderr_omitted],
             ..Default::default()
         };
@@ -384,7 +384,7 @@ mod tests {
         let command_execution_stderr_all_omitted =
             make_command_execution_with_stderr("<<omitted>>".to_owned());
 
-        let action_execution_end_with_stderrs = buck2_data::ActionExecutionEnd {
+        let action_execution_end_with_stderrs = bz_data::ActionExecutionEnd {
             commands: vec![
                 command_execution_with_stderr.clone(),
                 command_execution_with_long_stderr.clone(),
@@ -394,7 +394,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let action_execution_end_last_stderr_omitted = buck2_data::ActionExecutionEnd {
+        let action_execution_end_last_stderr_omitted = bz_data::ActionExecutionEnd {
             commands: vec![
                 command_execution_with_stderr.clone(),
                 command_execution_stderr_partially_omitted.clone(),
@@ -416,13 +416,13 @@ mod tests {
     #[test]
     fn smart_truncate_build_command_end_short_target_patterns_not_truncated() {
         let unresolved_target_patterns = vec![
-            buck2_data::TargetPattern {
+            bz_data::TargetPattern {
                 value: "hello".to_owned(),
             },
-            buck2_data::TargetPattern {
+            bz_data::TargetPattern {
                 value: "world".to_owned(),
             },
-            buck2_data::TargetPattern {
+            bz_data::TargetPattern {
                 value: "!\n".to_owned(),
             },
         ];
@@ -439,26 +439,26 @@ mod tests {
     #[test]
     fn smart_truncate_build_command_end_long_target_patterns_truncated() {
         let unresolved_target_patterns = vec![
-            buck2_data::TargetPattern {
+            bz_data::TargetPattern {
                 value: "0123456789".repeat(20 * 1024),
             },
-            buck2_data::TargetPattern {
+            bz_data::TargetPattern {
                 value: "0123456789".repeat(20 * 1024),
             },
-            buck2_data::TargetPattern {
+            bz_data::TargetPattern {
                 value: "0123456789".repeat(20 * 1024), // 600k in total; 88k-byte over
             },
         ];
         let command_end = make_build_command_end(unresolved_target_patterns);
 
         let unresolved_target_patterns_truncated = vec![
-            buck2_data::TargetPattern {
+            bz_data::TargetPattern {
                 value: "0123456789".repeat(20 * 1024),
             },
-            buck2_data::TargetPattern {
+            bz_data::TargetPattern {
                 value: "0123456789".repeat(20 * 1024),
             },
-            buck2_data::TargetPattern {
+            bz_data::TargetPattern {
                 value: "<<Truncated (reported 2 / 3)>>".to_owned(),
             },
         ];
@@ -474,11 +474,11 @@ mod tests {
 
     #[test]
     fn smart_truncate_long_file_watcher_stats_truncated() {
-        let file_watcher_event = buck2_data::FileWatcherEvent {
+        let file_watcher_event = bz_data::FileWatcherEvent {
             path: "0123456789".repeat(3 * 1024),
             ..Default::default()
         };
-        let file_watcher_stats = buck2_data::FileWatcherStats {
+        let file_watcher_stats = bz_data::FileWatcherStats {
             events: vec![
                 file_watcher_event.clone(),
                 file_watcher_event.clone(),
@@ -487,7 +487,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let file_watcher_stats_truncated = buck2_data::FileWatcherStats {
+        let file_watcher_stats_truncated = bz_data::FileWatcherStats {
             events: vec![
                 file_watcher_event.clone(),
                 file_watcher_event.clone(),
@@ -500,11 +500,11 @@ mod tests {
             )),
             ..Default::default()
         };
-        let record = buck2_data::InvocationRecord {
+        let record = bz_data::InvocationRecord {
             file_watcher_stats: Some(file_watcher_stats),
             ..Default::default()
         };
-        let record_truncated = buck2_data::InvocationRecord {
+        let record_truncated = bz_data::InvocationRecord {
             file_watcher_stats: Some(file_watcher_stats_truncated),
             ..Default::default()
         };
@@ -518,11 +518,11 @@ mod tests {
 
     #[test]
     fn smart_truncate_short_file_watcher_stats_not_truncated() {
-        let file_watcher_event = buck2_data::FileWatcherEvent {
+        let file_watcher_event = bz_data::FileWatcherEvent {
             path: "this is a test".to_owned(),
             ..Default::default()
         };
-        let file_watcher_stats = buck2_data::FileWatcherStats {
+        let file_watcher_stats = bz_data::FileWatcherStats {
             events: vec![
                 file_watcher_event.clone(),
                 file_watcher_event.clone(),
@@ -530,7 +530,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let record = buck2_data::InvocationRecord {
+        let record = bz_data::InvocationRecord {
             file_watcher_stats: Some(file_watcher_stats),
             ..Default::default()
         };
@@ -555,11 +555,11 @@ mod tests {
             "<<Truncated (reported 2 / 3)>>".to_owned(),
         ];
 
-        let record = buck2_data::InvocationRecord {
+        let record = bz_data::InvocationRecord {
             cli_args,
             ..Default::default()
         };
-        let record_truncated = buck2_data::InvocationRecord {
+        let record_truncated = bz_data::InvocationRecord {
             cli_args: cli_args_truncated,
             ..Default::default()
         };
@@ -576,7 +576,7 @@ mod tests {
     fn smart_truncate_invocation_record_short_cli_args_truncated() {
         let cli_args = vec!["this is".to_owned(), "a test".to_owned()];
 
-        let record = buck2_data::InvocationRecord {
+        let record = bz_data::InvocationRecord {
             cli_args,
             ..Default::default()
         };
@@ -592,28 +592,28 @@ mod tests {
     #[test]
     fn smart_truncate_invocation_record_error_reports_truncated() {
         let errors = vec![
-            buck2_data::ProcessedErrorReport {
+            bz_data::ProcessedErrorReport {
                 message: "0123456789".repeat(200 * 1024),
                 telemetry_message: None,
                 ..Default::default()
             },
-            buck2_data::ProcessedErrorReport {
+            bz_data::ProcessedErrorReport {
                 message: "0123456789".repeat(200 * 1024),
                 telemetry_message: Some("0123456789".repeat(200 * 1024)),
                 ..Default::default()
             },
         ];
 
-        let mut event_data = make_invocation_record(buck2_data::InvocationRecord {
+        let mut event_data = make_invocation_record(bz_data::InvocationRecord {
             errors,
             ..Default::default()
         });
         smart_truncate_event(&mut event_data);
 
-        let buck2_data::buck_event::Data::Record(record_event) = event_data else {
+        let bz_data::buck_event::Data::Record(record_event) = event_data else {
             unreachable!()
         };
-        let Some(buck2_data::record_event::Data::InvocationRecord(invocation_record)) =
+        let Some(bz_data::record_event::Data::InvocationRecord(invocation_record)) =
             record_event.data
         else {
             unreachable!()
@@ -639,15 +639,15 @@ mod tests {
             "<<Truncated (reported 2 / 3)>>".to_owned(),
         ];
 
-        let test_end = buck2_data::TestRunEnd {
-            suite: Some(buck2_data::TestSuite {
+        let test_end = bz_data::TestRunEnd {
+            suite: Some(bz_data::TestSuite {
                 test_names,
                 ..Default::default()
             }),
             ..Default::default()
         };
-        let test_end_truncated = buck2_data::TestRunEnd {
-            suite: Some(buck2_data::TestSuite {
+        let test_end_truncated = bz_data::TestRunEnd {
+            suite: Some(bz_data::TestSuite {
                 test_names: test_names_truncated,
                 ..Default::default()
             }),
@@ -662,9 +662,9 @@ mod tests {
         assert_eq!(event_data, event_data_expected);
     }
 
-    fn make_command_execution_with_stdout(stdout: String) -> buck2_data::CommandExecution {
-        buck2_data::CommandExecution {
-            details: Some(buck2_data::CommandExecutionDetails {
+    fn make_command_execution_with_stdout(stdout: String) -> bz_data::CommandExecution {
+        bz_data::CommandExecution {
+            details: Some(bz_data::CommandExecutionDetails {
                 cmd_stderr: stdout,
                 ..Default::default()
             }),
@@ -674,12 +674,12 @@ mod tests {
 
     #[test]
     fn smart_truncate_test_end_command_report_stdout_truncated() {
-        let test_end = buck2_data::TestRunEnd {
+        let test_end = bz_data::TestRunEnd {
             command_report: Some(make_command_execution_with_stdout("blah".to_owned())),
             ..Default::default()
         };
 
-        let test_end_truncated = buck2_data::TestRunEnd {
+        let test_end_truncated = bz_data::TestRunEnd {
             command_report: Some(make_command_execution_with_stdout("<<omitted>>".to_owned())),
             ..Default::default()
         };
@@ -694,12 +694,12 @@ mod tests {
 
     #[test]
     fn smart_truncate_test_discovery_end_command_report_stdout_truncated() {
-        let test_discovery_end = buck2_data::TestDiscoveryEnd {
+        let test_discovery_end = bz_data::TestDiscoveryEnd {
             command_report: Some(make_command_execution_with_stdout("blah".to_owned())),
             ..Default::default()
         };
 
-        let test_discovery_end_truncated = buck2_data::TestDiscoveryEnd {
+        let test_discovery_end_truncated = bz_data::TestDiscoveryEnd {
             command_report: Some(make_command_execution_with_stdout("<<omitted>>".to_owned())),
             ..Default::default()
         };

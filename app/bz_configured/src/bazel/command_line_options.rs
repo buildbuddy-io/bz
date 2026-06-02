@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::legacy_configs::view::LegacyBuckConfigView;
-use buck2_core::configuration::data::BazelBuildSettingValue;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_error::BuckErrorContext;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::legacy_configs::view::LegacyBuckConfigView;
+use bz_core::configuration::data::BazelBuildSettingValue;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::provider::label::ProvidersLabel;
+use bz_error::BuckErrorContext;
 use dice::DiceComputations;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum BazelCommandLineOptionsError {
     #[error("Malformed Bazel command-line build setting entry `{0}`")]
@@ -55,7 +55,7 @@ fn push_bazel_build_setting(
 
 async fn bazel_command_line_build_settings(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<BTreeMap<String, BazelBuildSettingValue>> {
+) -> bz_error::Result<BTreeMap<String, BazelBuildSettingValue>> {
     let entries = {
         let root_config = ctx.get_legacy_root_config_on_dice().await?;
         let mut config = root_config.view(ctx);
@@ -110,7 +110,7 @@ async fn bazel_command_line_build_settings(
 pub(crate) async fn apply_bazel_command_line_build_settings(
     ctx: &mut DiceComputations<'_>,
     cfg: ConfigurationData,
-) -> buck2_error::Result<ConfigurationData> {
+) -> bz_error::Result<ConfigurationData> {
     if !cfg.is_bound() {
         return Ok(cfg);
     }

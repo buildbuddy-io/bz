@@ -21,11 +21,11 @@ use crate::legacy_configs::key::BuckconfigKeyRef;
 /// * simple implementation which is backed by a buckconfig object, used in tests
 /// * DICE-backed implementation which records a dependency on buckconfig property in DICE
 pub trait LegacyBuckConfigView: Debug {
-    fn get(&mut self, key: BuckconfigKeyRef) -> buck2_error::Result<Option<Arc<str>>>;
+    fn get(&mut self, key: BuckconfigKeyRef) -> bz_error::Result<Option<Arc<str>>>;
 
-    fn parse<T: FromStr>(&mut self, key: BuckconfigKeyRef) -> buck2_error::Result<Option<T>>
+    fn parse<T: FromStr>(&mut self, key: BuckconfigKeyRef) -> bz_error::Result<Option<T>>
     where
-        buck2_error::Error: From<<T as FromStr>::Err>,
+        bz_error::Error: From<<T as FromStr>::Err>,
     {
         LegacyBuckConfig::parse_value(key, self.get(key)?.as_deref())
     }
@@ -33,9 +33,9 @@ pub trait LegacyBuckConfigView: Debug {
     fn parse_list<T: FromStr>(
         &mut self,
         key: BuckconfigKeyRef,
-    ) -> buck2_error::Result<Option<Vec<T>>>
+    ) -> bz_error::Result<Option<Vec<T>>>
     where
-        buck2_error::Error: From<<T as FromStr>::Err>,
+        bz_error::Error: From<<T as FromStr>::Err>,
     {
         LegacyBuckConfig::parse_list_value(key, self.get(key)?.as_deref())
     }

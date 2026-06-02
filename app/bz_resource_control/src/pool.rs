@@ -10,8 +10,8 @@
 
 use std::collections::VecDeque;
 
-use buck2_common::init::ResourceControlConfig;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_common::init::ResourceControlConfig;
+use bz_fs::paths::file_name::FileNameBuf;
 
 use crate::cgroup::CgroupInternal;
 use crate::cgroup::CgroupLeaf;
@@ -33,7 +33,7 @@ impl CgroupPool {
     }
 
     /// The new cgroup is assumed to be in use
-    async fn reserve_additional_cgroup(&mut self) -> buck2_error::Result<CgroupLeaf> {
+    async fn reserve_additional_cgroup(&mut self) -> bz_error::Result<CgroupLeaf> {
         let id = self.next_worker_id;
         self.next_worker_id += 1;
         let worker_name = Self::worker_name(id);
@@ -56,7 +56,7 @@ impl CgroupPool {
     pub(crate) async fn create_in_parent_cgroup(
         parent: &CgroupInternal,
         config: &ResourceControlConfig,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let pool_cgroup = parent
             .make_internal_child(FileNameBuf::unchecked_new("actions_cgroup_pool"))
             .await?
@@ -79,7 +79,7 @@ impl CgroupPool {
     }
 
     /// Acquire a worker cgroup from the pool. If no available worker cgroup, create a new one.
-    pub(crate) async fn acquire(&mut self) -> buck2_error::Result<CgroupLeaf> {
+    pub(crate) async fn acquire(&mut self) -> bz_error::Result<CgroupLeaf> {
         if let Some(cgroup) = self.available.pop_front() {
             Ok(cgroup)
         } else {

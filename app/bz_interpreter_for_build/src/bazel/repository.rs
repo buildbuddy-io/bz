@@ -24,93 +24,93 @@ use allocative::Allocative;
 use async_compression::tokio::bufread::GzipDecoder;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use buck2_build_api::actions::execute::dice_data::HasFallbackExecutorConfig;
-use buck2_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_ARCH_ENV;
-use buck2_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_NAME_ENV;
-use buck2_common::bazel::bzlmod::GetBzlmodRepositoryEnvironment;
-use buck2_common::bazel::bzlmod::archive::archive_kind_from_type_or_url;
-use buck2_common::bazel::bzlmod::archive::extract_archive;
-use buck2_common::bazel::bzlmod::patch::apply_unified_patch_file;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::file_ops::error::FileReadErrorContext;
-use buck2_common::file_ops::metadata::FileDigestConfig;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::init::BUILDBUDDY_API_KEY_HEADER;
-use buck2_common::init::RemoteExecutionStartupConfig;
-use buck2_common::liveliness_observer::NoopLivelinessObserver;
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::alias::NonEmptyCellAlias;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING;
-use buck2_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER;
-use buck2_core::cells::external::BAZEL_REPOSITORY_USER_AGENT_HEADER;
-use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
-use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
-use buck2_core::cells::external::bazel_repository_user_agent;
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
-use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
-use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::execution_types::executor_config::Executor;
-use buck2_core::execution_types::executor_config::RemoteEnabledExecutor;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuckOutTestPath;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::package::PackageLabel;
-use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
-use buck2_error::BuckErrorContext;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryBuilder;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_execute::directory::INTERNER;
-use buck2_execute::entry::build_entry_from_disk;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::execute::claim::MutexClaimManager;
-use buck2_execute::execute::command_executor::CommandExecutor;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::prepared::PreparedCommand;
-use buck2_execute::execute::request::CommandExecutionInput;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::CommandExecutionPaths;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::request::OutputCreationBehavior;
-use buck2_execute::execute::result::CommandExecutionStatus;
-use buck2_execute::execute::target::CommandExecutionTarget;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute_local::CommandEvent;
-use buck2_execute_local::DefaultKillProcess;
-use buck2_execute_local::GatherOutputStatus;
-use buck2_execute_local::spawn_command_and_stream_events;
-use buck2_execute_local::status_decoder::DefaultStatusDecoder;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::file_loader::LoadedModule;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_interpreter::paths::path::OwnedStarlarkPath;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_node::attrs::attr::Attribute;
-use buck2_node::attrs::attr::CoercedValue;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
-use buck2_node::attrs::fmt_context::AttrFmtContext;
-use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
-use buck2_node::rule_type::StarlarkRuleType;
-use buck2_resource_control::ActionFreezeEvent;
+use bz_build_api::actions::execute::dice_data::HasFallbackExecutorConfig;
+use bz_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_ARCH_ENV;
+use bz_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_NAME_ENV;
+use bz_common::bazel::bzlmod::GetBzlmodRepositoryEnvironment;
+use bz_common::bazel::bzlmod::archive::archive_kind_from_type_or_url;
+use bz_common::bazel::bzlmod::archive::extract_archive;
+use bz_common::bazel::bzlmod::patch::apply_unified_patch_file;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::file_ops::error::FileReadErrorContext;
+use bz_common::file_ops::metadata::FileDigestConfig;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_common::init::BUILDBUDDY_API_KEY_HEADER;
+use bz_common::init::RemoteExecutionStartupConfig;
+use bz_common::liveliness_observer::NoopLivelinessObserver;
+use bz_common::package_listing::listing::PackageListing;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::alias::NonEmptyCellAlias;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING;
+use bz_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER;
+use bz_core::cells::external::BAZEL_REPOSITORY_USER_AGENT_HEADER;
+use bz_core::cells::external::BzlmodModuleExtensionRepoSetup;
+use bz_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
+use bz_core::cells::external::bazel_repository_user_agent;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::cells::external::bzlmod_cell_aliases_for_cell;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::execution_types::executor_config::Executor;
+use bz_core::execution_types::executor_config::RemoteEnabledExecutor;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuckOutTestPath;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::package::PackageLabel;
+use bz_core::target::label::interner::ConcurrentTargetLabelInterner;
+use bz_error::BuckErrorContext;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryBuilder;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_execute::directory::INTERNER;
+use bz_execute::entry::build_entry_from_disk;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute::execute::claim::MutexClaimManager;
+use bz_execute::execute::command_executor::CommandExecutor;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::prepared::PreparedCommand;
+use bz_execute::execute::request::CommandExecutionInput;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::CommandExecutionPaths;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::request::OutputCreationBehavior;
+use bz_execute::execute::result::CommandExecutionStatus;
+use bz_execute::execute::target::CommandExecutionTarget;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute_local::CommandEvent;
+use bz_execute_local::DefaultKillProcess;
+use bz_execute_local::GatherOutputStatus;
+use bz_execute_local::spawn_command_and_stream_events;
+use bz_execute_local::status_decoder::DefaultStatusDecoder;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckIndexSet;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::file_loader::LoadedModule;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_interpreter::paths::path::OwnedStarlarkPath;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_node::attrs::attr::Attribute;
+use bz_node::attrs::attr::CoercedValue;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::fmt_context::AttrFmtContext;
+use bz_node::bzl_or_bxl_path::BzlOrBxlPath;
+use bz_node::rule_type::StarlarkRuleType;
+use bz_resource_control::ActionFreezeEvent;
 use derive_more::Display;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -292,7 +292,7 @@ use self::recorded_inputs::repository_recorded_dirents_value;
 #[cfg(test)]
 use self::recorded_inputs::repository_recorded_file_value;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum BazelRepositoryError {
     #[error("`{0}` is not a valid repository rule attribute name")]
@@ -446,7 +446,7 @@ pub(crate) enum BazelRepositoryError {
 fn current_bzl_path<'v>(
     eval: &Evaluator<'v, '_, '_>,
     symbol: &'static str,
-) -> buck2_error::Result<BzlOrBxlPath> {
+) -> bz_error::Result<BzlOrBxlPath> {
     let build_context = BuildContext::from_context(eval)?;
     match &build_context.additional {
         PerFileTypeContext::Bzl(bzl_path) => Ok(BzlOrBxlPath::Bzl(bzl_path.bzl_path.clone())),
@@ -467,7 +467,7 @@ fn record_repository_rule_invocation<'v>(
     let recorder = build_context
         .bazel_repository_rule_recorder
         .ok_or_else(|| {
-            buck2_error::Error::from(
+            bz_error::Error::from(
                 BazelRepositoryError::RepositoryRuleCalledOutsideModuleExtension,
             )
         })?;
@@ -480,7 +480,7 @@ fn record_repository_rule_invocation<'v>(
         let attr_name = attr_name.as_str();
         if attr_name == NAME_ATTRIBUTE_FIELD {
             let Some(name_value) = attr_value.unpack_str() else {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     BazelRepositoryError::RepositoryRuleNameMustBeString(
                         attr_value.get_type().to_owned(),
                     ),
@@ -496,7 +496,7 @@ fn record_repository_rule_invocation<'v>(
         }
     }
     let name = name
-        .ok_or_else(|| buck2_error::Error::from(BazelRepositoryError::RepositoryRuleMissingName))?;
+        .ok_or_else(|| bz_error::Error::from(BazelRepositoryError::RepositoryRuleMissingName))?;
     attrs.sort_by(|(left, _), (right, _)| left.cmp(right));
     let attr_build_file_callsite = repository_rule_attr_build_file_callsite(eval, build_context);
 
@@ -538,8 +538,8 @@ fn repository_rule_attr_expression(value: Value<'_>) -> starlark::Result<String>
     }
     if let Some(string) = value.unpack_str() {
         return serde_json::to_string(string).map_err(|e| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "failed to serialize repository_rule string attr: {e}"
             )
             .into()
@@ -599,8 +599,8 @@ fn repository_rule_label_attr_expression(
     Ok(format!(
         "Label({})",
         serde_json::to_string(&label).map_err(|e| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "failed to serialize repository_rule label attr: {e}"
             )
         })?
@@ -935,21 +935,21 @@ mod tests {
         assert_eq!(
             "../buck-out/v2/external_cells/repo/bin/tool",
             remote_path_relative_to_working_dir(
-                "__buck2_repository_ctx_work",
+                "__bz_repository_ctx_work",
                 "buck-out/v2/external_cells/repo/bin/tool",
             )
         );
         assert_eq!(
             "subdir/file.txt",
             remote_path_relative_to_working_dir(
-                "__buck2_repository_ctx_work",
-                "__buck2_repository_ctx_work/subdir/file.txt",
+                "__bz_repository_ctx_work",
+                "__bz_repository_ctx_work/subdir/file.txt",
             )
         );
         assert_eq!(
             "../../buck-out/v2/out",
             remote_path_relative_to_working_dir(
-                "__buck2_repository_ctx_work/nested/pkg",
+                "__bz_repository_ctx_work/nested/pkg",
                 "buck-out/v2/out",
             )
         );
@@ -996,7 +996,7 @@ mod tests {
                 repository_working_dir,
             )
             .as_deref(),
-            Some("cat __BUCK2_REMOTE_EXEC_ROOT__/__buck2_repository_ctx_work/package.json"),
+            Some("cat __BUCK2_REMOTE_EXEC_ROOT__/__bz_repository_ctx_work/package.json"),
         );
     }
 
@@ -1029,22 +1029,22 @@ mod tests {
 
     #[test]
     fn test_repository_rule_execution_cache_key_distinguishes_remote_execution() {
-        use buck2_core::execution_types::executor_config::CacheUploadBehavior;
-        use buck2_core::execution_types::executor_config::CommandGenerationOptions;
-        use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
-        use buck2_core::execution_types::executor_config::OutputPathsBehavior;
-        use buck2_core::execution_types::executor_config::PathSeparatorKind;
-        use buck2_core::execution_types::executor_config::RePlatformFields;
-        use buck2_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
-        use buck2_core::execution_types::executor_config::RemoteExecutorOptions;
-        use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
+        use bz_core::execution_types::executor_config::CacheUploadBehavior;
+        use bz_core::execution_types::executor_config::CommandGenerationOptions;
+        use bz_core::execution_types::executor_config::MetaInternalExtraParams;
+        use bz_core::execution_types::executor_config::OutputPathsBehavior;
+        use bz_core::execution_types::executor_config::PathSeparatorKind;
+        use bz_core::execution_types::executor_config::RePlatformFields;
+        use bz_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
+        use bz_core::execution_types::executor_config::RemoteExecutorOptions;
+        use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 
         let local = CommandExecutorConfig::testing_local();
         let remote = CommandExecutorConfig {
             executor: Executor::RemoteEnabled(RemoteEnabledExecutorOptions {
                 executor: RemoteEnabledExecutor::Remote(RemoteExecutorOptions::default()),
                 re_properties: RePlatformFields::default(),
-                re_use_case: RemoteExecutorUseCase::buck2_default(),
+                re_use_case: RemoteExecutorUseCase::bz_default(),
                 re_action_key: None,
                 cache_upload_behavior: CacheUploadBehavior::Disabled,
                 remote_cache_enabled: true,
@@ -1505,7 +1505,7 @@ fn validate_module_extension_return<'v>(
         return Ok(value);
     }
     Err(
-        buck2_error::Error::from(BazelRepositoryError::InvalidModuleExtensionReturn(
+        bz_error::Error::from(BazelRepositoryError::InvalidModuleExtensionReturn(
             extension_id.to_string(),
             value.get_type().to_owned(),
         ))
@@ -1594,7 +1594,7 @@ pub async fn evaluate_bzlmod_module_extension_repo(
     module_ctx_working_dir: &str,
     _current_canonical_repo_name: Option<&str>,
     cancellation: &CancellationContext,
-) -> buck2_error::Result<BazelModuleExtensionEvaluationResult> {
+) -> bz_error::Result<BazelModuleExtensionEvaluationResult> {
     let extension_cell_path = CellPath::new(
         CellName::unchecked_new(&setup.extension_bzl_cell)?,
         CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
@@ -1643,8 +1643,8 @@ pub async fn evaluate_bzlmod_module_extension_repo(
                     .filter(|dep| materialized_path_label_deps.insert(dep.clone()))
                     .collect::<Vec<_>>();
                 if new_label_deps.is_empty() {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "module_extension `{}%{}` failed after materializing module_ctx path labels: {}",
                         extension_path,
                         setup.extension_name,
@@ -1688,7 +1688,7 @@ pub async fn evaluate_bzlmod_repository_rule(
     repository_ctx_working_dir: &str,
     progress: Option<BazelRepositoryRuleProgress>,
     cancellation: &CancellationContext,
-) -> buck2_error::Result<Vec<BazelRepositoryGeneratedFile>> {
+) -> bz_error::Result<Vec<BazelRepositoryGeneratedFile>> {
     Ok(evaluate_bzlmod_repository_rule_with_recorded_inputs(
         ctx,
         invocation,
@@ -1706,7 +1706,7 @@ pub async fn evaluate_bzlmod_repository_rule_with_recorded_inputs(
     repository_ctx_working_dir: &str,
     progress: Option<BazelRepositoryRuleProgress>,
     cancellation: &CancellationContext,
-) -> buck2_error::Result<BazelRepositoryRuleEvaluationResult> {
+) -> bz_error::Result<BazelRepositoryRuleEvaluationResult> {
     let rule_path = match &invocation.rule_id.path {
         BzlOrBxlPath::Bzl(path) => path,
         BzlOrBxlPath::Bxl(_) => {
@@ -1734,15 +1734,15 @@ pub async fn evaluate_bzlmod_repository_rule_with_recorded_inputs(
             cancellation,
         );
         let evaluation = if let Some(progress) = progress.as_ref() {
-            buck2_events::dispatch::span_async_simple(
-                buck2_data::BzlmodRepoStart {
+            bz_events::dispatch::span_async_simple(
+                bz_data::BzlmodRepoStart {
                     repo: progress.repo.clone(),
                     path: progress.path.clone(),
                     kind: progress.kind.clone(),
                     progress: "starting".to_owned(),
                 },
                 evaluation,
-                buck2_data::BzlmodRepoEnd {
+                bz_data::BzlmodRepoEnd {
                     repo: progress.repo.clone(),
                     path: progress.path.clone(),
                     kind: progress.kind.clone(),
@@ -1775,8 +1775,8 @@ pub async fn evaluate_bzlmod_repository_rule_with_recorded_inputs(
                     .filter(|dep| materialized_path_label_deps.insert(dep.clone()))
                     .collect::<Vec<_>>();
                 if new_label_deps.is_empty() {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "repository_rule `{}` failed after materializing repository_ctx path labels: {}",
                         invocation.rule_id,
                         error
@@ -1792,7 +1792,7 @@ pub async fn evaluate_bzlmod_repository_rule_with_recorded_inputs(
 pub async fn repository_rule_uses_unresolved_dynamic_label(
     ctx: &mut DiceComputations<'_>,
     invocation: &BazelRepositoryRuleInvocation,
-) -> buck2_error::Result<bool> {
+) -> bz_error::Result<bool> {
     let rule_path = match &invocation.rule_id.path {
         BzlOrBxlPath::Bzl(path) => path,
         BzlOrBxlPath::Bxl(_) => return Ok(false),
@@ -1825,7 +1825,7 @@ struct RepositoryRuleLoadedModuleLoadPathsKey {
 
 #[async_trait::async_trait]
 impl Key for RepositoryRuleLoadedModuleLoadPathsKey {
-    type Value = buck2_error::Result<Arc<Vec<ImportPath>>>;
+    type Value = bz_error::Result<Arc<Vec<ImportPath>>>;
 
     async fn compute(
         &self,
@@ -1856,7 +1856,7 @@ impl Key for RepositoryRuleLoadedModuleLoadPathsKey {
 async fn repository_rule_loaded_module_load_paths(
     ctx: &mut DiceComputations<'_>,
     path: &ImportPath,
-) -> buck2_error::Result<Arc<Vec<ImportPath>>> {
+) -> bz_error::Result<Arc<Vec<ImportPath>>> {
     ctx.compute(&RepositoryRuleLoadedModuleLoadPathsKey { path: path.clone() })
         .await?
 }
@@ -1864,7 +1864,7 @@ async fn repository_rule_loaded_module_load_paths(
 async fn bzlmod_bzl_transitive_digest(
     ctx: &mut DiceComputations<'_>,
     bzl_path: ImportPath,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let bzl_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(&bzl_path))
         .await?;
@@ -1920,7 +1920,7 @@ fn loaded_module_bazel_digest_path(module: &LoadedModule) -> Option<ImportPath> 
 async fn bzlmod_bazel_bzl_transitive_digest(
     ctx: &mut DiceComputations<'_>,
     bzl_path: ImportPath,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let bzl_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(&bzl_path))
         .await?;
@@ -1930,8 +1930,8 @@ async fn bzlmod_bazel_bzl_transitive_digest(
     let mut digests = HashMap::<String, Vec<u8>>::new();
     for module in modules {
         let path = loaded_module_bazel_digest_path(&module).ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "loaded module `{}` cannot be included in a Bazel bzl transitive digest",
                 module.path()
             )
@@ -1949,8 +1949,8 @@ async fn bzlmod_bazel_bzl_transitive_digest(
             }
             let key = loaded.path().to_string();
             let digest = digests.get(&key).ok_or_else(|| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "missing Bazel bzl transitive digest for loaded module `{}`",
                     key
                 )
@@ -1963,8 +1963,8 @@ async fn bzlmod_bazel_bzl_transitive_digest(
     let root_digest = digests
         .get(&StarlarkModulePath::LoadFile(&bzl_path).to_string())
         .ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "missing Bazel bzl transitive digest for root module `{}`",
                 bzl_path
             )
@@ -1975,7 +1975,7 @@ async fn bzlmod_bazel_bzl_transitive_digest(
 pub async fn bzlmod_module_extension_bzl_transitive_digest(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let extension_cell_path = CellPath::new(
         CellName::unchecked_new(&setup.extension_bzl_cell)?,
         CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
@@ -1987,7 +1987,7 @@ pub async fn bzlmod_module_extension_bzl_transitive_digest(
 pub async fn bzlmod_module_extension_bazel_bzl_transitive_digest(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let extension_cell_path = CellPath::new(
         CellName::unchecked_new(&setup.extension_bzl_cell)?,
         CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
@@ -2005,7 +2005,7 @@ pub struct BzlmodModuleExtensionEvalFactorDeps {
 pub async fn bzlmod_module_extension_eval_factor_deps(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
-) -> buck2_error::Result<BzlmodModuleExtensionEvalFactorDeps> {
+) -> bz_error::Result<BzlmodModuleExtensionEvalFactorDeps> {
     let extension_cell_path = CellPath::new(
         CellName::unchecked_new(&setup.extension_bzl_cell)?,
         CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
@@ -2017,9 +2017,9 @@ pub async fn bzlmod_module_extension_eval_factor_deps(
     let extension_value = extension_module
         .env()
         .get_option(&setup.extension_name)
-        .map_err(|e| buck2_error::conversion::from_any_with_tag(e, buck2_error::ErrorTag::Input))?
+        .map_err(|e| bz_error::conversion::from_any_with_tag(e, bz_error::ErrorTag::Input))?
         .ok_or_else(|| {
-            buck2_error::Error::from(BazelRepositoryError::ModuleExtensionSymbolMissing {
+            bz_error::Error::from(BazelRepositoryError::ModuleExtensionSymbolMissing {
                 path: extension_path.to_string(),
                 extension: setup.extension_name.to_string(),
             })
@@ -2120,7 +2120,7 @@ fn bzlmod_repository_rule_execution_cache_key(config: &CommandExecutorConfig) ->
 pub async fn bzlmod_repository_rule_cache_info(
     ctx: &mut DiceComputations<'_>,
     invocation: &BazelRepositoryRuleInvocation,
-) -> buck2_error::Result<BazelRepositoryRuleCacheInfo> {
+) -> bz_error::Result<BazelRepositoryRuleCacheInfo> {
     let rule_path = match &invocation.rule_id.path {
         BzlOrBxlPath::Bzl(path) => path,
         BzlOrBxlPath::Bxl(_) => {
@@ -2137,9 +2137,9 @@ pub async fn bzlmod_repository_rule_cache_info(
         .env()
         .get_any_visibility(&invocation.rule_id.name)
         .map(|(value, _)| value)
-        .map_err(|e| buck2_error::conversion::from_any_with_tag(e, buck2_error::ErrorTag::Input))
+        .map_err(|e| bz_error::conversion::from_any_with_tag(e, bz_error::ErrorTag::Input))
         .or_else(|_| {
-            Err(buck2_error::Error::from(
+            Err(bz_error::Error::from(
                 BazelRepositoryError::RepositoryRuleSymbolMissing {
                     path: rule_path.to_string(),
                     rule: invocation.rule_id.name.clone(),
@@ -2194,7 +2194,7 @@ pub async fn bzlmod_repository_rule_cache_info(
 async fn materialize_repository_rule_path_label_deps(
     ctx: &mut DiceComputations<'_>,
     label_deps: &[RepositoryPathLabelDep],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let mut seen = BTreeSet::new();
     for dep in label_deps {
         if !seen.insert(dep) {
@@ -2237,7 +2237,7 @@ async fn materialize_repository_rule_path_label_dep_tree(
     ctx: &mut DiceComputations<'_>,
     cell_name: CellName,
     path: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let root = CellPath::new(cell_name, CellRelativePathBuf::try_from(path.to_owned())?);
     let Some(metadata) =
         DiceFileComputations::read_path_metadata_if_exists(ctx, root.as_ref()).await?
@@ -2269,7 +2269,7 @@ pub async fn evaluate_bzlmod_repository_rule_invocation(
     canonical_repo_name: &str,
     repository_ctx_working_dir: &str,
     cancellation: &CancellationContext,
-) -> buck2_error::Result<Vec<BazelRepositoryGeneratedFile>> {
+) -> bz_error::Result<Vec<BazelRepositoryGeneratedFile>> {
     let invocation = bzlmod_repository_rule_invocation_from_setup(setup, canonical_repo_name)?;
     evaluate_bzlmod_repository_rule(
         ctx,
@@ -2284,7 +2284,7 @@ pub async fn evaluate_bzlmod_repository_rule_invocation(
 pub fn bzlmod_repository_rule_invocation_from_setup(
     setup: &BzlmodRepositoryRuleInvocationSetup,
     canonical_repo_name: &str,
-) -> buck2_error::Result<BazelRepositoryRuleInvocation> {
+) -> bz_error::Result<BazelRepositoryRuleInvocation> {
     let rule_cell = CellName::unchecked_new(&setup.rule_bzl_cell)?;
     let rule_path = CellPath::new(
         rule_cell,
@@ -2315,10 +2315,10 @@ pub fn bzlmod_repository_rule_invocation_from_setup(
 
 pub fn bzlmod_repository_rule_invocation_to_setup(
     invocation: &BazelRepositoryRuleInvocation,
-) -> buck2_error::Result<BzlmodRepositoryRuleInvocationSetup> {
+) -> bz_error::Result<BzlmodRepositoryRuleInvocationSetup> {
     let BzlOrBxlPath::Bzl(rule_path) = &invocation.rule_id.path else {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "bzlmod repository rule invocation `{}` is not backed by a .bzl file",
             invocation.rule_id
         ));
@@ -2347,7 +2347,7 @@ pub(crate) fn module_extension_from_loaded_module(
     extension_module_path: &ImportPath,
     extension_name: &str,
     extension_value: starlark::values::OwnedFrozenValue,
-) -> buck2_error::Result<starlark::values::OwnedFrozenValueTyped<FrozenStarlarkModuleExtension>> {
+) -> bz_error::Result<starlark::values::OwnedFrozenValueTyped<FrozenStarlarkModuleExtension>> {
     extension_value.downcast_starlark().map_err(|err| {
         let got = err.to_string();
         BazelRepositoryError::ModuleExtensionSymbolWrongType {
@@ -2363,7 +2363,7 @@ pub(crate) fn repository_rule_from_loaded_module(
     rule_module_path: &ImportPath,
     rule_name: &str,
     rule_value: starlark::values::OwnedFrozenValue,
-) -> buck2_error::Result<starlark::values::OwnedFrozenValueTyped<FrozenStarlarkRepositoryRule>> {
+) -> bz_error::Result<starlark::values::OwnedFrozenValueTyped<FrozenStarlarkRepositoryRule>> {
     rule_value.downcast_starlark().map_err(|err| {
         let got = err.to_string();
         BazelRepositoryError::RepositoryRuleSymbolWrongType {
@@ -2396,7 +2396,7 @@ fn eval_bzlmod_tag_expression<'v>(
     eval.module()
         .get(value_name)
         .ok_or_else(|| {
-            buck2_error::Error::from(BazelRepositoryError::MissingEvaluatedTagExpression(
+            bz_error::Error::from(BazelRepositoryError::MissingEvaluatedTagExpression(
                 value_name.to_owned(),
             ))
         })
@@ -2513,8 +2513,8 @@ fn coerce_attr_value<'v>(
         CoercedValue::Custom(value) => value,
         CoercedValue::Default => {
             let default = attr.default().ok_or_else(|| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "attribute `{}` selected a default but has no default value",
                     attr_name
                 )
@@ -2541,7 +2541,7 @@ fn bzlmod_module_cell_name(
     canonical_repo_name: &str,
     is_root: bool,
     eval: &Evaluator<'_, '_, '_>,
-) -> buck2_error::Result<CellName> {
+) -> bz_error::Result<CellName> {
     let cell_resolver = BuildContext::from_context(eval)?
         .cell_info()
         .cell_resolver();
@@ -2557,7 +2557,7 @@ fn bzlmod_module_cell_name(
 fn bzlmod_module_attr_coercion_context(
     module_config: &BzlmodModuleExtensionModuleConfig,
     eval: &Evaluator<'_, '_, '_>,
-) -> buck2_error::Result<BuildAttrCoercionContext> {
+) -> bz_error::Result<BuildAttrCoercionContext> {
     let build_context = BuildContext::from_context(eval)?;
     let cell_resolver = build_context.cell_info().cell_resolver().dupe();
     let cell_name = bzlmod_module_cell_name(
@@ -2589,7 +2589,7 @@ fn bzlmod_module_attr_coercion_context(
 
 fn bzlmod_current_attr_coercion_context(
     eval: &Evaluator<'_, '_, '_>,
-) -> buck2_error::Result<BuildAttrCoercionContext> {
+) -> bz_error::Result<BuildAttrCoercionContext> {
     let build_context = BuildContext::from_context(eval)?;
     Ok(BuildAttrCoercionContext::new_no_package(
         build_context.cell_info().cell_resolver().dupe(),
@@ -2602,7 +2602,7 @@ fn bzlmod_current_attr_coercion_context(
 fn bzlmod_repository_rule_attr_coercion_context(
     invocation: &BazelRepositoryRuleInvocation,
     eval: &Evaluator<'_, '_, '_>,
-) -> buck2_error::Result<BuildAttrCoercionContext> {
+) -> bz_error::Result<BuildAttrCoercionContext> {
     let build_context = BuildContext::from_context(eval)?;
     let cell_resolver = build_context.cell_info().cell_resolver().dupe();
     let BzlOrBxlPath::Bzl(rule_path) = &invocation.rule_id.path else {
@@ -2637,9 +2637,9 @@ fn bzlmod_repository_rule_attr_coercion_context(
 }
 
 fn bzlmod_repository_rule_cell_alias_resolver(
-    cell_resolver: &buck2_core::cells::CellResolver,
+    cell_resolver: &bz_core::cells::CellResolver,
     cell_name: CellName,
-) -> buck2_error::Result<CellAliasResolver> {
+) -> bz_error::Result<CellAliasResolver> {
     if cell_name == cell_resolver.root_cell() {
         return Ok(cell_resolver.root_cell_cell_alias_resolver().dupe());
     }
@@ -2676,7 +2676,7 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
 ) -> starlark::Result<Value<'v>> {
     let config: BzlmodModuleExtensionEvaluationConfig = serde_json::from_str(extension_usages_json)
         .map_err(|e| {
-            buck2_error::Error::from(BazelRepositoryError::InvalidModuleExtensionUsageData)
+            bz_error::Error::from(BazelRepositoryError::InvalidModuleExtensionUsageData)
                 .context(format!("JSON parse error: {e}"))
         })?;
     let extension_id = extension.id()?;
@@ -2698,7 +2698,7 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
             let mut expression_bindings = module_config.constants.clone();
             expression_bindings.extend(tag_config.bindings.iter().cloned());
             let tag_class_value = tag_classes.get(&tag_config.tag_name).ok_or_else(|| {
-                buck2_error::Error::from(BazelRepositoryError::UnknownModuleExtensionTag {
+                bz_error::Error::from(BazelRepositoryError::UnknownModuleExtensionTag {
                     extension: extension_id.to_string(),
                     tag: tag_config.tag_name.clone(),
                 })
@@ -2707,7 +2707,7 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
                 .to_value()
                 .downcast_ref::<FrozenStarlarkTagClass>()
                 .ok_or_else(|| {
-                    buck2_error::Error::from(BazelRepositoryError::InvalidFrozenTagClass {
+                    bz_error::Error::from(BazelRepositoryError::InvalidFrozenTagClass {
                         tag: tag_config.tag_name.clone(),
                         got: tag_class_value.to_value().get_type().to_owned(),
                     })
@@ -2734,7 +2734,7 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
                     None => match attr.default() {
                         Some(default) => alloc_coerced_attr_value(default, eval)?,
                         None => {
-                            return Err(buck2_error::Error::from(
+                            return Err(bz_error::Error::from(
                                 BazelRepositoryError::MissingModuleExtensionTagAttribute {
                                     tag: tag_config.tag_name.clone(),
                                     attr: attr_name.clone(),
@@ -2747,8 +2747,8 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
                 attrs.insert(attr_name.clone(), value);
             }
             if let Some((attr, _)) = explicit_attrs.into_iter().next() {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "module extension tag `{}` has unknown attribute `{}`",
                     tag_config.tag_name,
                     attr
@@ -2843,8 +2843,8 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
                     value
                 }
                 None => {
-                    return Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "repository_rule `{}` invocation `{}` is missing required attribute `{}`",
                         invocation.rule_id,
                         invocation.name,
@@ -2857,7 +2857,7 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         attrs.insert(attr_name.clone(), value);
     }
     if let Some((attr, _)) = explicit_attrs.into_iter().next() {
-        return Err(buck2_error::Error::from(
+        return Err(bz_error::Error::from(
             BazelRepositoryError::RepositoryRuleUnknownAttribute {
                 rule: invocation.rule_id.to_string(),
                 attr,
@@ -3123,7 +3123,7 @@ fn repository_ctx_output_path_from_value(
     if let Some(path) = value.unpack_str() {
         return repository_ctx_output_path_from_relative_path(path, working_dir);
     }
-    Err(buck2_error::Error::from(
+    Err(bz_error::Error::from(
         BazelRepositoryError::RepositoryCtxOutputPathUnsupportedValue(value.get_type().to_owned()),
     )
     .into())
@@ -3174,7 +3174,7 @@ fn repository_ctx_output_path_from_resolved_path(
         && path_buf.starts_with(working_dir_buf)
     {
         let relative = path_buf.strip_prefix(working_dir_buf).map_err(|_| {
-            buck2_error::Error::from(
+            bz_error::Error::from(
                 BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
                     path: path.to_owned(),
                     working_dir: working_dir.to_owned(),
@@ -3185,7 +3185,7 @@ fn repository_ctx_output_path_from_resolved_path(
         return repository_ctx_output_path_from_relative_path(relative.as_ref(), working_dir);
     }
 
-    Err(buck2_error::Error::from(
+    Err(bz_error::Error::from(
         BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
             path: path.to_owned(),
             working_dir: working_dir.to_owned(),
@@ -3205,7 +3205,7 @@ fn repository_ctx_output_path_from_relative_path(
             std::path::Component::Normal(part) => normalized.push(part),
             std::path::Component::ParentDir => {
                 if !normalized.pop() {
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
                             path: path.to_owned(),
                             working_dir: working_dir.to_owned(),
@@ -3215,7 +3215,7 @@ fn repository_ctx_output_path_from_relative_path(
                 }
             }
             std::path::Component::RootDir | std::path::Component::Prefix(_) => {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
                         path: path.to_owned(),
                         working_dir: working_dir.to_owned(),
@@ -3234,8 +3234,8 @@ pub(crate) fn take_repository_ctx_files<'v>(
     let repository_ctx = repository_ctx
         .downcast_ref::<StarlarkRepositoryContext<'v>>()
         .ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected repository_ctx, got `{}`",
                 repository_ctx.get_type()
             )
@@ -3258,8 +3258,8 @@ fn repository_ctx_current_generated_files(
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "repository_ctx could not stat generated file `{}`: {}",
                     path.to_string_lossy(),
                     error
@@ -3273,8 +3273,8 @@ fn repository_ctx_current_generated_files(
         let content = match fs::read(&path) {
             Ok(content) => content,
             Err(error) => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "repository_ctx could not read generated file `{}`: {}",
                     path.to_string_lossy(),
                     error
@@ -3301,8 +3301,8 @@ pub(crate) fn take_repository_ctx_path_label_deps<'v>(
     let repository_ctx = repository_ctx
         .downcast_ref::<StarlarkRepositoryContext>()
         .ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected repository_ctx, got `{}`",
                 repository_ctx.get_type()
             )
@@ -3316,8 +3316,8 @@ pub(crate) fn take_repository_ctx_recorded_inputs<'v>(
     let repository_ctx = repository_ctx
         .downcast_ref::<StarlarkRepositoryContext>()
         .ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected repository_ctx, got `{}`",
                 repository_ctx.get_type()
             )
@@ -3331,8 +3331,8 @@ pub(crate) fn take_module_ctx_path_label_deps<'v>(
     let module_ctx = module_ctx
         .downcast_ref::<StarlarkModuleExtensionContext>()
         .ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected module_ctx, got `{}`",
                 module_ctx.get_type()
             )
@@ -3346,8 +3346,8 @@ pub(crate) fn take_module_ctx_recorded_inputs<'v>(
     let module_ctx = module_ctx
         .downcast_ref::<StarlarkModuleExtensionContext>()
         .ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "expected module_ctx, got `{}`",
                 module_ctx.get_type()
             )
@@ -3484,12 +3484,12 @@ fn module_ctx_path_from_value_relative_to<'v>(
     Ok(path)
 }
 
-fn repository_ctx_clean_working_dir(working_dir: &str) -> buck2_error::Result<()> {
+fn repository_ctx_clean_working_dir(working_dir: &str) -> bz_error::Result<()> {
     let working_dir = repository_path_for_write(working_dir)?;
     if working_dir.exists() {
         fs::remove_dir_all(&working_dir).map_err(|error| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "repository_ctx could not clean `{}` before retry: {}",
                 working_dir.to_string_lossy(),
                 error
@@ -3497,8 +3497,8 @@ fn repository_ctx_clean_working_dir(working_dir: &str) -> buck2_error::Result<()
         })?;
     }
     fs::create_dir_all(&working_dir).map_err(|error| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Tier0,
             "repository_ctx could not create `{}` before retry: {}",
             working_dir.to_string_lossy(),
             error
@@ -3506,9 +3506,9 @@ fn repository_ctx_clean_working_dir(working_dir: &str) -> buck2_error::Result<()
     })
 }
 
-fn repository_ctx_patch_strip(strip: i32, patch: &str) -> buck2_error::Result<u32> {
+fn repository_ctx_patch_strip(strip: i32, patch: &str) -> bz_error::Result<u32> {
     u32::try_from(strip).map_err(|_| {
-        buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+        bz_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
             patch: patch.to_owned(),
             error: format!("strip must be non-negative, got `{strip}`"),
         })
@@ -3537,14 +3537,14 @@ fn repository_ctx_write_bytes(path: &str, bytes: &[u8], executable: bool) -> sta
     let write_path = repository_path_for_write(path)?;
     if let Some(parent) = write_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxWriteFile {
+            bz_error::Error::from(BazelRepositoryError::RepositoryCtxWriteFile {
                 path: write_path.to_string_lossy().into_owned(),
                 error: e.to_string(),
             })
         })?;
     }
     fs::write(&write_path, bytes).map_err(|e| {
-        buck2_error::Error::from(BazelRepositoryError::RepositoryCtxWriteFile {
+        bz_error::Error::from(BazelRepositoryError::RepositoryCtxWriteFile {
             path: write_path.to_string_lossy().into_owned(),
             error: e.to_string(),
         })
@@ -3555,7 +3555,7 @@ fn repository_ctx_write_bytes(path: &str, bytes: &[u8], executable: bool) -> sta
             use std::os::unix::fs::PermissionsExt;
 
             fs::set_permissions(&write_path, fs::Permissions::from_mode(0o755)).map_err(|e| {
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxWriteFile {
+                bz_error::Error::from(BazelRepositoryError::RepositoryCtxWriteFile {
                     path: write_path.to_string_lossy().into_owned(),
                     error: e.to_string(),
                 })
@@ -3778,7 +3778,7 @@ fn repository_ctx_validate_external_inputs_ready(
             if let Some(dep) = repository_ctx_external_input_dep(&path) {
                 record_dep(dep);
             }
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::RepositoryCtxExecuteFailed {
                     program: program.to_owned(),
                     error: format!(
@@ -3865,7 +3865,7 @@ async fn repository_ctx_execute_output_async(
     let stream = spawn_command_and_stream_events(
         command,
         Some(Duration::from_secs(timeout as u64)),
-        futures::future::pending::<buck2_error::Result<GatherOutputStatus>>(),
+        futures::future::pending::<bz_error::Result<GatherOutputStatus>>(),
         DefaultStatusDecoder,
         DefaultKillProcess::default(),
         None,
@@ -3939,7 +3939,7 @@ fn repository_ctx_reject_nonblocking_download(
     if block {
         Ok(())
     } else {
-        Err(buck2_error::Error::from(
+        Err(bz_error::Error::from(
             BazelRepositoryError::RepositoryCtxNonblockingDownloadUnsupported { function },
         )
         .into())
@@ -3996,7 +3996,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         }
         let read_path = repository_path_for_read(&template_path);
         let mut content = fs::read_to_string(&read_path).map_err(|e| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxTemplateReadFile {
+            bz_error::Error::from(BazelRepositoryError::RepositoryCtxTemplateReadFile {
                 path: template_path.clone(),
                 error: e.to_string(),
             })
@@ -4062,7 +4062,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         }
         let read_path = repository_path_for_read(&path);
         let bytes = fs::read(&read_path).map_err(|e| {
-            buck2_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
+            bz_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
                 path: path.clone(),
                 error: e.to_string(),
             })
@@ -4109,8 +4109,8 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<StarlarkRepositoryMetadata> {
         let _unused = this;
         if reproducible && !attrs_for_reproducibility.entries.is_empty() {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "attrs_for_reproducibility can only be specified if reproducible is False"
             )
             .into());
@@ -4123,7 +4123,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] message: &str,
     ) -> starlark::Result<NoneType> {
         let _unused = this;
-        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress {
+        bz_events::dispatch::instant_event(bz_data::BzlmodProgress {
             progress: message.to_owned(),
         });
         Ok(NoneType)
@@ -4145,7 +4145,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             fs::remove_file(&write_path)
         };
         result.map_err(|e| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxDeletePath {
+            bz_error::Error::from(BazelRepositoryError::RepositoryCtxDeletePath {
                 path: write_path.to_string_lossy().into_owned(),
                 error: e.to_string(),
             })
@@ -4172,7 +4172,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let patch_path_abs = repository_path_for_read_abs_relative_to(&patch_path, working_dir);
         if patch_path_abs.is_dir() {
             return Err(
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+                bz_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
                     patch: patch_path.clone(),
                     error: "attempting to use a directory as patch file".to_owned(),
                 })
@@ -4181,14 +4181,14 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         }
         let working_dir_abs = repository_path_for_write(working_dir)?;
         fs::create_dir_all(&working_dir_abs).map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+            bz_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
                 patch: patch_path.clone(),
                 error: error.to_string(),
             })
         })?;
         let strip = repository_ctx_patch_strip(strip, &patch_path)?;
         apply_unified_patch_file(&working_dir_abs, &patch_path_abs, strip).map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+            bz_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
                 patch: patch_path,
                 error: error.to_string(),
             })
@@ -4221,7 +4221,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             )?;
             if output.return_code != 0 {
                 return Err(
-                    buck2_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
+                    bz_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
                         target,
                         link,
                         error: repository_ctx_latin1_output(&output.stderr),
@@ -4244,7 +4244,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             && !repository_ctx_external_input_ready(&target_path)
         {
             return Err(
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
+                bz_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
                     target,
                     link,
                     error: "external symlink target is not materialized".to_owned(),
@@ -4259,7 +4259,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         }
         if let Some(parent) = link_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
+                bz_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
                     target: target.clone(),
                     link: link.clone(),
                     error: error.to_string(),
@@ -4267,7 +4267,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             })?;
         }
         repository_ctx_create_symlink(&target_path, &link_path).map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
+            bz_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
                 target,
                 link,
                 error: error.to_string(),
@@ -4282,13 +4282,13 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         if program.is_empty() {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::RepositoryCtxWhichEmptyProgram,
             )
             .into());
         }
         if program.contains('/') || program.contains('\\') {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::RepositoryCtxWhichInvalidProgram(program.to_owned()),
             )
             .into());
@@ -4301,7 +4301,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let path = repository_ctx_command_executor(this)
             .which(program, &path, &repo_env, repository_ctx_working_dir(this))
             .map_err(|error| {
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxWhichFailed {
+                bz_error::Error::from(BazelRepositoryError::RepositoryCtxWhichFailed {
                     program: program.to_owned(),
                     error,
                 })
@@ -4329,7 +4329,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             .map(|arg| repository_ctx_command_arg(arg, &repository_working_dir, eval))
             .collect::<starlark::Result<Vec<_>>>()?;
         if arguments.is_empty() {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::RepositoryCtxExecuteEmptyArguments,
             )
             .into());
@@ -4386,17 +4386,17 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             repository_path_for_write(&working_directory)?
         };
         fs::create_dir_all(&working_directory).map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+            bz_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
                 program: program.clone(),
                 error: error.to_string(),
             })
         })?;
         command.current_dir(working_directory);
-        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress { progress });
+        bz_events::dispatch::instant_event(bz_data::BzlmodProgress { progress });
         let output = repository_ctx_command_executor(this)
             .execute(command, &repository_working_dir, timeout, quiet)
             .map_err(|error| {
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                bz_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
                     program: program.clone(),
                     error,
                 })
@@ -4491,10 +4491,10 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         repository_ctx_reject_nonblocking_download(block, "repository_ctx.download_and_extract")?;
         let working_dir = repository_ctx_working_dir(this);
         let archive_name = if r#type.is_empty() {
-            ".buck2_download_and_extract.archive".to_owned()
+            ".bz_download_and_extract.archive".to_owned()
         } else {
             format!(
-                ".buck2_download_and_extract.archive.{}",
+                ".bz_download_and_extract.archive.{}",
                 r#type.trim_start_matches('.')
             )
         };
@@ -4680,7 +4680,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] message: &str,
     ) -> starlark::Result<NoneType> {
         let _unused = this;
-        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress {
+        bz_events::dispatch::instant_event(bz_data::BzlmodProgress {
             progress: message.to_owned(),
         });
         Ok(NoneType)
@@ -4703,7 +4703,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             .map(|arg| repository_ctx_command_arg(arg, &repository_working_dir, eval))
             .collect::<starlark::Result<Vec<_>>>()?;
         if arguments.is_empty() {
-            return Err(buck2_error::Error::from(
+            return Err(bz_error::Error::from(
                 BazelRepositoryError::RepositoryCtxExecuteEmptyArguments,
             )
             .into());
@@ -4758,17 +4758,17 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             repository_path_for_write(&working_directory)?
         };
         fs::create_dir_all(&working_directory).map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+            bz_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
                 program: program.clone(),
                 error: error.to_string(),
             })
         })?;
         command.current_dir(working_directory);
-        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress { progress });
+        bz_events::dispatch::instant_event(bz_data::BzlmodProgress { progress });
         let output = module_ctx_command_executor(this)
             .execute(command, &repository_working_dir, timeout, quiet)
             .map_err(|error| {
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                bz_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
                     program: program.clone(),
                     error,
                 })
@@ -4804,7 +4804,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         }
         let read_path = repository_path_for_read(&path);
         let bytes = fs::read(&read_path).map_err(|e| {
-            buck2_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
+            bz_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
                 path: path.clone(),
                 error: e.to_string(),
             })
@@ -4914,7 +4914,7 @@ pub(crate) fn register_bazel_repository_globals(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRepositoryRule<'v>> {
         let implementation = implementation.ok_or_else(|| {
-            buck2_error::Error::from(BazelRepositoryError::MissingRepositoryRuleImplementation)
+            bz_error::Error::from(BazelRepositoryError::MissingRepositoryRuleImplementation)
         })?;
         Ok(StarlarkRepositoryRule::new(
             implementation,

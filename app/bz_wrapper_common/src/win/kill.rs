@@ -22,11 +22,11 @@ pub(crate) fn process_creation_time(process: &Process) -> Option<Duration> {
     proc_handle.process_creation_time().ok()
 }
 
-pub(crate) fn process_exists(pid: Pid) -> buck2_error::Result<bool> {
+pub(crate) fn process_exists(pid: Pid) -> bz_error::Result<bool> {
     Ok(WinapiProcessHandle::open_for_info(pid).is_some())
 }
 
-pub(crate) fn kill(pid: Pid) -> buck2_error::Result<Option<KilledProcessHandleImpl>> {
+pub(crate) fn kill(pid: Pid) -> bz_error::Result<Option<KilledProcessHandleImpl>> {
     let handle = match WinapiProcessHandle::open_for_terminate(pid) {
         Some(proc_handle) => proc_handle,
         None => return Ok(None),
@@ -44,7 +44,7 @@ pub(crate) struct KilledProcessHandleImpl {
 }
 
 impl KilledProcessHandleImpl {
-    pub(crate) fn has_exited(&self) -> buck2_error::Result<bool> {
+    pub(crate) fn has_exited(&self) -> bz_error::Result<bool> {
         self.handle.has_exited()
     }
 }

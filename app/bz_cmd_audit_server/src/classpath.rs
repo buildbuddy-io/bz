@@ -9,14 +9,14 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::classpath::AuditClasspathCommand;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::classpath::AuditClasspathCommand;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 use crate::ServerAuditSubcommand;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum AuditClasspathError {
     #[error(
@@ -30,9 +30,9 @@ impl ServerAuditSubcommand for AuditClasspathCommand {
     async fn server_execute(
         &self,
         _server_ctx: &dyn ServerCommandContextTrait,
-        mut _stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut _stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Err(AuditClasspathError::Deprecated.into())
     }
 }

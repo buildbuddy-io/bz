@@ -8,12 +8,12 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::callable::register_provider;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_build_api::interpreter::rule_defs::provider::callable::register_provider;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use indoc::indoc;
 
 #[test]
-fn test_provider() -> buck2_error::Result<()> {
+fn test_provider() -> bz_error::Result<()> {
     // TODO: test restricting field names
     let mut tester = Tester::new().unwrap();
     tester.additional_globals(register_provider);

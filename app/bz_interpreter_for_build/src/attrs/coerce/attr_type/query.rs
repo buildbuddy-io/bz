@@ -10,18 +10,18 @@
 
 use std::collections::BTreeMap;
 
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_error::internal_error;
-use buck2_node::attrs::attr_type::query::QueryAttr;
-use buck2_node::attrs::attr_type::query::QueryAttrBase;
-use buck2_node::attrs::attr_type::query::QueryAttrType;
-use buck2_node::attrs::attr_type::query::ResolvedQueryLiterals;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
-use buck2_node::provider_id_set::ProviderIdSet;
-use buck2_query::query::syntax::simple::functions::QueryLiteralVisitor;
-use buck2_query_parser::parse_expr;
+use bz_core::provider::label::ProvidersLabel;
+use bz_error::internal_error;
+use bz_node::attrs::attr_type::query::QueryAttr;
+use bz_node::attrs::attr_type::query::QueryAttrBase;
+use bz_node::attrs::attr_type::query::QueryAttrType;
+use bz_node::attrs::attr_type::query::ResolvedQueryLiterals;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::provider_id_set::ProviderIdSet;
+use bz_query::query::syntax::simple::functions::QueryLiteralVisitor;
+use bz_query_parser::parse_expr;
 use starlark::typing::Ty;
 use starlark::values::Value;
 
@@ -32,14 +32,14 @@ pub trait QueryAttrTypeExt {
     fn coerce(
         ctx: &dyn AttrCoercionContext,
         query: String,
-    ) -> buck2_error::Result<QueryAttrBase<ProvidersLabel>>;
+    ) -> bz_error::Result<QueryAttrBase<ProvidersLabel>>;
 }
 
 impl QueryAttrTypeExt for QueryAttrType {
     fn coerce(
         ctx: &dyn AttrCoercionContext,
         query: String,
-    ) -> buck2_error::Result<QueryAttrBase<ProvidersLabel>> {
+    ) -> bz_error::Result<QueryAttrBase<ProvidersLabel>> {
         // parse the expr to do validation and to extract the literals.
         let parsed_query = parse_expr(&query)?;
 
@@ -49,7 +49,7 @@ impl QueryAttrTypeExt for QueryAttrType {
         }
 
         impl<'q> QueryLiteralVisitor<'q> for Collector<'q> {
-            fn target_pattern(&mut self, pattern: &'q str) -> buck2_error::Result<()> {
+            fn target_pattern(&mut self, pattern: &'q str) -> bz_error::Result<()> {
                 // TODO(cjhopman): We could probably parse the pattern first. This would likely at least give a better error message when the query contains a non-literal target pattern.
                 // We could optimize this to do less work for duplicates, but it's generally not helpful.
                 let label = self.ctx.coerce_providers_label(pattern)?;
@@ -98,7 +98,7 @@ impl AttrTypeCoerce for QueryAttrType {
         _configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         Ok(CoercedAttr::Query(Box::new(QueryAttr {
             query: Self::coerce(ctx, value.unpack_str_err()?.to_owned())?,
             providers: ProviderIdSet::EMPTY,

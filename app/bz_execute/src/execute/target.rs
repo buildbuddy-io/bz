@@ -15,7 +15,7 @@ pub trait CommandExecutionTarget: Send + Sync + Debug {
 
     fn re_affinity_key(&self) -> String;
 
-    fn as_proto_action_key(&self) -> buck2_data::ActionKey;
+    fn as_proto_action_key(&self) -> bz_data::ActionKey;
 
-    fn as_proto_action_name(&self) -> buck2_data::ActionName;
+    fn as_proto_action_name(&self) -> bz_data::ActionName;
 }

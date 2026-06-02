@@ -5,7 +5,7 @@ pub(super) fn write_repository_rule_repo(
     dest: &AbsNormPath,
     canonical_repo_name: &str,
     setup: &BzlmodRepositoryRuleSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some(source_dir) = &setup.source_dir {
         let source_dir = ProjectRelativePath::new(source_dir.as_ref())?;
         let source = project_fs.resolve(source_dir);
@@ -50,7 +50,7 @@ pub(super) fn write_cc_autoconf_toolchains_repo(
     dest_rel: &ProjectRelativePath,
     dest: &AbsNormPath,
     setup: &BzlmodCcAutoconfToolchainsSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     write_generated_module_file(dest, "local_config_cc_toolchains")?;
     let template =
         cc_toolchains_build_template(project_fs, dest_rel, &setup.parent_canonical_repo_name)?;
@@ -84,7 +84,7 @@ pub(super) fn local_config_cc_toolchains_build_file(template: &str) -> String {
 pub(super) fn write_cc_autoconf_repo(
     dest: &AbsNormPath,
     _setup: &BzlmodCcAutoconfSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     write_generated_module_file(dest, "local_config_cc")?;
     write_cc_autoconf_support_files(dest)?;
     let build = local_config_cc_build_file();
@@ -96,7 +96,7 @@ pub(super) fn write_cc_autoconf_repo(
 pub(super) fn write_xcode_config_repo(
     dest: &AbsNormPath,
     _setup: &BzlmodXcodeConfigSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     write_generated_module_file(dest, "local_config_xcode")?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("xcode_config.bzl")?),
@@ -190,7 +190,7 @@ fn detect_host_macos_sdk_version() -> Option<String> {
     }
 }
 
-fn write_cc_autoconf_support_files(dest: &AbsNormPath) -> buck2_error::Result<()> {
+fn write_cc_autoconf_support_files(dest: &AbsNormPath) -> bz_error::Result<()> {
     let cc = host_tool_path("CC", "cc");
     let cxx = host_tool_path("CXX", "c++");
     let ar = if std::env::consts::OS == "macos" {
@@ -736,7 +736,7 @@ armeabi_cc_toolchain_config = rule(
 pub(super) fn write_shell_config_repo(
     dest: &AbsNormPath,
     _setup: &BzlmodShellConfigSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     write_generated_module_file(dest, "local_config_shell")?;
     let mut toolchains = Vec::new();
     for (os, default_shell_path) in [
@@ -796,7 +796,7 @@ pub(super) fn write_shell_config_repo(
 pub(super) fn write_python_hub_repo(
     dest: &AbsNormPath,
     _setup: &BzlmodPythonHubSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     write_generated_module_file(dest, "pythons_hub")?;
     let build = r#"package(default_visibility = ["//visibility:public"])
 
@@ -834,7 +834,7 @@ fn cc_toolchains_build_template(
     project_fs: &ProjectRoot,
     dest_rel: &ProjectRelativePath,
     parent_canonical_repo_name: &str,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let Some((external_cells_root, _)) = dest_rel
         .as_str()
         .split_once(BZLMOD_GENERATED_EXTERNAL_CELL_PATH_MARKER)
@@ -857,7 +857,7 @@ fn read_bzlmod_module_file_text(
     external_cells_root: &str,
     canonical_repo_name: &str,
     path: &str,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let materialized_path = ProjectRelativePathBuf::unchecked_new(format!(
         "{external_cells_root}/{BZLMOD_EXTERNAL_CELL_KIND}/{canonical_repo_name}/{path}",
     ));
@@ -908,7 +908,7 @@ pub(super) fn host_cc_cpu_value() -> &'static str {
 pub(super) fn write_bazel_features_version_repo(
     dest: &AbsNormPath,
     setup: &BzlmodBazelFeaturesVersionSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     write_generated_module_file(dest, "bazel_features_version")?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("BUILD.bazel")?),
@@ -926,7 +926,7 @@ pub(super) fn write_bazel_features_version_repo(
 pub(super) fn write_host_platform_repo(
     dest: &AbsNormPath,
     setup: &BzlmodHostPlatformSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     write_generated_module_file(dest, "host_platform")?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("BUILD.bazel")?),
@@ -1013,7 +1013,7 @@ pub(super) fn write_bazel_features_globals_repo(
     dest_rel: &ProjectRelativePath,
     dest: &AbsNormPath,
     setup: &BzlmodBazelFeaturesGlobalsSetup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let Some((external_cells_root, _)) = dest_rel
         .as_str()
         .split_once(BZLMOD_GENERATED_EXTERNAL_CELL_PATH_MARKER)
@@ -1074,7 +1074,7 @@ struct BazelFeatureGlobalVersions {
 fn parse_bazel_features_globals_dict(
     text: &str,
     path: &ProjectRelativePath,
-) -> buck2_error::Result<Vec<(String, BazelFeatureGlobalVersions)>> {
+) -> bz_error::Result<Vec<(String, BazelFeatureGlobalVersions)>> {
     let mut values = Vec::new();
     let mut in_dict = false;
 

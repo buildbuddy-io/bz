@@ -17,8 +17,8 @@ pub(crate) fn spawn_background_process_on_windows<'a>(
     _exe: &Path,
     _args: impl IntoIterator<Item = &'a str>,
     _daemon_env_vars: &[(&OsStr, &OsStr)],
-) -> buck2_error::Result<()> {
-    #[derive(Debug, buck2_error::Error)]
+) -> bz_error::Result<()> {
+    #[derive(Debug, bz_error::Error)]
     #[error("not Windows")]
     #[buck2(tag = Tier0)]
     struct NotWindows;
@@ -32,7 +32,7 @@ pub(crate) fn spawn_background_process_on_windows<'a>(
     exe: &Path,
     args: impl IntoIterator<Item = &'a str>,
     daemon_env_vars: &[(&OsStr, &OsStr)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     use std::ffi::OsString;
     use std::ffi::c_void;
     use std::io;
@@ -40,10 +40,10 @@ pub(crate) fn spawn_background_process_on_windows<'a>(
     use std::os::windows::ffi::OsStrExt;
     use std::ptr;
 
-    use buck2_error::BuckErrorContext;
-    use buck2_error::buck2_error;
-    use buck2_hash::StdBuckHashMap;
-    use buck2_util::os::win::os_str::os_str_to_wide_null_term;
+    use bz_error::BuckErrorContext;
+    use bz_error::bz_error;
+    use bz_hash::StdBuckHashMap;
+    use bz_util::os::win::os_str::os_str_to_wide_null_term;
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::Foundation::FALSE;
     use windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP;
@@ -118,10 +118,10 @@ pub(crate) fn spawn_background_process_on_windows<'a>(
     }
 
     // Inspiration from rust stdlib at `std/src/sys/windows/process.rs`
-    fn ensure_no_nuls(s: &OsStr) -> buck2_error::Result<&OsStr> {
+    fn ensure_no_nuls(s: &OsStr) -> bz_error::Result<&OsStr> {
         if s.encode_wide().any(|b| b == 0) {
-            Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "{}",
                 format!("null byte found in provided data: {s:?}")
             ))
@@ -132,7 +132,7 @@ pub(crate) fn spawn_background_process_on_windows<'a>(
 
     fn make_envp(
         extra_env_vars: &[(&OsStr, &OsStr)],
-    ) -> buck2_error::Result<(*mut c_void, Box<[u16]>)> {
+    ) -> bz_error::Result<(*mut c_void, Box<[u16]>)> {
         if extra_env_vars.is_empty() {
             Ok((ptr::null_mut(), Box::new([])))
         } else {
@@ -195,7 +195,7 @@ pub(crate) fn spawn_background_process_on_windows<'a>(
         )
     };
     if status == 0 {
-        return Err(buck2_error::Error::from(io::Error::last_os_error()));
+        return Err(bz_error::Error::from(io::Error::last_os_error()));
     }
     unsafe { CloseHandle(pinfo.hThread) };
     unsafe { CloseHandle(pinfo.hProcess) };

@@ -10,7 +10,7 @@
 
 use std::cell::RefCell;
 
-use buck2_core::bzl::ImportPath;
+use bz_core::bzl::ImportPath;
 
 #[derive(Debug)]
 pub struct BzlEvalCtx {
@@ -26,7 +26,7 @@ impl BzlEvalCtx {
         }
     }
 
-    pub(crate) fn set_bzl_visibility(&self, visibility: Vec<String>) -> buck2_error::Result<()> {
+    pub(crate) fn set_bzl_visibility(&self, visibility: Vec<String>) -> bz_error::Result<()> {
         let mut bzl_visibility = self.bzl_visibility.borrow_mut();
         if bzl_visibility.is_some() {
             return Err(BzlEvalError::VisibilityAlreadySet.into());
@@ -36,7 +36,7 @@ impl BzlEvalCtx {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BzlEvalError {
     #[error("load visibility may not be set more than once")]

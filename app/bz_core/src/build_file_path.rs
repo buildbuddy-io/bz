@@ -9,8 +9,8 @@
  */
 
 use allocative::Allocative;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
 use dupe::Dupe;
 use pagable::Pagable;
 

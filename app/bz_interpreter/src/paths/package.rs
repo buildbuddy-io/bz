@@ -9,11 +9,11 @@
  */
 
 use allocative::Allocative;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::name::CellName;
-use buck2_fs::paths::file_name::FileName;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::name::CellName;
+use bz_fs::paths::file_name::FileName;
 use pagable::Pagable;
 
 /// Represents the path to a PACKAGE file.

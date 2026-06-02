@@ -12,15 +12,15 @@ use std::convert::Infallible;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::actions::RegisteredAction;
-use buck2_build_api::actions::query::ActionQueryNode;
-use buck2_build_api::actions::query::OwnedActionAttr;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_error::buck2_error;
-use buck2_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
-use buck2_query::query::environment::QueryTarget;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::actions::RegisteredAction;
+use bz_build_api::actions::query::ActionQueryNode;
+use bz_build_api::actions::query::OwnedActionAttr;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_error::bz_error;
+use bz_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
+use bz_query::query::environment::QueryTarget;
 use derive_more::Display;
 use dupe::Dupe;
 use serde::Serialize;
@@ -85,8 +85,8 @@ fn action_methods(builder: &mut MethodsBuilder) {
             BaseDeferredKey::TargetLabel(label) => {
                 Ok(StarlarkConfiguredTargetLabel::new(label.dupe()))
             }
-            _ => Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            _ => Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "BXL and anon targets not supported."
             )
             .into()),
@@ -139,7 +139,7 @@ fn action_query_node_value_methods(builder: &mut MethodsBuilder) {
         let mut result = Vec::new();
         this.0.attrs_for_each(|k, v| {
             result.push((k.to_owned(), StarlarkActionAttr(v.to_owned())));
-            buck2_error::Ok(())
+            bz_error::Ok(())
         })?;
 
         Ok(heap.alloc(AllocStruct(result)))

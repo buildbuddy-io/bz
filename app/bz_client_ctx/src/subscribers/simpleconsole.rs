@@ -18,25 +18,25 @@ use std::time::Instant;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_event_observer::display;
-use buck2_event_observer::display::TargetDisplayOptions;
-use buck2_event_observer::display::display_file_watcher_end;
-use buck2_event_observer::event_observer::EventObserver;
-use buck2_event_observer::event_observer::EventObserverExtra;
-use buck2_event_observer::humanized::CommaSeparatedCount;
-use buck2_event_observer::humanized::HumanizedBytes;
-use buck2_event_observer::unpack_event::VisitorError;
-use buck2_event_observer::unpack_event::unpack_event;
-use buck2_event_observer::verbosity::Verbosity;
-use buck2_event_observer::what_ran::WhatRanCommandConsoleFormat;
-use buck2_event_observer::what_ran::WhatRanOutputCommand;
-use buck2_event_observer::what_ran::WhatRanOutputWriter;
-use buck2_events::BuckEvent;
-use buck2_hash::StdBuckHashMap;
-use buck2_health_check::interface::HealthCheckType;
-use buck2_health_check::report::DisplayReport;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_error::conversion::from_any_with_tag;
+use bz_event_observer::display;
+use bz_event_observer::display::TargetDisplayOptions;
+use bz_event_observer::display::display_file_watcher_end;
+use bz_event_observer::event_observer::EventObserver;
+use bz_event_observer::event_observer::EventObserverExtra;
+use bz_event_observer::humanized::CommaSeparatedCount;
+use bz_event_observer::humanized::HumanizedBytes;
+use bz_event_observer::unpack_event::VisitorError;
+use bz_event_observer::unpack_event::unpack_event;
+use bz_event_observer::verbosity::Verbosity;
+use bz_event_observer::what_ran::WhatRanCommandConsoleFormat;
+use bz_event_observer::what_ran::WhatRanOutputCommand;
+use bz_event_observer::what_ran::WhatRanOutputWriter;
+use bz_events::BuckEvent;
+use bz_hash::StdBuckHashMap;
+use bz_health_check::interface::HealthCheckType;
+use bz_health_check::report::DisplayReport;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
 use superconsole::DrawMode;
@@ -104,7 +104,7 @@ macro_rules! echo {
 fn echo_system_warning_exponential(
     warning: &HealthCheckType,
     msg: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if let Some((last_reported, every_x)) =
         ELAPSED_HEALTH_CHECK_MAP.lock().unwrap().get_mut(warning)
     {
@@ -160,7 +160,7 @@ pub struct SimpleConsole<E> {
     // Whether to show "Waiting for daemon..." when no root spans are received
     expect_spans: bool,
     pub(crate) observer: EventObserver<E>,
-    action_errors: Vec<buck2_data::ActionError>,
+    action_errors: Vec<bz_data::ActionError>,
     last_print_time: Instant,
     last_shown_snapshot_ts: Option<SystemTime>,
     health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
@@ -241,7 +241,7 @@ where
     pub(crate) async fn update_event_observer(
         &mut self,
         event: &Arc<BuckEvent>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.observer.observe(event).await
     }
 
@@ -249,7 +249,7 @@ where
         self.last_print_time = Instant::now();
     }
 
-    fn print_stats_while_waiting(&mut self) -> buck2_error::Result<()> {
+    fn print_stats_while_waiting(&mut self) -> bz_error::Result<()> {
         let snapshots = self.observer().two_snapshots();
 
         if let Some(h) = self
@@ -274,8 +274,8 @@ where
         } else {
             let mut parts = Vec::with_capacity(2);
             if let Some((_, snapshot)) = &snapshots.last {
-                if let Some(buck2_rss) = snapshot.buck2_rss {
-                    parts.push(format!("RSS: {}", HumanizedBytes::new(buck2_rss)));
+                if let Some(bz_rss) = snapshot.bz_rss {
+                    parts.push(format!("RSS: {}", HumanizedBytes::new(bz_rss)));
                 }
             }
             if let Some(cpu) = snapshots.cpu_percents() {
@@ -303,7 +303,7 @@ where
         Ok(())
     }
 
-    fn print_action_error(&mut self, error: &buck2_data::ActionError) -> buck2_error::Result<()> {
+    fn print_action_error(&mut self, error: &bz_data::ActionError) -> bz_error::Result<()> {
         let error_display = display::display_action_error(error, TargetDisplayOptions::for_log())?;
         let stream_bytes = error_display.output_stream_byte_count();
 
@@ -332,9 +332,9 @@ where
 
     pub(crate) async fn handle_file_watcher_end(
         &mut self,
-        file_watcher: &buck2_data::FileWatcherEnd,
+        file_watcher: &bz_data::FileWatcherEnd,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if self.verbosity.print_status() {
             for x in display_file_watcher_end(file_watcher) {
                 echo!("{}", x)?;
@@ -344,7 +344,7 @@ where
         Ok(())
     }
 
-    pub(crate) async fn handle_event(&mut self, event: &Arc<BuckEvent>) -> buck2_error::Result<()> {
+    pub(crate) async fn handle_event(&mut self, event: &Arc<BuckEvent>) -> bz_error::Result<()> {
         self.update_event_observer(event).await?;
 
         self.handle_event_inner(event).await?;
@@ -361,52 +361,52 @@ where
         Ok(())
     }
 
-    async fn handle_event_inner(&mut self, event: &BuckEvent) -> buck2_error::Result<()> {
+    async fn handle_event_inner(&mut self, event: &BuckEvent) -> bz_error::Result<()> {
         match unpack_event(event)? {
-            buck2_event_observer::unpack_event::UnpackedBuckEvent::SpanStart(_, _, data) => {
+            bz_event_observer::unpack_event::UnpackedBuckEvent::SpanStart(_, _, data) => {
                 match data {
-                    buck2_data::span_start_event::Data::Command(command) => {
+                    bz_data::span_start_event::Data::Command(command) => {
                         self.handle_command_start(command, event).await
                     }
                     _ => Ok(()),
                 }
             }
-            buck2_event_observer::unpack_event::UnpackedBuckEvent::SpanEnd(_, _, data) => {
+            bz_event_observer::unpack_event::UnpackedBuckEvent::SpanEnd(_, _, data) => {
                 match data {
-                    buck2_data::span_end_event::Data::Command(command) => {
+                    bz_data::span_end_event::Data::Command(command) => {
                         self.handle_command_end(command, event).await
                     }
-                    buck2_data::span_end_event::Data::ActionExecution(action) => {
+                    bz_data::span_end_event::Data::ActionExecution(action) => {
                         self.handle_action_execution_end(action, event).await
                     }
-                    buck2_data::span_end_event::Data::FileWatcher(file_watcher) => {
+                    bz_data::span_end_event::Data::FileWatcher(file_watcher) => {
                         self.handle_file_watcher_end(file_watcher, event).await
                     }
                     _ => Ok(()),
                 }
             }
-            buck2_event_observer::unpack_event::UnpackedBuckEvent::Instant(_, _, data) => {
+            bz_event_observer::unpack_event::UnpackedBuckEvent::Instant(_, _, data) => {
                 match data {
-                    buck2_data::instant_event::Data::ConsoleMessage(message) => {
+                    bz_data::instant_event::Data::ConsoleMessage(message) => {
                         self.handle_stderr(&message.message).await
                     }
-                    buck2_data::instant_event::Data::ConsoleWarning(message) => {
+                    bz_data::instant_event::Data::ConsoleWarning(message) => {
                         self.handle_stderr(&message.message).await
                     }
-                    buck2_data::instant_event::Data::ReSession(session) => {
+                    bz_data::instant_event::Data::ReSession(session) => {
                         let message = format!("RE Session: {}", session.session_id);
                         self.handle_stderr(&message).await
                     }
-                    buck2_data::instant_event::Data::StructuredError(err) => {
+                    bz_data::instant_event::Data::StructuredError(err) => {
                         self.handle_structured_error(err, event).await
                     }
-                    buck2_data::instant_event::Data::TestDiscovery(discovery) => {
+                    bz_data::instant_event::Data::TestDiscovery(discovery) => {
                         self.handle_test_discovery(discovery, event).await
                     }
-                    buck2_data::instant_event::Data::TestResult(result) => {
+                    bz_data::instant_event::Data::TestResult(result) => {
                         self.handle_test_result(result, event).await
                     }
-                    buck2_data::instant_event::Data::TagEvent(tags) => {
+                    bz_data::instant_event::Data::TagEvent(tags) => {
                         if tags.tags.contains(&"which-dice:Legacy".to_owned()) {
                             self.handle_stderr("Note: using deprecated legacy dice.")
                                 .await?;
@@ -414,10 +414,10 @@ where
 
                         Ok(())
                     }
-                    buck2_data::instant_event::Data::ActionError(error) => {
+                    bz_data::instant_event::Data::ActionError(error) => {
                         self.handle_action_error(error).await
                     }
-                    buck2_data::instant_event::Data::StreamingOutput(message) => {
+                    bz_data::instant_event::Data::StreamingOutput(message) => {
                         crate::stdio::print_bytes(message.message.as_bytes())?;
                         crate::stdio::flush()?;
                         self.notify_printed();
@@ -426,9 +426,9 @@ where
                     _ => Ok(()),
                 }
             }
-            buck2_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanStart(_, _)
-            | buck2_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanEnd(_, _)
-            | buck2_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedInstant(_, _) => {
+            bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanStart(_, _)
+            | bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanEnd(_, _)
+            | bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedInstant(_, _) => {
                 Err(VisitorError::MissingField(event.clone()).into())
             }
         }
@@ -436,9 +436,9 @@ where
 
     pub(crate) async fn handle_structured_error(
         &mut self,
-        err: &buck2_data::StructuredError,
+        err: &bz_data::StructuredError,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if err.quiet {
             return Ok(());
         }
@@ -449,9 +449,9 @@ where
 
     async fn handle_command_start(
         &mut self,
-        _command: &buck2_data::CommandStart,
+        _command: &bz_data::CommandStart,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if cfg!(fbcode_build) {
             echo!(
                 "Buck UI: https://www.internalfb.com/buck2/{}",
@@ -466,9 +466,9 @@ where
 
     async fn handle_command_end(
         &mut self,
-        _command: &buck2_data::CommandEnd,
+        _command: &bz_data::CommandEnd,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let snapshots = self.observer().two_snapshots();
 
         if self.verbosity.print_status() && self.observer().action_stats().log_stats() {
@@ -513,9 +513,9 @@ where
 
     pub(crate) async fn handle_action_execution_end(
         &mut self,
-        action: &buck2_data::ActionExecutionEnd,
+        action: &bz_data::ActionExecutionEnd,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let action_id = display::display_action_identity(
             action.key.as_ref(),
             action.name.as_ref(),
@@ -560,8 +560,8 @@ where
 
     pub(crate) async fn handle_action_error(
         &mut self,
-        error: &buck2_data::ActionError,
-    ) -> buck2_error::Result<()> {
+        error: &bz_data::ActionError,
+    ) -> bz_error::Result<()> {
         self.print_action_error(error)?;
         self.action_errors.push(error.clone());
         Ok(())
@@ -569,19 +569,19 @@ where
 
     async fn handle_test_discovery(
         &mut self,
-        test_info: &buck2_data::TestDiscovery,
+        test_info: &bz_data::TestDiscovery,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(data) = &test_info.data {
             match data {
-                buck2_data::test_discovery::Data::Session(buck2_data::TestSessionInfo {
+                bz_data::test_discovery::Data::Session(bz_data::TestSessionInfo {
                     info,
                     ..
                 }) => {
                     echo!("Test session: {}", info)?;
                     self.notify_printed();
                 }
-                buck2_data::test_discovery::Data::Tests(..) => {}
+                bz_data::test_discovery::Data::Tests(..) => {}
             }
         }
 
@@ -590,15 +590,15 @@ where
 
     async fn handle_test_result(
         &mut self,
-        result: &buck2_data::TestResult,
+        result: &bz_data::TestResult,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(msg) = display::format_test_result(result, self.verbosity)? {
             let mut buffer = String::new();
 
             for line in msg {
                 writeln!(buffer, "{}", line.to_unstyled())
-                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?;
             }
             match self.output_limit.emit(buffer.len()) {
                 EmitResult::Emit => {
@@ -614,7 +614,7 @@ where
         Ok(())
     }
 
-    pub(crate) async fn handle_stderr(&mut self, stderr: &str) -> buck2_error::Result<()> {
+    pub(crate) async fn handle_stderr(&mut self, stderr: &str) -> bz_error::Result<()> {
         echo!("{}", stderr)?;
         self.notify_printed();
         Ok(())
@@ -641,7 +641,7 @@ where
         None
     }
 
-    fn echo_health_check_warning(&self, report: &DisplayReport) -> buck2_error::Result<()> {
+    fn echo_health_check_warning(&self, report: &DisplayReport) -> bz_error::Result<()> {
         if let Some(warning) = &report.health_issue {
             echo_system_warning_exponential(&report.health_check_type, &warning.to_string())?;
         }
@@ -654,7 +654,7 @@ impl<E> EventSubscriber for SimpleConsole<E>
 where
     E: EventObserverExtra,
 {
-    async fn handle_output(&mut self, raw_output: &[u8]) -> buck2_error::Result<()> {
+    async fn handle_output(&mut self, raw_output: &[u8]) -> bz_error::Result<()> {
         // We expect output that gets here to already have been buffered if possible (because it
         // primarily gets to us through a GRPC layer that already needs buffering), so we
         // unconditionally flush it.
@@ -664,21 +664,21 @@ where
         Ok(())
     }
 
-    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
+    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> bz_error::Result<()> {
         for ev in events {
             self.handle_event(ev).await?;
         }
         Ok(())
     }
 
-    async fn handle_tailer_stderr(&mut self, stderr: &str) -> buck2_error::Result<()> {
+    async fn handle_tailer_stderr(&mut self, stderr: &str) -> bz_error::Result<()> {
         self.handle_stderr(stderr).await
     }
 
     async fn handle_command_result(
         &mut self,
-        result: &buck2_cli_proto::CommandResult,
-    ) -> buck2_error::Result<()> {
+        result: &bz_cli_proto::CommandResult,
+    ) -> bz_error::Result<()> {
         let errors = std::mem::take(&mut self.action_errors);
 
         if !errors.is_empty() {
@@ -697,7 +697,7 @@ where
             .await
     }
 
-    async fn tick(&mut self, _: &Tick) -> buck2_error::Result<()> {
+    async fn tick(&mut self, _: &Tick) -> bz_error::Result<()> {
         if self.verbosity.print_status()
             && Instant::now() - self.last_print_time > KEEPALIVE_TIME_LIMIT
         {
@@ -786,7 +786,7 @@ where
         Ok(())
     }
 
-    async fn handle_error(&mut self, _error: &buck2_error::Error) -> buck2_error::Result<()> {
+    async fn handle_error(&mut self, _error: &bz_error::Error) -> bz_error::Result<()> {
         // We don't need to do any cleanup to exit.
         Ok(())
     }
@@ -795,7 +795,7 @@ where
 struct PrintDebugCommandToStderr;
 
 impl WhatRanOutputWriter for PrintDebugCommandToStderr {
-    fn emit_command(&mut self, command: WhatRanOutputCommand<'_>) -> buck2_error::Result<()> {
+    fn emit_command(&mut self, command: WhatRanOutputCommand<'_>) -> bz_error::Result<()> {
         echo!(
             "{}",
             WhatRanCommandConsoleFormat {

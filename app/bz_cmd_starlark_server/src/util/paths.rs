@@ -11,25 +11,25 @@
 use std::ops::Deref;
 
 use async_recursion::async_recursion;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::file_ops::metadata::FileType;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::io::IoProvider;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellResolver;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::package::PackageLabel;
-use buck2_fs::paths::file_name::FileName;
-use buck2_interpreter::paths::package::PackageFilePath;
-use buck2_interpreter::paths::path::OwnedStarlarkPath;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
+use bz_client_ctx::path_arg::PathArg;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::file_ops::metadata::FileType;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_common::io::IoProvider;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::bxl::BxlFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellResolver;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::package::PackageLabel;
+use bz_fs::paths::file_name::FileName;
+use bz_interpreter::paths::package::PackageFilePath;
+use bz_interpreter::paths::path::OwnedStarlarkPath;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
 use dice::DiceComputations;
 use dupe::Dupe;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum StarlarkFilesError {
     #[error("File not found, `{0}`")]
@@ -48,7 +48,7 @@ async fn starlark_file(
     cell_resolver: &CellResolver,
     io: &dyn IoProvider,
     files: &mut Vec<OwnedStarlarkPath>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let cell_path = cell_resolver.get_cell_path(&proj_path);
     if recursive.is_some()
         && DiceFileComputations::is_ignored(ctx, cell_path.as_ref())
@@ -131,7 +131,7 @@ pub(crate) async fn starlark_files(
     context: &dyn ServerCommandContextTrait,
     cell_resolver: &CellResolver,
     io: &dyn IoProvider,
-) -> buck2_error::Result<Vec<OwnedStarlarkPath>> {
+) -> bz_error::Result<Vec<OwnedStarlarkPath>> {
     let mut files = Vec::new();
 
     for path in paths {

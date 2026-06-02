@@ -12,36 +12,36 @@ use std::fs::File;
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_cli_proto::BuildRequest;
-use buck2_cli_proto::build_request::BuildProviders;
-use buck2_cli_proto::build_request::Materializations;
-use buck2_cli_proto::build_request::Uploads;
-use buck2_cli_proto::build_request::build_providers;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::command_outcome::CommandOutcome;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonCommandOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::build::CommonBuildOptions;
-use buck2_client_ctx::common::target_cfg::TargetCfgWithUniverseOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::NoPartialResultHandler;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_common::argv::Argv;
-use buck2_common::argv::SanitizedArgv;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_wrapper_common::BUCK_WRAPPER_START_TIME_ENV_VAR;
-use buck2_wrapper_common::BUCK_WRAPPER_UUID_ENV_VAR;
-use buck2_wrapper_common::BUCK2_WRAPPER_ENV_VAR;
+use bz_cli_proto::BuildRequest;
+use bz_cli_proto::build_request::BuildProviders;
+use bz_cli_proto::build_request::Materializations;
+use bz_cli_proto::build_request::Uploads;
+use bz_cli_proto::build_request::build_providers;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::command_outcome::CommandOutcome;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonCommandOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::build::CommonBuildOptions;
+use bz_client_ctx::common::target_cfg::TargetCfgWithUniverseOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::NoPartialResultHandler;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::path_arg::PathArg;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_common::argv::Argv;
+use bz_common::argv::SanitizedArgv;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_wrapper_common::BUCK_WRAPPER_START_TIME_ENV_VAR;
+use bz_wrapper_common::BUCK_WRAPPER_UUID_ENV_VAR;
+use bz_wrapper_common::BUCK2_WRAPPER_ENV_VAR;
 use serde::Serialize;
 
 use crate::commands::build::print_buck_ui_and_rating;
@@ -228,10 +228,10 @@ impl StreamingCommand for RunCommand {
 
         if self.emit_shell {
             if cfg!(unix) {
-                buck2_client_ctx::println!(
+                bz_client_ctx::println!(
                     "{}",
                     shlex::try_join(run_args.iter().map(|a| a.as_str()))
-                        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?
+                        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?
                 )?;
                 return ExitResult::success();
             } else {
@@ -286,7 +286,7 @@ struct CommandArgsFile {
     print_command: bool,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 pub enum RunCommandError {
     #[error("Target `{0}` is not a binary rule (only binary rules can be `run`)")]

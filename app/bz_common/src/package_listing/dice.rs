@@ -10,11 +10,11 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::package::PackageLabel;
-use buck2_events::dispatch::async_record_root_spans;
-use buck2_events::span::SpanId;
-use buck2_util::time_span::TimeSpan;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::package::PackageLabel;
+use bz_events::dispatch::async_record_root_spans;
+use bz_events::span::SpanId;
+use bz_util::time_span::TimeSpan;
 use dice::DiceComputations;
 use dice::Key;
 use dice::OkPagableValueSerialize;
@@ -69,7 +69,7 @@ pub struct PackageListingKeyActivationData {
 
 #[async_trait]
 impl Key for PackageListingKey {
-    type Value = buck2_error::Result<PackageListing>;
+    type Value = bz_error::Result<PackageListing>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -104,7 +104,7 @@ impl Key for PackageListingKey {
 
 #[async_trait]
 impl Key for PackageListingWithStrategyKey {
-    type Value = buck2_error::Result<PackageListing>;
+    type Value = bz_error::Result<PackageListing>;
 
     async fn compute(
         &self,
@@ -142,14 +142,14 @@ pub struct DicePackageListingResolver<'compute, 'dice>(pub &'compute mut DiceCom
 
 #[async_trait]
 impl PackageListingResolver for DicePackageListingResolver<'_, '_> {
-    async fn resolve(&mut self, package: PackageLabel) -> buck2_error::Result<PackageListing> {
+    async fn resolve(&mut self, package: PackageLabel) -> bz_error::Result<PackageListing> {
         self.0.compute(&PackageListingKey(package)).await?
     }
 
     async fn get_enclosing_package(
         &mut self,
         path: CellPathRef<'async_trait>,
-    ) -> buck2_error::Result<PackageLabel> {
+    ) -> bz_error::Result<PackageLabel> {
         InterpreterPackageListingResolver::new(self.0)
             .get_enclosing_package(path)
             .await
@@ -159,7 +159,7 @@ impl PackageListingResolver for DicePackageListingResolver<'_, '_> {
         &mut self,
         path: CellPathRef<'async_trait>,
         enclosing_violation_path: CellPathRef<'async_trait>,
-    ) -> buck2_error::Result<Vec<PackageLabel>> {
+    ) -> bz_error::Result<Vec<PackageLabel>> {
         InterpreterPackageListingResolver::new(self.0)
             .get_enclosing_packages(path, enclosing_violation_path)
             .await
@@ -170,7 +170,7 @@ impl DicePackageListingResolver<'_, '_> {
     pub async fn resolve_package_listing(
         &mut self,
         package: PackageLabel,
-    ) -> buck2_error::Result<PackageListing> {
+    ) -> bz_error::Result<PackageListing> {
         self.resolve(package).await
     }
 
@@ -178,7 +178,7 @@ impl DicePackageListingResolver<'_, '_> {
         &mut self,
         package: PackageLabel,
         strategy: PackageListingStrategy,
-    ) -> buck2_error::Result<PackageListing> {
+    ) -> bz_error::Result<PackageListing> {
         self.0
             .compute(&PackageListingWithStrategyKey { package, strategy })
             .await?

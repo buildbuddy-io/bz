@@ -8,15 +8,15 @@
  * above-listed licenses.
  */
 
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::name::CellName;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::visibility::VisibilityPattern;
-use buck2_node::visibility::VisibilitySpecification;
-use buck2_node::visibility::VisibilityWithinViewBuilder;
-use buck2_node::visibility::WithinViewSpecification;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::name::CellName;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::visibility::VisibilityPattern;
+use bz_node::visibility::VisibilitySpecification;
+use bz_node::visibility::VisibilityWithinViewBuilder;
+use bz_node::visibility::WithinViewSpecification;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -32,7 +32,7 @@ use crate::interpreter::build_context::PerFileTypeContext;
 use crate::interpreter::module_internals::ModuleInternals;
 use crate::super_package::eval_ctx::PackageFileVisibilityFields;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum PackageFileError {
     #[error("`package()` function can be used at most once per `PACKAGE` file")]
@@ -52,7 +52,7 @@ fn parse_visibility(
     cell_name: CellName,
     cell_resolver: &CellResolver,
     cell_alias_resolver: &CellAliasResolver,
-) -> buck2_error::Result<VisibilitySpecification> {
+) -> bz_error::Result<VisibilitySpecification> {
     let mut builder = VisibilityWithinViewBuilder::with_capacity(patterns.len());
     for pattern in patterns {
         match normalize_visibility_pattern(pattern, None) {
@@ -76,7 +76,7 @@ fn parse_within_view(
     cell_name: CellName,
     cell_resolver: &CellResolver,
     cell_alias_resolver: &CellAliasResolver,
-) -> buck2_error::Result<WithinViewSpecification> {
+) -> bz_error::Result<WithinViewSpecification> {
     let mut builder = VisibilityWithinViewBuilder::with_capacity(patterns.len());
     for pattern in patterns {
         match normalize_visibility_pattern(pattern, None) {
@@ -98,7 +98,7 @@ fn parse_within_view(
 fn parse_build_default_visibility(
     patterns: &[String],
     internals: &ModuleInternals,
-) -> buck2_error::Result<VisibilitySpecification> {
+) -> bz_error::Result<VisibilitySpecification> {
     let mut builder = VisibilityWithinViewBuilder::with_capacity(patterns.len());
     for pattern in patterns {
         add_visibility_pattern(
@@ -110,7 +110,7 @@ fn parse_build_default_visibility(
     Ok(builder.build_visibility())
 }
 
-fn parse_bazel_bool_arg(name: &'static str, value: Value<'_>) -> buck2_error::Result<bool> {
+fn parse_bazel_bool_arg(name: &'static str, value: Value<'_>) -> bz_error::Result<bool> {
     if let Some(value) = value.unpack_bool() {
         return Ok(value);
     }
@@ -174,7 +174,7 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
         match &build_context.additional {
             PerFileTypeContext::Package(package_file_eval_ctx) => {
                 if default_visibility.is_some() {
-                    return Err(buck2_error::Error::from(PackageFileError::BuildFileOnlyArg(
+                    return Err(bz_error::Error::from(PackageFileError::BuildFileOnlyArg(
                         "default_visibility",
                     ))
                     .into());
@@ -198,7 +198,7 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
                     ("transitive_visibility", transitive_visibility.is_some()),
                 ] {
                     if name.1 {
-                        return Err(buck2_error::Error::from(PackageFileError::BuildFileOnlyArg(
+                        return Err(bz_error::Error::from(PackageFileError::BuildFileOnlyArg(
                             name.0,
                         ))
                         .into());
@@ -223,7 +223,7 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
 
                 match &mut *package_file_eval_ctx.visibility.borrow_mut() {
                     Some(_) => {
-                        return Err(buck2_error::Error::from(PackageFileError::AtMostOnce).into());
+                        return Err(bz_error::Error::from(PackageFileError::AtMostOnce).into());
                     }
                     x => {
                         *x = Some(PackageFileVisibilityFields {
@@ -237,13 +237,13 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
             PerFileTypeContext::Build(internals) => {
                 if inherit.is_some() {
                     return Err(
-                        buck2_error::Error::from(PackageFileError::PackageFileOnlyArg("inherit"))
+                        bz_error::Error::from(PackageFileError::PackageFileOnlyArg("inherit"))
                             .into(),
                     );
                 }
                 if visibility.is_some() {
                     return Err(
-                        buck2_error::Error::from(PackageFileError::PackageFileOnlyArg(
+                        bz_error::Error::from(PackageFileError::PackageFileOnlyArg(
                             "visibility",
                         ))
                         .into(),
@@ -251,7 +251,7 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
                 }
                 if within_view.is_some() {
                     return Err(
-                        buck2_error::Error::from(PackageFileError::PackageFileOnlyArg(
+                        bz_error::Error::from(PackageFileError::PackageFileOnlyArg(
                             "within_view",
                         ))
                         .into(),
@@ -259,7 +259,7 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
                 }
 
                 if !has_bazel_build_arg {
-                    return Err(buck2_error::Error::from(PackageFileError::NoArguments).into());
+                    return Err(bz_error::Error::from(PackageFileError::NoArguments).into());
                 };
                 if let Some(default_visibility) = default_visibility {
                     let default_visibility =

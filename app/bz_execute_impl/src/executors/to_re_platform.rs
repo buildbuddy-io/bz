@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_core::execution_types::executor_config::RePlatformFields;
+use bz_core::execution_types::executor_config::RePlatformFields;
 use remote_execution as RE;
 
 pub trait RePlatformFieldsToRePlatform {

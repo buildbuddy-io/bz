@@ -10,9 +10,9 @@
 
 use std::marker::PhantomData;
 
-use buck2_cli_proto::PartialResult;
-use buck2_cli_proto::partial_result;
-use buck2_events::dispatch::EventDispatcher;
+use bz_cli_proto::PartialResult;
+use bz_cli_proto::partial_result;
+use bz_events::dispatch::EventDispatcher;
 use dice_futures::cancellation::CancellationPoller;
 
 use crate::stdout_partial_output::StdoutPartialOutput;
@@ -46,7 +46,7 @@ where
     }
 }
 
-impl PartialResultDispatcher<buck2_cli_proto::StdoutBytes> {
+impl PartialResultDispatcher<bz_cli_proto::StdoutBytes> {
     pub fn as_writer(&mut self) -> StdoutPartialOutput<'_> {
         StdoutPartialOutput::new(self, self.cancellation.clone())
     }

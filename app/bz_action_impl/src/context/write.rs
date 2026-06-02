@@ -12,32 +12,32 @@ use std::collections::HashSet;
 use std::fmt;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_build_api::actions::impls::json::JsonUnpack;
-use buck2_build_api::actions::impls::workspace_status::WorkspaceStatusKind;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
-use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
-use buck2_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
-use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
-use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueUnpack;
-use buck2_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value::CommandLineArg;
-use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
-use buck2_core::fs::buck_out_path::BazelOutputPathKind;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_execute::execute::request::OutputType;
-use buck2_hash::BuckHashMap;
-use buck2_hash::buck_indexset;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_build_api::actions::impls::json::JsonUnpack;
+use bz_build_api::actions::impls::workspace_status::WorkspaceStatusKind;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use bz_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use bz_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
+use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use bz_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueUnpack;
+use bz_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::value::CommandLineArg;
+use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
+use bz_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
+use bz_core::fs::buck_out_path::BazelOutputPathKind;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_execute::execute::request::OutputType;
+use bz_hash::BuckHashMap;
+use bz_hash::buck_indexset;
 use dupe::Dupe;
 use either::Either;
 use parking_lot::Mutex;
@@ -75,7 +75,7 @@ use crate::actions::impls::write::UnregisteredWriteAction;
 use crate::actions::impls::write_json::UnregisteredWriteJsonAction;
 use crate::actions::impls::write_macros::UnregisteredWriteMacrosToFileAction;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum WriteActionError {
     #[error(
@@ -127,7 +127,7 @@ impl<'v> StarlarkValue<'v> for StarlarkTemplateDict {
     }
 }
 
-fn template_dict_format_joined(format: &str, value: &str) -> buck2_error::Result<String> {
+fn template_dict_format_joined(format: &str, value: &str) -> bz_error::Result<String> {
     let mut converted = String::with_capacity(format.len() + value.len());
     let mut idx = 0;
     let mut found = false;
@@ -135,8 +135,8 @@ fn template_dict_format_joined(format: &str, value: &str) -> buck2_error::Result
         let next = idx + next;
         converted.push_str(&format[idx..next]);
         let Some(escaped) = format[next + 1..].chars().next() else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid value for parameter `format_joined`: expected string with a single `%s`, got `{}`",
                 format
             ));
@@ -147,16 +147,16 @@ fn template_dict_format_joined(format: &str, value: &str) -> buck2_error::Result
                 found = true;
             }
             's' => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Invalid value for parameter `format_joined`: expected string with a single `%s`, got `{}`",
                     format
                 ));
             }
             '%' => converted.push('%'),
             _ => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Invalid value for parameter `format_joined`: expected string with a single `%s`, got `{}`",
                     format
                 ));
@@ -166,8 +166,8 @@ fn template_dict_format_joined(format: &str, value: &str) -> buck2_error::Result
     }
     converted.push_str(&format[idx..]);
     if !found {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid value for parameter `format_joined`: expected string with a single `%s`, got `{}`",
             format
         ));
@@ -182,8 +182,8 @@ fn template_dict_push_mapped_string(
     parts: &mut Vec<String>,
 ) -> starlark::Result<()> {
     let Some(value_str) = value.unpack_str() else {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Function provided to map_each must return string, None, or list of strings, but returned list containing element `{}` of type {} for key `{}` and value: {}",
             value.to_repr(),
             value.get_type(),
@@ -221,8 +221,8 @@ fn template_dict_extend_mapped_value(
         }
         return Ok(());
     }
-    Err(buck2_error::buck2_error!(
-        buck2_error::ErrorTag::Input,
+    Err(bz_error::bz_error!(
+        bz_error::ErrorTag::Input,
         "Function provided to map_each must return string, None, or list of strings, but returned type {} for key `{}` and value: {}",
         mapped.get_type(),
         key,
@@ -308,9 +308,9 @@ impl<'v> CommandLineArtifactVisitor<'v> for CommandLineInputVisitor {
 
     fn visit_declared_artifact(
         &mut self,
-        declared_artifact: buck2_artifact::artifact::artifact_type::DeclaredArtifact<'v>,
+        declared_artifact: bz_artifact::artifact::artifact_type::DeclaredArtifact<'v>,
         tags: Vec<&ArtifactTag>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if self.with_associated_artifacts || declared_artifact.has_content_based_path() {
             let artifact = declared_artifact.ensure_bound()?.into_artifact();
             self.visit_input(ArtifactGroup::Artifact(artifact), tags);
@@ -338,8 +338,8 @@ fn bazel_build_info_substitutions<'v>(
     let values = eval.heap().alloc(AllocDict(entries));
     let response = eval.eval_function(transform_func.0, &[values], &[])?;
     let dict = DictRef::from_value(response).ok_or_else(|| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "build info transform callback must return a dict, got `{}`",
             response.get_type()
         )
@@ -348,16 +348,16 @@ fn bazel_build_info_substitutions<'v>(
     let mut substitutions = Vec::with_capacity(dict.len());
     for (key, value) in dict.iter() {
         let Some(key) = key.unpack_str() else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "build info transform callback keys must be strings, got `{}`",
                 key.get_type()
             )
             .into());
         };
         let Some(value) = value.unpack_str() else {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "build info transform callback values must be strings, got `{}`",
                 value.get_type()
             )
@@ -444,8 +444,8 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         let mut seen = HashSet::new();
         for (key, _) in &substitutions {
             if !seen.insert(key.clone()) {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
                     "Multiple entries with same key: `{}`",
                     key
                 )
@@ -618,7 +618,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         fn count_write_to_file_macros(
             args_allowed: bool,
             cli: &dyn CommandLineArgLike,
-        ) -> buck2_error::Result<u32> {
+        ) -> bz_error::Result<u32> {
             if !args_allowed && cli.contains_arg_attr() {
                 return Err(WriteActionError::ArgAttrsDetectedButNotAllowed.into());
             }
@@ -632,7 +632,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                     &mut self,
                     _m: &ResolvedMacro,
                     _artifact_path_mapping: &dyn ArtifactPathMapper,
-                ) -> buck2_error::Result<()> {
+                ) -> bz_error::Result<()> {
                     self.count += 1;
                     Ok(())
                 }
@@ -642,8 +642,8 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                     _gen: &dyn Fn(
                         &dyn CommandLineContext,
                     )
-                        -> buck2_error::Result<Option<RelativePathBuf>>,
-                ) -> buck2_error::Result<()> {
+                        -> bz_error::Result<Option<RelativePathBuf>>,
+                ) -> bz_error::Result<()> {
                     Ok(())
                 }
             }
@@ -657,7 +657,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         fn get_cli_inputs(
             with_inputs: bool,
             cli: &dyn CommandLineArgLike,
-        ) -> buck2_error::Result<SmallSet<ArtifactGroup>> {
+        ) -> bz_error::Result<SmallSet<ArtifactGroup>> {
             let mut visitor = CommandLineInputVisitor::new(with_inputs);
             cli.visit_artifacts(&mut visitor)?;
             Ok(visitor.associated_artifacts)

@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_execute::execute::request::OutputType;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_execute::execute::request::OutputType;
 
 use crate::actions::execute::action_executor::ActionOutputs;
 
 /// This type intentionally does not implement `std::error::Error`. That's because it represents an
 /// "incomplete" error - it needs more information like the command results, action keys, etc.
-/// before it can be turned into a `buck2_build_api::actions::error::ActionError`.
+/// before it can be turned into a `bz_build_api::actions::error::ActionError`.
 #[derive(Debug)]
 pub enum ExecuteError {
     MissingOutputs {
@@ -31,16 +31,16 @@ pub enum ExecuteError {
         real: OutputType,
     },
     Error {
-        error: buck2_error::Error,
+        error: bz_error::Error,
     },
     CommandExecutionError {
         action_outputs: ActionOutputs,
-        error: Option<buck2_error::Error>,
+        error: Option<bz_error::Error>,
     },
 }
 
-impl From<buck2_error::Error> for ExecuteError {
-    fn from(error: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for ExecuteError {
+    fn from(error: bz_error::Error) -> Self {
         Self::Error { error }
     }
 }

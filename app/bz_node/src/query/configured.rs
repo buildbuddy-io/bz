@@ -10,11 +10,11 @@
 
 use std::borrow::Cow;
 
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::graph::node::LabeledNode;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::graph::node::LabeledNode;
 use dupe::Dupe;
 use starlark_map::Hashed;
 
@@ -90,8 +90,8 @@ impl QueryTarget for ConfiguredTargetNode {
 
     fn attr_any_matches(
         attr: &Self::Attr<'_>,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         attr.any_matches(filter)
     }
 

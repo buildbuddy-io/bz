@@ -15,7 +15,7 @@ use starlark::values::none::NoneType;
 
 use crate::interpreter::build_context::BuildContext;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum StarlarkPeakMemoryError {
     #[error("starlark peak memory already set in this file")]
@@ -34,7 +34,7 @@ pub(crate) fn register_set_starlark_peak_allocated_byte_limit(globals: &mut Glob
         let limit = &build_ctx.starlark_peak_allocated_byte_limit;
         if limit.get().is_some() || limit.set(Some(value)).is_err() {
             return Err(
-                buck2_error::Error::from(StarlarkPeakMemoryError::MemorySetInThisFile()).into(),
+                bz_error::Error::from(StarlarkPeakMemoryError::MemorySetInThisFile()).into(),
             );
         }
         Ok(NoneType)

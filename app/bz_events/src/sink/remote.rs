@@ -38,10 +38,10 @@ mod fbcode {
     pub enum RemoteEventSink {}
 
     impl RemoteEventSink {
-        pub async fn send_now(&self, _event: BuckEvent) -> buck2_error::Result<()> {
+        pub async fn send_now(&self, _event: BuckEvent) -> bz_error::Result<()> {
             Ok(())
         }
-        pub async fn send_messages_now(&self, _events: Vec<BuckEvent>) -> buck2_error::Result<()> {
+        pub async fn send_messages_now(&self, _events: Vec<BuckEvent>) -> bz_error::Result<()> {
             Ok(())
         }
     }
@@ -76,7 +76,7 @@ pub use fbcode::*;
 fn new_remote_event_sink_if_fbcode(
     fb: FacebookInit,
     config: ScribeConfig,
-) -> buck2_error::Result<Option<RemoteEventSink>> {
+) -> bz_error::Result<Option<RemoteEventSink>> {
     #[cfg(fbcode_build)]
     {
         Ok(Some(RemoteEventSink::new(fb, scribe_category()?, config)?))
@@ -91,7 +91,7 @@ fn new_remote_event_sink_if_fbcode(
 pub fn new_remote_event_sink_if_enabled(
     fb: FacebookInit,
     config: ScribeConfig,
-) -> buck2_error::Result<Option<RemoteEventSink>> {
+) -> bz_error::Result<Option<RemoteEventSink>> {
     if is_enabled() {
         new_remote_event_sink_if_fbcode(fb, config)
     } else {

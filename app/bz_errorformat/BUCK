@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_errorformat",
+    name = "bz_errorformat",
     srcs = glob(
         ["src/**/*.rs"],
     ),
@@ -11,6 +11,6 @@ rust_library(
         "fbsource//third-party/rust:fancy-regex",
         "fbsource//third-party/rust:nom",
         "fbsource//third-party/rust:tracing",
-        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_error:bz_error",
     ],
 )

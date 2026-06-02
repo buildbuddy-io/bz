@@ -13,21 +13,21 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_common::cas_digest::DataDigester;
-use buck2_common::cas_digest::DigestAlgorithmFamily;
-use buck2_common::external_symlink::ExternalSymlink;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileDigestConfig;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::SourceFileMetadata;
-use buck2_common::file_ops::metadata::Symlink;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_util::strong_hasher::Blake3StrongHasher;
+use bz_common::cas_digest::DataDigester;
+use bz_common::cas_digest::DigestAlgorithmFamily;
+use bz_common::external_symlink::ExternalSymlink;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileDigestConfig;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::SourceFileMetadata;
+use bz_common::file_ops::metadata::Symlink;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_fs::paths::RelativePathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_util::strong_hasher::Blake3StrongHasher;
 use dupe::Dupe;
 use pagable::Pagable;
 
@@ -138,7 +138,7 @@ impl ArtifactValue {
         &self,
         path: &AbsPath,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let ActionDirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(source)) = &self.entry
         else {
             return Ok(self.dupe());
@@ -146,7 +146,7 @@ impl ArtifactValue {
 
         let file_digest_config = FileDigestConfig::source(digest_config.cas_digest_config());
         let digest = FileDigest::from_file(path, file_digest_config)?;
-        let digest = buck2_common::file_ops::metadata::TrackedFileDigest::new(
+        let digest = bz_common::file_ops::metadata::TrackedFileDigest::new(
             digest,
             file_digest_config.as_cas_digest_config(),
         );
@@ -290,7 +290,7 @@ impl ArtifactValue {
         }
     }
 
-    pub fn write_local_action_cache_bytes(&self, bytes: &mut Vec<u8>) -> buck2_error::Result<()> {
+    pub fn write_local_action_cache_bytes(&self, bytes: &mut Vec<u8>) -> bz_error::Result<()> {
         bytes.push(LOCAL_ACTION_CACHE_ARTIFACT_VALUE_VERSION);
         write_action_cache_directory_entry(bytes, &self.entry)?;
         write_action_cache_option_directory(bytes, self.deps.as_ref())?;
@@ -307,12 +307,12 @@ impl ArtifactValue {
     pub fn read_local_action_cache_bytes(
         bytes: &[u8],
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut reader = ActionCacheBytesReader::new(bytes);
         let version = reader.read_u8()?;
         if version != LOCAL_ACTION_CACHE_ARTIFACT_VALUE_VERSION {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "unsupported local action cache artifact value version `{}`",
                 version
             ));
@@ -345,20 +345,20 @@ fn write_action_cache_u64(bytes: &mut Vec<u8>, value: u64) {
     bytes.extend(value.to_le_bytes());
 }
 
-fn write_action_cache_bytes(bytes: &mut Vec<u8>, value: &[u8]) -> buck2_error::Result<()> {
+fn write_action_cache_bytes(bytes: &mut Vec<u8>, value: &[u8]) -> bz_error::Result<()> {
     write_action_cache_u64(bytes, value.len().try_into()?);
     bytes.extend(value);
     Ok(())
 }
 
-fn write_action_cache_str(bytes: &mut Vec<u8>, value: &str) -> buck2_error::Result<()> {
+fn write_action_cache_str(bytes: &mut Vec<u8>, value: &str) -> bz_error::Result<()> {
     write_action_cache_bytes(bytes, value.as_bytes())
 }
 
 fn write_action_cache_digest(
     bytes: &mut Vec<u8>,
-    digest: &buck2_common::file_ops::metadata::TrackedFileDigest,
-) -> buck2_error::Result<()> {
+    digest: &bz_common::file_ops::metadata::TrackedFileDigest,
+) -> bz_error::Result<()> {
     let raw_digest = digest.raw_digest();
     bytes.push(match raw_digest.algorithm() {
         DigestAlgorithmFamily::Sha1 => LOCAL_ACTION_CACHE_DIGEST_SHA1,
@@ -373,7 +373,7 @@ fn write_action_cache_digest(
 fn write_action_cache_directory_member(
     bytes: &mut Vec<u8>,
     member: &ActionDirectoryMember,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match member {
         ActionDirectoryMember::File(file) => {
             bytes.push(LOCAL_ACTION_CACHE_ENTRY_FILE);
@@ -381,8 +381,8 @@ fn write_action_cache_directory_member(
             write_action_cache_bool(bytes, file.is_executable);
         }
         ActionDirectoryMember::SourceFile(_) => {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "source file proxy cannot be stored as a local action cache output value"
             ));
         }
@@ -401,7 +401,7 @@ fn write_action_cache_directory_member(
 fn write_action_cache_directory_entry(
     bytes: &mut Vec<u8>,
     entry: &ActionDirectoryEntry<ActionSharedDirectory>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match entry {
         DirectoryEntry::Leaf(member) => write_action_cache_directory_member(bytes, member),
         DirectoryEntry::Dir(directory) => {
@@ -414,7 +414,7 @@ fn write_action_cache_directory_entry(
 fn write_action_cache_directory(
     bytes: &mut Vec<u8>,
     directory: &ActionSharedDirectory,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let entries = directory.entries();
     write_action_cache_u64(bytes, entries.into_iter().count().try_into()?);
     for (name, entry) in directory.entries() {
@@ -427,7 +427,7 @@ fn write_action_cache_directory(
 fn write_action_cache_option_directory(
     bytes: &mut Vec<u8>,
     directory: Option<&ActionSharedDirectory>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     match directory {
         Some(directory) => {
             write_action_cache_bool(bytes, true);
@@ -448,16 +448,16 @@ impl<'a> ActionCacheBytesReader<'a> {
         Self { bytes, position: 0 }
     }
 
-    fn read_exact(&mut self, len: usize) -> buck2_error::Result<&'a [u8]> {
+    fn read_exact(&mut self, len: usize) -> bz_error::Result<&'a [u8]> {
         let end = self.position.checked_add(len).ok_or_else(|| {
-            buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "local action cache artifact value length overflow"
             )
         })?;
         if end > self.bytes.len() {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "truncated local action cache artifact value"
             ));
         }
@@ -466,43 +466,43 @@ impl<'a> ActionCacheBytesReader<'a> {
         Ok(value)
     }
 
-    fn read_u8(&mut self) -> buck2_error::Result<u8> {
+    fn read_u8(&mut self) -> bz_error::Result<u8> {
         Ok(self.read_exact(1)?[0])
     }
 
-    fn read_bool(&mut self) -> buck2_error::Result<bool> {
+    fn read_bool(&mut self) -> bz_error::Result<bool> {
         match self.read_u8()? {
             0 => Ok(false),
             1 => Ok(true),
-            value => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            value => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "invalid bool `{}` in local action cache artifact value",
                 value
             )),
         }
     }
 
-    fn read_u64(&mut self) -> buck2_error::Result<u64> {
+    fn read_u64(&mut self) -> bz_error::Result<u64> {
         Ok(u64::from_le_bytes(self.read_exact(8)?.try_into()?))
     }
 
-    fn read_bytes(&mut self) -> buck2_error::Result<&'a [u8]> {
+    fn read_bytes(&mut self) -> bz_error::Result<&'a [u8]> {
         let len: usize = self.read_u64()?.try_into()?;
         self.read_exact(len)
     }
 
-    fn read_str(&mut self) -> buck2_error::Result<&'a str> {
+    fn read_str(&mut self) -> bz_error::Result<&'a str> {
         Ok(std::str::from_utf8(self.read_bytes()?)?)
     }
 
-    fn read_digest_algorithm(&mut self) -> buck2_error::Result<DigestAlgorithmFamily> {
+    fn read_digest_algorithm(&mut self) -> bz_error::Result<DigestAlgorithmFamily> {
         match self.read_u8()? {
             LOCAL_ACTION_CACHE_DIGEST_SHA1 => Ok(DigestAlgorithmFamily::Sha1),
             LOCAL_ACTION_CACHE_DIGEST_SHA256 => Ok(DigestAlgorithmFamily::Sha256),
             LOCAL_ACTION_CACHE_DIGEST_BLAKE3 => Ok(DigestAlgorithmFamily::Blake3),
             LOCAL_ACTION_CACHE_DIGEST_BLAKE3_KEYED => Ok(DigestAlgorithmFamily::Blake3Keyed),
-            value => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            value => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "invalid digest algorithm `{}` in local action cache artifact value",
                 value
             )),
@@ -512,11 +512,11 @@ impl<'a> ActionCacheBytesReader<'a> {
     fn read_digest(
         &mut self,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<buck2_common::file_ops::metadata::TrackedFileDigest> {
+    ) -> bz_error::Result<bz_common::file_ops::metadata::TrackedFileDigest> {
         let algorithm = self.read_digest_algorithm()?;
         let size = self.read_u64()?;
         let digest = FileDigest::from_digest_bytes(algorithm, self.read_bytes()?, size)?;
-        Ok(buck2_common::file_ops::metadata::TrackedFileDigest::new(
+        Ok(bz_common::file_ops::metadata::TrackedFileDigest::new(
             digest,
             digest_config.cas_digest_config(),
         ))
@@ -526,7 +526,7 @@ impl<'a> ActionCacheBytesReader<'a> {
         &mut self,
         tag: u8,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<ActionDirectoryMember> {
+    ) -> bz_error::Result<ActionDirectoryMember> {
         Ok(match tag {
             LOCAL_ACTION_CACHE_ENTRY_FILE => ActionDirectoryMember::File(FileMetadata {
                 digest: self.read_digest(digest_config)?,
@@ -542,8 +542,8 @@ impl<'a> ActionCacheBytesReader<'a> {
                 )?))
             }
             value => {
-                return Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "invalid directory member tag `{}` in local action cache artifact value",
                     value
                 ));
@@ -554,7 +554,7 @@ impl<'a> ActionCacheBytesReader<'a> {
     fn read_action_cache_directory_entry(
         &mut self,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<ActionDirectoryEntry<ActionSharedDirectory>> {
+    ) -> bz_error::Result<ActionDirectoryEntry<ActionSharedDirectory>> {
         let tag = self.read_u8()?;
         if tag == LOCAL_ACTION_CACHE_ENTRY_DIRECTORY {
             return Ok(DirectoryEntry::Dir(
@@ -569,7 +569,7 @@ impl<'a> ActionCacheBytesReader<'a> {
     fn read_action_cache_builder_entry(
         &mut self,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<DirectoryEntry<ActionDirectoryBuilder, ActionDirectoryMember>> {
+    ) -> bz_error::Result<DirectoryEntry<ActionDirectoryBuilder, ActionDirectoryMember>> {
         let tag = self.read_u8()?;
         if tag == LOCAL_ACTION_CACHE_ENTRY_DIRECTORY {
             return Ok(DirectoryEntry::Dir(
@@ -585,7 +585,7 @@ impl<'a> ActionCacheBytesReader<'a> {
     fn read_action_cache_directory(
         &mut self,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<ActionSharedDirectory> {
+    ) -> bz_error::Result<ActionSharedDirectory> {
         let len = self.read_u64()?;
         let mut builder = ActionDirectoryBuilder::empty();
         for _ in 0..len {
@@ -601,7 +601,7 @@ impl<'a> ActionCacheBytesReader<'a> {
     fn read_action_cache_option_directory(
         &mut self,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<Option<ActionSharedDirectory>> {
+    ) -> bz_error::Result<Option<ActionSharedDirectory>> {
         if self.read_bool()? {
             Ok(Some(self.read_action_cache_directory(digest_config)?))
         } else {
@@ -609,10 +609,10 @@ impl<'a> ActionCacheBytesReader<'a> {
         }
     }
 
-    fn expect_eof(&self) -> buck2_error::Result<()> {
+    fn expect_eof(&self) -> bz_error::Result<()> {
         if self.position != self.bytes.len() {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "trailing data in local action cache artifact value"
             ));
         }
@@ -696,7 +696,7 @@ fn action_cache_add_file_digest(fingerprint: &mut DataDigester, digest: &FileDig
 
 fn action_cache_add_tracked_file_digest(
     fingerprint: &mut DataDigester,
-    digest: &buck2_common::file_ops::metadata::TrackedFileDigest,
+    digest: &bz_common::file_ops::metadata::TrackedFileDigest,
 ) {
     let raw_digest = digest.raw_digest();
     fingerprint.update(&[raw_digest.algorithm() as u8]);
@@ -767,7 +767,7 @@ fn action_cache_write_file_digest(bytes: &mut Vec<u8>, digest: &FileDigest) {
 
 fn action_cache_write_tracked_file_digest(
     bytes: &mut Vec<u8>,
-    digest: &buck2_common::file_ops::metadata::TrackedFileDigest,
+    digest: &bz_common::file_ops::metadata::TrackedFileDigest,
 ) {
     let raw_digest = digest.raw_digest();
     bytes.push(raw_digest.algorithm() as u8);
@@ -816,7 +816,7 @@ fn action_cache_write_entry(
 mod tests {
     use super::*;
 
-    use buck2_common::file_ops::metadata::TrackedFileDigest;
+    use bz_common::file_ops::metadata::TrackedFileDigest;
 
     fn file_value(content: &[u8], is_executable: bool) -> ArtifactValue {
         ArtifactValue::file(FileMetadata {
@@ -828,7 +828,7 @@ mod tests {
         })
     }
 
-    fn assert_local_action_cache_roundtrip(value: ArtifactValue) -> buck2_error::Result<()> {
+    fn assert_local_action_cache_roundtrip(value: ArtifactValue) -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
         let mut bytes = Vec::new();
         value.write_local_action_cache_bytes(&mut bytes)?;
@@ -838,7 +838,7 @@ mod tests {
     }
 
     #[test]
-    fn local_action_cache_roundtrips_file() -> buck2_error::Result<()> {
+    fn local_action_cache_roundtrips_file() -> bz_error::Result<()> {
         assert_local_action_cache_roundtrip(
             file_value(b"hello", true).with_content_based_path_hash(
                 ContentBasedPathHash::Specified("0123456789abcdef".to_owned()),
@@ -847,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn local_action_cache_roundtrips_symlink() -> buck2_error::Result<()> {
+    fn local_action_cache_roundtrips_symlink() -> bz_error::Result<()> {
         assert_local_action_cache_roundtrip(ArtifactValue::new(
             DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(Arc::new(Symlink::new(
                 RelativePathBuf::from("target"),
@@ -857,7 +857,7 @@ mod tests {
     }
 
     #[test]
-    fn local_action_cache_roundtrips_directory() -> buck2_error::Result<()> {
+    fn local_action_cache_roundtrips_directory() -> bz_error::Result<()> {
         let digest_config = DigestConfig::testing_default();
         let mut builder = ActionDirectoryBuilder::empty();
         builder.insert(

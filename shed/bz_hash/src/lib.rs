@@ -19,8 +19,8 @@
 //! # Usage
 //!
 //! ```
-//! use buck2_hash::BuckHashMap;
-//! use buck2_hash::BuckHashSet;
+//! use bz_hash::BuckHashMap;
+//! use bz_hash::BuckHashSet;
 //!
 //! let mut map: BuckHashMap<String, i32> = BuckHashMap::default();
 //! map.insert("key".to_string(), 42);
@@ -33,8 +33,8 @@
 //! and [`BuckIndexSet`]:
 //!
 //! ```
-//! use buck2_hash::BuckIndexMap;
-//! use buck2_hash::BuckIndexSet;
+//! use bz_hash::BuckIndexMap;
+//! use bz_hash::BuckIndexSet;
 //!
 //! let mut map: BuckIndexMap<String, i32> = BuckIndexMap::default();
 //! map.insert("first".to_string(), 1);
@@ -179,7 +179,7 @@ pub type BuckIndexSet<K> = indexmap::IndexSet<K>;
 /// # Example
 ///
 /// ```
-/// use buck2_hash::buck_indexmap;
+/// use bz_hash::buck_indexmap;
 ///
 /// let map = buck_indexmap! {
 ///     "a" => 1,
@@ -209,7 +209,7 @@ macro_rules! buck_indexmap {
 /// # Example
 ///
 /// ```
-/// use buck2_hash::buck_indexset;
+/// use bz_hash::buck_indexset;
 ///
 /// let set = buck_indexset![1, 2, 3];
 /// assert!(set.contains(&1));
@@ -229,7 +229,7 @@ macro_rules! buck_indexset {
 }
 
 /// The standard library's `DefaultHasher` (SipHash-1-3), wrapped behind a
-/// buck2_hash type alias.
+/// bz_hash type alias.
 ///
 /// This abstraction allows the hasher implementation to be changed centrally
 /// in a future commit. Currently this is identical to

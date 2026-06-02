@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_grpc",
+    name = "bz_grpc",
     srcs = glob(
         ["src/**/*.rs"],
     ),
@@ -15,6 +15,6 @@ rust_library(
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tonic",
         "fbsource//third-party/rust:tower",
-        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_error:bz_error",
     ],
 )

@@ -32,10 +32,10 @@ impl AbsWorkingDir {
         AbsWorkingDir { path }
     }
 
-    pub fn current_dir() -> buck2_error::Result<AbsWorkingDir> {
+    pub fn current_dir() -> bz_error::Result<AbsWorkingDir> {
         let current_dir = AbsPathBuf::new(env::current_dir()?)?;
 
-        #[derive(Debug, buck2_error::Error)]
+        #[derive(Debug, bz_error::Error)]
         #[buck2(tier0)]
         enum CurrentDirError {
             #[error("std::env::current_dir returns non-canonical path: `{}` -> `{}`", _0.display(), _1.display())]

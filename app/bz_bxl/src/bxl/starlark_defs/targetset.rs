@@ -12,8 +12,8 @@ use std::convert::Infallible;
 use std::ops::Deref;
 
 use allocative::Allocative;
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 use derive_more::Display;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
@@ -42,13 +42,13 @@ pub(crate) trait NodeLike = QueryTarget + std::fmt::Debug + Eq + Dupe + AllocNod
 unsafe impl<N: QueryTarget + 'static> starlark::pagable::VtableRegistered for StarlarkTargetSet<N> {}
 
 starlark::register_simple_vtable_entry!(
-    StarlarkTargetSet<buck2_node::nodes::unconfigured::TargetNode>
+    StarlarkTargetSet<bz_node::nodes::unconfigured::TargetNode>
 );
 starlark::register_simple_vtable_entry!(
-    StarlarkTargetSet<buck2_node::nodes::configured::ConfiguredTargetNode>
+    StarlarkTargetSet<bz_node::nodes::configured::ConfiguredTargetNode>
 );
 starlark::register_simple_vtable_entry!(
-    StarlarkTargetSet<buck2_build_api::actions::query::ActionQueryNode>
+    StarlarkTargetSet<bz_build_api::actions::query::ActionQueryNode>
 );
 
 #[derive(Debug, Display, Clone)]

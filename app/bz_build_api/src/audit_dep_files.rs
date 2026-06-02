@@ -12,9 +12,9 @@ use std::future::Future;
 use std::io::Write;
 use std::pin::Pin;
 
-use buck2_core::category::Category;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_util::late_binding::LateBinding;
+use bz_core::category::Category;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_util::late_binding::LateBinding;
 use dice::DiceTransaction;
 
 /// Implementation of `audit dep-files`.
@@ -25,5 +25,5 @@ pub static AUDIT_DEP_FILES: LateBinding<
         Category,
         Option<String>,
         &'a mut (dyn Write + Send),
-    ) -> Pin<Box<dyn Future<Output = buck2_error::Result<()>> + Send + 'a>>,
+    ) -> Pin<Box<dyn Future<Output = bz_error::Result<()>> + Send + 'a>>,
 > = LateBinding::new("AUDIT_DEP_FILES");

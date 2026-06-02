@@ -23,72 +23,72 @@ fn main() -> io::Result<()> {
         "proto/google/rpc/status.proto",
     ];
 
-    let builder = buck2_protoc_dev::configure();
+    let builder = bz_protoc_dev::configure();
     unsafe { builder.setup_protoc() }
         .type_attribute(".", "#[derive(::serde::Serialize, ::serde::Deserialize)]")
         .field_attribute(
             "build.bazel.remote.execution.v2.Action.timeout",
-            "#[serde(with = \"::buck2_data::serialize_duration_as_micros\")]",
+            "#[serde(with = \"::bz_data::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.virtual_execution_duration",
-            "#[serde(with = \"::buck2_data::serialize_duration_as_micros\")]",
+            "#[serde(with = \"::bz_data::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "google.longrunning.WaitOperationRequest.timeout",
-            "#[serde(with = \"::buck2_data::serialize_duration_as_micros\")]",
+            "#[serde(with = \"::bz_data::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "google.api.MethodSettings.LongRunning.initial_poll_delay",
-            "#[serde(with = \"::buck2_data::serialize_duration_as_micros\")]",
+            "#[serde(with = \"::bz_data::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "google.api.MethodSettings.LongRunning.max_poll_delay",
-            "#[serde(with = \"::buck2_data::serialize_duration_as_micros\")]",
+            "#[serde(with = \"::bz_data::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "google.api.MethodSettings.LongRunning.total_poll_timeout",
-            "#[serde(with = \"::buck2_data::serialize_duration_as_micros\")]",
+            "#[serde(with = \"::bz_data::serialize_duration_as_micros\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.NodeProperties.mtime",
-            "#[serde(with = \"::buck2_data::serialize_timestamp\")]",
+            "#[serde(with = \"::bz_data::serialize_timestamp\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.queued_timestamp",
-            "#[serde(with = \"::buck2_data::serialize_timestamp\")]",
+            "#[serde(with = \"::bz_data::serialize_timestamp\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.worker_start_timestamp",
-            "#[serde(with = \"::buck2_data::serialize_timestamp\")]",
+            "#[serde(with = \"::bz_data::serialize_timestamp\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.worker_completed_timestamp",
-            "#[serde(with = \"::buck2_data::serialize_timestamp\")]",
+            "#[serde(with = \"::bz_data::serialize_timestamp\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.input_fetch_start_timestamp",
-            "#[serde(with = \"::buck2_data::serialize_timestamp\")]",
+            "#[serde(with = \"::bz_data::serialize_timestamp\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.input_fetch_completed_timestamp",
-            "#[serde(with = \"::buck2_data::serialize_timestamp\")]",
+            "#[serde(with = \"::bz_data::serialize_timestamp\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.execution_start_timestamp",
-            "#[serde(with = \"::buck2_data::serialize_timestamp\")]",
+            "#[serde(with = \"::bz_data::serialize_timestamp\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.execution_completed_timestamp",
-            "#[serde(with = \"::buck2_data::serialize_timestamp\")]",
+            "#[serde(with = \"::bz_data::serialize_timestamp\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.output_upload_start_timestamp",
-            "#[serde(with = \"::buck2_data::serialize_timestamp\")]",
+            "#[serde(with = \"::bz_data::serialize_timestamp\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.output_upload_completed_timestamp",
-            "#[serde(with = \"::buck2_data::serialize_timestamp\")]",
+            "#[serde(with = \"::bz_data::serialize_timestamp\")]",
         )
         .field_attribute(
             "build.bazel.remote.execution.v2.ExecutedActionMetadata.auxiliary_metadata",

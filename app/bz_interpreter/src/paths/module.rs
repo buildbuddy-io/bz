@@ -12,12 +12,12 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use allocative::Allocative;
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::cells::name::CellName;
+use bz_core::bxl::BxlFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::cells::name::CellName;
 use dupe::Dupe;
 use gazebo::variants::UnpackVariants;
 use pagable::Pagable;

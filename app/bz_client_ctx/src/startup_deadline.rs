@@ -13,9 +13,9 @@ use std::future::Future;
 use std::time::Duration;
 use std::time::Instant;
 
-use buck2_common::client_utils::retrying;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
+use bz_common::client_utils::retrying;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
 
 /// Utility to time out properly with context during buck2 client startup.
 ///
@@ -32,7 +32,7 @@ pub struct StartupDeadline {
     deadline: Instant,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = ClientStartupTimeout)]
 enum StartupDeadlineError {
     #[error("timed out before {op}")]
@@ -42,7 +42,7 @@ enum StartupDeadlineError {
 }
 
 impl StartupDeadline {
-    pub fn duration_from_now(duration: Duration) -> buck2_error::Result<StartupDeadline> {
+    pub fn duration_from_now(duration: Duration) -> bz_error::Result<StartupDeadline> {
         Ok(StartupDeadline {
             deadline: Instant::now()
                 .checked_add(duration)
@@ -57,7 +57,7 @@ impl StartupDeadline {
     /// Deadline for a nested operation.
     ///
     /// Must be lower than outer deadline to make sure inner operation times out before outer one.
-    pub(crate) fn down_deadline(&self) -> buck2_error::Result<StartupDeadline> {
+    pub(crate) fn down_deadline(&self) -> bz_error::Result<StartupDeadline> {
         let new_deadline = self
             .deadline
             .checked_sub(Duration::from_millis(100))
@@ -68,17 +68,17 @@ impl StartupDeadline {
     }
 
     /// How much time is left for the current operation.
-    pub(crate) fn rem_duration(&self, op: &str) -> buck2_error::Result<Duration> {
+    pub(crate) fn rem_duration(&self, op: &str) -> bz_error::Result<Duration> {
         self.deadline
             .checked_duration_since(Instant::now())
             .ok_or(StartupDeadlineError::TimeoutBefore { op: op.to_owned() }.into())
     }
 
     /// Decrease the deadline by 100ms and invoke the given function with the new deadline.
-    pub(crate) async fn down<R, Fut, F>(&self, op: &str, f: F) -> buck2_error::Result<R>
+    pub(crate) async fn down<R, Fut, F>(&self, op: &str, f: F) -> bz_error::Result<R>
     where
         F: FnOnce(StartupDeadline) -> Fut,
-        Fut: Future<Output = buck2_error::Result<R>>,
+        Fut: Future<Output = bz_error::Result<R>>,
     {
         let rem_duration = self.rem_duration(op)?;
         let res = tokio::time::timeout_at(
@@ -98,15 +98,15 @@ impl StartupDeadline {
         }
     }
 
-    pub(crate) async fn run<R, Fut>(&self, op: &str, f: Fut) -> buck2_error::Result<R>
+    pub(crate) async fn run<R, Fut>(&self, op: &str, f: Fut) -> bz_error::Result<R>
     where
-        Fut: Future<Output = buck2_error::Result<R>>,
+        Fut: Future<Output = bz_error::Result<R>>,
     {
         self.down(op, |_| f).await
     }
 
     /// Round current deadline down to the given duration added to the current time.
-    pub(crate) fn min(&self, other: Duration) -> buck2_error::Result<StartupDeadline> {
+    pub(crate) fn min(&self, other: Duration) -> bz_error::Result<StartupDeadline> {
         let other = Instant::now()
             .checked_add(other)
             .ok_or_else(|| internal_error!("overflow"))?;
@@ -116,7 +116,7 @@ impl StartupDeadline {
     }
 
     /// Create a deadline object for the half of remaining time.
-    pub(crate) fn half(&self) -> buck2_error::Result<StartupDeadline> {
+    pub(crate) fn half(&self) -> bz_error::Result<StartupDeadline> {
         let now = Instant::now();
         let duration = self.deadline.duration_since(now) / 2;
         let deadline = now
@@ -131,9 +131,9 @@ impl StartupDeadline {
         initial_delay: Duration,
         max_delay: Duration,
         f: F,
-    ) -> buck2_error::Result<R>
+    ) -> bz_error::Result<R>
     where
-        Fut: Future<Output = buck2_error::Result<R>>,
+        Fut: Future<Output = bz_error::Result<R>>,
         F: Fn() -> Fut,
     {
         retrying(initial_delay, max_delay, self.rem_duration(op)?, f)

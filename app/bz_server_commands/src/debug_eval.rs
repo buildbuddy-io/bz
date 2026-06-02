@@ -8,22 +8,22 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::new_generic::DebugEvalRequest;
-use buck2_cli_proto::new_generic::DebugEvalResponse;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
+use bz_cli_proto::new_generic::DebugEvalRequest;
+use bz_cli_proto::new_generic::DebugEvalResponse;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::bxl::BxlFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::paths::module::OwnedStarlarkModulePath;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum DebugEvalError {
     #[error("Can only eval `.bzl` or `.bxl`, but got `{0}`")]
@@ -33,7 +33,7 @@ enum DebugEvalError {
 pub(crate) async fn debug_eval_command(
     context: &dyn ServerCommandContextTrait,
     req: DebugEvalRequest,
-) -> buck2_error::Result<DebugEvalResponse> {
+) -> bz_error::Result<DebugEvalResponse> {
     context
         .with_dice_ctx(|server_ctx, mut ctx| async move {
             let cell_resolver = ctx.get_cell_resolver().await?;
@@ -62,7 +62,7 @@ pub(crate) async fn debug_eval_command(
             }
 
             // Catch errors, ignore results.
-            buck2_util::future::try_join_all(loads).await?;
+            bz_util::future::try_join_all(loads).await?;
 
             Ok(DebugEvalResponse {})
         })

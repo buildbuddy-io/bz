@@ -11,7 +11,7 @@
 use std::io::BufWriter;
 use std::io::Write;
 
-use buck2_events::dispatch::EventDispatcher;
+use bz_events::dispatch::EventDispatcher;
 
 pub(crate) struct StreamingOutputWriter {
     inner: BufWriter<StreamingOutputInner>,

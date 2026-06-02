@@ -13,7 +13,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use async_trait::async_trait;
-use buck2_query_derive::query_module;
+use bz_query_derive::query_module;
 use gazebo::variants::VariantName;
 
 use crate::query::environment::QueryEnvironment;
@@ -105,7 +105,7 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
                 #[async_trait]
                 #[allow(non_local_definitions)]
                 impl<'a, T: QueryTarget, Env: QueryEnvironment<Target = T>> TraversalFilter<T> for Filter<'a, Env> {
-                    async fn get_children(&self, target: &T) -> buck2_error::Result<TargetSet<T>> {
+                    async fn get_children(&self, target: &T) -> bz_error::Result<TargetSet<T>> {
                         let augmented_functions = AugmentedQueryFunctions::augment(
                             self.functions,
                             Box::new(DepsContextFunctions { target }),
@@ -142,7 +142,7 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
         targets: &TargetSet<Env::Target>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr<'_>>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         let filter = self.make_filter(env, functions, captured_expr);
         let filter_ref = filter
             .as_ref()
@@ -159,7 +159,7 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
         from: &TargetSet<Env::Target>,
         depth: QueryValueDepth,
         captured_expr: Option<&CapturedExpr<'_>>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         let filter = self.make_filter(env, functions, captured_expr);
         let filter_ref = filter
             .as_ref()
@@ -175,7 +175,7 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
         from: &TargetSet<Env::Target>,
         to: &TargetSet<Env::Target>,
         captured_expr: Option<&CapturedExpr<'_>>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         let filter = self.make_filter(env, functions, captured_expr);
         let filter_ref = filter
             .as_ref()
@@ -191,7 +191,7 @@ impl<'a, Env: QueryEnvironment> DepsFunction<Env> {
         from: &TargetSet<Env::Target>,
         to: &TargetSet<Env::Target>,
         captured_expr: Option<&CapturedExpr<'_>>,
-    ) -> buck2_error::Result<TargetSet<Env::Target>> {
+    ) -> bz_error::Result<TargetSet<Env::Target>> {
         let filter = self.make_filter(env, functions, captured_expr);
         let filter_ref = filter
             .as_ref()

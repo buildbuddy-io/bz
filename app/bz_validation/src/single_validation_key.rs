@@ -10,14 +10,14 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::actions::calculation::ActionCalculation;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute::materialize::materializer::HasMaterializer;
-use buck2_fs::async_fs_util;
-use buck2_fs::error::IoResultExt;
+use bz_artifact::actions::key::ActionKey;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::actions::calculation::ActionCalculation;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute::materialize::materializer::HasMaterializer;
+use bz_fs::async_fs_util;
+use bz_fs::error::IoResultExt;
 use derive_more::Display;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -31,7 +31,7 @@ use pagable::pagable_typetag;
 use crate::cached_validation_result::CachedValidationResult;
 use crate::validator_api::parse_validation_result;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum ParseValidationResultError {
     #[error("Validation result should produce exactly one artifact")]
@@ -50,7 +50,7 @@ pub(crate) struct SingleValidationKey(pub ActionKey);
 
 #[async_trait]
 impl Key for SingleValidationKey {
-    type Value = buck2_error::Result<CachedValidationResult>;
+    type Value = bz_error::Result<CachedValidationResult>;
 
     async fn compute(
         &self,
@@ -60,7 +60,7 @@ impl Key for SingleValidationKey {
         let build_result = ActionCalculation::build_action(ctx, &self.0).await?;
         let (gen_path, artifact_value) = {
             if build_result.iter().count() != 1 {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     ParseValidationResultError::WrongNumberOfArtifacts,
                 ));
             }

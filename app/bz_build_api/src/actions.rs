@@ -31,47 +31,47 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::io::IoProvider;
-use buck2_core::category::Category;
-use buck2_core::category::CategoryRef;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::external::external_cell_origin_for_cell;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BazelOutputPathKind;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
-use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::execute::cache_uploader::CacheUploadResults;
-use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::prepared::PreparedAction;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::CommandExecutionRequest;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::request::LocalActionCacheKey;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::materialize::materializer::Materializer;
-use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
-use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
-use buck2_file_watcher::mergebase::Mergebase;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckHashMap;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::buck_indexmap;
-use buck2_http::HttpClient;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_signals::env::WaitingData;
+use bz_common::io::IoProvider;
+use bz_core::category::Category;
+use bz_core::category::CategoryRef;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::external_cell_origin_for_cell;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BazelOutputPathKind;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_events::dispatch::EventDispatcher;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
+use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute::execute::cache_uploader::CacheUploadResults;
+use bz_execute::execute::cache_uploader::IntoRemoteDepFile;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::prepared::PreparedAction;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::CommandExecutionRequest;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::request::LocalActionCacheKey;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::materialize::materializer::Materializer;
+use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
+use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+use bz_file_watcher::mergebase::Mergebase;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckHashMap;
+use bz_hash::BuckIndexMap;
+use bz_hash::BuckIndexSet;
+use bz_hash::buck_indexmap;
+use bz_http::HttpClient;
 use derivative::Derivative;
 use derive_more::Display;
 use dice_futures::cancellation::CancellationContext;
@@ -114,7 +114,7 @@ pub trait UnregisteredAction: Allocative + Send {
         outputs: BuckIndexSet<BuildArtifact>,
         starlark_data: Option<OwnedFrozenValue>,
         error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>>;
+    ) -> bz_error::Result<Box<dyn Action>>;
 }
 
 /// A registered, immutable 'Action' that is fully bound. All it's 'Artifact's, both inputs and
@@ -125,11 +125,11 @@ pub trait UnregisteredAction: Allocative + Send {
 #[async_trait]
 pub trait Action: Allocative + Debug + Send + Sync + 'static {
     /// A machine readable kind identifying this type of action.
-    fn kind(&self) -> buck2_data::ActionKind;
+    fn kind(&self) -> bz_data::ActionKind;
 
     /// All the input 'Artifact's, both sources and built artifacts, that are required for
     /// executing this artifact. While nothing enforces it, this should be a pure function.
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>>;
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>>;
 
     /// All the outputs this 'Artifact' will generate. Just like inputs, this should be a pure
     /// function. Note that outputs in action result might be ordered differently.
@@ -151,7 +151,7 @@ pub trait Action: Allocative + Debug + Send + Sync + 'static {
     /// Bazel checks the persistent action cache once metadata for the action-cache inputs is ready,
     /// and only prepares/executes the full action on a miss. Returning `None` preserves the existing
     /// behavior of ensuring every execution input before calling `execute`.
-    fn local_action_cache_inputs(&self) -> buck2_error::Result<Option<Cow<'_, [ArtifactGroup]>>> {
+    fn local_action_cache_inputs(&self) -> bz_error::Result<Option<Cow<'_, [ArtifactGroup]>>> {
         Ok(None)
     }
 
@@ -213,7 +213,7 @@ pub trait Action: Allocative + Debug + Send + Sync + 'static {
         _artifact_fs: &ArtifactFs,
         _heap: Heap<'v>,
         _outputs: Option<&ActionOutputs>,
-    ) -> buck2_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>>
+    ) -> bz_error::Result<ValueOfUnchecked<'v, DictType<StarlarkArtifact, StarlarkArtifactValue>>>
     {
         Ok(ValueOfUnchecked::new(starlark::values::Value::new_none()))
     }
@@ -242,7 +242,7 @@ pub trait Action: Allocative + Debug + Send + Sync + 'static {
         let mut ineligible_inputs = Vec::new();
         for ag in self.inputs().unwrap_or_default().iter() {
             if ag.is_eligible_for_dedupe(target_platform)
-                == buck2_data::EligibleForDedupe::IneligibleInput
+                == bz_data::EligibleForDedupe::IneligibleInput
             {
                 ineligible_inputs.push(ag.to_string());
             }
@@ -294,7 +294,7 @@ pub trait ActionExecutionCtx: Send + Sync {
         &mut self,
         request: &CommandExecutionRequest,
         re_outputs_required: bool,
-    ) -> buck2_error::Result<PreparedAction>;
+    ) -> bz_error::Result<PreparedAction>;
 
     async fn action_cache(
         &mut self,
@@ -326,7 +326,7 @@ pub trait ActionExecutionCtx: Send + Sync {
         &mut self,
         _local_action_cache_key: &LocalActionCacheKey,
         _outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
@@ -344,7 +344,7 @@ pub trait ActionExecutionCtx: Send + Sync {
         execution_result: &CommandExecutionResult,
         re_result: Option<TActionResult2>,
         dep_file_entry: Option<&mut dyn IntoRemoteDepFile>,
-    ) -> buck2_error::Result<CacheUploadResults>;
+    ) -> bz_error::Result<CacheUploadResults>;
 
     /// Executes a command
     /// TODO(bobyf) this seems like it deserves critical sections?
@@ -362,13 +362,13 @@ pub trait ActionExecutionCtx: Send + Sync {
         allows_cache_upload: bool,
         allows_dep_file_cache_upload: bool,
         input_files_bytes: Option<u64>,
-        incremental_kind: buck2_data::IncrementalKind,
+        incremental_kind: bz_data::IncrementalKind,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>;
 
     /// Clean up all the output directories for this action. This requires a mutable reference
     /// because you shouldn't be doing anything else with the ActionExecutionCtx while cleaning the
     /// outputs.
-    async fn cleanup_outputs(&mut self) -> buck2_error::Result<()>;
+    async fn cleanup_outputs(&mut self) -> bz_error::Result<()>;
 
     /// Get the value of an Artifact. This Artifact _must_ have been declared
     /// as an input to the associated action or a panic will be raised.
@@ -406,7 +406,7 @@ pub trait ActionExecutionCtx: Send + Sync {
     fn output_trees_download_config(&self) -> &OutputTreesDownloadConfig;
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 pub enum ActionErrors {
     #[error("Output path for artifact or metadata file cannot be empty.")]
@@ -627,7 +627,7 @@ impl ActionToBeRegistered {
         self,
         starlark_data: Option<OwnedFrozenValue>,
         error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         self.action
             .register(self.outputs, starlark_data, error_handler)
     }

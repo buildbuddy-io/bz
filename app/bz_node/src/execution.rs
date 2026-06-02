@@ -11,12 +11,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
-use buck2_core::execution_types::execution_platforms::ExecutionPlatforms;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
-use buck2_util::late_binding::LateBinding;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_core::execution_types::execution::ExecutionPlatformResolutionPartial;
+use bz_core::execution_types::execution_platforms::ExecutionPlatforms;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
+use bz_util::late_binding::LateBinding;
 use dice::DiceComputations;
 
 use crate::configuration::calculation::CellNameForConfigurationResolution;
@@ -32,7 +32,7 @@ pub trait GetExecutionPlatformsImpl: 'static + Send + Sync {
     async fn get_execution_platforms_impl(
         &self,
         dice_computations: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<Option<ExecutionPlatforms>>;
+    ) -> bz_error::Result<Option<ExecutionPlatforms>>;
 
     async fn execution_platform_resolution_one_for_cell(
         &self,
@@ -41,7 +41,7 @@ pub trait GetExecutionPlatformsImpl: 'static + Send + Sync {
         toolchain_deps: Arc<[TargetConfiguredTargetLabel]>,
         exec_compatible_with: Arc<[ConfigurationSettingKey]>,
         cell: CellNameForConfigurationResolution,
-    ) -> buck2_error::Result<ExecutionPlatformResolutionPartial>;
+    ) -> bz_error::Result<ExecutionPlatformResolutionPartial>;
 }
 
 pub static GET_EXECUTION_PLATFORMS: LateBinding<&'static dyn GetExecutionPlatformsImpl> =
@@ -53,11 +53,11 @@ pub trait GetExecutionPlatforms: Send {
     /// configured **in the root cell's buckconfig** with key `build.execution_platforms`. If there's no
     /// value configured, it will return `None` which indicates we should fallback to the legacy execution
     /// platform behavior.
-    async fn get_execution_platforms(&mut self) -> buck2_error::Result<Option<ExecutionPlatforms>>;
+    async fn get_execution_platforms(&mut self) -> bz_error::Result<Option<ExecutionPlatforms>>;
 }
 
 impl GetExecutionPlatforms for DiceComputations<'_> {
-    async fn get_execution_platforms(&mut self) -> buck2_error::Result<Option<ExecutionPlatforms>> {
+    async fn get_execution_platforms(&mut self) -> bz_error::Result<Option<ExecutionPlatforms>> {
         GET_EXECUTION_PLATFORMS
             .get()?
             .get_execution_platforms_impl(self)

@@ -10,18 +10,18 @@
 
 use std::fmt::Debug;
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_hash::BuckIndexSet;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_fs::paths::RelativePathBuf;
+use bz_hash::BuckIndexSet;
 
 use crate::interpreter::rule_defs::cmd_args::traits::CommandLineContext;
 use crate::interpreter::rule_defs::cmd_args::traits::CommandLineLocation;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 pub enum CommandLineBuilderErrors {
     #[error(
@@ -76,7 +76,7 @@ impl CommandLineContext for DefaultCommandLineContext<'_> {
     fn resolve_project_path(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         Ok(CommandLineLocation::from_relative_path(
             path.into(),
             self.fs.path_separator(),
@@ -87,7 +87,7 @@ impl CommandLineContext for DefaultCommandLineContext<'_> {
         self.fs
     }
 
-    fn next_macro_file_path(&mut self) -> buck2_error::Result<RelativePathBuf> {
+    fn next_macro_file_path(&mut self) -> bz_error::Result<RelativePathBuf> {
         if let Some((files, pos)) = self.maybe_macros_state {
             if pos >= files.len() {
                 return Err(CommandLineBuilderErrors::InconsistentNumberOfMacroArtifacts.into());
@@ -118,7 +118,7 @@ impl CommandLineContext for AbsCommandLineContext<'_> {
     fn resolve_project_path(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         Ok(CommandLineLocation::from_root(
             self.0.fs().fs().fs(),
             path,
@@ -130,12 +130,12 @@ impl CommandLineContext for AbsCommandLineContext<'_> {
         self.0.fs()
     }
 
-    fn next_macro_file_path(&mut self) -> buck2_error::Result<RelativePathBuf> {
+    fn next_macro_file_path(&mut self) -> bz_error::Result<RelativePathBuf> {
         let executor_fs = self.0.fs();
         let mut path = executor_fs.fs().fs().root().to_path_buf();
         path.extend(self.0.next_macro_file_path()?.iter());
         RelativePathBuf::from_path(path).map_err(|e| {
-            buck2_error::buck2_error!(buck2_error::ErrorTag::Tier0, "{}", e.to_string())
+            bz_error::bz_error!(bz_error::ErrorTag::Tier0, "{}", e.to_string())
         })
     }
 }
@@ -144,22 +144,22 @@ impl CommandLineContext for AbsCommandLineContext<'_> {
 mod tests {
     use std::path::PathBuf;
 
-    use buck2_core::cells::CellResolver;
-    use buck2_core::cells::cell_root_path::CellRootPathBuf;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::execution_types::executor_config::PathSeparatorKind;
-    use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-    use buck2_core::fs::buck_out_path::BuckOutPathResolver;
-    use buck2_core::fs::project::ProjectRoot;
-    use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-    use buck2_hash::BuckHashMap;
+    use bz_core::cells::CellResolver;
+    use bz_core::cells::cell_root_path::CellRootPathBuf;
+    use bz_core::cells::name::CellName;
+    use bz_core::execution_types::executor_config::PathSeparatorKind;
+    use bz_core::fs::artifact_path_resolver::ArtifactFs;
+    use bz_core::fs::buck_out_path::BuckOutPathResolver;
+    use bz_core::fs::project::ProjectRoot;
+    use bz_core::fs::project_rel_path::ProjectRelativePath;
+    use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+    use bz_hash::BuckHashMap;
 
     use super::*;
     use crate::interpreter::rule_defs::cmd_args::traits::CommandLineArgLike;
 
     #[test]
-    fn adds_args_and_builds() -> buck2_error::Result<()> {
+    fn adds_args_and_builds() -> bz_error::Result<()> {
         let project_fs =
             ProjectRoot::new(AbsNormPathBuf::try_from(std::env::current_dir().unwrap()).unwrap())
                 .unwrap();

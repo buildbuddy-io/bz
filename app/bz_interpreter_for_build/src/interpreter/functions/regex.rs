@@ -28,8 +28,8 @@ pub(crate) fn register_regex(builder: &mut GlobalsBuilder) {
         #[starlark(require = pos)] regex: &str,
         #[starlark(require = pos)] str: &str,
     ) -> starlark::Result<bool> {
-        let re = Regex::new(regex).map_err(buck2_error::Error::from)?;
-        Ok(re.is_match(str).map_err(buck2_error::Error::from)?)
+        let re = Regex::new(regex).map_err(bz_error::Error::from)?;
+        Ok(re.is_match(str).map_err(bz_error::Error::from)?)
     }
 }
 

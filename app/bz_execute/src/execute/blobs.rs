@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_hash::StdBuckHashMap;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_hash::StdBuckHashMap;
 use dupe::Dupe;
 use remote_execution::InlinedBlobWithDigest;
 

@@ -9,24 +9,24 @@
  */
 
 use async_trait::async_trait;
-use buck2_cli_proto::protobuf_util::ProtobufSplitter;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::common::CommonBuildConfigurationOptions;
-use buck2_client_ctx::common::CommonEventLogOptions;
-use buck2_client_ctx::common::CommonStarlarkOptions;
-use buck2_client_ctx::common::ui::CommonConsoleOptions;
-use buck2_client_ctx::common::ui::ConsoleType;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::events_ctx::PartialResultCtx;
-use buck2_client_ctx::events_ctx::PartialResultHandler;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::stream_util::reborrow_stream_for_static;
-use buck2_client_ctx::streaming::StreamingCommand;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_subscription_proto::SubscriptionRequest;
+use bz_cli_proto::protobuf_util::ProtobufSplitter;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::common::CommonBuildConfigurationOptions;
+use bz_client_ctx::common::CommonEventLogOptions;
+use bz_client_ctx::common::CommonStarlarkOptions;
+use bz_client_ctx::common::ui::CommonConsoleOptions;
+use bz_client_ctx::common::ui::ConsoleType;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::events_ctx::PartialResultCtx;
+use bz_client_ctx::events_ctx::PartialResultHandler;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::stream_util::reborrow_stream_for_static;
+use bz_client_ctx::streaming::StreamingCommand;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_subscription_proto::SubscriptionRequest;
 use futures::stream::StreamExt;
 use futures::stream::TryStreamExt;
 use once_cell::sync::Lazy;
@@ -94,10 +94,10 @@ impl StreamingCommand for SubscribeCommand {
                     // NOTE: if stderr is gone there is not much we can do besides not write to
                     // stderr.
                     let reason = format!("Error parsing request: {e:#}");
-                    let _ignored = buck2_client_ctx::eprintln!("{}", reason);
+                    let _ignored = bz_client_ctx::eprintln!("{}", reason);
                     SubscriptionRequest {
                         request: Some(
-                            buck2_subscription_proto::Disconnect { reason, ok: false }.into(),
+                            bz_subscription_proto::Disconnect { reason, ok: false }.into(),
                         ),
                     }
                 }
@@ -111,7 +111,7 @@ impl StreamingCommand for SubscribeCommand {
 
         let stream = if self.active_commands {
             futures::stream::once(futures::future::ready(SubscriptionRequest {
-                request: Some(buck2_subscription_proto::SubscribeToActiveCommands {}.into()),
+                request: Some(bz_subscription_proto::SubscribeToActiveCommands {}.into()),
             }))
             .chain(stream)
             .left_stream()
@@ -119,7 +119,7 @@ impl StreamingCommand for SubscribeCommand {
             stream.right_stream()
         };
 
-        let stream = stream.map(|request| buck2_cli_proto::SubscriptionRequestWrapper {
+        let stream = stream.map(|request| bz_cli_proto::SubscriptionRequestWrapper {
             request: Some(request),
         });
 
@@ -135,10 +135,10 @@ impl StreamingCommand for SubscribeCommand {
                         .await
                 },
                 || {
-                    Some(buck2_cli_proto::SubscriptionRequestWrapper {
+                    Some(bz_cli_proto::SubscriptionRequestWrapper {
                         request: Some(SubscriptionRequest {
                             request: Some(
-                                buck2_subscription_proto::Disconnect {
+                                bz_subscription_proto::Disconnect {
                                     reason: "EOF on stdin".to_owned(),
                                     ok: true,
                                 }
@@ -156,7 +156,7 @@ impl StreamingCommand for SubscribeCommand {
         } else {
             // FIXME(JakobDegen): This command should propagate some error information back from the
             // server so that we can do error handling here.
-            buck2_error::buck2_error!(buck2_error::ErrorTag::Tier0, "Subscribe command failed")
+            bz_error::bz_error!(bz_error::ErrorTag::Tier0, "Subscribe command failed")
                 .into()
         }
     }
@@ -200,18 +200,18 @@ struct SubscriptionPartialResultHandler {
 
 #[async_trait]
 impl PartialResultHandler for SubscriptionPartialResultHandler {
-    type PartialResult = buck2_cli_proto::SubscriptionResponseWrapper;
+    type PartialResult = bz_cli_proto::SubscriptionResponseWrapper;
 
     async fn handle_partial_result(
         &mut self,
         mut ctx: PartialResultCtx<'_>,
         partial_res: Self::PartialResult,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let response = partial_res
             .response
             .ok_or_else(|| internal_error!("Empty `SubscriptionResponseWrapper`"))?;
 
-        if let Some(buck2_subscription_proto::subscription_response::Response::Goodbye(goodbye)) =
+        if let Some(bz_subscription_proto::subscription_response::Response::Goodbye(goodbye)) =
             &response.response
         {
             self.ok = self.ok && goodbye.ok;

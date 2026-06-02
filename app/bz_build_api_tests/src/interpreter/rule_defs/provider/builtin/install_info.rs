@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::collection::tester::collection_creator;
-use buck2_build_api::interpreter::rule_defs::register_rule_defs;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
-use buck2_interpreter_for_build::label::testing::label_creator;
+use bz_build_api::interpreter::rule_defs::provider::collection::tester::collection_creator;
+use bz_build_api::interpreter::rule_defs::register_rule_defs;
+use bz_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::label::testing::label_creator;
 use indoc::indoc;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
@@ -26,7 +26,7 @@ fn tester() -> Tester {
 }
 
 #[test]
-fn install_info_works_as_provider_key() -> buck2_error::Result<()> {
+fn install_info_works_as_provider_key() -> bz_error::Result<()> {
     let content = indoc!(
         r#"
              installer_app = label("//foo:bar[quz]")
@@ -40,7 +40,7 @@ fn install_info_works_as_provider_key() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn info_validator_succeeds_for_artifacts_without_additional_artifacts() -> buck2_error::Result<()> {
+fn info_validator_succeeds_for_artifacts_without_additional_artifacts() -> bz_error::Result<()> {
     let content = indoc!(
         r#"
              a1 = source_artifact("foo/bar", "baz.h")

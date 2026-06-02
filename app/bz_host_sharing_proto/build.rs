@@ -21,10 +21,10 @@ fn main() -> io::Result<()> {
         vec!["."]
     };
 
-    let builder = buck2_protoc_dev::configure();
+    let builder = bz_protoc_dev::configure();
     unsafe { builder.setup_protoc() }
         .type_attribute(".", "#[derive(::allocative::Allocative)]")
         .type_attribute(".", "#[derive(::serde::Serialize, ::serde::Deserialize)]")
-        .extern_path(".buck.data", "::buck2_data")
+        .extern_path(".buck.data", "::bz_data")
         .compile(proto_files, &includes)
 }

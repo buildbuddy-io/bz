@@ -21,19 +21,19 @@ use bz::panic;
 use bz::process_context::ClientRuntime;
 use bz::process_context::ProcessContext;
 use bz::process_context::SharedProcessContext;
-use buck2_build_info::BUCK2_BUILD_INFO;
-use buck2_build_info::Buck2BuildInfo;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::restarter::Restarter;
-use buck2_client_ctx::stdio;
-use buck2_client_ctx::subscribers::recorder::InvocationRecorder;
-use buck2_core::buck2_env;
-use buck2_core::logging::LogConfigurationReloadHandle;
-use buck2_core::logging::init_tracing_for_writer;
-use buck2_core::logging::log_file::TracingLogFile;
-use buck2_fs::working_dir::AbsWorkingDir;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_build_info::BUCK2_BUILD_INFO;
+use bz_build_info::Buck2BuildInfo;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::restarter::Restarter;
+use bz_client_ctx::stdio;
+use bz_client_ctx::subscribers::recorder::InvocationRecorder;
+use bz_core::bz_env;
+use bz_core::logging::LogConfigurationReloadHandle;
+use bz_core::logging::init_tracing_for_writer;
+use bz_core::logging::log_file::TracingLogFile;
+use bz_fs::working_dir::AbsWorkingDir;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use superconsole::Stdin;
 
@@ -47,7 +47,7 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[cfg(target_os = "windows")]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-fn init_logging() -> buck2_error::Result<Arc<dyn LogConfigurationReloadHandle>> {
+fn init_logging() -> bz_error::Result<Arc<dyn LogConfigurationReloadHandle>> {
     static ENV_TRACING_LOG_FILE_PATH: &str = "BUCK_LOG_TO_FILE_PATH";
 
     let handle = match std::env::var_os(ENV_TRACING_LOG_FILE_PATH) {
@@ -66,8 +66,8 @@ fn init_logging() -> buck2_error::Result<Arc<dyn LogConfigurationReloadHandle>> 
 
     #[cfg(fbcode_build)]
     {
-        use buck2_event_log::should_upload_log;
-        use buck2_events::sink::remote;
+        use bz_event_log::should_upload_log;
+        use bz_events::sink::remote;
 
         if !should_upload_log()? {
             remote::disable();
@@ -81,7 +81,7 @@ fn init_logging() -> buck2_error::Result<Arc<dyn LogConfigurationReloadHandle>> 
 // fall back to slow paths that give terrible performance.
 // Therefore, if we are using cargo, warn strongly.
 fn check_cargo() {
-    if !cfg!(fbcode_build) && !buck2_core::is_open_source() {
+    if !cfg!(fbcode_build) && !bz_core::is_open_source() {
         eprintln!("=====================================================================");
         eprintln!("WARNING: You are using Buck v2 compiled with `cargo`, not `buck`.");
         eprintln!("         Some operations may go slower and logging may be impaired.");
@@ -102,12 +102,12 @@ fn check_unoptimized() {
     }
 }
 
-fn print_retry() -> buck2_error::Result<()> {
-    buck2_client_ctx::eprintln!("============================================================")?;
-    buck2_client_ctx::eprintln!("|| Buck2 has detected that it needs to restart to proceed ||")?;
-    buck2_client_ctx::eprintln!("|| Your command will now restart.                         ||")?;
-    buck2_client_ctx::eprintln!("============================================================")?;
-    buck2_client_ctx::eprintln!()?;
+fn print_retry() -> bz_error::Result<()> {
+    bz_client_ctx::eprintln!("============================================================")?;
+    bz_client_ctx::eprintln!("|| Buck2 has detected that it needs to restart to proceed ||")?;
+    bz_client_ctx::eprintln!("|| Your command will now restart.                         ||")?;
+    bz_client_ctx::eprintln!("============================================================")?;
+    bz_client_ctx::eprintln!()?;
     Ok(())
 }
 
@@ -115,7 +115,7 @@ fn exec_with_logging(
     trace_id: TraceId,
     start_time: SystemTime,
     restarted_trace_id: Option<TraceId>,
-    shared: buck2_error::Result<SharedProcessContext>,
+    shared: bz_error::Result<SharedProcessContext>,
     runtime: &mut ClientRuntime,
 ) -> (Option<SharedProcessContext>, ExitResult) {
     let args = std::env::args().collect::<Vec<String>>();
@@ -145,30 +145,30 @@ fn exec_with_logging(
 // it must be single-threaded. Commands that want to be multi-threaded/async
 // will start up their own tokio runtime.
 fn main() -> ! {
-    buck2_core::client_only::CLIENT_ONLY_VAL.init(cfg!(client_only));
+    bz_core::client_only::CLIENT_ONLY_VAL.init(cfg!(client_only));
     #[cfg(not(client_only))]
     {
-        buck2_analysis::init_late_bindings();
-        buck2_anon_target::init_late_bindings();
-        buck2_action_impl::init_late_bindings();
-        buck2_cmd_audit_server::init_late_bindings();
-        buck2_build_api::init_late_bindings();
-        buck2_cmd_docs_server::init_late_bindings();
-        buck2_external_cells::init_late_bindings();
-        buck2_transition::init_late_bindings();
-        buck2_build_signals_impl::init_late_bindings();
-        buck2_bxl::init_late_bindings();
-        buck2_cfg_constructor::init_late_bindings();
-        buck2_configured::init_late_bindings();
-        buck2_query_impls::init_late_bindings();
-        buck2_interpreter_for_build::init_late_bindings();
-        buck2_server_commands::init_late_bindings();
-        buck2_cmd_targets_server::init_late_bindings();
-        buck2_cmd_query_server::init_late_bindings();
-        buck2_cmd_starlark_server::init_late_bindings();
-        buck2_test::init_late_bindings();
-        buck2_validation::init_late_bindings();
-        buck2_events::init_late_bindings();
+        bz_analysis::init_late_bindings();
+        bz_anon_target::init_late_bindings();
+        bz_action_impl::init_late_bindings();
+        bz_cmd_audit_server::init_late_bindings();
+        bz_build_api::init_late_bindings();
+        bz_cmd_docs_server::init_late_bindings();
+        bz_external_cells::init_late_bindings();
+        bz_transition::init_late_bindings();
+        bz_build_signals_impl::init_late_bindings();
+        bz_bxl::init_late_bindings();
+        bz_cfg_constructor::init_late_bindings();
+        bz_configured::init_late_bindings();
+        bz_query_impls::init_late_bindings();
+        bz_interpreter_for_build::init_late_bindings();
+        bz_server_commands::init_late_bindings();
+        bz_cmd_targets_server::init_late_bindings();
+        bz_cmd_query_server::init_late_bindings();
+        bz_cmd_starlark_server::init_late_bindings();
+        bz_test::init_late_bindings();
+        bz_validation::init_late_bindings();
+        bz_events::init_late_bindings();
     }
     BUCK2_BUILD_INFO.init(Buck2BuildInfo {
         revision: std::option_env!("BUCK2_SET_EXPLICIT_VERSION"),
@@ -177,9 +177,9 @@ fn main() -> ! {
     });
 
     // Set up crypto impl once per process
-    buck2_certs::certs::setup_cryptography_or_fail();
+    bz_certs::certs::setup_cryptography_or_fail();
 
-    fn init_shared_context() -> buck2_error::Result<SharedProcessContext> {
+    fn init_shared_context() -> bz_error::Result<SharedProcessContext> {
         panic::initialize()?;
         check_cargo();
         check_unoptimized();
@@ -187,7 +187,7 @@ fn main() -> ! {
         // Log the start timestamp
         tracing::debug!("Client initialized logging");
 
-        let stdin_buffer_size = buck2_env!(
+        let stdin_buffer_size = bz_env!(
             "BUCK2_TEST_STDIN_BUFFER_SIZE",
             type=usize,
             applicability=testing,
@@ -200,7 +200,7 @@ fn main() -> ! {
             working_dir: AbsWorkingDir::current_dir()?,
             args: std::env::args().collect::<Vec<String>>(),
             restarter: Restarter::new(),
-            force_want_restart: buck2_env!("FORCE_WANT_RESTART", bool)?,
+            force_want_restart: bz_env!("FORCE_WANT_RESTART", bool)?,
         })
     }
 

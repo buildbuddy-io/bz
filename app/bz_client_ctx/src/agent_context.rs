@@ -20,8 +20,8 @@ pub struct AgentContextEntry {
 }
 
 impl AgentContextEntry {
-    pub fn to_proto(&self) -> buck2_data::AgentContextEntry {
-        buck2_data::AgentContextEntry {
+    pub fn to_proto(&self) -> bz_data::AgentContextEntry {
+        bz_data::AgentContextEntry {
             key: self.key.clone(),
             value: self.value.clone(),
         }
@@ -30,7 +30,7 @@ impl AgentContextEntry {
 
 /// Parse a single `key=value` agent context entry.
 /// Used as a clap `value_parser`.
-pub fn parse_agent_context(value: &str) -> buck2_error::Result<AgentContextEntry> {
+pub fn parse_agent_context(value: &str) -> bz_error::Result<AgentContextEntry> {
     const REGEX_TEXT: &str = "^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$";
     static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(REGEX_TEXT).unwrap());
 
@@ -48,7 +48,7 @@ pub fn parse_agent_context(value: &str) -> buck2_error::Result<AgentContextEntry
     })
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum AgentContextError {
     #[error("Invalid agent-context format: `{0}`. Each entry must be a `key=value` pair.")]

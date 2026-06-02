@@ -10,26 +10,26 @@
 
 use std::io::Write;
 
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::starlark::module::StarlarkModuleCommand;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::parse_import::ParseImportOptions;
-use buck2_interpreter::parse_import::RelativeImports;
-use buck2_interpreter::parse_import::parse_bzl_path_with_config;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::starlark::module::StarlarkModuleCommand;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::parse_import::ParseImportOptions;
+use bz_interpreter::parse_import::RelativeImports;
+use bz_interpreter::parse_import::parse_bzl_path_with_config;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 pub(crate) async fn server_execute(
     command: &StarlarkModuleCommand,
     server_ctx: &dyn ServerCommandContextTrait,
-    mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+    mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
     _client_ctx: ClientContext,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     server_ctx
         .with_dice_ctx(|server_ctx, mut dice_ctx| async move {
             let cell_resolver = dice_ctx.get_cell_resolver().await?;

@@ -12,8 +12,8 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-use buck2_cli_proto::CommandProgress;
-use buck2_cli_proto::MultiCommandProgress;
+use bz_cli_proto::CommandProgress;
+use bz_cli_proto::MultiCommandProgress;
 use futures::stream::Stream;
 use pin_project::pin_project;
 use prost::Message;
@@ -103,7 +103,7 @@ where
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use buck2_data::BuckEvent;
+    use bz_data::BuckEvent;
     use futures::stream::StreamExt;
     use futures::stream::poll_fn;
 
@@ -111,7 +111,7 @@ mod tests {
 
     fn event(span_id: u64) -> CommandProgress {
         CommandProgress {
-            progress: Some(buck2_cli_proto::command_progress::Progress::Event(
+            progress: Some(bz_cli_proto::command_progress::Progress::Event(
                 Box::new(BuckEvent {
                     span_id,
                     ..Default::default()

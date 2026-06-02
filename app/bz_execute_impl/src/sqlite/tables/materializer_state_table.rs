@@ -11,28 +11,28 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use buck2_common::external_symlink::ExternalSymlink;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::Symlink;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::directory_iterator::DirectoryIteratorPathStack;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_directory::directory::walk::unordered_entry_walk;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryBuilder;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_execute::directory::INTERNER;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::StdBuckHashMap;
+use bz_common::external_symlink::ExternalSymlink;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::Symlink;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::directory_iterator::DirectoryIteratorPathStack;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_directory::directory::walk::unordered_entry_walk;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryBuilder;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_execute::directory::INTERNER;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::StdBuckHashMap;
 use chrono::DateTime;
 use chrono::TimeZone;
 use chrono::Utc;
@@ -53,7 +53,7 @@ use crate::sqlite::materializer_db::MaterializerStateEntry;
 
 const STATE_TABLE_NAME: &str = "materializer_state";
 
-#[derive(buck2_error::Error, Debug, PartialEq, Eq)]
+#[derive(bz_error::Error, Debug, PartialEq, Eq)]
 #[buck2(tag = Tier0)]
 enum MaterializerStateTableError {
     #[error("Internal error: expected field `{}` to be not null for artifact type '{}'", .field, .artifact_type)]
@@ -263,7 +263,7 @@ fn convert_action_directory_member_to_sqlite_entry<'a>(
 fn convert_sqlite_entries_to_materializer_state(
     entries: Vec<SqliteEntry>,
     digest_config: DigestConfig,
-) -> buck2_error::Result<MaterializerState> {
+) -> bz_error::Result<MaterializerState> {
     #[derive(Default)]
     struct DirectoryData<'a> {
         timestamp: Option<DateTime<Utc>>,
@@ -364,7 +364,7 @@ fn convert_non_directory_sqlite_entry_to_materializer_state_entry(
     sqlite_entry: SqliteEntry,
     last_access_time: DateTime<Utc>,
     digest_config: DigestConfig,
-) -> buck2_error::Result<MaterializerStateEntry> {
+) -> bz_error::Result<MaterializerStateEntry> {
     let path = ProjectRelativePathBuf::unchecked_new(sqlite_entry.path.clone().into_owned());
     let member =
         convert_non_directory_sqlite_entry_to_action_directory_member(sqlite_entry, digest_config)?;
@@ -381,7 +381,7 @@ fn digest(
     entry_hash_kind: Option<u8>,
     artifact_type: ArtifactType,
     digest_config: DigestConfig,
-) -> buck2_error::Result<TrackedFileDigest> {
+) -> bz_error::Result<TrackedFileDigest> {
     let size = size.ok_or(MaterializerStateTableError::ExpectedFieldIsMissing {
         field: "size",
         artifact_type,
@@ -398,7 +398,7 @@ fn digest(
     })?;
     let entry_hash_kind = entry_hash_kind
         .try_into()
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
         .with_buck_error_context(|| format!("Invalid entry_hash_kind: `{entry_hash_kind}`"))?;
 
     let file_digest = FileDigest::from_digest_bytes(entry_hash_kind, entry_hash, size)?;
@@ -411,7 +411,7 @@ fn digest(
 fn convert_non_directory_sqlite_entry_to_action_directory_member(
     sqlite_entry: SqliteEntry,
     digest_config: DigestConfig,
-) -> buck2_error::Result<ActionDirectoryMember> {
+) -> bz_error::Result<ActionDirectoryMember> {
     Ok(match sqlite_entry.artifact_type {
         ArtifactType::Directory => {
             return Err(MaterializerStateTableError::CodePathNotSupportedForDirEntry.into());
@@ -470,7 +470,7 @@ impl MaterializerStateSqliteTable {
         Self { connection }
     }
 
-    pub(crate) fn create_table(&self) -> buck2_error::Result<()> {
+    pub(crate) fn create_table(&self) -> bz_error::Result<()> {
         let sql = format!(
             "CREATE TABLE {STATE_TABLE_NAME} (
                 path                    TEXT NOT NULL PRIMARY KEY,
@@ -494,7 +494,7 @@ impl MaterializerStateSqliteTable {
     }
 
     // Index is useful for faster removals
-    fn create_parent_path_index(&self) -> buck2_error::Result<()> {
+    fn create_parent_path_index(&self) -> bz_error::Result<()> {
         let sql = format!(
             "CREATE INDEX {STATE_TABLE_NAME}_index ON {STATE_TABLE_NAME} (
                 parent_path
@@ -513,7 +513,7 @@ impl MaterializerStateSqliteTable {
         path: &ProjectRelativePath,
         metadata: &ArtifactMetadata,
         timestamp: DateTime<Utc>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let entries = convert_artifact_metadata_to_sqlite_entries(path, metadata, &timestamp);
         static SQL: Lazy<String> = Lazy::new(|| {
             format!(
@@ -556,7 +556,7 @@ impl MaterializerStateSqliteTable {
     pub(crate) fn update_access_times(
         &self,
         updates: Vec<&ProjectRelativePathBuf>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut conn = self.connection.lock();
         let tx = conn.transaction()?;
         for chunk in updates.chunks(100) {
@@ -577,14 +577,14 @@ impl MaterializerStateSqliteTable {
     pub(crate) fn read_materializer_state(
         &self,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<MaterializerState> {
+    ) -> bz_error::Result<MaterializerState> {
         let entries = self.read_all_entries().with_buck_error_context(|| {
             format!("error reading row of sqlite table {STATE_TABLE_NAME}")
         })?;
         convert_sqlite_entries_to_materializer_state(entries, digest_config)
     }
 
-    fn read_all_entries(&self) -> buck2_error::Result<Vec<SqliteEntry<'_>>> {
+    fn read_all_entries(&self) -> bz_error::Result<Vec<SqliteEntry<'_>>> {
         static SQL: Lazy<String> = Lazy::new(|| {
             format!(
                 "SELECT path, artifact_type, digest_size, entry_hash, entry_hash_kind, file_is_executable, symlink_target, last_access_time, parent_path FROM {STATE_TABLE_NAME}",
@@ -610,7 +610,7 @@ impl MaterializerStateSqliteTable {
         .with_buck_error_context(|| format!("reading from sqlite table {STATE_TABLE_NAME}"))
     }
 
-    pub(crate) fn clear(&self) -> buck2_error::Result<usize> {
+    pub(crate) fn clear(&self) -> bz_error::Result<usize> {
         let sql = format!("DELETE FROM {STATE_TABLE_NAME}");
 
         tracing::trace!(sql = %sql, "clearing materializer state table");
@@ -623,7 +623,7 @@ impl MaterializerStateSqliteTable {
             })
     }
 
-    pub(crate) fn delete(&self, paths: Vec<ProjectRelativePathBuf>) -> buck2_error::Result<usize> {
+    pub(crate) fn delete(&self, paths: Vec<ProjectRelativePathBuf>) -> bz_error::Result<usize> {
         if paths.is_empty() {
             return Ok(0);
         }
@@ -634,7 +634,7 @@ impl MaterializerStateSqliteTable {
         fn delete_artifact_rows(
             connection: &Arc<Mutex<Connection>>,
             paths: &[ProjectRelativePathBuf],
-        ) -> buck2_error::Result<usize> {
+        ) -> bz_error::Result<usize> {
             let sql = format!(
                 "DELETE FROM {} WHERE path IN ({})",
                 STATE_TABLE_NAME,
@@ -659,7 +659,7 @@ impl MaterializerStateSqliteTable {
         fn delete_directory_artifact_members(
             connection: &Arc<Mutex<Connection>>,
             paths: &[ProjectRelativePathBuf],
-        ) -> buck2_error::Result<usize> {
+        ) -> bz_error::Result<usize> {
             let sql = format!(
                 "DELETE FROM {} WHERE parent_path IN ({})",
                 STATE_TABLE_NAME,
@@ -694,11 +694,11 @@ impl MaterializerStateSqliteTable {
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use buck2_common::cas_digest::TrackedCasDigest;
-    use buck2_directory::directory::builder::DirectoryBuilder;
-    use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
-    use buck2_execute::directory::new_symlink;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_common::cas_digest::TrackedCasDigest;
+    use bz_directory::directory::builder::DirectoryBuilder;
+    use bz_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
+    use bz_execute::directory::new_symlink;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 
     use super::*;
 
@@ -884,7 +884,7 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_many() -> buck2_error::Result<()> {
+    fn test_delete_many() -> bz_error::Result<()> {
         let conn = Connection::open_in_memory()?;
 
         let table = MaterializerStateSqliteTable::new(Arc::new(Mutex::new(conn)));

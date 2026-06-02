@@ -69,7 +69,7 @@ fn impl_struct(input: Struct) -> TokenStream {
             #tags
 
             // All errors called by transparent should have From implemented
-            let error: buck2_error::Error = #arg_token.#member.into();
+            let error: bz_error::Error = #arg_token.#member.into();
             error.tag(tags)
         }
     } else if let Some(source_field) = input.source_field() {
@@ -81,7 +81,7 @@ fn impl_struct(input: Struct) -> TokenStream {
             let error_msg = format!("{}", &#arg_token);
 
             // All errors called by source should have From implemented
-            let error: buck2_error::Error = #arg_token.#member.into();
+            let error: bz_error::Error = #arg_token.#member.into();
             let error = error.tag(tags);
             error.context(error_msg)
         }
@@ -92,8 +92,8 @@ fn impl_struct(input: Struct) -> TokenStream {
             #field_pats
             #tags
 
-            let source_location = buck2_error::source_location::SourceLocation::new(core::file!(), core::line!()).with_type_name(#source_location_type_name);
-            let root_error = buck2_error::Error::new(format!("{}", #arg_token), tags[0], source_location, None);
+            let source_location = bz_error::source_location::SourceLocation::new(core::file!(), core::line!()).with_type_name(#source_location_type_name);
+            let root_error = bz_error::Error::new(format!("{}", #arg_token), tags[0], source_location, None);
             root_error.tag(tags)
         }
     };
@@ -139,11 +139,11 @@ fn impl_struct(input: Struct) -> TokenStream {
 
     quote! {
         #[allow(unused_qualifications)]
-        impl #impl_generics From<#ty #ty_generics> for buck2_error::Error #error_where_clause
+        impl #impl_generics From<#ty #ty_generics> for bz_error::Error #error_where_clause
         {
             #[cold]
             #[allow(unused_assignments, unused_variables, deprecated)]
-            fn from(#arg_token: #ty #ty_generics) -> buck2_error::Error {
+            fn from(#arg_token: #ty #ty_generics) -> bz_error::Error {
                 #content
             }
         }
@@ -228,7 +228,7 @@ fn impl_enum(mut input: Enum) -> TokenStream {
                 #tags
 
                 // All errors called by transparent must have From implemented
-                let error: buck2_error::Error = #only_field.into();
+                let error: bz_error::Error = #only_field.into();
                 error.tag(tags)
             }
         } else if let Some(source_field) = variant.source_field() {
@@ -241,7 +241,7 @@ fn impl_enum(mut input: Enum) -> TokenStream {
                 #tags
 
                 // All errors called by source must have From implemented
-                let error = buck2_error::Error::from(#member);
+                let error = bz_error::Error::from(#member);
                 let error = error.tag(tags);
 
                 error.context(err_msg)
@@ -252,8 +252,8 @@ fn impl_enum(mut input: Enum) -> TokenStream {
             quote! {
                 #tags
 
-                let source_location = buck2_error::source_location::SourceLocation::new(core::file!(), core::line!()).with_type_name(#source_location_type_name);
-                let root_error = buck2_error::Error::new(err_msg, tags[0], source_location, None);
+                let source_location = bz_error::source_location::SourceLocation::new(core::file!(), core::line!()).with_type_name(#source_location_type_name);
+                let root_error = bz_error::Error::new(err_msg, tags[0], source_location, None);
                 root_error.tag(tags)
             }
         };
@@ -270,9 +270,9 @@ fn impl_enum(mut input: Enum) -> TokenStream {
     let error_where_clause = display_inferred_bounds.augment_where_clause(input.generics);
 
     quote! {
-        impl #impl_generics From<#ty #ty_generics> for buck2_error::Error #error_where_clause  {
+        impl #impl_generics From<#ty #ty_generics> for bz_error::Error #error_where_clause  {
             #[cold]
-            fn from(#arg_token: #ty #ty_generics) -> buck2_error::Error {
+            fn from(#arg_token: #ty #ty_generics) -> bz_error::Error {
                 // This is a bit hacky but match moves #arg_token so we need this to be before the match
                 let err_msg = format!("{}", #arg_token);
 
@@ -285,14 +285,14 @@ fn impl_enum(mut input: Enum) -> TokenStream {
     }
 }
 
-/// Generates the from implementation to buck2_error for a provided error type
+/// Generates the from implementation to bz_error for a provided error type
 fn get_tags(attrs: &Attrs) -> TokenStream {
     let individual_tags: Vec<syn::Expr> = attrs
         .tags
         .iter()
         .map(|tag| match tag {
             OptionStyle::Explicit(tag) => syn::parse_quote! {
-                buck2_error::ErrorTag::#tag
+                bz_error::ErrorTag::#tag
             },
             OptionStyle::ByExpr(e) => e.clone(),
         })
@@ -306,7 +306,7 @@ fn get_tags(attrs: &Attrs) -> TokenStream {
 
     if let Some(tags_expr) = tags_expr {
         quote! {
-            let mut tags: Vec<buck2_error::ErrorTag> = #tags_expr;
+            let mut tags: Vec<bz_error::ErrorTag> = #tags_expr;
             for tag in [#(#individual_tags,)*] {
                 tags.push(tag);
             }

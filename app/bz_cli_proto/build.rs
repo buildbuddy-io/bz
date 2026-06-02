@@ -26,20 +26,20 @@ fn main() -> io::Result<()> {
         ]
     };
 
-    let builder = buck2_protoc_dev::configure();
+    let builder = bz_protoc_dev::configure();
     unsafe { builder.setup_protoc() }
         .type_attribute(".", "#[derive(::serde::Serialize, ::serde::Deserialize)] #[serde(rename_all = \"snake_case\")]")
         .type_attribute(".", "#[derive(::allocative::Allocative)]")
         .field_attribute("start_time", "#[serde(with = \"serialize_timestamp\")]")
-        .field_attribute("timeout", "#[serde(rename = \"timeout_us\", with = \"buck2_data::serialize_duration_as_micros\")]")
-        .field_attribute("uptime", "#[serde(rename = \"uptime_us\", with = \"buck2_data::serialize_duration_as_micros\")]")
-        .field_attribute("delay", "#[serde(rename = \"delay_us\", with = \"buck2_data::serialize_duration_as_micros\")]")
-        .field_attribute("ProfileResponse.elapsed", "#[serde(rename = \"elapsed_us\", with = \"buck2_data::serialize_duration_as_micros\")]")
+        .field_attribute("timeout", "#[serde(rename = \"timeout_us\", with = \"bz_data::serialize_duration_as_micros\")]")
+        .field_attribute("uptime", "#[serde(rename = \"uptime_us\", with = \"bz_data::serialize_duration_as_micros\")]")
+        .field_attribute("delay", "#[serde(rename = \"delay_us\", with = \"bz_data::serialize_duration_as_micros\")]")
+        .field_attribute("ProfileResponse.elapsed", "#[serde(rename = \"elapsed_us\", with = \"bz_data::serialize_duration_as_micros\")]")
         .boxed("CommandProgress.progress.event")
         .boxed("CommandProgress.progress.result")
         .boxed("CommandProgress.progress.partial_result")
         .field_attribute("expires_at", "#[serde(with = \"serialize_timestamp\")]")
-        .extern_path(".buck.data", "::buck2_data")
-        .extern_path(".buck.subscription", "::buck2_subscription_proto")
+        .extern_path(".buck.data", "::bz_data")
+        .extern_path(".buck.subscription", "::bz_subscription_proto")
         .compile(proto_files, &includes)
 }

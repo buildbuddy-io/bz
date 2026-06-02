@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use bz_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 

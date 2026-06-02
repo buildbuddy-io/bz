@@ -10,36 +10,36 @@
 
 use std::sync::Arc;
 
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::configs::testing::parse_with_config_args;
-use buck2_common::package_listing::PackageListingStrategy;
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_common::package_listing::listing::testing::PackageListingExt;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::cell_root_path::CellRootPathBuf;
-use buck2_core::cells::name::CellName;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_interpreter::extra::InterpreterHostArchitecture;
-use buck2_interpreter::extra::InterpreterHostPlatform;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::file_loader::LoadedModule;
-use buck2_interpreter::file_loader::LoadedModules;
-use buck2_interpreter::import_paths::ImplicitImportPaths;
-use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_interpreter::paths::path::StarlarkPath;
-use buck2_interpreter::prelude_path::PreludePath;
-use buck2_node::nodes::eval_result::EvaluationResult;
-use buck2_node::nodes::targets_map::TargetsMap;
-use buck2_node::super_package::SuperPackage;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::configs::testing::parse_with_config_args;
+use bz_common::package_listing::PackageListingStrategy;
+use bz_common::package_listing::listing::PackageListing;
+use bz_common::package_listing::listing::testing::PackageListingExt;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::CellResolver;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::cell_root_path::CellRootPathBuf;
+use bz_core::cells::name::CellName;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::target::label::interner::ConcurrentTargetLabelInterner;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_interpreter::extra::InterpreterHostArchitecture;
+use bz_interpreter::extra::InterpreterHostPlatform;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::file_loader::LoadedModule;
+use bz_interpreter::file_loader::LoadedModules;
+use bz_interpreter::import_paths::ImplicitImportPaths;
+use bz_interpreter::paths::module::OwnedStarlarkModulePath;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_interpreter::paths::path::StarlarkPath;
+use bz_interpreter::prelude_path::PreludePath;
+use bz_node::nodes::eval_result::EvaluationResult;
+use bz_node::nodes::targets_map::TargetsMap;
+use bz_node::super_package::SuperPackage;
 use dice::CancellationContext;
 use dupe::Dupe;
 use indoc::indoc;
@@ -77,7 +77,7 @@ pub type CellsData = (
 
 /// The same as `run_starlark_test`, but just make sure the parse succeeds;
 /// ignore the targets
-pub fn run_simple_starlark_test(content: &str) -> buck2_error::Result<()> {
+pub fn run_simple_starlark_test(content: &str) -> bz_error::Result<()> {
     let mut tester = Tester::new()?;
     match tester.run_starlark_test(content) {
         Ok(_) => Ok(()),
@@ -85,7 +85,7 @@ pub fn run_simple_starlark_test(content: &str) -> buck2_error::Result<()> {
     }
 }
 
-pub fn cells(extra_root_config: Option<&str>) -> buck2_error::Result<CellsData> {
+pub fn cells(extra_root_config: Option<&str>) -> bz_error::Result<CellsData> {
     let resolver = CellResolver::testing_with_name_and_path(
         CellName::testing_new("root"),
         CellRootPathBuf::new(ProjectRelativePath::empty().to_owned()),
@@ -123,7 +123,7 @@ pub fn cells(extra_root_config: Option<&str>) -> buck2_error::Result<CellsData> 
     ))
 }
 
-pub fn expect_error<T>(result: buck2_error::Result<T>, content: &str, expected: &str) {
+pub fn expect_error<T>(result: bz_error::Result<T>, content: &str, expected: &str) {
     match result {
         Ok(_) => {
             eprintln!("Expected starlark failure, got success.\nCode contents:\n{content}");
@@ -142,11 +142,11 @@ pub fn expect_error<T>(result: buck2_error::Result<T>, content: &str, expected: 
 }
 
 impl Tester {
-    pub fn new() -> buck2_error::Result<Self> {
+    pub fn new() -> bz_error::Result<Self> {
         Self::with_cells(cells(None)?)
     }
 
-    pub fn with_cells(cells_data: CellsData) -> buck2_error::Result<Self> {
+    pub fn with_cells(cells_data: CellsData) -> bz_error::Result<Self> {
         let (
             cell_alias_resolver,
             cell_resolver,
@@ -176,7 +176,7 @@ impl Tester {
         self.prelude_path = Some(PreludePath::testing_new(prelude_import));
     }
 
-    fn interpreter(&self) -> buck2_error::Result<Arc<InterpreterForDir>> {
+    fn interpreter(&self) -> bz_error::Result<Arc<InterpreterForDir>> {
         let build_file_cell = BuildFileCell::new(self.cell_alias_resolver.resolve_self());
         let import_paths = ImplicitImportPaths::parse(
             &self.root_config,
@@ -229,7 +229,7 @@ impl Tester {
         &mut self,
         path: &ImportPath,
         content: &str,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         let loaded = self.eval_import(path, content, self.loaded_modules.clone())?;
         self.loaded_modules
             .map
@@ -245,7 +245,7 @@ impl Tester {
         path: &ImportPath,
         content: &str,
         loaded_modules: LoadedModules,
-    ) -> buck2_error::Result<LoadedModule> {
+    ) -> bz_error::Result<LoadedModule> {
         let interpreter = self.interpreter()?;
         let ast = interpreter
             .parse(StarlarkPath::LoadFile(path), content.to_owned())??
@@ -277,7 +277,7 @@ impl Tester {
         path: &BuildFilePath,
         content: &str,
         package_listing: PackageListing,
-    ) -> buck2_error::Result<EvaluationResult> {
+    ) -> bz_error::Result<EvaluationResult> {
         self.eval_build_file_with_loaded_modules(
             path,
             content,
@@ -294,7 +294,7 @@ impl Tester {
         content: &str,
         loaded_modules: LoadedModules,
         package_listing: PackageListing,
-    ) -> buck2_error::Result<EvaluationResult> {
+    ) -> bz_error::Result<EvaluationResult> {
         let interpreter = self.interpreter()?;
         let ast = interpreter
             .parse(StarlarkPath::BuildFile(path), content.to_owned())??
@@ -319,7 +319,7 @@ impl Tester {
                 CancellationContext::testing(),
             )?
         else {
-            return Err(buck2_error::internal_error!(
+            return Err(bz_error::internal_error!(
                 "test build file evaluation unexpectedly requested a package listing restart"
             ));
         };
@@ -332,7 +332,7 @@ impl Tester {
 
     /// Run a starlark test with a basic environment. See
     /// `run_starlark_test()` above.
-    pub fn run_starlark_test(&mut self, content: &str) -> buck2_error::Result<TargetsMap> {
+    pub fn run_starlark_test(&mut self, content: &str) -> bz_error::Result<TargetsMap> {
         let import_path = ImportPath::testing_new("root//some/package:defs.bzl");
         self.add_import(
             &import_path,
@@ -369,7 +369,7 @@ impl Tester {
     /// evaluation was successful. This can be handy if the .bzl
     /// evaluation environment is different from the build file
     /// environment.
-    pub fn run_starlark_bzl_test(&mut self, content: &str) -> buck2_error::Result<()> {
+    pub fn run_starlark_bzl_test(&mut self, content: &str) -> bz_error::Result<()> {
         let import_path = ImportPath::testing_new("root//some/package:defs.bzl");
         let template = indoc!(
             r#"

@@ -3,14 +3,14 @@ build = "build.rs"
 description = "Buck2 external cells bundled data"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_external_cells_bundled"
+name = "bz_external_cells_bundled"
 repository = { workspace = true }
 version = "0.1.0"
 
 [dependencies]
 async-trait = { workspace = true }
 
-buck2_common = { workspace = true }
+bz_common = { workspace = true }
 
 [build-dependencies]
 walkdir = { workspace = true }

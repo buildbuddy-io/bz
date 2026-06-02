@@ -11,7 +11,7 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
+use bz_build_api_derive::internal_provider;
 use either::Either;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
@@ -33,12 +33,12 @@ use starlark::values::dict::DictType;
 use starlark::values::dict::FrozenDictRef;
 use starlark::values::string::StarlarkStr;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum TemplatePlaceholderInfoError {
     #[error(
@@ -154,7 +154,7 @@ impl FrozenTemplatePlaceholderInfo {
     }
 }
 
-fn verify_variables_type(field_key: &str, variables: Value) -> buck2_error::Result<()> {
+fn verify_variables_type(field_key: &str, variables: Value) -> bz_error::Result<()> {
     match DictRef::from_value(variables) {
         None => Err(TemplatePlaceholderInfoError::VariablesNotADict {
             field_key: field_key.to_owned(),
@@ -198,7 +198,7 @@ fn verify_variables_type(field_key: &str, variables: Value) -> buck2_error::Resu
 }
 
 impl<'v> TemplatePlaceholderInfo<'v> {
-    fn new(unkeyed_variables: Value<'v>, keyed_variables: Value<'v>) -> buck2_error::Result<Self> {
+    fn new(unkeyed_variables: Value<'v>, keyed_variables: Value<'v>) -> bz_error::Result<Self> {
         verify_variables_type("unkeyed_variables", unkeyed_variables)?;
         verify_variables_type("keyed_variables", keyed_variables)?;
         Ok(Self {

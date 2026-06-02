@@ -11,12 +11,12 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::package::source_path::SourcePathRef;
-use buck2_core::plugins::PluginKind;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_util::thin_box::ThinBoxSlice;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::package::source_path::SourcePathRef;
+use bz_core::plugins::PluginKind;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_util::thin_box::ThinBoxSlice;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark_map::ordered_set::OrderedSet;
@@ -106,17 +106,17 @@ impl CoercedDepsCollector {
 }
 
 impl<'a> CoercedAttrTraversal<'a> for CoercedDepsCollector {
-    fn dep(&mut self, dep: &ProvidersLabel) -> buck2_error::Result<()> {
+    fn dep(&mut self, dep: &ProvidersLabel) -> bz_error::Result<()> {
         self.deps.insert(dep.target().dupe());
         Ok(())
     }
 
-    fn exec_dep(&mut self, dep: &'a ProvidersLabel) -> buck2_error::Result<()> {
+    fn exec_dep(&mut self, dep: &'a ProvidersLabel) -> bz_error::Result<()> {
         self.exec_deps.insert(dep.target().dupe());
         Ok(())
     }
 
-    fn toolchain_dep(&mut self, dep: &'a ProvidersLabel) -> buck2_error::Result<()> {
+    fn toolchain_dep(&mut self, dep: &'a ProvidersLabel) -> bz_error::Result<()> {
         self.toolchain_deps.insert(dep.target().dupe());
         Ok(())
     }
@@ -125,7 +125,7 @@ impl<'a> CoercedAttrTraversal<'a> for CoercedDepsCollector {
         &mut self,
         dep: &'a ProvidersLabel,
         tr: &Arc<TransitionId>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.transition_deps
             .insert((dep.target().dupe(), tr.dupe()));
         Ok(())
@@ -135,7 +135,7 @@ impl<'a> CoercedAttrTraversal<'a> for CoercedDepsCollector {
         &mut self,
         dep: &'a ProvidersLabel,
         tr: &Arc<TransitionId>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.transition_deps
             .insert((dep.target().dupe(), tr.dupe()));
         Ok(())
@@ -145,17 +145,17 @@ impl<'a> CoercedAttrTraversal<'a> for CoercedDepsCollector {
         &mut self,
         dep: &ProvidersLabel,
         t: ConfigurationDepKind,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.configuration_deps.insert((dep.dupe(), t));
         Ok(())
     }
 
-    fn plugin_dep(&mut self, dep: &'a TargetLabel, _kind: &PluginKind) -> buck2_error::Result<()> {
+    fn plugin_dep(&mut self, dep: &'a TargetLabel, _kind: &PluginKind) -> bz_error::Result<()> {
         self.plugin_deps.insert(dep.dupe());
         Ok(())
     }
 
-    fn input(&mut self, _input: SourcePathRef) -> buck2_error::Result<()> {
+    fn input(&mut self, _input: SourcePathRef) -> bz_error::Result<()> {
         Ok(())
     }
 }

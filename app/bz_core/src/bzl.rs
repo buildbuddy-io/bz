@@ -12,7 +12,7 @@ use std::fmt::Display;
 use std::fmt::Formatter;
 
 use allocative::Allocative;
-use buck2_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileName;
 use pagable::Pagable;
 use strong_hash::StrongHash;
 
@@ -22,7 +22,7 @@ use crate::cells::cell_path::CellPathRef;
 use crate::cells::name::CellName;
 use crate::cells::paths::CellRelativePath;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ImportPathError {
     #[error("Invalid import path `{0}`")]
@@ -49,7 +49,7 @@ impl ImportPath {
     /// We evaluate `bzl` files multiple times: for each cell we evaluate `bzl` file again.
     /// We want to stop doing that.
     /// This function is for call sites where we don't care about the build file cell.
-    pub fn new_same_cell(path: CellPath) -> buck2_error::Result<Self> {
+    pub fn new_same_cell(path: CellPath) -> bz_error::Result<Self> {
         let build_file_cell = BuildFileCell::new(path.cell());
         Self::new_with_build_file_cells(path, build_file_cell)
     }
@@ -57,7 +57,7 @@ impl ImportPath {
     pub fn new_same_cell_with_package_root(
         path: CellPath,
         package_root: Option<CellPath>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let build_file_cell = BuildFileCell::new(path.cell());
         Self::new_with_build_file_cells_and_package_root(path, build_file_cell, package_root)
     }
@@ -65,7 +65,7 @@ impl ImportPath {
     pub fn new_with_build_file_cells(
         path: CellPath,
         build_file_cell: BuildFileCell,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Self::new_with_build_file_cells_and_package_root(path, build_file_cell, None)
     }
 
@@ -73,7 +73,7 @@ impl ImportPath {
         path: CellPath,
         build_file_cell: BuildFileCell,
         package_root: Option<CellPath>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         if path.parent().is_none() {
             return Err(ImportPathError::Invalid(path).into());
         }
@@ -97,7 +97,7 @@ impl ImportPath {
     pub fn new_hack_for_lsp(
         path: CellPath,
         build_file_cell: BuildFileCell,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         if path.parent().is_none() {
             return Err(ImportPathError::Invalid(path).into());
         }

@@ -13,11 +13,11 @@ use std::os::unix::io::RawFd;
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::sync::Arc;
 
-use buck2_core::logging::LogConfigurationReloadHandle;
-use buck2_error::BuckErrorContext;
-use buck2_forkserver_proto::forkserver_server;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_grpc::DuplexChannel;
+use bz_core::logging::LogConfigurationReloadHandle;
+use bz_error::BuckErrorContext;
+use bz_forkserver_proto::forkserver_server;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_grpc::DuplexChannel;
 use tokio::net::UnixListener;
 use tokio::net::UnixStream;
 
@@ -28,7 +28,7 @@ pub async fn run_forkserver(
     socket_path: Option<String>,
     log_reload_handle: Arc<dyn LogConfigurationReloadHandle>,
     state_dir: AbsNormPathBuf,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let io = match (fd, socket_path) {
         (Some(fd), None) => {
             // SAFETY: At worst, we just read (or close) the wrong FD.
@@ -63,7 +63,7 @@ pub async fn run_forkserver(
             .max_decoding_message_size(usize::MAX),
     );
 
-    buck2_grpc::spawn_oneshot(io, router)
+    bz_grpc::spawn_oneshot(io, router)
         .into_join_handle()
         .await??;
 

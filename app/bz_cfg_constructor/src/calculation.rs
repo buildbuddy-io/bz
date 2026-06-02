@@ -12,20 +12,20 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::package::PackageLabel;
-use buck2_core::soft_error;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::internal_error;
-use buck2_interpreter_for_build::interpreter::package_file_calculation::EvalPackageFile;
-use buck2_node::cfg_constructor::CfgConstructorCalculationImpl;
-use buck2_node::cfg_constructor::CfgConstructorImpl;
-use buck2_node::metadata::value::MetadataValue;
-use buck2_node::nodes::unconfigured::TargetNodeRef;
-use buck2_node::rule_type::RuleType;
-use buck2_node::super_package::SuperPackage;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::package::PackageLabel;
+use bz_core::soft_error;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::internal_error;
+use bz_interpreter_for_build::interpreter::package_file_calculation::EvalPackageFile;
+use bz_node::cfg_constructor::CfgConstructorCalculationImpl;
+use bz_node::cfg_constructor::CfgConstructorImpl;
+use bz_node::metadata::value::MetadataValue;
+use bz_node::nodes::unconfigured::TargetNodeRef;
+use bz_node::rule_type::RuleType;
+use bz_node::super_package::SuperPackage;
 use derive_more::Display;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -37,7 +37,7 @@ use dupe::OptionDupedExt;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum CalculationCfgConstructorError {
     // TODO: Clean up once metadata modifiers are deleted
@@ -51,7 +51,7 @@ pub struct CfgConstructorCalculationInstance;
 
 async fn get_cfg_constructor_uncached(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<Option<Arc<dyn CfgConstructorImpl>>> {
+) -> bz_error::Result<Option<Arc<dyn CfgConstructorImpl>>> {
     let root_cell = ctx.get_cell_resolver().await?.root_cell();
     let package_label = PackageLabel::new(root_cell, CellRelativePath::empty())?;
     // This returns empty super package if `PACKAGE` file does not exist.
@@ -61,14 +61,14 @@ async fn get_cfg_constructor_uncached(
 
 async fn get_cfg_constructor(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<Option<Arc<dyn CfgConstructorImpl>>> {
+) -> bz_error::Result<Option<Arc<dyn CfgConstructorImpl>>> {
     #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
     #[pagable_typetag(dice::DiceKeyDyn)]
     struct GetCfgConstructorKey;
 
     #[async_trait]
     impl Key for GetCfgConstructorKey {
-        type Value = buck2_error::Result<Option<Arc<dyn CfgConstructorImpl>>>;
+        type Value = bz_error::Result<Option<Arc<dyn CfgConstructorImpl>>>;
 
         async fn compute(
             &self,
@@ -101,7 +101,7 @@ impl CfgConstructorCalculationImpl for CfgConstructorCalculationInstance {
         cli_modifiers: &Arc<Vec<String>>,
         rule_type: &RuleType,
         configuring_exec_dep: bool,
-    ) -> buck2_error::Result<ConfigurationData> {
+    ) -> bz_error::Result<ConfigurationData> {
         #[derive(Clone, Display, Dupe, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
         #[display("CfgConstructorInvocationKey")]
         #[pagable_typetag(dice::DiceKeyDyn)]
@@ -116,7 +116,7 @@ impl CfgConstructorCalculationImpl for CfgConstructorCalculationInstance {
 
         #[async_trait]
         impl Key for CfgConstructorInvocationKey {
-            type Value = buck2_error::Result<ConfigurationData>;
+            type Value = bz_error::Result<ConfigurationData>;
 
             async fn compute(
                 &self,
@@ -173,8 +173,8 @@ impl CfgConstructorCalculationImpl for CfgConstructorCalculationInstance {
                 // Metadata modifiers come first, then attribute modifiers.
                 soft_error!(
                     "cfg_modifiers_both_metadata_and_attr",
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Target `{}` uses both `modifiers` attribute and modifiers in metadata. \
                          Migrate metadata modifiers to the `modifiers` attribute.",
                         target.label(),

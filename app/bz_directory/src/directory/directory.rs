@@ -10,8 +10,8 @@
 
 use std::fmt;
 
-use buck2_core::directory_digest::DirectoryDigest;
-use buck2_fs::paths::file_name::FileName;
+use bz_core::directory_digest::DirectoryDigest;
+use bz_fs::paths::file_name::FileName;
 
 use crate::directory::builder::DirectoryBuilder;
 use crate::directory::directory_iterator::DirectoryIterator;

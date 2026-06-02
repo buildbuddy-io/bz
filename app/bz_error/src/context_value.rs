@@ -142,9 +142,9 @@ impl std::fmt::Display for StarlarkContext {
 mod tests {
     use crate::ErrorTag;
     use crate::Tier;
-    use crate::{self as buck2_error};
+    use crate::{self as bz_error};
 
-    #[derive(buck2_error_derive::Error, Debug)]
+    #[derive(bz_error_derive::Error, Debug)]
     #[error("test error")]
     #[buck2(tag = TestOnly)]
     struct TestError;

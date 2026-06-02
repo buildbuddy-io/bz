@@ -145,7 +145,7 @@ impl std::fmt::Display for ExecutionPlatformIncompatibleReason {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 pub enum ExecutionPlatformError {
     // .indented() losing the alternate flag that we want to use to format the reason so we need to explicitly do that.
@@ -181,7 +181,7 @@ impl ExecutionPlatformResolutionBase {
         }
     }
 
-    fn platform(&self) -> buck2_error::Result<&ExecutionPlatform> {
+    fn platform(&self) -> bz_error::Result<&ExecutionPlatform> {
         match &self.platform {
             Some(v) => Ok(v),
             None => Err(ExecutionPlatformError::NoCompatiblePlatform(
@@ -195,7 +195,7 @@ impl ExecutionPlatformResolutionBase {
         &self.skipped_platforms
     }
 
-    fn executor_config(&self) -> buck2_error::Result<&Arc<CommandExecutorConfig>> {
+    fn executor_config(&self) -> bz_error::Result<&Arc<CommandExecutorConfig>> {
         Ok(self.platform()?.executor_config())
     }
 }
@@ -223,7 +223,7 @@ impl ExecutionPlatformResolutionPartial {
     }
 
     /// Get the execution platform, if resolution found one.
-    pub fn platform(&self) -> buck2_error::Result<&ExecutionPlatform> {
+    pub fn platform(&self) -> bz_error::Result<&ExecutionPlatform> {
         self.0.platform()
     }
 
@@ -233,7 +233,7 @@ impl ExecutionPlatformResolutionPartial {
     }
 
     /// Get the executor config for the resolved platform.
-    pub fn executor_config(&self) -> buck2_error::Result<&Arc<CommandExecutorConfig>> {
+    pub fn executor_config(&self) -> bz_error::Result<&Arc<CommandExecutorConfig>> {
         self.0.executor_config()
     }
 
@@ -304,7 +304,7 @@ impl ExecutionPlatformResolution {
         }
     }
 
-    // TODO(cjhopman): Should this be an buck2_error::Result and never return an invalid configuration?
+    // TODO(cjhopman): Should this be an bz_error::Result and never return an invalid configuration?
     #[inline]
     pub fn base_cfg(&self) -> ConfigurationNoExec {
         match self.base() {
@@ -313,7 +313,7 @@ impl ExecutionPlatformResolution {
         }
     }
 
-    pub fn platform(&self) -> buck2_error::Result<&ExecutionPlatform> {
+    pub fn platform(&self) -> bz_error::Result<&ExecutionPlatform> {
         match self.base() {
             Some(base) => base.platform(),
             None => Err(ExecutionPlatformError::NoCompatiblePlatform(Arc::new(Vec::new())).into()),
@@ -327,7 +327,7 @@ impl ExecutionPlatformResolution {
         }
     }
 
-    pub fn executor_config(&self) -> buck2_error::Result<&Arc<CommandExecutorConfig>> {
+    pub fn executor_config(&self) -> bz_error::Result<&Arc<CommandExecutorConfig>> {
         match self.base() {
             Some(base) => base.executor_config(),
             None => Err(ExecutionPlatformError::NoCompatiblePlatform(Arc::new(Vec::new())).into()),
@@ -348,7 +348,7 @@ impl ExecutionPlatformResolution {
     ///
     /// If the target is not found in `Resolved` state, this indicates a bug where the
     /// exec_dep was not collected during dependency gathering.
-    pub fn cfg_for_exec_dep(&self, target: &TargetLabel) -> buck2_error::Result<ConfigurationData> {
+    pub fn cfg_for_exec_dep(&self, target: &TargetLabel) -> bz_error::Result<ConfigurationData> {
         match self {
             Self::Unspecified => {
                 // During gather_deps, we use the base cfg as a placeholder.
@@ -359,8 +359,8 @@ impl ExecutionPlatformResolution {
                 .get(target)
                 .map(|cfg| cfg.dupe())
                 .ok_or_else(|| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::Tier0,
                         "exec_dep `{}` was not found in exec_dep_cfgs. \
                         This indicates a bug: this exec_dep was not collected during \
                         dependency gathering. Available exec_deps: [{}]",

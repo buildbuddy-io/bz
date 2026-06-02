@@ -10,7 +10,7 @@
 
 #![feature(error_generic_member_access)]
 
-//! Code shared between `buck2_wrapper` and `buck2`.
+//! Code shared between `bz_wrapper` and `buck2`.
 //!
 //! Careful! The wrapper is not released as part of the regular buck version bumps,
 //! meaning code changes here are not "atomically" updated.
@@ -21,12 +21,12 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
-use buck2_hash::StdBuckHashSet;
+use bz_hash::StdBuckHashSet;
 use is_buck2::WhoIsAsking;
 use sysinfo::ProcessesToUpdate;
 use sysinfo::System;
 
-use crate::is_buck2::is_buck2_exe;
+use crate::is_buck2::is_bz_exe;
 use crate::pid::Pid;
 
 pub mod invocation_id;
@@ -88,7 +88,7 @@ fn get_all_tgids_linux() -> Option<StdBuckHashSet<sysinfo::Pid>> {
 }
 
 /// Find all buck2 processes in the system.
-fn find_buck2_processes(who_is_asking: WhoIsAsking) -> Vec<ProcessInfo> {
+fn find_bz_processes(who_is_asking: WhoIsAsking) -> Vec<ProcessInfo> {
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
 
@@ -105,7 +105,7 @@ fn find_buck2_processes(who_is_asking: WhoIsAsking) -> Vec<ProcessInfo> {
 
     let filtered_proc_list = get_all_tgids_linux();
 
-    let mut buck2_processes = Vec::new();
+    let mut bz_processes = Vec::new();
     for (pid, process) in system.processes() {
         // See comment on `get_all_tgids_linux`
         if let Some(filtered_proc_list) = filtered_proc_list.as_ref() {
@@ -116,11 +116,11 @@ fn find_buck2_processes(who_is_asking: WhoIsAsking) -> Vec<ProcessInfo> {
         let Some(exe) = process.exe() else {
             continue;
         };
-        if is_buck2_exe(exe, who_is_asking) && !current_parents.contains(pid) {
+        if is_bz_exe(exe, who_is_asking) && !current_parents.contains(pid) {
             let Ok(pid) = Pid::from_u32(pid.as_u32()) else {
                 continue;
             };
-            buck2_processes.push(ProcessInfo {
+            bz_processes.push(ProcessInfo {
                 pid,
                 name: process.name().to_string_lossy().into_owned(),
                 cmd: process
@@ -132,15 +132,15 @@ fn find_buck2_processes(who_is_asking: WhoIsAsking) -> Vec<ProcessInfo> {
         }
     }
 
-    buck2_processes
+    bz_processes
 }
 
 /// Kills all running Buck2 processes, except this process's hierarchy. Returns whether it
 /// succeeded without errors.
 pub fn killall(who_is_asking: WhoIsAsking, write: impl Fn(String)) -> bool {
-    let buck2_processes = find_buck2_processes(who_is_asking);
+    let bz_processes = find_bz_processes(who_is_asking);
 
-    if buck2_processes.is_empty() {
+    if bz_processes.is_empty() {
         write("No buck2 processes found".to_owned());
         return true;
     }
@@ -158,7 +158,7 @@ pub fn killall(who_is_asking: WhoIsAsking, write: impl Fn(String)) -> bool {
             format!("{} {} ({}). {}", status, process.name, process.pid, cmd,)
         }
 
-        fn failed_to_kill(&mut self, process: &ProcessInfo, error: buck2_error::Error) {
+        fn failed_to_kill(&mut self, process: &ProcessInfo, error: bz_error::Error) {
             let mut message = self.fmt_status(process, "Failed to kill");
             for line in format!("{error:?}").lines() {
                 message.push_str("\n  ");
@@ -180,7 +180,7 @@ pub fn killall(who_is_asking: WhoIsAsking, write: impl Fn(String)) -> bool {
     // Send a kill signal and collect the processes that are still alive.
 
     let mut processes_still_alive: Vec<(ProcessInfo, _)> = Vec::new();
-    for process in buck2_processes {
+    for process in bz_processes {
         match kill::kill(process.pid) {
             Ok(Some(handle)) => processes_still_alive.push((process, handle)),
             Ok(None) => {}
@@ -210,8 +210,8 @@ pub fn killall(who_is_asking: WhoIsAsking, write: impl Fn(String)) -> bool {
             for process in processes_still_alive {
                 printer.failed_to_kill(
                     &process.0,
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::DaemonWontDieFromKill,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::DaemonWontDieFromKill,
                         "Process still alive after {timeout_secs}s after kill sent"
                     ),
                 );

@@ -10,12 +10,12 @@
 
 use std::sync::Arc;
 
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_node::attrs::attr_type::transition_dep::CoercedTransitionDep;
-use buck2_node::attrs::attr_type::transition_dep::TransitionDepAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_node::attrs::attr_type::transition_dep::CoercedTransitionDep;
+use bz_node::attrs::attr_type::transition_dep::TransitionDepAttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
@@ -30,7 +30,7 @@ impl AttrTypeCoerce for TransitionDepAttrType {
         _configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         let (dep, transition) = if self.transition.is_some() {
             (coerce_providers_label_from_value(ctx, value)?, None)
         } else {

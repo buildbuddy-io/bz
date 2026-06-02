@@ -8,14 +8,14 @@
  * above-listed licenses.
  */
 
-use buck2_core::error::validate_logview_category;
-use buck2_core::soft_error;
+use bz_core::error::validate_logview_category;
+use bz_core::soft_error;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::none::NoneType;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum SoftErrorError {
     #[error("Error produced by Starlark: {category}: {message}\n{call_stack}")]
@@ -35,7 +35,7 @@ enum SoftErrorError {
 fn validate_category(category: &str) -> starlark::Result<()> {
     if !category.starts_with("starlark_") {
         return Err(
-            buck2_error::Error::from(SoftErrorError::InvalidCategory(category.to_owned())).into(),
+            bz_error::Error::from(SoftErrorError::InvalidCategory(category.to_owned())).into(),
         );
     }
 

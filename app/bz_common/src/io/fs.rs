@@ -14,18 +14,18 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_fs::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_fs::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::RelativePathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use compact_str::CompactString;
 use dashmap::mapref::entry::Entry;
 use dupe::Dupe;
@@ -70,7 +70,7 @@ impl FsIoProvider {
     }
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum ReadSymlinkAtExactPathError {
     #[error("The path does not exist")]
@@ -87,7 +87,7 @@ impl FsIoProvider {
         &self,
         path: ProjectRelativePathBuf,
         options: ReadUncheckedOptions,
-    ) -> buck2_error::Result<RawPathMetadata<ProjectRelativePathBuf>> {
+    ) -> bz_error::Result<RawPathMetadata<ProjectRelativePathBuf>> {
         let fs = self.fs.dupe();
         let path = path.into_forward_relative_path_buf();
         let file_digest_config = FileDigestConfig::source(self.cas_digest_config);
@@ -103,12 +103,12 @@ impl FsIoProvider {
 
 pub(crate) async fn read_external_path_metadata_for_no_watchfs(
     path: Arc<ExternalSymlink>,
-) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<Arc<ExternalSymlink>>>> {
+) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<Arc<ExternalSymlink>>>> {
     tokio::task::spawn_blocking(move || read_external_path_metadata_for_no_watchfs_impl(path))
         .await?
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum FsIoError {
     #[error("File name `{0:?}` is not UTF-8")]
@@ -123,7 +123,7 @@ impl IoProvider for FsIoProvider {
     async fn read_file_if_exists_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<String>> {
+    ) -> bz_error::Result<Option<String>> {
         let path = self.fs.resolve(&path);
 
         // Don't want to totally saturate the executor with these so that some other work can progress.
@@ -138,7 +138,7 @@ impl IoProvider for FsIoProvider {
     async fn read_dir_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Vec<RawDirEntry>> {
+    ) -> bz_error::Result<Vec<RawDirEntry>> {
         // Don't want to totally saturate the executor with these so that some other work can progress.
         // For normal fs (or warm eden), something smaller would probably be fine, for eden couple hundred is probably
         // good (current plan in that impl is to allow multiple batches of 128 dirs at a time).
@@ -164,7 +164,7 @@ impl IoProvider for FsIoProvider {
                 });
             }
 
-            buck2_error::Ok(entries)
+            bz_error::Ok(entries)
         })
         .await?
         .buck_error_context("Error listing directory")
@@ -173,7 +173,7 @@ impl IoProvider for FsIoProvider {
     async fn read_path_metadata_if_exists_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>> {
         let fs = self.fs.dupe();
         let path = path.into_forward_relative_path_buf();
         let file_digest_config = FileDigestConfig::source(self.cas_digest_config);
@@ -191,7 +191,7 @@ impl IoProvider for FsIoProvider {
     async fn read_path_metadata_if_exists_for_no_watchfs_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
         let fs = self.fs.dupe();
         let path = path.into_forward_relative_path_buf();
 
@@ -209,7 +209,7 @@ impl IoProvider for FsIoProvider {
         &self,
         path: ProjectRelativePathBuf,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
         let fs = self.fs.dupe();
         let path = path.into_forward_relative_path_buf();
 
@@ -227,7 +227,7 @@ impl IoProvider for FsIoProvider {
         .await?
     }
 
-    async fn settle(&self) -> buck2_error::Result<()> {
+    async fn settle(&self) -> bz_error::Result<()> {
         Ok(())
     }
 
@@ -235,7 +235,7 @@ impl IoProvider for FsIoProvider {
         "fs"
     }
 
-    async fn eden_version(&self) -> buck2_error::Result<Option<String>> {
+    async fn eden_version(&self) -> bz_error::Result<Option<String>> {
         Ok(None)
     }
 
@@ -266,7 +266,7 @@ fn read_path_metadata<P: AsRef<AbsPath>>(
     root: P,
     relpath: &ForwardRelativePath,
     file_digest_config: FileDigestConfig,
-) -> buck2_error::Result<Option<RawPathMetadata<ForwardRelativePathBuf>>> {
+) -> bz_error::Result<Option<RawPathMetadata<ForwardRelativePathBuf>>> {
     let root = root.as_ref();
 
     let mut relpath_components = relpath.iter();
@@ -318,7 +318,7 @@ fn read_path_metadata<P: AsRef<AbsPath>>(
 fn read_path_metadata_for_no_watchfs<P: AsRef<AbsPath>>(
     root: P,
     relpath: &ForwardRelativePath,
-) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
+) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
     let root = root.as_ref();
 
     let mut relpath_components = relpath.iter();
@@ -372,7 +372,7 @@ fn read_path_metadata_for_no_watchfs_cached<P: AsRef<AbsPath>>(
     root: P,
     relpath: &ForwardRelativePath,
     cache: &NoWatchFsMetadataCache,
-) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
+) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
     let root = root.as_ref();
 
     let mut relpath_components = relpath.iter();
@@ -423,7 +423,7 @@ fn read_path_metadata_for_no_watchfs_cached<P: AsRef<AbsPath>>(
 fn exact_path_metadata_for_no_watchfs_cached(
     curr: &PathAndAbsPath,
     cache: &NoWatchFsMetadataCache,
-) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
+) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
     match cache.metadata.entry(curr.path.clone()) {
         Entry::Occupied(cached) => Ok(cached.get().clone()),
         Entry::Vacant(vacant) => {
@@ -437,7 +437,7 @@ fn exact_path_metadata_for_no_watchfs_cached(
 fn exact_path_metadata_for_no_watchfs_with_cached_type(
     curr: &PathAndAbsPath,
     cache: &NoWatchFsMetadataCache,
-) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
+) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
     Ok(match cache.cached_dirent_type(&curr.path) {
         CachedDirentType::Found(FileType::Directory) => {
             Some(RawPathMetadataForNoWatchFs::Directory)
@@ -458,7 +458,7 @@ fn exact_path_metadata_for_no_watchfs_with_cached_type(
 
 fn exact_path_metadata_for_no_watchfs(
     curr: &PathAndAbsPath,
-) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
+) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
     Ok(match ExactPathMetadata::from_exact_path(curr)? {
         ExactPathMetadata::DoesNotExist => None,
         ExactPathMetadata::Symlink(symlink) => {
@@ -475,7 +475,7 @@ fn exact_path_metadata_for_no_watchfs(
 
 fn read_external_path_metadata_for_no_watchfs_impl(
     path: Arc<ExternalSymlink>,
-) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<Arc<ExternalSymlink>>>> {
+) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<Arc<ExternalSymlink>>>> {
     let full_path = path.to_path_buf();
     if !full_path.is_absolute() {
         return Err(internal_error!(
@@ -544,7 +544,7 @@ fn append_symlink_rest_for_no_watchfs(
     at: ForwardRelativePathBuf,
     to: RawSymlink<ForwardRelativePathBuf>,
     rest: ForwardRelativePathBuf,
-) -> buck2_error::Result<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>> {
+) -> bz_error::Result<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>> {
     let to = if rest.is_empty() {
         to
     } else {
@@ -573,7 +573,7 @@ fn convert_metadata(
     path: &PathAndAbsPath,
     meta: std::fs::Metadata,
     file_digest_config: FileDigestConfig,
-) -> buck2_error::Result<RawPathMetadata<ForwardRelativePathBuf>> {
+) -> bz_error::Result<RawPathMetadata<ForwardRelativePathBuf>> {
     let meta = if meta.is_dir() {
         RawPathMetadata::Directory
     } else {
@@ -593,7 +593,7 @@ fn convert_metadata(
 
 fn convert_metadata_for_no_watchfs(
     meta: std::fs::Metadata,
-) -> buck2_error::Result<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>> {
+) -> bz_error::Result<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>> {
     let meta = if meta.is_dir() {
         RawPathMetadataForNoWatchFs::Directory
     } else {
@@ -649,7 +649,7 @@ enum ExactPathMetadata {
 }
 
 impl ExactPathMetadata {
-    fn from_exact_path(curr: &PathAndAbsPath) -> buck2_error::Result<Self> {
+    fn from_exact_path(curr: &PathAndAbsPath) -> bz_error::Result<Self> {
         Ok(match fs_util::symlink_metadata_if_exists(&curr.abspath)? {
             Some(meta) if meta.file_type().is_symlink() => {
                 ExactPathMetadata::Symlink(ExactPathSymlinkMetadata::from_symlink_path(curr)?)
@@ -668,7 +668,7 @@ enum ExactPathSymlinkMetadata {
 }
 
 impl ExactPathSymlinkMetadata {
-    fn from_symlink_path(curr: &PathAndAbsPath) -> buck2_error::Result<Self> {
+    fn from_symlink_path(curr: &PathAndAbsPath) -> bz_error::Result<Self> {
         let dest = fs_util::read_link(&curr.abspath).categorize_input()?;
 
         if dest.has_root() {
@@ -696,7 +696,7 @@ impl ExactPathSymlinkMetadata {
         self,
         curr: PathAndAbsPath,
         rest: ForwardRelativePathBuf,
-    ) -> buck2_error::Result<RawPathMetadata<ForwardRelativePathBuf>> {
+    ) -> bz_error::Result<RawPathMetadata<ForwardRelativePathBuf>> {
         Ok(match self {
             Self::ExternalSymlink(link_path) => RawPathMetadata::Symlink {
                 at: curr.path,
@@ -722,7 +722,7 @@ impl ExactPathSymlinkMetadata {
         self,
         curr: PathAndAbsPath,
         rest: ForwardRelativePathBuf,
-    ) -> buck2_error::Result<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>> {
+    ) -> bz_error::Result<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>> {
         Ok(match self {
             Self::ExternalSymlink(link_path) => RawPathMetadataForNoWatchFs::Symlink {
                 at: curr.path,
@@ -758,7 +758,7 @@ fn read_unchecked<P: AsRef<AbsPath>>(
     relpath: ForwardRelativePathBuf,
     file_digest_config: FileDigestConfig,
     options: ReadUncheckedOptions,
-) -> buck2_error::Result<RawPathMetadata<ForwardRelativePathBuf>> {
+) -> bz_error::Result<RawPathMetadata<ForwardRelativePathBuf>> {
     let abspath = root.as_ref().join(relpath.as_path());
 
     let curr = PathAndAbsPath {
@@ -796,13 +796,13 @@ mod tests {
     use std::os::unix;
 
     use assert_matches::assert_matches;
-    use buck2_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::fs_util::uncategorized as fs_util;
     use tempfile::TempDir;
 
     use super::*;
 
     #[test]
-    fn test_read_not_symlink() -> buck2_error::Result<()> {
+    fn test_read_not_symlink() -> bz_error::Result<()> {
         let t = TempDir::new()?;
         let root = AbsPath::new(t.path())?;
 
@@ -821,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_symlink() -> buck2_error::Result<()> {
+    fn test_read_symlink() -> bz_error::Result<()> {
         let t = TempDir::new()?;
 
         unix::fs::symlink("y/z", t.path().join("x"))?;
@@ -838,7 +838,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_symlink_in_dir() -> buck2_error::Result<()> {
+    fn test_read_symlink_in_dir() -> bz_error::Result<()> {
         let t = TempDir::new()?;
         let t = AbsPath::new(t.path())?;
 
@@ -857,7 +857,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_symlink_remaining_path() -> buck2_error::Result<()> {
+    fn test_read_symlink_remaining_path() -> bz_error::Result<()> {
         let t = TempDir::new()?;
 
         unix::fs::symlink("y", t.path().join("x"))?;
@@ -874,7 +874,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_symlink_out_of_project() -> buck2_error::Result<()> {
+    fn test_read_symlink_out_of_project() -> bz_error::Result<()> {
         let t = TempDir::new()?;
 
         unix::fs::symlink("../y", t.path().join("x"))?;
@@ -888,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_unchecked_symlink() -> buck2_error::Result<()> {
+    fn test_read_unchecked_symlink() -> bz_error::Result<()> {
         let t = TempDir::new()?;
         let root = AbsPath::new(t.path())?;
         let digest_config = FileDigestConfig::source(CasDigestConfig::testing_default());

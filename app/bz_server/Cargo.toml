@@ -2,7 +2,7 @@
 description = "Some parts of Buck2 server"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_server"
+name = "bz_server"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -11,8 +11,8 @@ async-recursion = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true }
 blake3 = { workspace = true }
-buck2_hash = { workspace = true }
-buck2_re_configuration = { workspace = true }
+bz_hash = { workspace = true }
+bz_re_configuration = { workspace = true }
 chrono = { workspace = true }
 constant_time_eq = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -48,45 +48,45 @@ pagable = { workspace = true }
 starlark = { workspace = true }
 starlark_lsp = { workspace = true }
 
-buck2_analysis = { workspace = true }
-buck2_build_api = { workspace = true }
-buck2_build_signals = { workspace = true }
-buck2_certs = { workspace = true }
-buck2_cli_proto = { workspace = true }
-buck2_common = { workspace = true }
-buck2_configured = { workspace = true }
-buck2_core = { workspace = true }
-buck2_data = { workspace = true }
-buck2_directory = { workspace = true }
-buck2_error = { workspace = true }
-buck2_event_observer = { workspace = true }
-buck2_events = { workspace = true }
-buck2_execute = { workspace = true }
-buck2_execute_impl = { workspace = true }
-buck2_file_watcher = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_http = { workspace = true }
-buck2_interpreter = { workspace = true }
-buck2_interpreter_for_build = { workspace = true }
-buck2_node = { workspace = true }
-buck2_profile = { workspace = true }
-buck2_resource_control = { workspace = true }
-buck2_server_ctx = { workspace = true }
-buck2_server_starlark_debug = { workspace = true }
-buck2_subscription_proto = { workspace = true }
-buck2_test = { workspace = true }
-buck2_util = { workspace = true }
-buck2_validation = { workspace = true }
-buck2_wrapper_common = { workspace = true }
+bz_analysis = { workspace = true }
+bz_build_api = { workspace = true }
+bz_build_signals = { workspace = true }
+bz_certs = { workspace = true }
+bz_cli_proto = { workspace = true }
+bz_common = { workspace = true }
+bz_configured = { workspace = true }
+bz_core = { workspace = true }
+bz_data = { workspace = true }
+bz_directory = { workspace = true }
+bz_error = { workspace = true }
+bz_event_observer = { workspace = true }
+bz_events = { workspace = true }
+bz_execute = { workspace = true }
+bz_execute_impl = { workspace = true }
+bz_file_watcher = { workspace = true }
+bz_fs = { workspace = true }
+bz_http = { workspace = true }
+bz_interpreter = { workspace = true }
+bz_interpreter_for_build = { workspace = true }
+bz_node = { workspace = true }
+bz_profile = { workspace = true }
+bz_resource_control = { workspace = true }
+bz_server_ctx = { workspace = true }
+bz_server_starlark_debug = { workspace = true }
+bz_subscription_proto = { workspace = true }
+bz_test = { workspace = true }
+bz_util = { workspace = true }
+bz_validation = { workspace = true }
+bz_wrapper_common = { workspace = true }
 dice_futures = { workspace = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-buck2_forkserver = { workspace = true }
+bz_forkserver = { workspace = true }
 psutil = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-buck2_util = { workspace = true }
+bz_util = { workspace = true }
 indoc = { workspace = true }
 
 [lints]

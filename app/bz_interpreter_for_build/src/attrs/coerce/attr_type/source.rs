@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_node::attrs::attr_type::source::SourceAttrType;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::attr_type::source::SourceAttrType;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
 use starlark::values::Value;
 
@@ -19,13 +19,13 @@ use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::coerce_providers_label_from_value;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum SourceLabelCoercionError {
     #[error(
         "Couldn't coerce `{0}` as a source.\n  Error when treated as a target: {1:#}\n  Error when treated as a path: {2:#}"
     )]
-    CoercionFailed(String, buck2_error::Error, buck2_error::Error),
+    CoercionFailed(String, bz_error::Error, bz_error::Error),
 }
 
 /// Try cleaning up irrelevant details users often type
@@ -41,7 +41,7 @@ impl AttrTypeCoerce for SourceAttrType {
         _configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         if value.unpack_str().is_none() {
             return coerce_providers_label_from_value(ctx, value).map(CoercedAttr::SourceLabel);
         }

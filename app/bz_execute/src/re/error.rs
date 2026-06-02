@@ -9,8 +9,8 @@
  */
 
 use allocative::Allocative;
-use buck2_error::ErrorTag;
-use buck2_error::TypedContext;
+use bz_error::ErrorTag;
+use bz_error::TypedContext;
 use remote_execution::REClientError;
 use remote_execution::TCode;
 use remote_execution::TCodeReasonGroup;
@@ -46,7 +46,7 @@ pub fn get_re_group_tag(group: &TCodeReasonGroup) -> Option<ErrorTag> {
     }
 }
 
-#[derive(Allocative, Debug, Clone, buck2_error::Error)]
+#[derive(Allocative, Debug, Clone, bz_error::Error)]
 #[error("Remote Execution Error on {} for ReSession {}\nError: ({})", .re_action, .re_session_id, .message)]
 #[buck2(tag = get_re_error_tag(code))]
 pub struct RemoteExecutionError {
@@ -78,7 +78,7 @@ fn re_error(
     message: String,
     code: TCode,
     group: TCodeReasonGroup,
-) -> buck2_error::Error {
+) -> bz_error::Error {
     let re_error = RemoteExecutionError {
         re_action: re_action.to_owned(),
         re_session_id: re_session_id.to_owned(),
@@ -86,7 +86,7 @@ fn re_error(
         code,
         group,
     };
-    let error = buck2_error::Error::from(re_error.clone()).context(re_error);
+    let error = bz_error::Error::from(re_error.clone()).context(re_error);
     if let Some(tag) = get_re_group_tag(&group) {
         error.tag([tag])
     } else {
@@ -98,7 +98,7 @@ pub(crate) async fn with_error_handler<T>(
     re_action: &str,
     re_session_id: &str,
     result: anyhow::Result<T>,
-) -> buck2_error::Result<T> {
+) -> bz_error::Result<T> {
     match result {
         Ok(val) => Ok(val),
         Err(e) => {
@@ -119,7 +119,7 @@ pub(crate) async fn with_error_handler<T>(
     }
 }
 
-pub fn test_re_error(message: &str, code: TCode) -> buck2_error::Error {
+pub fn test_re_error(message: &str, code: TCode) -> bz_error::Error {
     re_error(
         "test",
         "test",
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_extract_re_error() {
-        let error: buck2_error::Error = re_error(
+        let error: bz_error::Error = re_error(
             "test",
             "test",
             "test".to_owned(),

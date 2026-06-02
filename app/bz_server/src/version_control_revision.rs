@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_core::soft_error;
-use buck2_data::VersionControlRevision;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_fs::async_fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_util::properly_reaped_child::reap_on_drop_command;
+use bz_core::soft_error;
+use bz_data::VersionControlRevision;
+use bz_events::dispatch::EventDispatcher;
+use bz_fs::async_fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_util::properly_reaped_child::reap_on_drop_command;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use tokio::sync::OnceCell;
@@ -42,7 +42,7 @@ pub(crate) fn spawn_version_control_collector(
             if let Some(error) = &event.command_error {
                 soft_error!(
                     "spawn_version_control_collector_failed",
-                    buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "{}", error),
+                    bz_error::bz_error!(bz_error::ErrorTag::Input, "{}", error),
                     quiet: true
                 )
                 .ok();
@@ -82,8 +82,8 @@ enum RevisionDataType {
 async fn create_revision_data(
     repo_root: &AbsNormPathBuf,
     revision_type: RevisionDataType,
-) -> buck2_data::VersionControlRevision {
-    let mut revision = buck2_data::VersionControlRevision::default();
+) -> bz_data::VersionControlRevision {
+    let mut revision = bz_data::VersionControlRevision::default();
     match repo_type(repo_root).await {
         Ok(repo_vcs) => {
             match repo_vcs {
@@ -106,7 +106,7 @@ async fn create_revision_data(
 }
 
 async fn create_hg_data(
-    revision: &mut buck2_data::VersionControlRevision,
+    revision: &mut bz_data::VersionControlRevision,
     revision_type: RevisionDataType,
     repo_root: &AbsNormPathBuf,
 ) {
@@ -117,7 +117,7 @@ async fn create_hg_data(
 }
 
 async fn get_hg_revision(
-    revision: &mut buck2_data::VersionControlRevision,
+    revision: &mut bz_data::VersionControlRevision,
     repo_root: &AbsNormPathBuf,
 ) {
     // The contents of dirstate may be arbitrarily large, but the id is always
@@ -140,7 +140,7 @@ async fn get_hg_revision(
     revision.hg_revision = Some(curr_revision);
 }
 
-async fn get_hg_status(revision: &mut buck2_data::VersionControlRevision) {
+async fn get_hg_status(revision: &mut bz_data::VersionControlRevision) {
     // `hg status` returns if there are any local changes
     let status_output = match reap_on_drop_command("hg", &["status"], Some(&[("HGPLAIN", "1")])) {
         Ok(command) => command.output().await,
@@ -183,9 +183,9 @@ async fn get_hg_status(revision: &mut buck2_data::VersionControlRevision) {
     };
 }
 
-async fn repo_type(repo_root: &AbsNormPathBuf) -> buck2_error::Result<&'static RepoVcs> {
-    static REPO_TYPE: OnceCell<buck2_error::Result<RepoVcs>> = OnceCell::const_new();
-    async fn repo_type_impl(repo_root: &AbsNormPathBuf) -> buck2_error::Result<RepoVcs> {
+async fn repo_type(repo_root: &AbsNormPathBuf) -> bz_error::Result<&'static RepoVcs> {
+    static REPO_TYPE: OnceCell<bz_error::Result<RepoVcs>> = OnceCell::const_new();
+    async fn repo_type_impl(repo_root: &AbsNormPathBuf) -> bz_error::Result<RepoVcs> {
         let (hg_metadata, git_metadata) = tokio::join!(
             async_fs_util::metadata(repo_root.join(ForwardRelativePath::new(".hg").unwrap())),
             async_fs_util::metadata(repo_root.join(ForwardRelativePath::new(".git").unwrap()))

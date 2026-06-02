@@ -16,13 +16,13 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use allocative::Allocative;
-use buck2_action_metadata_proto::RemoteDepFile;
-use buck2_build_signals::env::WaitingData;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_data::SchedulingMode;
-use buck2_hash::BuckIndexMap;
-use buck2_util::time_span::TimeSpan;
+use bz_action_metadata_proto::RemoteDepFile;
+use bz_build_signals::env::WaitingData;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_data::SchedulingMode;
+use bz_hash::BuckIndexMap;
+use bz_util::time_span::TimeSpan;
 use derivative::Derivative;
 use dupe::Dupe;
 use remote_execution::TActionResult2;
@@ -63,7 +63,7 @@ pub enum CommandExecutionStatus {
     },
     Error {
         stage: &'static str,
-        error: buck2_error::Error,
+        error: bz_error::Error,
         execution_kind: Option<CommandExecutionKind>,
         typ: CommandExecutionErrorType,
     },
@@ -152,7 +152,7 @@ pub struct CommandExecutionMetadata {
     pub start_time: SystemTime,
 
     /// Additional stats.
-    pub execution_stats: Option<buck2_data::CommandExecutionStats>,
+    pub execution_stats: Option<bz_data::CommandExecutionStats>,
 
     /// How long it took to materialize the action's inputs.
     pub input_materialization_duration: Duration,
@@ -206,9 +206,9 @@ impl CommandExecutionMetadata {
         self.start_time + self.time_span.duration()
     }
 
-    pub fn to_proto(&self) -> buck2_data::CommandExecutionMetadata {
+    pub fn to_proto(&self) -> bz_data::CommandExecutionMetadata {
         let metadata = self.dupe();
-        buck2_data::CommandExecutionMetadata {
+        bz_data::CommandExecutionMetadata {
             wall_time: metadata.time_span.duration().try_into().ok(),
             execution_time: metadata.execution_time.try_into().ok(),
             start_time: Some(metadata.start_time.into()),
@@ -316,7 +316,7 @@ impl CommandExecutionResult {
         &'a self,
         fs: &'a ArtifactFs,
     ) -> impl Iterator<
-        Item = buck2_error::Result<(
+        Item = bz_error::Result<(
             ResolvedCommandExecutionOutput,
             ResolvedCommandExecutionOutput,
             &'a ArtifactValue,
@@ -349,7 +349,7 @@ pub struct CommandExecutionReport {
     /// Any additional message that a command's executor wants to be user visible in case of a
     /// failure. Provided by non-Meta RE server.
     pub additional_message: Option<String>,
-    pub inline_environment_metadata: buck2_data::InlineCommandExecutionEnvironmentMetadata,
+    pub inline_environment_metadata: bz_data::InlineCommandExecutionEnvironmentMetadata,
 }
 
 impl CommandExecutionReport {
@@ -358,32 +358,32 @@ impl CommandExecutionReport {
         omit_stdout: bool,
         omit_stderr: bool,
         omit_command_details: bool,
-    ) -> buck2_data::CommandExecution {
+    ) -> bz_data::CommandExecution {
         let details = self
             .to_command_execution_details_proto(omit_stdout, omit_stderr, omit_command_details)
             .await;
 
         let status = match &self.status {
             CommandExecutionStatus::Success { .. } => {
-                buck2_data::command_execution::Success {}.into()
+                bz_data::command_execution::Success {}.into()
             }
             CommandExecutionStatus::Cancelled { .. } => {
-                buck2_data::command_execution::Cancelled {}.into()
+                bz_data::command_execution::Cancelled {}.into()
             }
             CommandExecutionStatus::Failure { .. } => {
-                buck2_data::command_execution::Failure {}.into()
+                bz_data::command_execution::Failure {}.into()
             }
             CommandExecutionStatus::WorkerFailure { .. } => {
-                buck2_data::command_execution::WorkerFailure {}.into()
+                bz_data::command_execution::WorkerFailure {}.into()
             }
             CommandExecutionStatus::TimedOut { duration, .. } => {
-                buck2_data::command_execution::Timeout {
+                bz_data::command_execution::Timeout {
                     duration: (*duration).try_into().ok(),
                 }
                 .into()
             }
             CommandExecutionStatus::Error { stage, error, .. } => {
-                buck2_data::command_execution::Error {
+                bz_data::command_execution::Error {
                     stage: (*stage).to_owned(),
                     error: format!("{error:#}"),
                 }
@@ -391,7 +391,7 @@ impl CommandExecutionReport {
             }
         };
 
-        buck2_data::CommandExecution {
+        bz_data::CommandExecution {
             details: Some(details),
             status: Some(status),
             inline_environment_metadata: Some(self.inline_environment_metadata),
@@ -403,7 +403,7 @@ impl CommandExecutionReport {
         omit_stdout: bool,
         omit_stderr: bool,
         omit_command_details: bool,
-    ) -> buck2_data::CommandExecutionDetails {
+    ) -> bz_data::CommandExecutionDetails {
         // If the top-level command failed then we don't want to omit any details. If it succeeded and
         // so did this command (it could succeed while not having a success here if we have rejected
         // executions), then we'll strip non-relevant stuff.
@@ -429,7 +429,7 @@ impl CommandExecutionReport {
             .execution_kind()
             .map(|k| k.to_proto(omit_command_details));
 
-        buck2_data::CommandExecutionDetails {
+        bz_data::CommandExecutionDetails {
             cmd_stdout: stdout,
             cmd_stderr: stderr,
             command_kind,
@@ -454,8 +454,8 @@ impl FromResidual<ControlFlow<Self, Infallible>> for CommandExecutionResult {
 mod tests {
     use std::time::Instant;
 
-    use buck2_common::cas_digest::CasDigest;
-    use buck2_util::time_span::TimeSpan;
+    use bz_common::cas_digest::CasDigest;
+    use bz_util::time_span::TimeSpan;
     use sorted_vector_map::SortedVectorMap;
 
     use super::*;
@@ -477,15 +477,15 @@ mod tests {
             time_span: TimeSpan::from_start_and_duration(Instant::now(), Duration::from_secs(2)),
             execution_time: Duration::from_secs(3),
             start_time: SystemTime::UNIX_EPOCH,
-            execution_stats: Some(buck2_data::CommandExecutionStats {
+            execution_stats: Some(bz_data::CommandExecutionStats {
                 cpu_instructions_user: Some(4),
                 cpu_instructions_kernel: Some(5),
-                userspace_events: Some(buck2_data::CpuCounter {
+                userspace_events: Some(bz_data::CpuCounter {
                     count: 4,
                     time_enabled: 100,
                     time_running: 100,
                 }),
-                kernel_events: Some(buck2_data::CpuCounter {
+                kernel_events: Some(bz_data::CpuCounter {
                     count: 10,
                     time_enabled: 50,
                     time_running: 100,
@@ -511,19 +511,19 @@ mod tests {
             std_streams,
             exit_code: Some(456),
             additional_message: None,
-            inline_environment_metadata: buck2_data::InlineCommandExecutionEnvironmentMetadata {
+            inline_environment_metadata: bz_data::InlineCommandExecutionEnvironmentMetadata {
                 sandcastle_instance_id: Some(123),
             },
         }
     }
 
-    fn make_simple_proto() -> buck2_data::CommandExecution {
+    fn make_simple_proto() -> bz_data::CommandExecution {
         // The field values correspond to what `make_simple_report()` builds.
-        let command_execution_kind = buck2_data::CommandExecutionKind {
-            command: Some(buck2_data::command_execution_kind::Command::LocalCommand(
-                buck2_data::LocalCommand {
+        let command_execution_kind = bz_data::CommandExecutionKind {
+            command: Some(bz_data::command_execution_kind::Command::LocalCommand(
+                bz_data::LocalCommand {
                     argv: vec!["fake_buck2".to_owned()],
-                    env: vec![buck2_data::EnvironmentEntry {
+                    env: vec![bz_data::EnvironmentEntry {
                         key: "FAKE_ENV_VAR".to_owned(),
                         value: "1".to_owned(),
                     }],
@@ -531,22 +531,22 @@ mod tests {
                 },
             )),
         };
-        let command_execution_stats = buck2_data::CommandExecutionStats {
+        let command_execution_stats = bz_data::CommandExecutionStats {
             cpu_instructions_user: Some(4),
             cpu_instructions_kernel: Some(5),
-            userspace_events: Some(buck2_data::CpuCounter {
+            userspace_events: Some(bz_data::CpuCounter {
                 count: 4,
                 time_enabled: 100,
                 time_running: 100,
             }),
-            kernel_events: Some(buck2_data::CpuCounter {
+            kernel_events: Some(bz_data::CpuCounter {
                 count: 10,
                 time_enabled: 50,
                 time_running: 100,
             }),
             memory_peak: None,
         };
-        let command_execution_metadata = buck2_data::CommandExecutionMetadata {
+        let command_execution_metadata = bz_data::CommandExecutionMetadata {
             wall_time: Some(prost_types::Duration {
                 seconds: 2,
                 nanos: 0,
@@ -576,7 +576,7 @@ mod tests {
             suspend_duration: None,
             suspend_count: None,
         };
-        let command_execution_details = buck2_data::CommandExecutionDetails {
+        let command_execution_details = bz_data::CommandExecutionDetails {
             signed_exit_code: Some(456),
             cmd_stdout: "ABC".to_owned(),
             cmd_stderr: "DEF".to_owned(),
@@ -585,13 +585,13 @@ mod tests {
             additional_message: None,
         };
 
-        buck2_data::CommandExecution {
+        bz_data::CommandExecution {
             details: Some(command_execution_details),
-            status: Some(buck2_data::command_execution::Status::Success(
-                buck2_data::command_execution::Success {},
+            status: Some(bz_data::command_execution::Status::Success(
+                bz_data::command_execution::Success {},
             )),
             inline_environment_metadata: Some(
-                buck2_data::InlineCommandExecutionEnvironmentMetadata {
+                bz_data::InlineCommandExecutionEnvironmentMetadata {
                     sandcastle_instance_id: Some(123),
                 },
             ),
@@ -643,8 +643,8 @@ mod tests {
             .as_mut()
             .unwrap()
             .command = Some(
-            buck2_data::command_execution_kind::Command::OmittedLocalCommand(
-                buck2_data::OmittedLocalCommand {
+            bz_data::command_execution_kind::Command::OmittedLocalCommand(
+                bz_data::OmittedLocalCommand {
                     action_digest: format!("{}:{}", "0".repeat(64), "123"),
                 },
             ),

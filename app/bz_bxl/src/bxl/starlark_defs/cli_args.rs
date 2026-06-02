@@ -16,29 +16,29 @@ use std::path::Path;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_build_api::configure_targets::load_compatible_patterns_with_modifiers;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::pattern::pattern::ModifiersError;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
-use buck2_core::pattern::pattern::lex_target_pattern;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::conversion::clap::buck_error_clap_parser;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_node::load_patterns::MissingTargetBehavior;
-use buck2_node::load_patterns::load_patterns;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
+use bz_build_api::configure_targets::load_compatible_patterns_with_modifiers;
+use bz_common::dice::data::HasIoProvider;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::pattern::pattern::ModifiersError;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern::ParsedPatternWithModifiers;
+use bz_core::pattern::pattern::lex_target_pattern;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::conversion::clap::buck_error_clap_parser;
+use bz_error::conversion::from_any_with_tag;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_node::load_patterns::MissingTargetBehavior;
+use bz_node::load_patterns::load_patterns;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
 use clap::ArgAction;
 use derive_more::Display;
 use dupe::Dupe;
@@ -113,7 +113,7 @@ impl CliArgs {
         doc: &str,
         coercer: CliArgType,
         short: Option<Value<'v>>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let default = match default {
             None => None,
             Some(x) => Some(Arc::new(coercer.coerce_value(x).map_err(|_| {
@@ -163,7 +163,7 @@ impl CliArgs {
         &self,
         clap: ArgAccessor<'a>,
         ctx: &CliResolutionCtx<'a>,
-    ) -> buck2_error::Result<CliArgValue> {
+    ) -> bz_error::Result<CliArgValue> {
         Ok(match self.coercer.parse_clap(clap, ctx).await? {
             None => (**self.default.as_ref().ok_or(CliArgError::MissingCliArg)?).clone(),
             Some(v) => v,
@@ -415,7 +415,7 @@ impl CliArgType {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 pub(crate) enum CliArgError {
     #[error("Expected default value of type `{}`, but got `{}`", _0, _1)]
@@ -435,7 +435,7 @@ pub(crate) enum CliArgError {
 }
 
 impl CliArgType {
-    fn coerce_value<'v>(&self, value: Value<'v>) -> buck2_error::Result<CliArgValue> {
+    fn coerce_value<'v>(&self, value: Value<'v>) -> bz_error::Result<CliArgValue> {
         Ok(match self {
             CliArgType::Bool => CliArgValue::Bool(value.unpack_bool().ok_or_else(|| {
                 CliArgError::DefaultValueTypeError(self.dupe(), value.get_type().to_owned())
@@ -552,7 +552,7 @@ impl CliArgType {
             CliArgType::TargetLabel => {
                 clap.num_args(1)
                     .value_parser(buck_error_clap_parser(|x: &str| {
-                        buck2_error::Ok(
+                        bz_error::Ok(
                             lex_target_pattern::<TargetPatternExtra>(x, false)
                                 .and_then(|parsed| parsed.pattern.infer_target())
                                 .map(|parsed| {
@@ -570,7 +570,7 @@ impl CliArgType {
             CliArgType::ConfiguredTargetLabel => {
                 clap.num_args(1)
                     .value_parser(buck_error_clap_parser(|x: &str| {
-                        buck2_error::Ok(
+                        bz_error::Ok(
                             lex_target_pattern::<TargetPatternExtra>(x, false)
                                 .and_then(|parsed| parsed.pattern.infer_target())
                                 .map(|parsed| {
@@ -588,7 +588,7 @@ impl CliArgType {
             CliArgType::SubTarget => {
                 clap.num_args(1)
                     .value_parser(buck_error_clap_parser(|x: &str| {
-                        buck2_error::Ok(
+                        bz_error::Ok(
                             lex_target_pattern::<ProvidersPatternExtra>(x, false)
                                 .and_then(|parsed| parsed.pattern.infer_target())
                                 .map(|parsed| {
@@ -615,28 +615,28 @@ impl CliArgType {
         &'a self,
         clap: ArgAccessor<'a>,
         ctx: &'a CliResolutionCtx<'a>,
-    ) -> BoxFuture<'a, buck2_error::Result<Option<CliArgValue>>> {
+    ) -> BoxFuture<'a, bz_error::Result<Option<CliArgValue>>> {
         async move {
             Ok(match self {
                 CliArgType::Bool => clap.value_of().map_or(Ok(None), |x| {
-                    let r: buck2_error::Result<_> = try {
-                        CliArgValue::Bool(x.parse::<bool>().map_err(buck2_error::Error::from)?)
+                    let r: bz_error::Result<_> = try {
+                        CliArgValue::Bool(x.parse::<bool>().map_err(bz_error::Error::from)?)
                     };
                     r.map(Some)
                 })?,
                 CliArgType::Int => clap.value_of().map_or(Ok(None), |x| {
-                    let r: buck2_error::Result<_> = try {
+                    let r: bz_error::Result<_> = try {
                         CliArgValue::Int(
                             x.parse::<BigInt>()
-                                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?,
+                                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?,
                         )
                     };
                     r.map(Some)
                 })?,
                 CliArgType::Float => clap.value_of().map_or(Ok(None), |x| {
-                    let r: buck2_error::Result<_> = try {
+                    let r: bz_error::Result<_> = try {
                         CliArgValue::Float({
-                            x.parse::<f64>().map_err(buck2_error::Error::from)?;
+                            x.parse::<f64>().map_err(bz_error::Error::from)?;
                             x.to_owned()
                         })
                     };
@@ -660,7 +660,7 @@ impl CliArgType {
                         }))
                         .await
                         .into_iter()
-                        .collect::<buck2_error::Result<_>>()?,
+                        .collect::<bz_error::Result<_>>()?,
                     )),
                 },
                 CliArgType::Option(inner) => Some(if clap.value_of().is_some() {
@@ -672,7 +672,7 @@ impl CliArgType {
                     CliArgValue::None
                 }),
                 CliArgType::TargetLabel => clap.value_of().map_or(Ok(None), |x| {
-                    let r: buck2_error::Result<_> = try {
+                    let r: bz_error::Result<_> = try {
                         CliArgValue::TargetLabel(
                             ParsedPattern::<TargetPatternExtra>::parse_relaxed(
                                 &ctx.target_alias_resolver,
@@ -727,7 +727,7 @@ impl CliArgType {
                     ))
                 }
                 CliArgType::SubTarget => clap.value_of().map_or(Ok(None), |x| {
-                    let r: buck2_error::Result<_> = try {
+                    let r: bz_error::Result<_> = try {
                         CliArgValue::ProvidersLabel(
                             ParsedPattern::<ProvidersPatternExtra>::parse_relaxed(
                                 &ctx.target_alias_resolver,
@@ -760,7 +760,7 @@ impl CliArgType {
                         loaded
                             .iter_loaded_targets()
                             .map_ok(|t| CliArgValue::TargetLabel(t.label().dupe()))
-                            .collect::<buck2_error::Result<_>>()?,
+                            .collect::<bz_error::Result<_>>()?,
                     ))
                 }
                 CliArgType::ConfiguredTargetExpr => {
@@ -822,7 +822,7 @@ impl CliArgType {
                                     .collect::<Vec<_>>(),
                                 Err(e) => vec![Err(e.dupe())],
                             })
-                            .collect::<buck2_error::Result<Vec<_>>>()?,
+                            .collect::<bz_error::Result<Vec<_>>>()?,
                     ))
                 }
                 CliArgType::Json => match clap.value_of() {
@@ -1077,15 +1077,15 @@ impl<'a> ArgAccessor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::provider::label::ProvidersLabel;
-    use buck2_core::provider::label::testing::ProvidersLabelTestExt;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-    use buck2_core::target::label::label::TargetLabel;
-    use buck2_hash::StdBuckHashSet;
-    use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-    use buck2_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
-    use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::provider::label::ProvidersLabel;
+    use bz_core::provider::label::testing::ProvidersLabelTestExt;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_core::target::label::label::TargetLabel;
+    use bz_hash::StdBuckHashSet;
+    use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+    use bz_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
+    use bz_interpreter::types::target_label::StarlarkTargetLabel;
     use num_bigint::BigInt;
     use starlark::values::Heap;
     use starlark::values::Value;
@@ -1096,7 +1096,7 @@ mod tests {
     use crate::bxl::starlark_defs::cli_args::JsonCliArgValueData;
 
     #[test]
-    fn print_cli_arg_list() -> buck2_error::Result<()> {
+    fn print_cli_arg_list() -> bz_error::Result<()> {
         let args = vec![
             CliArgValue::Bool(true),
             CliArgValue::String("test".to_owned()),
@@ -1111,7 +1111,7 @@ mod tests {
     }
 
     #[test]
-    fn print_cli_arg_json() -> buck2_error::Result<()> {
+    fn print_cli_arg_json() -> bz_error::Result<()> {
         let mut args = OrderedMap::new();
         args.insert("my_bool".to_owned(), JsonCliArgValueData::Bool(true));
         args.insert(
@@ -1142,7 +1142,7 @@ mod tests {
     }
 
     #[test]
-    fn coerce_starlark() -> buck2_error::Result<()> {
+    fn coerce_starlark() -> bz_error::Result<()> {
         Heap::temp(|heap| {
             assert_eq!(
                 CliArgType::bool().coerce_value(Value::new_bool(true))?,

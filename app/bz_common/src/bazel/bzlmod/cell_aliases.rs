@@ -112,7 +112,7 @@ impl BazelModuleCellAliases {
         }
     }
 
-    pub(crate) fn register_external_cell_origins(&self) -> buck2_error::Result<()> {
+    pub(crate) fn register_external_cell_origins(&self) -> bz_error::Result<()> {
         register_bzlmod_cell_canonical_repo_name_for_cell("bazel_tools", "bazel_tools");
         for module in &self.external_modules {
             register_bzlmod_cell_canonical_repo_name_for_cell(
@@ -130,8 +130,8 @@ pub(crate) fn parse_bzlmod_external_cell_origin(
     cell: &CellName,
     value: &str,
     config: &LegacyBuckConfig,
-) -> buck2_error::Result<Option<ExternalCellOrigin>> {
-    #[derive(buck2_error::Error, Debug)]
+) -> bz_error::Result<Option<ExternalCellOrigin>> {
+    #[derive(bz_error::Error, Debug)]
     #[buck2(tag = Input)]
     enum BzlmodExternalCellOriginParseError {
         #[error("Missing buckconfig `{0}.{1}` for external cell configuration")]
@@ -271,7 +271,7 @@ pub(crate) fn bzlmod_external_module_is_configure_repo(module: &BazelCompatExter
 
 pub(crate) fn external_cell_origin_from_bazel_module(
     module: &BazelCompatExternalModule,
-) -> buck2_error::Result<ExternalCellOrigin> {
+) -> bz_error::Result<ExternalCellOrigin> {
     match module {
         BazelCompatExternalModule::Registry(module) => {
             let patches: Vec<BzlmodPatchConfig> = serde_json::from_str(&module.patches_json)

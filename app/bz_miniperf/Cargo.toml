@@ -3,7 +3,7 @@ authors = ["Meta"]
 description = "A minimal implementation of perf. This has lower overhead when only CPU instruction counts are needed."
 edition = "2024"
 license = { workspace = true }
-name = "buck2_miniperf"
+name = "bz_miniperf"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -12,8 +12,8 @@ anyhow = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 bincode = { workspace = true }
-buck2_miniperf_proto = { workspace = true }
-buck2_util = { workspace = true }
+bz_miniperf_proto = { workspace = true }
+bz_util = { workspace = true }
 perf-event = { workspace = true }
 smallvec = { workspace = true }
 thiserror = { workspace = true }

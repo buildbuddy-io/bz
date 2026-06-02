@@ -10,19 +10,19 @@
 
 use std::path::Path;
 
-use buck2_cli_proto::UnstableDiceDumpRequest;
-use buck2_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
-use buck2_client_ctx::daemon::client::BuckdClientConnector;
-use buck2_client_ctx::daemon::client::connect::BootstrapBuckdClient;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_common::manifold::Bucket;
-use buck2_common::manifold::ManifoldClient;
-use buck2_error::BuckErrorContext;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_util::process::async_background_command;
+use bz_cli_proto::UnstableDiceDumpRequest;
+use bz_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
+use bz_client_ctx::daemon::client::BuckdClientConnector;
+use bz_client_ctx::daemon::client::connect::BootstrapBuckdClient;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_common::manifold::Bucket;
+use bz_common::manifold::ManifoldClient;
+use bz_error::BuckErrorContext;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_util::process::async_background_command;
 
 use crate::manifold::manifold_leads;
 
@@ -31,7 +31,7 @@ pub async fn upload_dice_dump(
     buck_out_dice: AbsNormPathBuf,
     manifold: &ManifoldClient,
     manifold_id: &String,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let buckd = buckd.to_connector();
     let mut events_ctx = EventsCtx::new(None, Default::default());
     let manifold_bucket = Bucket::RAGE_DUMPS;
@@ -72,7 +72,7 @@ impl DiceDump {
         manifold: &ManifoldClient,
         manifold_bucket: Bucket,
         manifold_filename: &str,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         fs_util::create_dir_all(&self.buck_out_dice).with_buck_error_context(|| {
             format!(
                 "Failed to create directory `{}`, no DICE dump will be created",
@@ -116,9 +116,9 @@ async fn upload_to_manifold(
     manifold: &ManifoldClient,
     manifold_bucket: Bucket,
     manifold_filename: &str,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if !cfg!(target_os = "windows") {
-        buck2_core::facebook_only();
+        bz_core::facebook_only();
 
         let tar = async_background_command("tar")
             .arg("-c")

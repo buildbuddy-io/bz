@@ -18,10 +18,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
 use dupe::Dupe;
 use nix::fcntl::OFlag;
 use nix::sys::stat::Mode;
@@ -34,7 +34,7 @@ use crate::cgroup_files::ResourcePressure;
 use crate::path::CgroupPath;
 use crate::path::CgroupPathBuf;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Environment)]
 enum CgroupError {
     #[error("{msg} IO error: {io_err}")]
@@ -133,7 +133,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
         &self.dir
     }
 
-    pub(crate) async fn read_enabled_controllers(&self) -> buck2_error::Result<EnabledControllers> {
+    pub(crate) async fn read_enabled_controllers(&self) -> bz_error::Result<EnabledControllers> {
         let controllers_file = CgroupFile::open(
             self.dir.dupe(),
             FileNameBuf::unchecked_new("cgroup.controllers"),
@@ -150,7 +150,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
     }
 
     /// Set the memory.high limit for this cgroup
-    pub async fn set_memory_high(&self, memory_high: &str) -> buck2_error::Result<()> {
+    pub async fn set_memory_high(&self, memory_high: &str) -> bz_error::Result<()> {
         CgroupFile::open(
             self.dir.dupe(),
             FileNameBuf::unchecked_new("memory.high"),
@@ -162,7 +162,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
     }
 
     /// Set the memory.max limit for this cgroup
-    pub async fn set_memory_max(&self, memory_max: &str) -> buck2_error::Result<()> {
+    pub async fn set_memory_max(&self, memory_max: &str) -> bz_error::Result<()> {
         CgroupFile::open(
             self.dir.dupe(),
             FileNameBuf::unchecked_new("memory.max"),
@@ -178,7 +178,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
     ///
     /// In buck2 we want this because there's a risk that actions will not correctly report failures
     /// if sub-processes are getting killed.
-    pub(crate) async fn set_memory_oom_group(&self) -> buck2_error::Result<()> {
+    pub(crate) async fn set_memory_oom_group(&self) -> bz_error::Result<()> {
         CgroupFile::open(
             self.dir.dupe(),
             FileNameBuf::unchecked_new("memory.oom.group"),
@@ -189,7 +189,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
         .await
     }
 
-    async fn read_resource_constraints(&self) -> buck2_error::Result<EffectiveResourceConstraints> {
+    async fn read_resource_constraints(&self) -> bz_error::Result<EffectiveResourceConstraints> {
         let read = |f| async move {
             let f = CgroupFile::open(
                 self.dir.dupe(),
@@ -197,7 +197,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
                 CgroupFileMode::ReadOnly,
             )
             .await?;
-            buck2_error::Ok(f.read_max_or_int().await?)
+            bz_error::Ok(f.read_max_or_int().await?)
         };
         let (memory_high, memory_max, memory_swap_high, memory_swap_max) = tokio::try_join!(
             read("memory.high"),
@@ -215,7 +215,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
 
     pub(crate) async fn read_effective_resouce_constraints(
         &self,
-    ) -> buck2_error::Result<EffectiveResourceConstraints> {
+    ) -> bz_error::Result<EffectiveResourceConstraints> {
         let Some(parent_path) = self.path.parent() else {
             // The root cgroup doesn't have memory restrictions (the files don't even exist)
             return Ok(EffectiveResourceConstraints::default());
@@ -251,7 +251,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
     ///  2. Ensure that the pid controller is available
     ///  3. Consider holding the FD open
     #[cfg(test)]
-    pub(crate) async fn read_pid_count(&self) -> buck2_error::Result<u64> {
+    pub(crate) async fn read_pid_count(&self) -> bz_error::Result<u64> {
         CgroupFile::open(
             self.dir.dupe(),
             FileNameBuf::unchecked_new("pids.current"),
@@ -265,7 +265,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
     /// Kill all remaining processes in the cgroup and return information about what was killed.
     ///
     /// The kill behavior is "race free," ie no risk of racing against forks or whatever. However, the output reporting is not race free.
-    pub async fn kill_remaining_pids(&self) -> buck2_error::Result<Vec<OrphanProcessInfo>> {
+    pub async fn kill_remaining_pids(&self) -> bz_error::Result<Vec<OrphanProcessInfo>> {
         let procs = CgroupFile::open(
             self.dir.dupe(),
             FileNameBuf::unchecked_new("cgroup.procs"),
@@ -305,7 +305,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
 }
 
 impl Cgroup<NoMemoryMonitoring, CgroupKindUndecided> {
-    pub(crate) fn sync_try_from_path(path: CgroupPathBuf) -> buck2_error::Result<Self> {
+    pub(crate) fn sync_try_from_path(path: CgroupPathBuf) -> bz_error::Result<Self> {
         let dir = nix::fcntl::open(
             path.as_path(),
             OFlag::O_CLOEXEC | OFlag::O_DIRECTORY,
@@ -326,14 +326,14 @@ impl Cgroup<NoMemoryMonitoring, CgroupKindUndecided> {
         Ok(cgroup)
     }
 
-    pub async fn try_from_path(path: CgroupPathBuf) -> buck2_error::Result<Self> {
+    pub async fn try_from_path(path: CgroupPathBuf) -> bz_error::Result<Self> {
         tokio::task::spawn_blocking(|| Self::sync_try_from_path(path)).await?
     }
 
     /// Treat this cgroup as a leaf cgroup
     pub async fn into_leaf(
         self,
-    ) -> buck2_error::Result<Cgroup<NoMemoryMonitoring, CgroupKindLeaf>> {
+    ) -> bz_error::Result<Cgroup<NoMemoryMonitoring, CgroupKindLeaf>> {
         Ok(Cgroup {
             kind: CgroupKindLeaf {
                 procs: Arc::new(
@@ -355,7 +355,7 @@ impl Cgroup<NoMemoryMonitoring, CgroupKindUndecided> {
     pub(crate) async fn enable_subtree_control_and_into_internal(
         self,
         enabled_controllers: EnabledControllers,
-    ) -> buck2_error::Result<Cgroup<NoMemoryMonitoring, CgroupKindInternal>> {
+    ) -> bz_error::Result<Cgroup<NoMemoryMonitoring, CgroupKindInternal>> {
         let subtree_control = CgroupFile::open(
             self.dir.dupe(),
             FileNameBuf::unchecked_new("cgroup.subtree_control"),
@@ -429,10 +429,10 @@ impl<M: MemoryMonitoring> Cgroup<M, CgroupKindLeaf> {
         each_tick_allocate_memory_mbs: f64,
         tick_duration: Option<Duration>,
         pre_exit_sleep_duration: Option<Duration>,
-    ) -> buck2_error::Result<Child> {
+    ) -> bz_error::Result<Child> {
         use std::process::Stdio;
 
-        use buck2_util::process::background_command;
+        use bz_util::process::background_command;
 
         let bin = std::env::var("USE_SOME_MEMORY_BIN").unwrap();
         let mut cmd = background_command(bin);
@@ -460,7 +460,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
         dir: &OwnedFd,
         path: &CgroupPath,
         child: &FileName,
-    ) -> buck2_error::Result<CgroupMinimal> {
+    ) -> bz_error::Result<CgroupMinimal> {
         nix::sys::stat::mkdirat(dir, child.as_str(), Mode::all())?;
 
         let fd = nix::fcntl::openat(
@@ -481,7 +481,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
     pub(crate) fn sync_discouraged_make_child(
         &self,
         child: &FileName,
-    ) -> buck2_error::Result<CgroupMinimal> {
+    ) -> bz_error::Result<CgroupMinimal> {
         Self::sync_discouraged_make_child_impl(&self.dir, &self.path, child)
     }
 
@@ -491,7 +491,7 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
     pub(crate) async fn discouraged_make_child(
         &self,
         child: FileNameBuf,
-    ) -> buck2_error::Result<CgroupMinimal> {
+    ) -> bz_error::Result<CgroupMinimal> {
         let dir = self.dir.dupe();
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
@@ -508,14 +508,14 @@ impl<M: MemoryMonitoring> Cgroup<M, CgroupKindInternal> {
     pub(crate) async fn make_child(
         &self,
         child: FileNameBuf,
-    ) -> buck2_error::Result<CgroupMinimal> {
+    ) -> bz_error::Result<CgroupMinimal> {
         self.discouraged_make_child(child).await
     }
 
     pub(crate) async fn make_internal_child(
         &self,
         child: FileNameBuf,
-    ) -> buck2_error::Result<Cgroup<NoMemoryMonitoring, CgroupKindInternal>> {
+    ) -> bz_error::Result<Cgroup<NoMemoryMonitoring, CgroupKindInternal>> {
         let c = self.make_child(child).await?;
         c.enable_subtree_control_and_into_internal(self.kind.controllers.dupe())
             .await
@@ -524,7 +524,7 @@ impl<M: MemoryMonitoring> Cgroup<M, CgroupKindInternal> {
     pub(crate) async fn make_leaf_child(
         &self,
         child: FileNameBuf,
-    ) -> buck2_error::Result<Cgroup<NoMemoryMonitoring, CgroupKindLeaf>> {
+    ) -> bz_error::Result<Cgroup<NoMemoryMonitoring, CgroupKindLeaf>> {
         let c = self.make_child(child).await?;
         c.into_leaf().await
     }
@@ -533,7 +533,7 @@ impl<M: MemoryMonitoring> Cgroup<M, CgroupKindInternal> {
 impl<K: CgroupKind> Cgroup<NoMemoryMonitoring, K> {
     pub(crate) async fn enable_memory_monitoring(
         self,
-    ) -> buck2_error::Result<Cgroup<WithMemoryMonitoring, K>> {
+    ) -> bz_error::Result<Cgroup<WithMemoryMonitoring, K>> {
         let open = |f| {
             let d = &self.dir;
             async move {
@@ -566,15 +566,15 @@ impl<K: CgroupKind> Cgroup<NoMemoryMonitoring, K> {
 }
 
 impl<K: CgroupKind> Cgroup<WithMemoryMonitoring, K> {
-    pub async fn read_memory_stat(&self) -> buck2_error::Result<MemoryStat> {
+    pub async fn read_memory_stat(&self) -> bz_error::Result<MemoryStat> {
         self.memory.memory_stat.read_memory_stat().await
     }
 
-    pub async fn read_memory_current(&self) -> buck2_error::Result<u64> {
+    pub async fn read_memory_current(&self) -> bz_error::Result<u64> {
         self.memory.memory_current.read_int().await
     }
 
-    pub async fn read_swap_current(&self) -> buck2_error::Result<u64> {
+    pub async fn read_swap_current(&self) -> bz_error::Result<u64> {
         self.memory.swap_current.read_int().await
     }
 
@@ -586,7 +586,7 @@ impl<K: CgroupKind> Cgroup<WithMemoryMonitoring, K> {
     pub async fn read_memory_pressure_total(
         &self,
         handle: &mut MemoryPressureHandle,
-    ) -> buck2_error::Result<f64> {
+    ) -> bz_error::Result<f64> {
         let before = Instant::now();
         let new_total = self
             .memory
@@ -628,7 +628,7 @@ impl<K: CgroupKind> Cgroup<WithMemoryMonitoring, K> {
         Ok(pressure)
     }
 
-    pub async fn read_memory_pressure(&self) -> buck2_error::Result<ResourcePressure> {
+    pub async fn read_memory_pressure(&self) -> bz_error::Result<ResourcePressure> {
         self.memory.memory_pressure.read_resource_pressure().await
     }
 }
@@ -658,7 +658,7 @@ impl Drop for CgroupFreezeGuard {
 }
 
 impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
-    pub async fn freeze(&self) -> buck2_error::Result<CgroupFreezeGuard> {
+    pub async fn freeze(&self) -> bz_error::Result<CgroupFreezeGuard> {
         let f = CgroupFile::open(
             self.dir.dupe(),
             FileNameBuf::unchecked_new("cgroup.freeze"),
@@ -673,8 +673,8 @@ impl<M: MemoryMonitoring, K: CgroupKind> Cgroup<M, K> {
 #[cfg(test)]
 impl CgroupMinimal {
     pub(crate) async fn create_minimal_for_test() -> Option<Self> {
-        use buck2_fs::paths::abs_norm_path::AbsNormPath;
-        use buck2_util::process::background_command;
+        use bz_fs::paths::abs_norm_path::AbsNormPath;
+        use bz_util::process::background_command;
 
         if !cfg!(buck_build) || !cfg!(target_os = "linux") {
             return None;
@@ -824,9 +824,9 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
     use std::time::Duration;
 
-    use buck2_fs::fs_util::uncategorized as fs_util;
-    use buck2_fs::paths::file_name::FileNameBuf;
-    use buck2_util::process::background_command;
+    use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_fs::paths::file_name::FileNameBuf;
+    use bz_util::process::background_command;
     use dupe::Dupe;
 
     use crate::cgroup::Cgroup;

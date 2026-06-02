@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use pagable::Pagable;
 use relative_path::Component;
 use relative_path::RelativePath;
@@ -18,7 +18,7 @@ use relative_path::RelativePathBuf;
 use crate::cells::cell_path::CellPath;
 use crate::cells::paths::CellRelativePathBuf;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum RelativeImportParseError {
     #[error("Relative import path `{0}` is not allowed at the current location.")]
@@ -61,7 +61,7 @@ impl CellPathWithAllowedRelativeDir {
         }
     }
 
-    pub fn join_normalized(&self, path: &RelativePath) -> buck2_error::Result<CellPath> {
+    pub fn join_normalized(&self, path: &RelativePath) -> bz_error::Result<CellPath> {
         let Some(allowed_relative_dir) = &self.allowed_relative_dir else {
             let rel_path = <&ForwardRelativePath>::try_from(path).map_err(|_e| {
                 RelativeImportParseError::InvalidCurrentPathWhenFileRelativeImport(path.to_string())
@@ -134,7 +134,7 @@ impl CellPathWithAllowedRelativeDir {
 
 #[cfg(test)]
 mod tests {
-    use buck2_fs::paths::file_name::FileName;
+    use bz_fs::paths::file_name::FileName;
     use relative_path::RelativePath;
 
     use crate::cells::cell_path::CellPath;
@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn parent_directory_traversal() -> buck2_error::Result<()> {
+    fn parent_directory_traversal() -> bz_error::Result<()> {
         let import = "../sibling.bzl";
         let cell_path_with_allowed_relative_dir = CellPathWithAllowedRelativeDir {
             current_dir: CellPath::testing_new("cell1//package/path"),
@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_parent_directory_traversal() -> buck2_error::Result<()> {
+    fn multiple_parent_directory_traversal() -> bz_error::Result<()> {
         let import = "../../foo.bzl";
         let cell_path_with_allowed_relative_dir = CellPathWithAllowedRelativeDir {
             current_dir: CellPath::testing_new("cell1//root/a/b"),
@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn parent_directory_with_subpath() -> buck2_error::Result<()> {
+    fn parent_directory_with_subpath() -> bz_error::Result<()> {
         let import = "../bar/zoo.bzl";
         let cell_path_with_allowed_relative_dir = CellPathWithAllowedRelativeDir {
             current_dir: CellPath::testing_new("cell1//package/foo/baz"),
@@ -196,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn traversal_out_of_allowed_dir() -> buck2_error::Result<()> {
+    fn traversal_out_of_allowed_dir() -> bz_error::Result<()> {
         let import = "../../package1/too_far_up.bzl";
         let cell_path_with_allowed_relative_dir = CellPathWithAllowedRelativeDir {
             current_dir: CellPath::testing_new("cell1//package1/path"),
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn nonleading_parent_dir_component() -> buck2_error::Result<()> {
+    fn nonleading_parent_dir_component() -> bz_error::Result<()> {
         let import = "some_dir/../../package2/wrong_package.bzl";
         let cell_path_with_allowed_relative_dir = CellPathWithAllowedRelativeDir {
             current_dir: CellPath::testing_new("cell1//package1/path"),

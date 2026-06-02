@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_http::HttpClient;
+use bz_http::HttpClient;
 use dice::UserComputationData;
 use dupe::Dupe;
 

@@ -13,7 +13,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::mem;
 
-use buck2_hash::BuckHasher;
+use bz_hash::BuckHasher;
 
 pub(crate) fn key_hash<K: Hash + 'static>(key: &K) -> u64 {
     let mut hasher = BuckHasher::default();

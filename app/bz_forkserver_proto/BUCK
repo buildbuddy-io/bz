@@ -5,20 +5,20 @@ load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
 oncall("build_infra")
 
 rust_protobuf_library(
-    name = "buck2_forkserver_proto",
+    name = "bz_forkserver_proto",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",
-    proto_srcs = ":buck2_forkserver_proto.proto",
+    proto_srcs = ":bz_forkserver_proto.proto",
     deps = [
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:prost-types",
-        "//bz/app/bz_data:buck2_data",
+        "//bz/app/bz_data:bz_data",
         "//bz/gazebo/gazebo:gazebo",
     ],
 )
 
 proto_srcs(
-    name = "buck2_forkserver_proto.proto",
+    name = "bz_forkserver_proto.proto",
     srcs = ["forkserver.proto"],
     visibility = ["PUBLIC"],
     deps = [

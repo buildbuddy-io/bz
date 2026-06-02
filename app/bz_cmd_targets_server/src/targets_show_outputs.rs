@@ -11,34 +11,34 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_cli_proto::TargetsRequest;
-use buck2_cli_proto::TargetsShowOutputsResponse;
-use buck2_cli_proto::targets_show_outputs_response::TargetPaths;
-use buck2_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
-use buck2_common::pattern::resolve::ResolveTargetPatterns;
-use buck2_common::pattern::resolve::ResolvedPattern;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabel;
-use buck2_core::pattern::pattern::PackageSpec;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::internal_error;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_node::nodes::eval_result::EvaluationResult;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_cli_proto::TargetsRequest;
+use bz_cli_proto::TargetsShowOutputsResponse;
+use bz_cli_proto::targets_show_outputs_response::TargetPaths;
+use bz_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
+use bz_common::pattern::resolve::ResolveTargetPatterns;
+use bz_common::pattern::resolve::ResolvedPattern;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabel;
+use bz_core::pattern::pattern::PackageSpec;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::internal_error;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_node::nodes::eval_result::EvaluationResult;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::DiceComputations;
 use dice::DiceTransaction;
 use dupe::Dupe;
@@ -54,7 +54,7 @@ pub async fn targets_show_outputs_command(
     ctx: &dyn ServerCommandContextTrait,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
     req: TargetsRequest,
-) -> buck2_error::Result<TargetsShowOutputsResponse> {
+) -> bz_error::Result<TargetsShowOutputsResponse> {
     run_server_command(
         TargetsShowOutputsServerCommand { req },
         ctx,
@@ -69,9 +69,9 @@ struct TargetsShowOutputsServerCommand {
 
 #[async_trait]
 impl ServerCommandTemplate for TargetsShowOutputsServerCommand {
-    type StartEvent = buck2_data::TargetsCommandStart;
-    type EndEvent = buck2_data::TargetsCommandEnd;
-    type Response = buck2_cli_proto::TargetsShowOutputsResponse;
+    type StartEvent = bz_data::TargetsCommandStart;
+    type EndEvent = bz_data::TargetsCommandEnd;
+    type Response = bz_cli_proto::TargetsShowOutputsResponse;
     type PartialResult = NoPartialResult;
 
     async fn command(
@@ -79,7 +79,7 @@ impl ServerCommandTemplate for TargetsShowOutputsServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         targets_show_outputs(server_ctx, ctx, &self.req).await
     }
 }
@@ -88,7 +88,7 @@ async fn targets_show_outputs(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
     request: &TargetsRequest,
-) -> buck2_error::Result<TargetsShowOutputsResponse> {
+) -> bz_error::Result<TargetsShowOutputsResponse> {
     let cwd = server_ctx.working_dir();
 
     let global_cfg_options = global_cfg_options_from_client_context(
@@ -134,7 +134,7 @@ async fn retrieve_targets_artifacts_from_patterns(
     ctx: &mut DiceComputations<'_>,
     global_cfg_options: &GlobalCfgOptions,
     parsed_patterns: &[ParsedPattern<ProvidersPatternExtra>],
-) -> buck2_error::Result<Vec<TargetsArtifacts>> {
+) -> bz_error::Result<Vec<TargetsArtifacts>> {
     let resolved_pattern = ResolveTargetPatterns::resolve(ctx, parsed_patterns).await?;
 
     retrieve_artifacts_for_targets(ctx, resolved_pattern, global_cfg_options).await
@@ -144,7 +144,7 @@ async fn retrieve_artifacts_for_targets(
     ctx: &mut DiceComputations<'_>,
     spec: ResolvedPattern<ProvidersPatternExtra>,
     global_cfg_options: &GlobalCfgOptions,
-) -> buck2_error::Result<Vec<TargetsArtifacts>> {
+) -> bz_error::Result<Vec<TargetsArtifacts>> {
     let artifacts_for_specs = ctx
         .try_compute_join(spec.specs, |ctx, (package_with_modifiers, spec)| {
             async move {
@@ -180,7 +180,7 @@ async fn retrieve_artifacts_for_spec(
     spec: PackageSpec<ProvidersPatternExtra>,
     global_cfg_options: &GlobalCfgOptions,
     res: Arc<EvaluationResult>,
-) -> buck2_error::Result<Vec<TargetsArtifacts>> {
+) -> bz_error::Result<Vec<TargetsArtifacts>> {
     let available_targets = res.targets();
 
     let todo_targets: Vec<(ProvidersLabel, &GlobalCfgOptions)> = match spec {
@@ -217,7 +217,7 @@ async fn retrieve_artifacts_for_provider_label(
     ctx: &mut DiceComputations<'_>,
     providers_label: ProvidersLabel,
     global_cfg_options: &GlobalCfgOptions,
-) -> buck2_error::Result<TargetsArtifacts> {
+) -> bz_error::Result<TargetsArtifacts> {
     let providers_label = ctx
         .get_configured_provider_label(&providers_label, global_cfg_options)
         .await?;

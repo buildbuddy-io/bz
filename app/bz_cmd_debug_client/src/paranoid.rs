@@ -11,11 +11,11 @@
 use std::time::Duration;
 use std::time::SystemTime;
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
 use prost::Message;
 
 /// Configure paranoid mode.
@@ -55,13 +55,13 @@ impl ParanoidCommand {
                 let ttl: Duration = enable.ttl.into();
                 let expires = SystemTime::now() + ttl;
 
-                let data = buck2_cli_proto::ParanoidInfo {
+                let data = bz_cli_proto::ParanoidInfo {
                     expires_at: Some(expires.into()),
                 }
                 .encode_to_vec();
 
                 fs_util::write(&paranoid_info_path, data).categorize_internal()?;
-                buck2_client_ctx::eprintln!(
+                bz_client_ctx::eprintln!(
                     "Paranoid mode is now enabled, and will remain enabled for the next {}. \
                     Buck will restart automatically.",
                     enable.ttl,
@@ -69,7 +69,7 @@ impl ParanoidCommand {
             }
             Self::Disable(_) => {
                 fs_util::remove_all(&paranoid_info_path).categorize_internal()?;
-                buck2_client_ctx::eprintln!(
+                bz_client_ctx::eprintln!(
                     "Paranoid mode is now disabled. \
                     Buck will restart automatically."
                 )?;

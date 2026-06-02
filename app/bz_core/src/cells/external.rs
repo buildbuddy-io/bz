@@ -17,8 +17,8 @@ use std::sync::Mutex;
 use std::sync::RwLock;
 
 use allocative::Allocative;
-use buck2_error::buck2_error;
-use buck2_hash::StdBuckHashMap;
+use bz_error::bz_error;
+use bz_hash::StdBuckHashMap;
 use derive_more::Display;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
@@ -706,14 +706,14 @@ pub enum GitObjectFormat {
 }
 
 impl FromStr for GitObjectFormat {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "sha1" => Ok(GitObjectFormat::Sha1),
             "sha256" => Ok(GitObjectFormat::Sha256),
-            _ => Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            _ => Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "object_format must be one of `sha1` or `sha256` (got: {})",
                 &s,
             )),
@@ -722,14 +722,14 @@ impl FromStr for GitObjectFormat {
 }
 
 impl GitObjectFormat {
-    pub fn check(&self, s: &str) -> Result<(), buck2_error::Error> {
+    pub fn check(&self, s: &str) -> Result<(), bz_error::Error> {
         match self {
             Self::Sha1 => {
                 if s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit()) {
                     Ok(())
                 } else {
-                    Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    Err(bz_error!(
+                        bz_error::ErrorTag::Input,
                         "not a valid SHA1 digest (got: {})",
                         &s,
                     ))
@@ -739,8 +739,8 @@ impl GitObjectFormat {
                 if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
                     Ok(())
                 } else {
-                    Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    Err(bz_error!(
+                        bz_error::ErrorTag::Input,
                         "not a valid SHA256 digest (got: {})",
                         &s,
                     ))

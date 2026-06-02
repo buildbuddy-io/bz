@@ -12,15 +12,15 @@
 
 use std::sync::Arc;
 
-use buck2_common::events::HasEvents;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_events::dispatch::console_message;
-use buck2_node::configured_universe::CqueryUniverse;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
-use buck2_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
+use bz_common::events::HasEvents;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_events::dispatch::console_message;
+use bz_node::configured_universe::CqueryUniverse;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationResult;
+use bz_query::query::syntax::simple::functions::DefaultQueryFunctionsModule;
 use dice::DiceComputations;
 use dupe::Dupe;
 use futures::StreamExt;
@@ -41,7 +41,7 @@ pub(crate) async fn eval_cquery(
     query_args: &[String],
     target_universe: Option<&[String]>,
     collect_universes: bool,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     QueryEvaluationResult<ConfiguredTargetNode>,
     Option<Vec<Arc<CqueryUniverse>>>,
 )> {
@@ -81,7 +81,7 @@ pub(crate) async fn eval_cquery(
     {
         universes_tx_value
             .send(target_universe.dupe())
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
             .internal_error("Must be open")?;
     }
 
@@ -117,7 +117,7 @@ pub(crate) async fn eval_cquery(
                     let universe = Arc::new(universe);
 
                     if let Some(universes_tx) = universes_tx {
-                        universes_tx.send(universe.dupe()).map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0)).internal_error("Must be open")?;
+                        universes_tx.send(universe.dupe()).map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0)).internal_error("Must be open")?;
                     }
 
                     (
@@ -164,7 +164,7 @@ pub(crate) async fn preresolve_literals_and_build_universe(
     dice_query_delegate: &DiceQueryDelegate<'_, '_>,
     dice_query_data: &DiceQueryData,
     literals: &[String],
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     CqueryUniverse,
     PreresolvedQueryLiterals<ConfiguredTargetNode>,
 )> {
@@ -182,7 +182,7 @@ async fn build_cquery_universe_from_literals(
     universe: &[String],
     query_literals: &DiceQueryData,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<CqueryUniverse> {
+) -> bz_error::Result<CqueryUniverse> {
     let refs: Vec<_> = universe.map(|v| v.as_str());
     let universe_resolved = query_literals.eval_literals(&refs, ctx).await?;
 
@@ -195,7 +195,7 @@ async fn resolve_literals_in_universe(
     dice_query_delegate: &DiceQueryDelegate<'_, '_>,
     literals: &[String],
     universe: &CqueryUniverse,
-) -> buck2_error::Result<PreresolvedQueryLiterals<ConfiguredTargetNode>> {
+) -> bz_error::Result<PreresolvedQueryLiterals<ConfiguredTargetNode>> {
     // TODO(cjhopman): We should probably also resolve the literals to TargetNode so that
     // we can get errors for packages or targets that don't exist or fail to load.
 
@@ -208,7 +208,7 @@ async fn resolve_literals_in_universe(
     let resolution_futs: FuturesUnordered<_> = literals
         .iter()
         .map(|lit| async move {
-            let result: buck2_error::Result<_> = try {
+            let result: bz_error::Result<_> = try {
                 let resolved_pattern = dice_query_delegate
                     .resolve_target_patterns(&[lit.as_str()])
                     .await?;

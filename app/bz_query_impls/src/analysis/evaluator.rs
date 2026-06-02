@@ -10,31 +10,31 @@
 
 //! Implementation of common cquery/uquery pieces.
 
-use buck2_common::scope::scope_and_collect_with_dispatcher;
-use buck2_error::BuckErrorContext;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_query::query::environment::QueryEnvironment;
-use buck2_query::query::syntax::simple::eval::evaluator::QueryEvaluator;
-use buck2_query::query::syntax::simple::eval::literals::extract_target_literals;
-use buck2_query::query::syntax::simple::eval::multi_query::MultiQueryResult;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationValue;
-use buck2_query::query::syntax::simple::functions::QueryFunctions;
-use buck2_query_parser::multi_query::MaybeMultiQuery;
-use buck2_query_parser::multi_query::MultiQueryItem;
+use bz_common::scope::scope_and_collect_with_dispatcher;
+use bz_error::BuckErrorContext;
+use bz_events::dispatch::EventDispatcher;
+use bz_query::query::environment::QueryEnvironment;
+use bz_query::query::syntax::simple::eval::evaluator::QueryEvaluator;
+use bz_query::query::syntax::simple::eval::literals::extract_target_literals;
+use bz_query::query::syntax::simple::eval::multi_query::MultiQueryResult;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationResult;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationValue;
+use bz_query::query::syntax::simple::functions::QueryFunctions;
+use bz_query_parser::multi_query::MaybeMultiQuery;
+use bz_query_parser::multi_query::MultiQueryItem;
 use futures::Future;
 
 pub(crate) async fn eval_query<
     F: QueryFunctions<Env = Env>,
     Env: QueryEnvironment,
-    Fut: Future<Output = buck2_error::Result<Env>> + Send,
+    Fut: Future<Output = bz_error::Result<Env>> + Send,
 >(
     dispatcher: EventDispatcher,
     functions: &F,
     query: &str,
     query_args: &[String],
     environment: impl Fn(Vec<String>) -> Fut + Send + Sync,
-) -> buck2_error::Result<QueryEvaluationResult<Env::Target>> {
+) -> bz_error::Result<QueryEvaluationResult<Env::Target>> {
     let query = MaybeMultiQuery::parse(query, query_args)?;
     match query {
         MaybeMultiQuery::MultiQuery(queries) => {
@@ -52,11 +52,11 @@ async fn eval_single_query<F, Env, Fut>(
     functions: &F,
     query: &str,
     environment: impl Fn(Vec<String>) -> Fut,
-) -> buck2_error::Result<QueryEvaluationValue<<Env as QueryEnvironment>::Target>>
+) -> bz_error::Result<QueryEvaluationValue<<Env as QueryEnvironment>::Target>>
 where
     F: QueryFunctions<Env = Env>,
     Env: QueryEnvironment,
-    Fut: Future<Output = buck2_error::Result<Env>>,
+    Fut: Future<Output = bz_error::Result<Env>>,
 {
     let literals = extract_target_literals(functions, query)?;
     let env = environment(literals).await?;
@@ -68,11 +68,11 @@ async fn process_multi_query<Env, EnvFut, Qf>(
     functions: &Qf,
     env: impl Fn(Vec<String>) -> EnvFut + Send + Sync,
     queries: &[MultiQueryItem],
-) -> buck2_error::Result<MultiQueryResult<Env::Target>>
+) -> bz_error::Result<MultiQueryResult<Env::Target>>
 where
     Qf: QueryFunctions<Env = Env>,
     Env: QueryEnvironment,
-    EnvFut: Future<Output = buck2_error::Result<Env>> + Send,
+    EnvFut: Future<Output = bz_error::Result<Env>> + Send,
 {
     // SAFETY: it is safe as long as we don't forget the future. We don't do that.
     let ((), future_results) = unsafe {
@@ -90,8 +90,8 @@ where
                         (
                             i,
                             arg_1,
-                            Err::<_, buck2_error::Error>(buck2_error::buck2_error!(
-                                buck2_error::ErrorTag::Tier0,
+                            Err::<_, bz_error::Error>(bz_error::bz_error!(
+                                bz_error::ErrorTag::Tier0,
                                 "future was cancelled"
                             )),
                         )

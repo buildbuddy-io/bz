@@ -1,5 +1,5 @@
 [package]
-name = "buck2_test_proto"
+name = "bz_test_proto"
 
 edition = "2024"
 license = { workspace = true }
@@ -7,12 +7,12 @@ repository = { workspace = true }
 version = "0.1.0"
 
 [dependencies]
-buck2_data = { workspace = true }
-buck2_host_sharing_proto = { workspace = true }
+bz_data = { workspace = true }
+bz_host_sharing_proto = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 
 [build-dependencies]
-buck2_protoc_dev = { workspace = true }
+bz_protoc_dev = { workspace = true }

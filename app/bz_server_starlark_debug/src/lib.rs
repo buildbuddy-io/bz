@@ -24,7 +24,7 @@
 //! will be created for each buck2 command and put in the dice per-transaction data. Code
 //! that needs to do starlark evaluation can then use this to setup their Evaluator
 //! appropriately (though this is really just an implementation detail hidden in the
-//! helper [buck2_interpreter::factory::StarlarkEvaluatorProvider]).
+//! helper [bz_interpreter::factory::StarlarkEvaluatorProvider]).
 //!
 //! [CURRENT_DEBUGGER] holds a global reference for the currently attached debugger and
 //! vends out handles (through [create_debugger_handle]).
@@ -52,10 +52,10 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_interpreter::starlark_debug::StarlarkDebugController;
-use buck2_interpreter::starlark_debug::StarlarkDebuggerHandle;
+use bz_core::fs::project::ProjectRoot;
+use bz_events::dispatch::EventDispatcher;
+use bz_interpreter::starlark_debug::StarlarkDebugController;
+use bz_interpreter::starlark_debug::StarlarkDebuggerHandle;
 use derive_more::Display;
 use dupe::Dupe;
 use tokio::sync::mpsc;
@@ -92,7 +92,7 @@ impl StarlarkDebuggerHandle for BuckStarlarkDebuggerHandle {
     async fn start_eval(
         &self,
         description: &str,
-    ) -> buck2_error::Result<Box<dyn StarlarkDebugController>> {
+    ) -> bz_error::Result<Box<dyn StarlarkDebugController>> {
         self.0.server.start_eval(self, description).await
     }
 }
@@ -124,7 +124,7 @@ impl ServerConnection {
     fn new(
         to_client_send: mpsc::UnboundedSender<ToClientMessage>,
         project_root: ProjectRoot,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut locked = CURRENT_DEBUGGER.lock().unwrap();
         if locked.is_some() {
             return Err(StarlarkDebuggerError::DebuggerAlreadyAttached.into());

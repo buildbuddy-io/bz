@@ -14,9 +14,9 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::Weak;
 
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_execute::materialize::materializer::EagerMaterializationGuard;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_execute::materialize::materializer::EagerMaterializationGuard;
 use dupe::Dupe;
 
 use crate::materializers::deferred::MaterializerCommand;
@@ -91,7 +91,7 @@ impl<T: 'static> EagerMaterializations<T> {
 
     pub(super) fn should_materialize_eagerly(
         &self,
-        path: &buck2_core::fs::project_rel_path::ProjectRelativePath,
+        path: &bz_core::fs::project_rel_path::ProjectRelativePath,
     ) -> bool {
         self.active
             .get(path)

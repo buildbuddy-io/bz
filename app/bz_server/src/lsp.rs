@@ -12,45 +12,45 @@ use std::future::Future;
 use std::path::Path;
 use std::thread;
 
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_cli_proto::*;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::package_listing::dice::DicePackageListingResolver;
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPathRef;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::package::package_relative_path::PackageRelativePath;
-use buck2_core::package::source_path::SourcePath;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern::TargetParsingRel;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::target::name::TargetName;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_events::dispatch::span_async;
-use buck2_events::dispatch::with_dispatcher;
-use buck2_events::dispatch::with_dispatcher_async;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::allow_relative_paths::HasAllowRelativePaths;
-use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
-use buck2_interpreter::paths::path::OwnedStarlarkPath;
-use buck2_interpreter::prelude_path::prelude_path;
-use buck2_interpreter_for_build::interpreter::dice_calculation_delegate::HasCalculationDelegate;
-use buck2_interpreter_for_build::interpreter::global_interpreter_state::HasGlobalInterpreterState;
-use buck2_server_ctx::commands::command_end;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::streaming_request_handler::StreamingRequestHandler;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_cli_proto::*;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::package_listing::dice::DicePackageListingResolver;
+use bz_core::bxl::BxlFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellResolver;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPathRef;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::package::package_relative_path::PackageRelativePath;
+use bz_core::package::source_path::SourcePath;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern::TargetParsingRel;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::target::name::TargetName;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_events::dispatch::span_async;
+use bz_events::dispatch::with_dispatcher;
+use bz_events::dispatch::with_dispatcher_async;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::allow_relative_paths::HasAllowRelativePaths;
+use bz_interpreter::load_module::InterpreterCalculation;
+use bz_interpreter::paths::module::OwnedStarlarkModulePath;
+use bz_interpreter::paths::path::OwnedStarlarkPath;
+use bz_interpreter::prelude_path::prelude_path;
+use bz_interpreter_for_build::interpreter::dice_calculation_delegate::HasCalculationDelegate;
+use bz_interpreter_for_build::interpreter::global_interpreter_state::HasGlobalInterpreterState;
+use bz_server_ctx::commands::command_end;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::streaming_request_handler::StreamingRequestHandler;
 use dice::DiceEquality;
 use dice::DiceTransaction;
 use dupe::Dupe;
@@ -78,7 +78,7 @@ use tokio::sync::Mutex;
 use tokio::sync::MutexGuard;
 
 /// Errors when [`LspContext::resolve_load()`] cannot resolve a given path.
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 enum ResolveLoadError {
     /// The scheme provided was not correct or supported.
@@ -96,7 +96,7 @@ struct DocsCacheManager {
 }
 
 impl DocsCacheManager {
-    async fn new(fs: ProjectRoot, mut dice_ctx: DiceTransaction) -> buck2_error::Result<Self> {
+    async fn new(fs: ProjectRoot, mut dice_ctx: DiceTransaction) -> bz_error::Result<Self> {
         Ok(Self {
             docs_cache: Mutex::new(Self::new_docs_cache(&fs, &mut dice_ctx).await?),
             fs,
@@ -107,7 +107,7 @@ impl DocsCacheManager {
     async fn get_cache(
         &self,
         mut current_dice_ctx: DiceTransaction,
-    ) -> buck2_error::Result<MutexGuard<'_, DocsCache>> {
+    ) -> bz_error::Result<MutexGuard<'_, DocsCache>> {
         let mut docs_cache = self.docs_cache.lock().await;
 
         let fs = &self.fs;
@@ -129,7 +129,7 @@ impl DocsCacheManager {
     async fn new_docs_cache(
         fs: &ProjectRoot,
         dice_ctx: &mut DiceTransaction,
-    ) -> buck2_error::Result<DocsCache> {
+    ) -> bz_error::Result<DocsCache> {
         let mut builtin_docs = Vec::new();
 
         let cell_resolver = dice_ctx.get_cell_resolver().await?;
@@ -148,7 +148,7 @@ impl DocsCacheManager {
 
 async fn get_builtin_globals_docs(
     dice_ctx: &mut DiceTransaction,
-) -> buck2_error::Result<DocModule> {
+) -> bz_error::Result<DocModule> {
     Ok(dice_ctx
         .get_global_interpreter_state()
         .await?
@@ -159,7 +159,7 @@ async fn get_builtin_globals_docs(
 async fn get_prelude_docs(
     ctx: &DiceTransaction,
     existing_globals: &StdBuckHashSet<&str>,
-) -> buck2_error::Result<Option<(ImportPath, DocModule)>> {
+) -> bz_error::Result<Option<(ImportPath, DocModule)>> {
     let ctx = &mut ctx.clone();
     let cell_resolver = ctx.get_cell_resolver().await?;
     let Some(prelude_path) = prelude_path(&cell_resolver)? else {
@@ -193,7 +193,7 @@ struct DocsCache {
     native_starlark_files: StdBuckHashMap<LspUrl, String>,
 }
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Environment)]
 enum DocsCacheError {
     #[error("Duplicate global symbol `{}` detected. Existing URL was `{}`, new URL was `{}`", .name, .existing, .new)]
@@ -209,20 +209,20 @@ impl DocsCache {
         location: &ImportPath,
         fs: &ProjectRoot,
         cell_resolver: &CellResolver,
-    ) -> buck2_error::Result<LspUrl> {
+    ) -> bz_error::Result<LspUrl> {
         let relative_path = cell_resolver.resolve_path(location.path().as_ref())?;
         let abs_path = fs.resolve(&relative_path);
         Url::from_file_path(abs_path)
             .unwrap()
             .try_into()
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))
     }
 
     async fn new(
         builtin_symbols: &[(Option<ImportPath>, DocModule)],
         fs: &ProjectRoot,
         cell_resolver: &CellResolver,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Self::new_with_lookup(builtin_symbols, |location| async {
             Self::get_prelude_uri(location, fs, cell_resolver).await
         })
@@ -232,11 +232,11 @@ impl DocsCache {
     async fn new_with_lookup<
         'a,
         F: Fn(&'a ImportPath) -> Fut + 'a,
-        Fut: Future<Output = buck2_error::Result<LspUrl>>,
+        Fut: Future<Output = bz_error::Result<LspUrl>>,
     >(
         builtin_symbols: &'a [(Option<ImportPath>, DocModule)],
         location_lookup: F,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut global_urls =
             StdBuckHashMap::with_capacity_and_hasher(builtin_symbols.len(), Default::default());
 
@@ -249,7 +249,7 @@ impl DocsCache {
                 }
                 .into())
             } else {
-                buck2_error::Ok(())
+                bz_error::Ok(())
             }
         };
 
@@ -273,9 +273,9 @@ impl DocsCache {
 
                         let url = LspUrl::try_from(
                             Url::parse(&format!("starlark:{}", path.display()))
-                                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?,
+                                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?,
                         )
-                        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?;
+                        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?;
                         let rendered = render_doc_item_no_link(sym, mem);
                         let prev = native_starlark_files.insert(url.clone(), rendered);
                         assert!(prev.is_none());
@@ -309,7 +309,7 @@ struct BuckLspContext<'a> {
     runtime: Handle,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BuckLspContextError {
     /// The scheme provided was not correct or supported.
@@ -320,7 +320,7 @@ enum BuckLspContextError {
 impl<'a> BuckLspContext<'a> {
     async fn new(
         server_ctx: &'a dyn ServerCommandContextTrait,
-    ) -> buck2_error::Result<BuckLspContext<'a>> {
+    ) -> bz_error::Result<BuckLspContext<'a>> {
         let (fs, docs_cache_manager) = server_ctx
             .with_dice_ctx(|server_ctx, dice_ctx| async move {
                 let fs = server_ctx.project_root().clone();
@@ -342,10 +342,10 @@ impl<'a> BuckLspContext<'a> {
     // We are purposefully only holding the DICE context briefly since the LSP logic lives in a
     // long-running thread, and we don't want it to block continuously while holding DICE since
     // it will block other concurrent commands.
-    async fn with_dice_ctx<F, Fut, R>(&self, exec: F) -> buck2_error::Result<R>
+    async fn with_dice_ctx<F, Fut, R>(&self, exec: F) -> bz_error::Result<R>
     where
         F: FnOnce(DiceTransaction) -> Fut + Send,
-        Fut: Future<Output = buck2_error::Result<R>> + Send,
+        Fut: Future<Output = bz_error::Result<R>> + Send,
         R: Send,
     {
         self.server_ctx
@@ -353,7 +353,7 @@ impl<'a> BuckLspContext<'a> {
             .await?
     }
 
-    async fn import_path(&self, path: &Path) -> buck2_error::Result<OwnedStarlarkModulePath> {
+    async fn import_path(&self, path: &Path) -> bz_error::Result<OwnedStarlarkModulePath> {
         let abs_path = AbsPath::new(path)?;
         let relative_path = self.fs.relativize_any(abs_path)?;
         let cell_resolver = self
@@ -381,7 +381,7 @@ impl<'a> BuckLspContext<'a> {
     async fn starlark_import_path(
         &self,
         path: &Path,
-    ) -> buck2_error::Result<OwnedStarlarkModulePath> {
+    ) -> bz_error::Result<OwnedStarlarkModulePath> {
         // The "absolute" path from LSP urls doesn't work here, they have to be relative
         // to get a ProjectRelativePath. We already guaranteed that things start with a '/'
         // (rooted from `starlark:`, see LspUrl), so just drop it.
@@ -427,7 +427,7 @@ impl<'a> BuckLspContext<'a> {
         &self,
         uri: &LspUrl,
         content: String,
-    ) -> buck2_error::Result<LspEvalResult> {
+    ) -> bz_error::Result<LspEvalResult> {
         let import_path: OwnedStarlarkModulePath = match uri {
             LspUrl::File(path) => self.import_path(path).await,
             LspUrl::Starlark(path) => self.starlark_import_path(path).await,
@@ -467,7 +467,7 @@ impl<'a> BuckLspContext<'a> {
         &self,
         current_package: CellPathRef<'_>,
         literal: &str,
-    ) -> buck2_error::Result<Option<StringLiteralResult>> {
+    ) -> bz_error::Result<Option<StringLiteralResult>> {
         match ForwardRelativePath::new(literal) {
             Ok(package_relative) => {
                 let cell_resolver = self
@@ -480,7 +480,7 @@ impl<'a> BuckLspContext<'a> {
                 let url = Url::from_file_path(path)
                     .unwrap()
                     .try_into()
-                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?;
+                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?;
                 let string_literal = StringLiteralResult {
                     url,
                     location_finder: None,
@@ -495,7 +495,7 @@ impl<'a> BuckLspContext<'a> {
         &self,
         current_package: CellPathRef<'_>,
         literal: &str,
-    ) -> buck2_error::Result<Option<StringLiteralResult>> {
+    ) -> bz_error::Result<Option<StringLiteralResult>> {
         let (artifact_fs, cell_alias_resolver, dir_with_allowed_relative_dirs) = self
             .with_dice_ctx(|mut dice_ctx| async move {
                 Ok((
@@ -544,7 +544,7 @@ impl<'a> BuckLspContext<'a> {
                                         };
                                         Ok(Some(string_literal))
                                     }
-                                    Err(e) => Err(from_any_with_tag(e, buck2_error::ErrorTag::Lsp)),
+                                    Err(e) => Err(from_any_with_tag(e, bz_error::ErrorTag::Lsp)),
                                 }
                             }))
                     })
@@ -606,11 +606,11 @@ impl LspContext for BuckLspContext<'_> {
                                 Url::from_file_path(abs_path)
                                     .unwrap()
                                     .try_into()
-                                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))
+                                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))
                             })
                             .await?;
 
-                        buck2_error::Ok(url)
+                        bz_error::Ok(url)
                     }
                     _ => Err(ResolveLoadError::WrongScheme(
                         "file://".to_owned(),
@@ -640,7 +640,7 @@ impl LspContext for BuckLspContext<'_> {
                         current_file.clone(),
                     )),
                 }
-                .map_err(buck2_error::Error::from)?;
+                .map_err(bz_error::Error::from)?;
 
                 let current_package = import_path.path();
 
@@ -648,7 +648,7 @@ impl LspContext for BuckLspContext<'_> {
                 // perfectly recoverable (e.g. an invalid cell is specified, we can't list an invalid
                 // package path, an absolute path is requested, etc).
                 //
-                // buck2_error::Error sort of obscures the root causes, so we just have
+                // bz_error::Error sort of obscures the root causes, so we just have
                 // to assume if it failed, it's fine, and we can maybe try the next thing.
                 if let Ok(Some(string_literal)) = self
                     .parse_target_from_string(current_package, literal)
@@ -660,7 +660,7 @@ impl LspContext for BuckLspContext<'_> {
                 {
                     Ok(Some(string_literal))
                 } else {
-                    buck2_error::Ok(None)
+                    bz_error::Ok(None)
                 }
             }))
             .map_err(|e| format!("{:#}", e))
@@ -713,7 +713,7 @@ impl LspContext for BuckLspContext<'_> {
                         self.docs_cache_manager.get_cache(dice_ctx).await
                     })
                     .await?;
-                buck2_error::Ok(docs_cache.url_for_symbol(symbol).cloned())
+                bz_error::Ok(docs_cache.url_for_symbol(symbol).cloned())
             }))
             .map_err(|e| format!("{:#}", e))
     }
@@ -734,15 +734,15 @@ impl LspContext for BuckLspContext<'_> {
 
 pub(crate) async fn run_lsp_server_command(
     ctx: &dyn ServerCommandContextTrait,
-    partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::LspMessage>,
-    req: StreamingRequestHandler<buck2_cli_proto::LspRequest>,
-) -> buck2_error::Result<buck2_cli_proto::LspResponse> {
+    partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::LspMessage>,
+    req: StreamingRequestHandler<bz_cli_proto::LspRequest>,
+) -> bz_error::Result<bz_cli_proto::LspResponse> {
     let start_event = ctx
-        .command_start_event(buck2_data::LspCommandStart {}.into())
+        .command_start_event(bz_data::LspCommandStart {}.into())
         .await?;
     span_async(start_event, async move {
         let result = run_lsp_server(ctx, partial_result_dispatcher, req).await;
-        let end_event = command_end(&result, buck2_data::LspCommandEnd {});
+        let end_event = command_end(&result, bz_data::LspCommandEnd {});
         (result, end_event)
     })
     .await
@@ -751,9 +751,9 @@ pub(crate) async fn run_lsp_server_command(
 /// Run an LSP server for a given client.
 async fn run_lsp_server(
     ctx: &dyn ServerCommandContextTrait,
-    mut partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::LspMessage>,
+    mut partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::LspMessage>,
     mut req: StreamingRequestHandler<LspRequest>,
-) -> buck2_error::Result<LspResponse> {
+) -> bz_error::Result<LspResponse> {
     // This gets a bit messy because the various frameworks don't quite work the same way.
     // - tonic has async streams (which we pull from with .message().await)
     // - The LSP server uses crossbeam channels, which are synchronous, so we need to run
@@ -829,19 +829,19 @@ async fn run_lsp_server(
 /// This returns `Ok(())` when the other end of the connection disconnects.
 async fn recv_from_lsp(
     to_client: crossbeam_channel::Receiver<Message>,
-    mut event_sender: UnboundedSender<buck2_cli_proto::LspMessage>,
-) -> buck2_error::Result<()> {
+    mut event_sender: UnboundedSender<bz_cli_proto::LspMessage>,
+) -> bz_error::Result<()> {
     loop {
         let msg = to_client
             .recv()
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?;
 
         let lsp_json = serde_json::to_string(&msg).unwrap();
-        let res = buck2_cli_proto::LspMessage { lsp_json };
+        let res = bz_cli_proto::LspMessage { lsp_json };
         match event_sender.send(res).await {
             Ok(_) => {}
             Err(e) if e.is_disconnected() => break Ok(()),
-            Err(e) => break Err(from_any_with_tag(e, buck2_error::ErrorTag::Lsp)),
+            Err(e) => break Err(from_any_with_tag(e, bz_error::ErrorTag::Lsp)),
         }
     }
 }
@@ -855,8 +855,8 @@ async fn recv_from_lsp(
 ///     - `Err` if a payload could not be decoded.
 fn handle_incoming_lsp_message(
     from_client: &crossbeam_channel::Sender<Message>,
-    message: buck2_error::Result<LspRequest>,
-) -> buck2_error::Result<Option<LspResponse>> {
+    message: bz_error::Result<LspRequest>,
+) -> bz_error::Result<Option<LspResponse>> {
     if let Ok(m) = message {
         let message = serde_json::from_str(&m.lsp_json)?;
         if from_client.send(message).is_ok() {
@@ -873,8 +873,8 @@ fn handle_incoming_lsp_message(
 ///     - `Some(LspResponse)` if there was no message. This happens when the server is done
 ///                           sending messages, and the stream should be disconnected.
 fn handle_outgoing_lsp_message(
-    partial_result_dispatcher: &mut PartialResultDispatcher<buck2_cli_proto::LspMessage>,
-    event: Option<buck2_cli_proto::LspMessage>,
+    partial_result_dispatcher: &mut PartialResultDispatcher<bz_cli_proto::LspMessage>,
+    event: Option<bz_cli_proto::LspMessage>,
 ) -> Option<LspResponse> {
     match event {
         Some(event) => {
@@ -887,8 +887,8 @@ fn handle_outgoing_lsp_message(
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::bzl::ImportPath;
-    use buck2_error::conversion::from_any_with_tag;
+    use bz_core::bzl::ImportPath;
+    use bz_error::conversion::from_any_with_tag;
     use lsp_types::Url;
     use starlark::docs::DocFunction;
     use starlark::docs::DocItem;
@@ -899,7 +899,7 @@ mod tests {
     use crate::lsp::DocsCache;
 
     #[test]
-    fn cache_builds() -> buck2_error::Result<()> {
+    fn cache_builds() -> bz_error::Result<()> {
         const P: &str = "cell//foo:bar.bzl";
 
         let docs = vec![
@@ -939,19 +939,19 @@ mod tests {
             .build()
             .unwrap();
 
-        async fn lookup_function(location: &ImportPath) -> buck2_error::Result<LspUrl> {
+        async fn lookup_function(location: &ImportPath) -> bz_error::Result<LspUrl> {
             if location == &ImportPath::testing_new(P) {
                 Ok(LspUrl::try_from(
                     Url::parse(
                         // Make sure we use a Url which is an absolute path on Linux and Windows
                         "file:////c:/usr/local/dir/prelude.bzl",
                     )
-                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?,
+                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?,
                 )
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?)
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?)
             } else {
-                Err(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Lsp,
+                Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Lsp,
                     "Unknown path {}",
                     location
                 ))
@@ -964,25 +964,25 @@ mod tests {
         assert_eq!(
             &LspUrl::try_from(
                 Url::parse("starlark:/native/native_function1.bzl")
-                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?
+                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?
             )
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?,
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?,
             cache.url_for_symbol("native_function1").unwrap()
         );
         assert_eq!(
             &LspUrl::try_from(
                 Url::parse("starlark:/native/native_function2.bzl")
-                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?
+                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?
             )
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?,
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?,
             cache.url_for_symbol("native_function2").unwrap()
         );
         assert_eq!(
             &LspUrl::try_from(
                 Url::parse("file:/c:/usr/local/dir/prelude.bzl")
-                    .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?
+                    .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?
             )
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Lsp))?,
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Lsp))?,
             cache.url_for_symbol("prelude_function").unwrap()
         );
 

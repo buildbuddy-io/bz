@@ -22,9 +22,9 @@ pub mod unpack_artifact;
 
 use std::fmt::Debug;
 
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum ArtifactError {
     #[error("expected artifact {repr} to be used as the output of an action, but it was not")]

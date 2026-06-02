@@ -14,20 +14,20 @@ use std::fmt::Formatter;
 use std::time::Duration;
 use std::time::SystemTime;
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::subscribers::recorder::process_memory;
-use buck2_data::ActionExecutionKind;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_event_observer::fmt_duration;
-use buck2_event_observer::humanized::HumanizedBitsPerSecond;
-use buck2_event_observer::humanized::HumanizedBytes;
-use buck2_util::network_speed_average::NetworkSpeedAverage;
-use buck2_util::sliding_window::SlidingWindow;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::subscribers::recorder::process_memory;
+use bz_data::ActionExecutionKind;
+use bz_event_log::stream_value::StreamValue;
+use bz_event_observer::fmt_duration;
+use bz_event_observer::humanized::HumanizedBitsPerSecond;
+use bz_event_observer::humanized::HumanizedBytes;
+use bz_util::network_speed_average::NetworkSpeedAverage;
+use bz_util::sliding_window::SlidingWindow;
 use tokio_stream::StreamExt;
 
 #[derive(Default)]
@@ -58,17 +58,17 @@ struct Stats {
 }
 
 impl Stats {
-    fn update_with_event(&mut self, event: &buck2_data::BuckEvent) {
+    fn update_with_event(&mut self, event: &bz_data::BuckEvent) {
         match &event.data {
-            Some(buck2_data::buck_event::Data::SpanEnd(end)) => match end.data.as_ref() {
-                Some(buck2_data::span_end_event::Data::ReUpload(data)) => {
+            Some(bz_data::buck_event::Data::SpanEnd(end)) => match end.data.as_ref() {
+                Some(bz_data::span_end_event::Data::ReUpload(data)) => {
                     self.total_bytes_uploaded += data.bytes_uploaded.unwrap_or_default();
                 }
-                Some(buck2_data::span_end_event::Data::Materialization(data)) => {
+                Some(bz_data::span_end_event::Data::Materialization(data)) => {
                     self.total_files_materialized += data.file_count;
                     self.total_bytes_materialized += data.total_bytes;
                 }
-                Some(buck2_data::span_end_event::Data::ActionExecution(data)) => {
+                Some(bz_data::span_end_event::Data::ActionExecution(data)) => {
                     match ActionExecutionKind::try_from(data.execution_kind) {
                         Ok(ActionExecutionKind::Local) => self.total_local_actions += 1,
                         Ok(ActionExecutionKind::Remote) => self.total_remote_actions += 1,
@@ -79,17 +79,17 @@ impl Stats {
                         _ => self.total_other_actions += 1,
                     }
                 }
-                Some(buck2_data::span_end_event::Data::Analysis(_)) => {
+                Some(bz_data::span_end_event::Data::Analysis(_)) => {
                     self.total_targets_analysed += 1;
                 }
-                Some(buck2_data::span_end_event::Data::Command(_command)) => {
+                Some(bz_data::span_end_event::Data::Command(_command)) => {
                     self.duration = end.duration;
                 }
                 _ => {}
             },
-            Some(buck2_data::buck_event::Data::Instant(instant_event)) => {
+            Some(bz_data::buck_event::Data::Instant(instant_event)) => {
                 match instant_event.data.as_ref() {
-                    Some(buck2_data::instant_event::Data::Snapshot(snapshot)) => {
+                    Some(bz_data::instant_event::Data::Snapshot(snapshot)) => {
                         self.peak_process_memory_bytes =
                             max(self.peak_process_memory_bytes, process_memory(snapshot));
                         self.peak_used_disk_space_bytes = max(
@@ -115,11 +115,11 @@ impl Stats {
                             }
                         }
                     }
-                    Some(buck2_data::instant_event::Data::SystemInfo(system_info)) => {
+                    Some(bz_data::instant_event::Data::SystemInfo(system_info)) => {
                         self.total_disk_space_bytes = system_info.total_disk_space_bytes;
                         self.system_total_memory_bytes = system_info.system_total_memory_bytes;
                     }
-                    Some(buck2_data::instant_event::Data::VersionControlRevision(vcs)) => {
+                    Some(bz_data::instant_event::Data::VersionControlRevision(vcs)) => {
                         if let Some(ref revision) = vcs.hg_revision {
                             self.hg_revision = Some(revision.clone());
                         }
@@ -136,7 +136,7 @@ impl Stats {
     }
 }
 
-fn get_event_timestamp(event: &buck2_data::BuckEvent) -> Option<SystemTime> {
+fn get_event_timestamp(event: &bz_data::BuckEvent) -> Option<SystemTime> {
     SystemTime::try_from(event.timestamp?).ok()
 }
 
@@ -325,11 +325,11 @@ impl BuckSubcommand for SummaryCommand {
 
         let (invocation, mut events) = log_path.unpack_stream().await?;
 
-        buck2_client_ctx::println!(
+        bz_client_ctx::println!(
             "Showing summary from: {}",
             invocation.display_command_line()
         )?;
-        buck2_client_ctx::println!("build ID: {}", invocation.trace_id)?;
+        bz_client_ctx::println!("build ID: {}", invocation.trace_id)?;
 
         let mut stats = Stats {
             re_max_download_speeds: vec![
@@ -351,7 +351,7 @@ impl BuckSubcommand for SummaryCommand {
                 StreamValue::Result(..) | StreamValue::PartialResult(..) => {}
             }
         }
-        buck2_client_ctx::println!("{}", stats)?;
+        bz_client_ctx::println!("{}", stats)?;
         ExitResult::success()
     }
 }

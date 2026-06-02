@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
+use bz_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -16,7 +16,7 @@ use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::dict::DictType;
 use starlark::values::dict::UnpackDictEntries;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::provider::builtin::bazel::toolchain_info::register_toolchain_info;
 use crate::interpreter::rule_defs::provider::builtin::constraint_setting_info::ConstraintSettingInfoCallable;
 use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::ConstraintValueInfoCallable;

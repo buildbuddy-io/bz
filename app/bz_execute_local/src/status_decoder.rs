@@ -11,10 +11,10 @@
 use std::process::ExitStatus;
 
 use async_trait::async_trait;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_miniperf_proto::MiniperfOutput;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_miniperf_proto::MiniperfOutput;
 
 use crate::CollectedExecutionStats;
 
@@ -33,24 +33,24 @@ pub enum DecodedStatus {
 pub trait StatusDecoder {
     /// Status decoders receive the exit status of the command we ran, but they might also obtain
     /// information out of band to obtain a different exit status.
-    async fn decode_status(self, status: ExitStatus) -> buck2_error::Result<DecodedStatus>;
+    async fn decode_status(self, status: ExitStatus) -> bz_error::Result<DecodedStatus>;
 
     /// Notify this decoder that it will not be used.
-    async fn cancel(self) -> buck2_error::Result<()>;
+    async fn cancel(self) -> bz_error::Result<()>;
 }
 
 pub struct DefaultStatusDecoder;
 
 #[async_trait]
 impl StatusDecoder for DefaultStatusDecoder {
-    async fn decode_status(self, status: ExitStatus) -> buck2_error::Result<DecodedStatus> {
+    async fn decode_status(self, status: ExitStatus) -> bz_error::Result<DecodedStatus> {
         Ok(DecodedStatus::Status {
             exit_code: default_decode_exit_code(status),
             execution_stats: None,
         })
     }
 
-    async fn cancel(self) -> buck2_error::Result<()> {
+    async fn cancel(self) -> bz_error::Result<()> {
         Ok(())
     }
 }
@@ -87,7 +87,7 @@ impl MiniperfStatusDecoder {
 
 #[async_trait]
 impl StatusDecoder for MiniperfStatusDecoder {
-    async fn decode_status(self, status: ExitStatus) -> buck2_error::Result<DecodedStatus> {
+    async fn decode_status(self, status: ExitStatus) -> bz_error::Result<DecodedStatus> {
         if !status.success() {
             return Ok(DecodedStatus::Status {
                 exit_code: default_decode_exit_code(status),
@@ -114,7 +114,7 @@ impl StatusDecoder for MiniperfStatusDecoder {
             &status,
             bincode::config::legacy(),
         )
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
         .with_buck_error_context(|| {
             format!("Invalid miniperf output at `{}`", self.out_path.display())
         })?;
@@ -149,8 +149,8 @@ impl StatusDecoder for MiniperfStatusDecoder {
 
                 #[cfg(not(unix))]
                 {
-                    Err(buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::Tier0,
+                    Err(bz_error::bz_error!(
+                        bz_error::ErrorTag::Tier0,
                         "Attempted to use Miniperf output off-UNIX"
                     ))
                 }
@@ -159,13 +159,13 @@ impl StatusDecoder for MiniperfStatusDecoder {
         }
     }
 
-    async fn cancel(self) -> buck2_error::Result<()> {
+    async fn cancel(self) -> bz_error::Result<()> {
         let res = tokio::fs::remove_file(&self.out_path).await;
 
         match res {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(buck2_error::Error::from(e).context(format!(
+            Err(e) => Err(bz_error::Error::from(e).context(format!(
                 "Error removing miniperf output at `{}`",
                 self.out_path
             ))),

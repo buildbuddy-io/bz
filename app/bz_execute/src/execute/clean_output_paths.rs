@@ -14,15 +14,15 @@ use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 
 use crate::execute::blocking::IoRequest;
 
@@ -40,7 +40,7 @@ impl CleanOutputPaths {
     pub fn clean<'a>(
         paths: impl IntoIterator<Item = &'a ProjectRelativePath>,
         fs: &'a ProjectRoot,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for path in paths {
             cleanup_path(fs, path)
                 .with_buck_error_context(|| format!("Error cleaning up output path `{path}`"))?;
@@ -53,7 +53,7 @@ impl BackgroundCleanOutputPaths {
     pub fn clean<'a>(
         paths: impl IntoIterator<Item = &'a ProjectRelativePath>,
         fs: &'a ProjectRoot,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for path in paths {
             background_cleanup_path(fs, path)
                 .with_buck_error_context(|| format!("Error retiring output path `{path}`"))?;
@@ -63,13 +63,13 @@ impl BackgroundCleanOutputPaths {
 }
 
 #[cfg(unix)]
-fn tag_environment_error(error: buck2_error::Error) -> buck2_error::Error {
+fn tag_environment_error(error: bz_error::Error) -> bz_error::Error {
     error
 }
 
 #[cfg(windows)]
-fn tag_environment_error(error: buck2_error::Error) -> buck2_error::Error {
-    use buck2_error::ErrorTag;
+fn tag_environment_error(error: bz_error::Error) -> bz_error::Error {
+    use bz_error::ErrorTag;
     if error.has_tag(ErrorTag::IoWindowsSharingViolation)
         | error.has_tag(ErrorTag::IoPermissionDenied)
     {
@@ -82,7 +82,7 @@ fn tag_environment_error(error: buck2_error::Error) -> buck2_error::Error {
 }
 
 #[tracing::instrument(level = "debug", skip(fs), fields(path = %path))]
-pub fn cleanup_path(fs: &ProjectRoot, path: &ProjectRelativePath) -> buck2_error::Result<()> {
+pub fn cleanup_path(fs: &ProjectRoot, path: &ProjectRelativePath) -> bz_error::Result<()> {
     let path = fs.resolve(path);
 
     // This will remove the path if it exists.
@@ -101,8 +101,8 @@ pub fn cleanup_path(fs: &ProjectRoot, path: &ProjectRelativePath) -> buck2_error
         path = match path.parent() {
             Some(path) => path,
             None => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::CleanOutputs,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::CleanOutputs,
                     "Internal Error: reached root before finding a directory that exists!"
                 ));
             }
@@ -153,15 +153,15 @@ static BACKGROUND_CLEAN_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn background_cleanup_path(
     fs: &ProjectRoot,
     path: &ProjectRelativePath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let path = fs.resolve(path);
     if fs_util::symlink_metadata_if_exists(&path)?.is_none() {
         return Ok(());
     }
 
     let parent = path.parent().ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::CleanOutputs,
+        bz_error!(
+            bz_error::ErrorTag::CleanOutputs,
             "Internal Error: output path `{path}` has no parent"
         )
     })?;
@@ -169,8 +169,8 @@ fn background_cleanup_path(
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| {
-            buck2_error!(
-                buck2_error::ErrorTag::CleanOutputs,
+            bz_error!(
+                bz_error::ErrorTag::CleanOutputs,
                 "Internal Error: output path `{path}` has no file name"
             )
         })?;
@@ -181,7 +181,7 @@ fn background_cleanup_path(
     Ok(())
 }
 
-fn retired_path(parent: &AbsNormPath, file_name: &str) -> buck2_error::Result<AbsNormPathBuf> {
+fn retired_path(parent: &AbsNormPath, file_name: &str) -> bz_error::Result<AbsNormPathBuf> {
     let now_nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -194,7 +194,7 @@ fn retired_path(parent: &AbsNormPath, file_name: &str) -> buck2_error::Result<Ab
     .map_err(Into::into)
 }
 
-fn spawn_background_cleaner(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
+fn spawn_background_cleaner(path: &AbsNormPathBuf) -> bz_error::Result<()> {
     #[cfg(unix)]
     {
         let child = std::process::Command::new("/bin/sh")
@@ -241,13 +241,13 @@ fn spawn_background_cleaner(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
 }
 
 impl IoRequest for CleanOutputPaths {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         Self::clean(self.paths.iter().map(AsRef::as_ref), project_fs)
     }
 }
 
 impl IoRequest for BackgroundCleanOutputPaths {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         Self::clean(self.paths.iter().map(AsRef::as_ref), project_fs)
     }
 }

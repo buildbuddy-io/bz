@@ -4,7 +4,7 @@ pub async fn bzlmod_module_extension_bazel_usages_digest(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
     cancellation: &CancellationContext,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     let extension_cell_path = CellPath::new(
         CellName::unchecked_new(&setup.extension_bzl_cell)?,
         CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
@@ -35,7 +35,7 @@ pub(crate) fn bzlmod_module_extension_bazel_usages_digest_in_eval<'v>(
 ) -> starlark::Result<String> {
     let config: BzlmodModuleExtensionEvaluationConfig = serde_json::from_str(extension_usages_json)
         .map_err(|e| {
-            buck2_error::Error::from(BazelRepositoryError::InvalidModuleExtensionUsageData)
+            bz_error::Error::from(BazelRepositoryError::InvalidModuleExtensionUsageData)
                 .context(format!("JSON parse error: {e}"))
         })?;
     let mut expression_index = 0usize;
@@ -255,8 +255,8 @@ fn bzlmod_bazel_usages_attribute_value_json(
         out.push(']');
         return Ok(());
     }
-    Err(buck2_error::buck2_error!(
-        buck2_error::ErrorTag::Input,
+    Err(bz_error::bz_error!(
+        bz_error::ErrorTag::Input,
         "unsupported bzlmod module extension tag value `{}` of type `{}` for Bazel usagesDigest",
         value.to_repr(),
         value.get_type()
@@ -271,8 +271,8 @@ fn bzlmod_bazel_usages_attribute_key_string(value: Value<'_>) -> starlark::Resul
     if let Some(value) = value.unpack_str() {
         return Ok(bzlmod_bazel_usages_attribute_string(value));
     }
-    Err(buck2_error::buck2_error!(
-        buck2_error::ErrorTag::Input,
+    Err(bz_error::bz_error!(
+        bz_error::ErrorTag::Input,
         "unsupported bzlmod module extension tag dict key `{}` of type `{}` for Bazel usagesDigest",
         value.to_repr(),
         value.get_type()
@@ -339,8 +339,8 @@ fn bzlmod_bazel_module_key(module: &BzlmodModuleExtensionModuleConfig) -> String
 
 fn push_json_string(out: &mut String, value: &str) -> starlark::Result<()> {
     let encoded = serde_json::to_string(value).map_err(|e| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        bz_error::bz_error!(
+            bz_error::ErrorTag::Tier0,
             "failed to serialize Bazel lockfile string: {e}"
         )
     })?;

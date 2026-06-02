@@ -12,7 +12,7 @@ use std::iter;
 use std::marker::PhantomData;
 use std::vec;
 
-use buck2_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileName;
 use either::Either;
 
 use crate::directory::directory_iterator::DirectoryIterator;
@@ -232,7 +232,7 @@ mod tests {
     use crate::directory::walk::ordered_entry_walk;
 
     #[test]
-    fn test_walk() -> buck2_error::Result<()> {
+    fn test_walk() -> bz_error::Result<()> {
         let mut b = TestDirectoryBuilder::empty();
         b.insert(path("a/b"), DirectoryEntry::Leaf(NopEntry))?;
         b.insert(

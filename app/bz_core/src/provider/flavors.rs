@@ -46,7 +46,7 @@ fn is_platform_flavor(flavor: &str) -> bool {
 /// via subtargets.
 ///
 /// This mapping is a hardcoded map of flavors that we know can be handled simply as subtargets.
-pub fn map_flavors(flavors: &str, full_target: &str) -> buck2_error::Result<ProvidersName> {
+pub fn map_flavors(flavors: &str, full_target: &str) -> bz_error::Result<ProvidersName> {
     let mut flavors_parts: Vec<&str> = flavors.split(',').collect();
     assert!(!flavors_parts.is_empty());
 
@@ -56,7 +56,7 @@ pub fn map_flavors(flavors: &str, full_target: &str) -> buck2_error::Result<Prov
         // rely on the wrapping span in order to find
         soft_error!(
             "platform_flavor",
-            buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "Platform flavor found in target: {}", full_target),
+            bz_error::bz_error!(bz_error::ErrorTag::Input, "Platform flavor found in target: {}", full_target),
             deprecation: true,
             quiet: true,
             error_on_oss: true
@@ -67,7 +67,7 @@ pub fn map_flavors(flavors: &str, full_target: &str) -> buck2_error::Result<Prov
     // sort a flavors list to have a deterministic order.
     flavors_parts.sort_unstable();
     Ok(ProvidersName::NonDefault(triomphe::Arc::new(
-        NonDefaultProvidersName::Named(buck2_util::arc_str::ArcSlice::new([
+        NonDefaultProvidersName::Named(bz_util::arc_str::ArcSlice::new([
             ProviderName::new_unchecked(match *flavors_parts {
                 // If we only had one flavor that represents some specific platform then return a default provider name.
                 [] => {

@@ -1,8 +1,8 @@
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::file_ops::dice::KnownFileStateInvalidationStats;
-use buck2_common::file_ops::dice::invalidate_changed_file_state;
-use buck2_events::dispatch::span_async;
+use bz_common::file_ops::dice::KnownFileStateInvalidationStats;
+use bz_common::file_ops::dice::invalidate_changed_file_state;
+use bz_events::dispatch::span_async;
 use dice::DiceTransactionUpdater;
 
 use crate::file_watcher::FileWatcher;
@@ -22,10 +22,10 @@ impl FileWatcher for NoWatchFs {
     async fn sync(
         &self,
         mut dice: DiceTransactionUpdater,
-    ) -> buck2_error::Result<(DiceTransactionUpdater, Mergebase)> {
+    ) -> bz_error::Result<(DiceTransactionUpdater, Mergebase)> {
         span_async(
-            buck2_data::FileWatcherStart {
-                provider: buck2_data::FileWatcherProvider::NoWatchFs as i32,
+            bz_data::FileWatcherStart {
+                provider: bz_data::FileWatcherProvider::NoWatchFs as i32,
             },
             async {
                 let (stats, res) = match invalidate_changed_file_state(&mut dice).await {
@@ -35,7 +35,7 @@ impl FileWatcher for NoWatchFs {
                     ),
                     Err(e) => (None, Err(e)),
                 };
-                (res, buck2_data::FileWatcherEnd { stats })
+                (res, bz_data::FileWatcherEnd { stats })
             },
         )
         .await
@@ -44,9 +44,9 @@ impl FileWatcher for NoWatchFs {
 
 fn no_watchfs_file_watcher_stats(
     stats: KnownFileStateInvalidationStats,
-) -> buck2_data::FileWatcherStats {
+) -> bz_data::FileWatcherStats {
     let total = stats.total() as u64;
-    buck2_data::FileWatcherStats {
+    bz_data::FileWatcherStats {
         events_total: total,
         events_processed: total,
         events: stats.events,

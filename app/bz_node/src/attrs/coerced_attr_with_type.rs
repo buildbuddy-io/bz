@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_util::arc_str::ArcStr;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_util::arc_str::ArcStr;
 
 use super::attr_type::target_modifiers::TargetModifiersAttrType;
 use crate::attrs::attr_type::AttrType;
@@ -57,7 +57,7 @@ use crate::metadata::map::MetadataMap;
 use crate::visibility::VisibilitySpecification;
 use crate::visibility::WithinViewSpecification;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum CoercedAttrWithTypeError {
     #[error(
@@ -121,7 +121,7 @@ impl<'a, 't> CoercedAttrWithType<'a, 't> {
     pub fn pack(
         attr: &'a CoercedAttr,
         ty: &'t AttrType,
-    ) -> buck2_error::Result<CoercedAttrWithType<'a, 't>> {
+    ) -> bz_error::Result<CoercedAttrWithType<'a, 't>> {
         match (attr, &ty.0.inner) {
             (CoercedAttr::Selector(s), _) => Ok(CoercedAttrWithType::Selector(s, ty)),
             (CoercedAttr::Concat(c), _) => Ok(CoercedAttrWithType::Concat(&c.0, ty)),
@@ -231,7 +231,7 @@ impl<'a, 't> CoercedAttrWithType<'a, 't> {
     }
 
     #[inline]
-    fn pack_any(attr: &'a CoercedAttr) -> buck2_error::Result<CoercedAttrWithType<'a, 't>> {
+    fn pack_any(attr: &'a CoercedAttr) -> bz_error::Result<CoercedAttrWithType<'a, 't>> {
         match attr {
             CoercedAttr::Selector(_)
             | CoercedAttr::Concat(_)

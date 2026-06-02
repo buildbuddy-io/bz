@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
-use buck2_build_api::artifact_groups::promise::PromiseArtifact;
-use buck2_build_api::artifact_groups::promise::PromiseArtifactId;
+use bz_build_api::artifact_groups::promise::PromiseArtifact;
+use bz_build_api::artifact_groups::promise::PromiseArtifactId;
 use dupe::Dupe;
 use gazebo::prelude::SliceExt;
 use starlark::codemap::FileSpan;
@@ -55,7 +55,7 @@ impl PromiseArtifactRegistry {
         &mut self,
         location: Option<FileSpan>,
         id: PromiseArtifactId,
-    ) -> buck2_error::Result<PromiseArtifact> {
+    ) -> bz_error::Result<PromiseArtifact> {
         let artifact: PromiseArtifact = PromiseArtifact::new(Arc::new(OnceLock::new()), id);
 
         self.artifacts.push(PromiseArtifactEntry {

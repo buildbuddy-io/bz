@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_core::buck2_env;
+use bz_core::bz_env;
 
 pub struct SandcastleScheduleType {
     schedule_type: Option<&'static str>,
@@ -19,13 +19,13 @@ impl SandcastleScheduleType {
     const SCHEDULE_TYPE_CONTINUOUS: &'static str = "continuous";
     const SCHEDULE_TYPE_DIFF: &'static str = "diff";
 
-    pub fn new() -> buck2_error::Result<Self> {
+    pub fn new() -> bz_error::Result<Self> {
         // Same as RE does https://fburl.com/code/sj13r130
         let schedule_type =
-            if let Some(env) = buck2_env!("SCHEDULE_TYPE", applicability = internal)? {
+            if let Some(env) = bz_env!("SCHEDULE_TYPE", applicability = internal)? {
                 Some(env)
             } else {
-                buck2_env!("SANDCASTLE_SCHEDULE_TYPE", applicability = internal)?
+                bz_env!("SANDCASTLE_SCHEDULE_TYPE", applicability = internal)?
             };
         Ok(Self { schedule_type })
     }

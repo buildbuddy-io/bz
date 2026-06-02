@@ -13,16 +13,16 @@ use std::fmt::Debug;
 use std::fmt::Display;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::DeclaredArtifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_execute::execute::request::OutputType;
-use buck2_execute::path::artifact_path::ArtifactPath;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::DeclaredArtifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_execute::execute::request::OutputType;
+use bz_execute::path::artifact_path::ArtifactPath;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::codemap::FileSpan;
@@ -142,37 +142,37 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
     fn with_filename(
         &self,
         f: &dyn for<'b> Fn(&'b FileName) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         self.artifact.get_path().with_filename(f)
     }
 
-    fn is_source(&'v self) -> buck2_error::Result<bool> {
+    fn is_source(&'v self) -> bz_error::Result<bool> {
         Ok(false)
     }
 
-    fn is_directory(&'v self) -> buck2_error::Result<bool> {
+    fn is_directory(&'v self) -> bz_error::Result<bool> {
         Ok(self.artifact.output_type() == OutputType::Directory)
     }
 
-    fn is_symlink(&'v self) -> buck2_error::Result<bool> {
+    fn is_symlink(&'v self) -> bz_error::Result<bool> {
         Ok(self.artifact.output_type() == OutputType::Symlink)
     }
 
-    fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
+    fn owner(&'v self) -> bz_error::Result<Option<BaseDeferredKey>> {
         Ok(bazel_artifact_owner(self.artifact.get_path()).or_else(|| self.artifact.owner()))
     }
 
     fn with_short_path(
         &self,
         f: &dyn for<'b> Fn(&'b ForwardRelativePath) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         Ok(self.artifact.get_path().with_short_path(f))
     }
 
     fn with_bazel_short_path(
         &self,
         f: &dyn Fn(&str) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         let path = bazel_artifact_short_path(self.artifact.get_path());
         Ok(f(&path))
     }
@@ -180,7 +180,7 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
     fn with_bazel_path(
         &self,
         f: &dyn Fn(&str) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         let path = bazel_artifact_path(self.artifact.get_path());
         Ok(f(&path))
     }
@@ -200,15 +200,15 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
 }
 
 impl<'v> StarlarkInputArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
-    fn as_output_error(&self) -> buck2_error::Error {
+    fn as_output_error(&self) -> bz_error::Error {
         // This shouldn't ever be called for StarlarkDeclaredArtifact
-        buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        bz_error!(
+            bz_error::ErrorTag::Tier0,
             "error trying to use declared artifact as an output, this indicates an internal buck error"
         )
     }
 
-    fn get_bound_artifact(&self) -> buck2_error::Result<Artifact> {
+    fn get_bound_artifact(&self) -> bz_error::Result<Artifact> {
         Ok(self.artifact.dupe().ensure_bound()?.into_artifact())
     }
 
@@ -220,11 +220,11 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
         self
     }
 
-    fn get_artifact_group(&self) -> buck2_error::Result<ArtifactGroup> {
+    fn get_artifact_group(&self) -> bz_error::Result<ArtifactGroup> {
         Ok(ArtifactGroup::Artifact(self.get_bound_artifact()?))
     }
 
-    fn as_output(&'v self, this: Value<'v>) -> buck2_error::Result<StarlarkOutputArtifact<'v>> {
+    fn as_output(&'v self, this: Value<'v>) -> bz_error::Result<StarlarkOutputArtifact<'v>> {
         Ok(StarlarkOutputArtifact::new(
             ValueTyped::<StarlarkDeclaredArtifact>::new_err(this)
                 .internal_error("Type must have been checked earlier")?,
@@ -235,7 +235,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
         &'v self,
         path: &ForwardRelativePath,
         hide_prefix: bool,
-    ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
+    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>> {
         // Not sure if this.declaration_location is or the project() call is more appropriate here.
         Ok(EitherStarlarkInputArtifact::DeclaredArtifact(
             StarlarkDeclaredArtifact {
@@ -248,7 +248,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
 
     fn without_associated_artifacts(
         &'v self,
-    ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
+    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>> {
         Ok(EitherStarlarkInputArtifact::DeclaredArtifact(
             StarlarkDeclaredArtifact {
                 declaration_location: self.declaration_location.dupe(),
@@ -261,7 +261,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
     fn with_associated_artifacts(
         &'v self,
         artifacts: UnpackList<ValueAsInputArtifactLike<'v>>,
-    ) -> buck2_error::Result<EitherStarlarkInputArtifact<'v>> {
+    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>> {
         let artifacts = artifacts
             .items
             .iter()
@@ -290,10 +290,10 @@ impl<'v> CommandLineArgLike<'v> for StarlarkDeclaredArtifact<'v> {
         _cli: &mut dyn CommandLineBuilder,
         _ctx: &mut dyn CommandLineContext,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // TODO: proper error message
-        Err(buck2_error!(
-            buck2_error::ErrorTag::Tier0,
+        Err(bz_error!(
+            bz_error::ErrorTag::Tier0,
             "proper error here; we should not be adding mutable starlark objects to clis"
         ))
     }
@@ -301,7 +301,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkDeclaredArtifact<'v> {
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         visitor.visit_declared_artifact(self.artifact.dupe(), vec![])?;
 
         self.associated_artifacts
@@ -318,7 +318,7 @@ impl<'v> CommandLineArgLike<'v> for StarlarkDeclaredArtifact<'v> {
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }

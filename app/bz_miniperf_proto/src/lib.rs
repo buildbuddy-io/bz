@@ -70,8 +70,8 @@ impl MiniperfCounter {
         (self.count as f64 * ratio) as u64
     }
 
-    pub fn to_proto(&self) -> buck2_data::CpuCounter {
-        buck2_data::CpuCounter {
+    pub fn to_proto(&self) -> bz_data::CpuCounter {
+        bz_data::CpuCounter {
             count: self.count,
             time_enabled: self.time_enabled,
             time_running: self.time_running,

@@ -11,13 +11,13 @@
 use std::fmt::Display;
 use std::sync::Arc;
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_node::rule_type::StarlarkRuleType;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_node::rule_type::StarlarkRuleType;
 use dupe::Dupe;
 use starlark::collections::SmallMap;
 use starlark::environment::Module;
@@ -43,14 +43,14 @@ pub trait AnonTargetDyn: Send + Sync + Display {
         promise_artifact_mappings: SmallMap<String, Value<'v>>,
         anon_target_result: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<StdBuckHashMap<PromiseArtifactId, Artifact>>;
+    ) -> bz_error::Result<StdBuckHashMap<PromiseArtifactId, Artifact>>;
 
     fn resolve_attrs<'v>(
         &self,
         env: &Module<'v>,
         dependents_analyses: AnonTargetDependentAnalysisResults<'_>,
         exec_resolution: ExecutionPlatformResolution,
-    ) -> buck2_error::Result<ValueOfUncheckedGeneric<Value<'v>, StructRef<'static>>>;
+    ) -> bz_error::Result<ValueOfUncheckedGeneric<Value<'v>, StructRef<'static>>>;
 }
 
 // Container for analysis results of the anon target dependents.

@@ -14,12 +14,12 @@ use std::hash::Hash;
 use std::mem;
 
 use allocative::Allocative;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProviderName;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProviderName;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
@@ -55,7 +55,7 @@ use crate::interpreter::rule_defs::provider::collection::empty_provider_collecti
 use crate::interpreter::rule_defs::provider::execution_platform::StarlarkExecutionPlatformResolution;
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum DependencyError {
     #[error("Unknown subtarget, could not find `{0}`")]
@@ -209,9 +209,9 @@ impl<'v> Dependency<'v> {
 
     fn map_default_info<T>(
         &self,
-        f: impl FnOnce(&DefaultInfo<'v>) -> buck2_error::Result<T>,
-        frozen_f: impl FnOnce(&FrozenDefaultInfo) -> buck2_error::Result<T>,
-    ) -> buck2_error::Result<T> {
+        f: impl FnOnce(&DefaultInfo<'v>) -> bz_error::Result<T>,
+        frozen_f: impl FnOnce(&FrozenDefaultInfo) -> bz_error::Result<T>,
+    ) -> bz_error::Result<T> {
         let collection = ProviderCollection::from_value(self.provider_collection_value())
             .expect("Dependency provider collection should be a provider collection");
         let default_info = collection.default_info_value()?;
@@ -229,7 +229,7 @@ impl<'v> Dependency<'v> {
         ))
     }
 
-    pub fn execution_platform(&self) -> buck2_error::Result<Option<&ExecutionPlatformResolution>> {
+    pub fn execution_platform(&self) -> bz_error::Result<Option<&ExecutionPlatformResolution>> {
         let execution_platform: ValueOfUnchecked<NoneOr<&StarlarkExecutionPlatformResolution>> =
             self.execution_platform.cast();
         match execution_platform.unpack()? {
@@ -238,14 +238,14 @@ impl<'v> Dependency<'v> {
         }
     }
 
-    pub fn default_output_values(&self) -> buck2_error::Result<Vec<Value<'v>>> {
+    pub fn default_output_values(&self) -> bz_error::Result<Vec<Value<'v>>> {
         self.map_default_info(
             |info| info.default_output_values_for_dependency(),
             |info| info.default_output_values(),
         )
     }
 
-    pub fn files_to_run_executable(&self) -> buck2_error::Result<Option<Value<'v>>> {
+    pub fn files_to_run_executable(&self) -> bz_error::Result<Option<Value<'v>>> {
         let files_to_run = self.map_default_info(
             |info| Ok(info.files_to_run_raw_for_dependency()),
             |info| Ok(info.files_to_run_raw().to_value()),
@@ -253,7 +253,7 @@ impl<'v> Dependency<'v> {
         Ok(bazel_files_to_run_executable(files_to_run))
     }
 
-    pub fn default_runfiles_value(&self) -> buck2_error::Result<Value<'v>> {
+    pub fn default_runfiles_value(&self) -> bz_error::Result<Value<'v>> {
         self.map_default_info(
             |info| Ok(info.default_runfiles_raw_for_dependency()),
             |info| Ok(info.default_runfiles_raw().to_value()),
@@ -266,23 +266,23 @@ impl<'v> Dependency<'v> {
         self.provider_collection.builtin_provider()
     }
 
-    pub fn data_runfiles(&'v self) -> buck2_error::Result<&'v BazelRunfiles<'v>> {
+    pub fn data_runfiles(&'v self) -> bz_error::Result<&'v BazelRunfiles<'v>> {
         let value = self.map_default_info(
             |info| Ok(info.data_runfiles_raw_for_dependency()),
             |info| Ok(info.data_runfiles_raw().to_value()),
         )?;
         BazelRunfiles::from_value(value).ok_or_else(|| {
-            buck2_error::internal_error!("DefaultInfo.data_runfiles should be a runfiles object")
+            bz_error::internal_error!("DefaultInfo.data_runfiles should be a runfiles object")
         })
     }
 
-    pub fn default_runfiles(&'v self) -> buck2_error::Result<&'v BazelRunfiles<'v>> {
+    pub fn default_runfiles(&'v self) -> bz_error::Result<&'v BazelRunfiles<'v>> {
         let value = self.map_default_info(
             |info| Ok(info.default_runfiles_raw_for_dependency()),
             |info| Ok(info.default_runfiles_raw().to_value()),
         )?;
         BazelRunfiles::from_value(value).ok_or_else(|| {
-            buck2_error::internal_error!("DefaultInfo.default_runfiles should be a runfiles object")
+            bz_error::internal_error!("DefaultInfo.default_runfiles should be a runfiles object")
         })
     }
 }
@@ -442,7 +442,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<Dependency<'v>> {
         let di = this.provider_collection.default_info()?;
         let providers = di.get_sub_target_providers(subtarget).ok_or_else(|| {
-            buck2_error::Error::from(DependencyError::UnknownSubtarget(subtarget.to_owned()))
+            bz_error::Error::from(DependencyError::UnknownSubtarget(subtarget.to_owned()))
         })?;
         let lbl = StarlarkConfiguredProvidersLabel::from_value(this.label.get())
             .unwrap()

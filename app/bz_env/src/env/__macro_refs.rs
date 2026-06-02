@@ -14,10 +14,10 @@ use std::str::FromStr;
 
 pub use linkme;
 
-pub fn convert_from_str<T>(v: &str) -> buck2_error::Result<T>
+pub fn convert_from_str<T>(v: &str) -> bz_error::Result<T>
 where
     T: FromStr,
-    buck2_error::Error: From<<T as FromStr>::Err>,
+    bz_error::Error: From<<T as FromStr>::Err>,
 {
     Ok(T::from_str(v)?)
 }
@@ -38,15 +38,15 @@ where
 ///  - `applicability=<internal|testing>` - to indicate that the variable is not used in OSS or only
 ///    for self-testing of buck2
 ///
-/// The macro expands to an expression of type `buck2_error::Result<Type>` if a default is set, and
-/// `buck2_error::Result<Option<Type>` otherwise.
-pub macro buck2_env {
+/// The macro expands to an expression of type `bz_error::Result<Type>` if a default is set, and
+/// `bz_error::Result<Option<Type>` otherwise.
+pub macro bz_env {
     ($var:expr, bool $(, $($rest:tt)*)?) => {{
-        let v: buck2_error::Result<bool> = $crate::env::__macro_refs::buck2_env!($var, type=bool, default=false, converter = |s| {
+        let v: bz_error::Result<bool> = $crate::env::__macro_refs::bz_env!($var, type=bool, default=false, converter = |s| {
             match s.to_lowercase().as_str() {
                 "1" | "true" => Ok(true),
                 "0" | "false" => Ok(false),
-                _ => Err(buck2_error::buck2_error!(buck2_error::ErrorTag::Tier0, "Invalid bool value: {}", s).into()),
+                _ => Err(bz_error::bz_error!(bz_error::ErrorTag::Tier0, "Invalid bool value: {}", s).into()),
             }
         }, $($($rest)*)?);
         v
@@ -119,7 +119,7 @@ pub macro buck2_env {
 }
 
 /// Register env name to be shown in `buck2 help-env`.
-pub macro buck2_env_name($var:expr) {{
+pub macro bz_env_name($var:expr) {{
     $crate::env::__macro_refs::register!(
         $var,
         ty = std::string::String,
@@ -153,7 +153,7 @@ macro parse2 {
 }
 
 #[allow(unused_macros)]
-/// `parser` is `&str -> buck2_error::Result<$stored_type>`, `processor` is `Option<& $stored_type> -> $output_type`
+/// `parser` is `&str -> bz_error::Result<$stored_type>`, `processor` is `Option<& $stored_type> -> $output_type`
 ///
 /// The extra set of parentheses is a trick to let us pass things through `parse2` transparently
 macro expand(
@@ -175,7 +175,7 @@ macro expand(
     );
     static ENV_HELPER: $crate::env::helper::EnvHelper<$stored_ty> =
         $crate::env::helper::EnvHelper::with_converter_from_macro($var, $parser);
-    let v: buck2_error::Result<$output_ty> = ENV_HELPER.get().map($processor);
+    let v: bz_error::Result<$output_ty> = ENV_HELPER.get().map($processor);
     v
 }}
 

@@ -11,9 +11,9 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_util::late_binding::LateBinding;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_util::late_binding::LateBinding;
 use starlark::any::AnyLifetime;
 use starlark::values::DynStarlark;
 use starlark::values::FreezeResult;

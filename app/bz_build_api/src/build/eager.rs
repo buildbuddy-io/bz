@@ -45,7 +45,7 @@ impl EagerBuildExecutionState {
     fn claim_inputs(
         &self,
         inputs: impl IntoIterator<Item = ArtifactGroup>,
-    ) -> buck2_error::Result<Vec<ArtifactGroup>> {
+    ) -> bz_error::Result<Vec<ArtifactGroup>> {
         if !self.enabled.load(Ordering::Relaxed) {
             return Ok(Vec::new());
         }
@@ -53,7 +53,7 @@ impl EagerBuildExecutionState {
         let mut scheduled = self
             .scheduled
             .lock()
-            .map_err(|_| buck2_error::internal_error!("eager build execution lock poisoned"))?;
+            .map_err(|_| bz_error::internal_error!("eager build execution lock poisoned"))?;
 
         Ok(inputs
             .into_iter()
@@ -61,14 +61,14 @@ impl EagerBuildExecutionState {
             .collect())
     }
 
-    fn push_cancellation(&self, cancellation: CancellationHandle) -> buck2_error::Result<()> {
+    fn push_cancellation(&self, cancellation: CancellationHandle) -> bz_error::Result<()> {
         if !self.enabled.load(Ordering::Relaxed) {
             cancellation.cancel();
             return Ok(());
         }
         self.cancellations
             .lock()
-            .map_err(|_| buck2_error::internal_error!("eager build execution lock poisoned"))?
+            .map_err(|_| bz_error::internal_error!("eager build execution lock poisoned"))?
             .push(cancellation);
         Ok(())
     }
@@ -76,7 +76,7 @@ impl EagerBuildExecutionState {
 
 pub trait HasEagerBuildExecution {
     fn init_eager_build_execution(&mut self);
-    fn enable_eager_build_execution(&self) -> buck2_error::Result<()>;
+    fn enable_eager_build_execution(&self) -> bz_error::Result<()>;
     fn cancel_eager_build_execution(&self);
 }
 
@@ -85,10 +85,10 @@ impl HasEagerBuildExecution for UserComputationData {
         self.data.set(EagerBuildExecutionState::new());
     }
 
-    fn enable_eager_build_execution(&self) -> buck2_error::Result<()> {
+    fn enable_eager_build_execution(&self) -> bz_error::Result<()> {
         self.data
             .get::<EagerBuildExecutionState>()
-            .map_err(|e| buck2_error::internal_error!("per-transaction data invalid: {}", e))?
+            .map_err(|e| bz_error::internal_error!("per-transaction data invalid: {}", e))?
             .enable();
         Ok(())
     }
@@ -110,7 +110,7 @@ fn should_eager_ensure_input(input: &ArtifactGroup) -> bool {
 pub fn schedule_eager_inputs_from_analysis(
     ctx: &mut DiceComputations<'_>,
     result: &AnalysisResult,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let inputs = {
         let Ok(state) = ctx
             .per_transaction_data()
@@ -153,6 +153,6 @@ pub fn schedule_eager_inputs_from_analysis(
         .per_transaction_data()
         .data
         .get::<EagerBuildExecutionState>()
-        .map_err(|e| buck2_error::internal_error!("per-transaction data invalid: {}", e))?;
+        .map_err(|e| bz_error::internal_error!("per-transaction data invalid: {}", e))?;
     state.push_cancellation(cancellation)
 }

@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
 
 use crate::query::graph::node::NodeKey;
 

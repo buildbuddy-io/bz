@@ -11,15 +11,15 @@
 #![feature(error_generic_member_access)]
 
 use async_trait::async_trait;
-use buck2_cli_proto::new_generic::DocsRequest;
-use buck2_cli_proto::new_generic::DocsResponse;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::late_bindings::DOCS_SERVER_COMMAND;
-use buck2_server_ctx::late_bindings::DocsServerCommand;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_cli_proto::new_generic::DocsRequest;
+use bz_cli_proto::new_generic::DocsResponse;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::late_bindings::DOCS_SERVER_COMMAND;
+use bz_server_ctx::late_bindings::DocsServerCommand;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::DiceTransaction;
 
 use crate::builtins::docs_starlark_builtins;
@@ -38,7 +38,7 @@ impl DocsServerCommand for DocsServerCommandImpl {
         context: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
         req: DocsRequest,
-    ) -> buck2_error::Result<DocsResponse> {
+    ) -> bz_error::Result<DocsResponse> {
         run_server_command(DocsServerCmd { req }, context, partial_result_dispatcher).await
     }
 }
@@ -53,8 +53,8 @@ struct DocsServerCmd {
 
 #[async_trait]
 impl ServerCommandTemplate for DocsServerCmd {
-    type StartEvent = buck2_data::DocsCommandStart;
-    type EndEvent = buck2_data::DocsCommandEnd;
+    type StartEvent = bz_data::DocsCommandStart;
+    type EndEvent = bz_data::DocsCommandEnd;
     type Response = DocsResponse;
     type PartialResult = NoPartialResult;
 
@@ -63,7 +63,7 @@ impl ServerCommandTemplate for DocsServerCmd {
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         Ok(docs(server_ctx, ctx, &self.req).await?)
     }
 }
@@ -72,7 +72,7 @@ async fn docs(
     server_ctx: &dyn ServerCommandContextTrait,
     dice_ctx: DiceTransaction,
     request: &DocsRequest,
-) -> buck2_error::Result<DocsResponse> {
+) -> bz_error::Result<DocsResponse> {
     match request {
         DocsRequest::Starlark(request) => docs_starlark(server_ctx, dice_ctx, request).await,
         DocsRequest::StarlarkBuiltins(request) => {

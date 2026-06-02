@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_event_observer::dice_state::DiceState;
-use buck2_event_observer::humanized::HumanizedCount;
+use bz_event_observer::dice_state::DiceState;
+use bz_event_observer::humanized::HumanizedCount;
 use gazebo::prelude::*;
 use superconsole::Component;
 use superconsole::Lines;
@@ -22,13 +22,13 @@ pub(crate) struct DiceComponent<'s> {
 }
 
 impl Component for DiceComponent<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         _dimensions: superconsole::Dimensions,
         _mode: superconsole::DrawMode,
-    ) -> buck2_error::Result<superconsole::Lines> {
+    ) -> bz_error::Result<superconsole::Lines> {
         if !self.super_console_config.enable_dice {
             return Ok(Lines::new());
         }

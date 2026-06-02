@@ -10,23 +10,23 @@
 
 use std::sync::Arc;
 
-use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
-use buck2_core::configuration::compatibility::ResultMaybeCompatible;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::package::PackageLabelWithModifiers;
-use buck2_core::pattern::pattern::ModifiersError;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_events::dispatch::console_message;
-use buck2_node::load_patterns::MissingTargetBehavior;
-use buck2_node::load_patterns::load_patterns;
-use buck2_node::load_patterns::load_patterns_with_modifiers;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_core::configuration::compatibility::IncompatiblePlatformReason;
+use bz_core::configuration::compatibility::ResultMaybeCompatible;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::package::PackageLabelWithModifiers;
+use bz_core::pattern::pattern::ModifiersError;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern::ParsedPatternWithModifiers;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_events::dispatch::console_message;
+use bz_node::load_patterns::MissingTargetBehavior;
+use bz_node::load_patterns::load_patterns;
+use bz_node::load_patterns::load_patterns_with_modifiers;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 use dice::DiceComputations;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -38,10 +38,10 @@ use futures::FutureExt;
 fn split_compatible_incompatible(
     targets: impl IntoIterator<Item = ResultMaybeCompatible<ConfiguredTargetNode>>,
     keep_going: bool,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     TargetSet<ConfiguredTargetNode>,
     Vec<Arc<IncompatiblePlatformReason>>,
-    Vec<buck2_error::Error>,
+    Vec<bz_error::Error>,
 )> {
     let mut target_set = TargetSet::new();
     let mut incompatible_targets = Vec::new();
@@ -71,7 +71,7 @@ fn split_compatible_incompatible(
 // Package info is available for package-level errors, but may be None for target-level configuration errors.
 pub struct ErrorWithPackageLabel {
     pub package: Option<PackageLabelWithModifiers>,
-    pub error: buck2_error::Error,
+    pub error: bz_error::Error,
 }
 
 pub async fn get_maybe_compatible_targets<T>(
@@ -79,7 +79,7 @@ pub async fn get_maybe_compatible_targets<T>(
     loaded_targets: T,
     global_cfg_options: &GlobalCfgOptions,
     keep_going: bool,
-) -> buck2_error::Result<(
+) -> bz_error::Result<(
     impl Iterator<Item = ResultMaybeCompatible<ConfiguredTargetNode>> + use<T>,
     Vec<ErrorWithPackageLabel>,
 )>
@@ -87,7 +87,7 @@ where
     T: IntoIterator<
         Item = (
             PackageLabelWithModifiers,
-            buck2_error::Result<Vec<TargetNode>>,
+            bz_error::Result<Vec<TargetNode>>,
         ),
     >,
 {
@@ -100,7 +100,7 @@ where
                 let local_cfg_options = match package_with_modifiers.modifiers.as_slice() {
                     Some(modifiers) => {
                         if !global_cfg_options.cli_modifiers.is_empty() {
-                            let error = buck2_error::Error::from(
+                            let error = bz_error::Error::from(
                                 ModifiersError::PatternModifiersWithGlobalModifiers,
                             );
                             if keep_going {
@@ -171,12 +171,12 @@ pub async fn get_compatible_targets(
     loaded_targets: impl IntoIterator<
         Item = (
             PackageLabelWithModifiers,
-            buck2_error::Result<Vec<TargetNode>>,
+            bz_error::Result<Vec<TargetNode>>,
         ),
     >,
     global_cfg_options: &GlobalCfgOptions,
     keep_going: bool,
-) -> buck2_error::Result<ConfiguredTargetsWithErrors> {
+) -> bz_error::Result<ConfiguredTargetsWithErrors> {
     let (maybe_compatible_targets, package_errors) =
         get_maybe_compatible_targets(ctx, loaded_targets, global_cfg_options, keep_going).await?;
 
@@ -212,7 +212,7 @@ pub async fn load_compatible_patterns(
     global_cfg_options: &GlobalCfgOptions,
     skip_missing_targets: MissingTargetBehavior,
     keep_going: bool,
-) -> buck2_error::Result<ConfiguredTargetsWithErrors> {
+) -> bz_error::Result<ConfiguredTargetsWithErrors> {
     let loaded_patterns = load_patterns(ctx, parsed_patterns, skip_missing_targets).await?;
     get_compatible_targets(
         ctx,
@@ -229,7 +229,7 @@ pub async fn load_compatible_patterns_with_modifiers(
     global_cfg_options: &GlobalCfgOptions,
     skip_missing_targets: MissingTargetBehavior,
     keep_going: bool,
-) -> buck2_error::Result<ConfiguredTargetsWithErrors> {
+) -> bz_error::Result<ConfiguredTargetsWithErrors> {
     let loaded_patterns_with_modifiers =
         load_patterns_with_modifiers(ctx, parsed_patterns_with_modifiers, skip_missing_targets)
             .await?;

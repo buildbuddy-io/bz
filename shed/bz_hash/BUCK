@@ -3,7 +3,7 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_hash",
+    name = "bz_hash",
     srcs = glob(["src/**/*.rs"]),
     deps = [
         "fbsource//third-party/rust:dashmap",

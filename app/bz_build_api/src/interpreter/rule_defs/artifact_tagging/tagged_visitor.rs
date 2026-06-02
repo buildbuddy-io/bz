@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
 
 use super::ArtifactTag;
 use crate::artifact_groups::ArtifactGroup;

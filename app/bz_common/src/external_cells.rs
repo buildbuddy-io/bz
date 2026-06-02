@@ -11,10 +11,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_core::cells::cell_root_path::CellRootPath;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::name::CellName;
-use buck2_util::late_binding::LateBinding;
+use bz_core::cells::cell_root_path::CellRootPath;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::name::CellName;
+use bz_util::late_binding::LateBinding;
 use dice::CancellationContext;
 use dice::DiceComputations;
 
@@ -27,14 +27,14 @@ pub trait ExternalCellsImpl: Send + Sync + 'static {
         ctx: &mut DiceComputations<'_>,
         cell_name: CellName,
         origin: ExternalCellOrigin,
-    ) -> buck2_error::Result<Arc<dyn FileOpsDelegate>>;
+    ) -> bz_error::Result<Arc<dyn FileOpsDelegate>>;
 
     async fn ensure_cell_alias_resolver_ready(
         &self,
         _ctx: &mut DiceComputations<'_>,
         _cell_name: CellName,
         _origin: ExternalCellOrigin,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
@@ -44,11 +44,11 @@ pub trait ExternalCellsImpl: Send + Sync + 'static {
         _cell_name: CellName,
         _origin: ExternalCellOrigin,
         _cancellations: &CancellationContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 
-    fn check_bundled_cell_exists(&self, cell_name: CellName) -> buck2_error::Result<()>;
+    fn check_bundled_cell_exists(&self, cell_name: CellName) -> bz_error::Result<()>;
 
     async fn expand(
         &self,
@@ -56,7 +56,7 @@ pub trait ExternalCellsImpl: Send + Sync + 'static {
         cell_name: CellName,
         origin: ExternalCellOrigin,
         path: &CellRootPath,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }
 
 pub static EXTERNAL_CELLS_IMPL: LateBinding<&'static dyn ExternalCellsImpl> =

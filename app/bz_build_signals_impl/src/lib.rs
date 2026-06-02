@@ -19,48 +19,48 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use buck2_analysis::analysis::calculation::AnalysisKey;
-use buck2_analysis::analysis::calculation::AnalysisKeyActivationData;
-use buck2_analysis::analysis::calculation::AnalysisWithExtraData;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::RegisteredAction;
-use buck2_build_api::actions::calculation::ActionExtraData;
-use buck2_build_api::actions::calculation::ActionWithExtraData;
-use buck2_build_api::actions::calculation::BuildKey;
-use buck2_build_api::actions::calculation::BuildKeyActivationData;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::artifact_groups::ResolvedArtifactGroupBuildSignalsKey;
-use buck2_build_api::artifact_groups::calculation::EnsureProjectedArtifactKey;
-use buck2_build_api::artifact_groups::calculation::EnsureTransitiveSetProjectionKey;
-use buck2_build_api::artifact_groups::calculation::EnsureTransitiveSetProjectionKeyActivationData;
-use buck2_build_api::build_signals::BuildSignals;
-use buck2_build_api::build_signals::BuildSignalsInstaller;
-use buck2_build_api::build_signals::CREATE_BUILD_SIGNALS;
-use buck2_build_signals::env::BuildSignalsContext;
-use buck2_build_signals::env::CriticalPathBackendName;
-use buck2_build_signals::env::DeferredBuildSignals;
-use buck2_build_signals::env::EarlyCommandTiming;
-use buck2_build_signals::env::FinishBuildSignals;
-use buck2_build_signals::env::NodeDuration;
-use buck2_build_signals::env::WaitingData;
-use buck2_build_signals::error::CriticalPathError;
-use buck2_build_signals::node_key::BuildSignalsNodeKey;
-use buck2_build_signals::node_key::BuildSignalsNodeKeyImpl;
-use buck2_common::package_listing::dice::PackageListingKey;
-use buck2_common::package_listing::dice::PackageListingKeyActivationData;
-use buck2_core::package::PackageLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_data::ToProtoMessage;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::dispatch::instant_event;
-use buck2_events::dispatch::with_dispatcher_async;
-use buck2_events::span::SpanId;
-use buck2_hash::StdBuckHashMap;
-use buck2_interpreter_for_build::interpreter::calculation::InterpreterResultsKey;
-use buck2_interpreter_for_build::interpreter::calculation::InterpreterResultsKeyActivationData;
-use buck2_node::nodes::eval_result::EvaluationResult;
-use buck2_util::time_span::TimeSpan;
+use bz_analysis::analysis::calculation::AnalysisKey;
+use bz_analysis::analysis::calculation::AnalysisKeyActivationData;
+use bz_analysis::analysis::calculation::AnalysisWithExtraData;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::RegisteredAction;
+use bz_build_api::actions::calculation::ActionExtraData;
+use bz_build_api::actions::calculation::ActionWithExtraData;
+use bz_build_api::actions::calculation::BuildKey;
+use bz_build_api::actions::calculation::BuildKeyActivationData;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::artifact_groups::ResolvedArtifactGroupBuildSignalsKey;
+use bz_build_api::artifact_groups::calculation::EnsureProjectedArtifactKey;
+use bz_build_api::artifact_groups::calculation::EnsureTransitiveSetProjectionKey;
+use bz_build_api::artifact_groups::calculation::EnsureTransitiveSetProjectionKeyActivationData;
+use bz_build_api::build_signals::BuildSignals;
+use bz_build_api::build_signals::BuildSignalsInstaller;
+use bz_build_api::build_signals::CREATE_BUILD_SIGNALS;
+use bz_build_signals::env::BuildSignalsContext;
+use bz_build_signals::env::CriticalPathBackendName;
+use bz_build_signals::env::DeferredBuildSignals;
+use bz_build_signals::env::EarlyCommandTiming;
+use bz_build_signals::env::FinishBuildSignals;
+use bz_build_signals::env::NodeDuration;
+use bz_build_signals::env::WaitingData;
+use bz_build_signals::error::CriticalPathError;
+use bz_build_signals::node_key::BuildSignalsNodeKey;
+use bz_build_signals::node_key::BuildSignalsNodeKeyImpl;
+use bz_common::package_listing::dice::PackageListingKey;
+use bz_common::package_listing::dice::PackageListingKeyActivationData;
+use bz_core::package::PackageLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_data::ToProtoMessage;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::dispatch::instant_event;
+use bz_events::dispatch::with_dispatcher_async;
+use bz_events::span::SpanId;
+use bz_hash::StdBuckHashMap;
+use bz_interpreter_for_build::interpreter::calculation::InterpreterResultsKey;
+use bz_interpreter_for_build::interpreter::calculation::InterpreterResultsKeyActivationData;
+use bz_node::nodes::eval_result::EvaluationResult;
+use bz_util::time_span::TimeSpan;
 use dice::ActivationData;
 use dice::ActivationTracker;
 use dice::DynKey;
@@ -151,7 +151,7 @@ impl NodeKey {
     fn into_critical_path_entry_data(
         self,
         extra_data: &NodeExtraData,
-    ) -> buck2_data::critical_path_entry2::Entry {
+    ) -> bz_data::critical_path_entry2::Entry {
         match self {
             NodeKey::BuildKey(ref key) => {
                 let owner = key.0.owner().to_proto().into();
@@ -166,9 +166,9 @@ impl NodeKey {
                         target_rule_type_name,
                         action_digest,
                         invalidation_info,
-                    }) => buck2_data::critical_path_entry2::ActionExecution {
+                    }) => bz_data::critical_path_entry2::ActionExecution {
                         owner: Some(owner),
-                        name: Some(buck2_data::ActionName {
+                        name: Some(bz_data::ActionName {
                             category: action.category().as_str().to_owned(),
                             identifier: action.identifier().unwrap_or("").to_owned(),
                         }),
@@ -181,7 +181,7 @@ impl NodeKey {
                     _ => self.into_generic_entry(),
                 }
             }
-            NodeKey::AnalysisKey(key) => buck2_data::critical_path_entry2::Analysis {
+            NodeKey::AnalysisKey(key) => bz_data::critical_path_entry2::Analysis {
                 target: Some(key.0.as_proto().into()),
                 target_rule_type_name: match &extra_data {
                     NodeExtraData::Analysis(node_data) => node_data.target_rule_type_name.clone(),
@@ -197,32 +197,32 @@ impl NodeKey {
             NodeKey::FinalMaterialization(key) => {
                 let owner = key.key().owner().to_proto().into();
 
-                buck2_data::critical_path_entry2::FinalMaterialization {
+                bz_data::critical_path_entry2::FinalMaterialization {
                     owner: Some(owner),
                     path: key.get_path().path().to_string(),
                 }
                 .into()
             }
-            NodeKey::InterpreterResultsKey(key) => buck2_data::critical_path_entry2::Load {
+            NodeKey::InterpreterResultsKey(key) => bz_data::critical_path_entry2::Load {
                 package: key.0.to_string(),
             }
             .into(),
 
-            NodeKey::PackageListingKey(key) => buck2_data::critical_path_entry2::Listing {
+            NodeKey::PackageListingKey(key) => bz_data::critical_path_entry2::Listing {
                 package: key.0.to_string(),
             }
             .into(),
 
             NodeKey::EnsureProjectedArtifactKey(..) => self.into_generic_entry(),
             NodeKey::EnsureTransitiveSetProjectionKey(_key) => {
-                buck2_data::critical_path_entry2::EnsureTransitiveSetProjection {}.into()
+                bz_data::critical_path_entry2::EnsureTransitiveSetProjection {}.into()
             }
             NodeKey::Dyn(_, ref d) => match d.critical_path_entry_proto() {
                 Some(mut entry) => {
                     // For Dyn keys that produce AnonAnalysis entries and have been
                     // split, inject the part number from the analysis extra_data.
                     if let (
-                        buck2_data::critical_path_entry2::Entry::AnonAnalysis(anon),
+                        bz_data::critical_path_entry2::Entry::AnonAnalysis(anon),
                         NodeExtraData::Analysis(node_data),
                     ) = (&mut entry, extra_data)
                     {
@@ -234,7 +234,7 @@ impl NodeKey {
                 }
                 None => self.into_generic_entry(),
             },
-            NodeKey::TestExecution(t) => buck2_data::critical_path_entry2::TestExecution {
+            NodeKey::TestExecution(t) => bz_data::critical_path_entry2::TestExecution {
                 target_label: Some(t.target.as_proto()),
                 suite: t.suite.to_string(),
                 testcases: t.testcases.to_vec(),
@@ -242,7 +242,7 @@ impl NodeKey {
             }
             .into(),
 
-            NodeKey::TestListing(t) => buck2_data::critical_path_entry2::TestListing {
+            NodeKey::TestListing(t) => bz_data::critical_path_entry2::TestListing {
                 target_label: Some(t.target.as_proto()),
                 suite: t.suite.to_string(),
             }
@@ -250,8 +250,8 @@ impl NodeKey {
         }
     }
 
-    fn into_generic_entry(self) -> buck2_data::critical_path_entry2::Entry {
-        buck2_data::critical_path_entry2::GenericEntry {
+    fn into_generic_entry(self) -> bz_data::critical_path_entry2::Entry {
+        bz_data::critical_path_entry2::GenericEntry {
             kind: match self {
                 NodeKey::Dyn(_, d) => d.kind(),
                 _ => self.variant_name_lowercase(),
@@ -351,7 +351,7 @@ impl BuildSignalSender {
                 let anon_target_proto = dyn_key
                     .critical_path_entry_proto()
                     .and_then(|entry| match entry {
-                        buck2_data::critical_path_entry2::Entry::AnonAnalysis(a) => a.anon_target,
+                        bz_data::critical_path_entry2::Entry::AnonAnalysis(a) => a.anon_target,
                         _ => None,
                     })
                     .unwrap_or_default();
@@ -741,7 +741,7 @@ where
         let slowest_path = slowest_path.into_critical_path_proto(&ctx.early_command_timing, now);
 
         let top_level_targets =
-            top_level_targets.map(|(key, duration)| buck2_data::TopLevelTargetCriticalPath {
+            top_level_targets.map(|(key, duration)| bz_data::TopLevelTargetCriticalPath {
                 target: Some(key.as_proto()),
                 duration: Some((*duration).try_into().unwrap_or(prost_types::Duration {
                     seconds: i64::MAX,
@@ -749,7 +749,7 @@ where
                 })),
             });
 
-        instant_event(buck2_data::BuildGraphExecutionInfo {
+        instant_event(bz_data::BuildGraphExecutionInfo {
             critical_path2,
             slowest_path,
             metadata: ctx.metadata,
@@ -980,8 +980,8 @@ impl DetailedCriticalPath {
         enhancer: &mut CriticalPathProtoEnhancer,
         early_command_timing: &EarlyCommandTiming,
     ) {
-        let generic_entry = |kind: &str| -> buck2_data::critical_path_entry2::Entry {
-            buck2_data::critical_path_entry2::GenericEntry {
+        let generic_entry = |kind: &str| -> bz_data::critical_path_entry2::Entry {
+            bz_data::critical_path_entry2::GenericEntry {
                 kind: kind.to_owned(),
             }
             .into()
@@ -1013,7 +1013,7 @@ impl DetailedCriticalPath {
         self,
         early_command_timing: &EarlyCommandTiming,
         critical_path_compute_start: Instant,
-    ) -> Vec<buck2_data::CriticalPathEntry2> {
+    ) -> Vec<bz_data::CriticalPathEntry2> {
         let mut enhancer = CriticalPathProtoEnhancer::new(
             early_command_timing.command_start,
             1 + early_command_timing.early_spans.len() + self.entries.len() + 1,
@@ -1027,7 +1027,7 @@ impl DetailedCriticalPath {
 
         enhancer.add_simple_entry(
             Some("unknown_final_work"),
-            buck2_data::critical_path_entry2::ComputeCriticalPath {}.into(),
+            bz_data::critical_path_entry2::ComputeCriticalPath {}.into(),
             TimeSpan::new_saturating(critical_path_compute_start, Instant::now()),
             true,
         );
@@ -1065,10 +1065,10 @@ enum NodeExtraData {
 #[derive(Clone)]
 struct ActionNodeData {
     action: Arc<RegisteredAction>,
-    execution_kind: buck2_data::ActionExecutionKind,
+    execution_kind: bz_data::ActionExecutionKind,
     target_rule_type_name: Option<String>,
     action_digest: Option<String>,
-    invalidation_info: Option<buck2_data::CommandInvalidationInfo>,
+    invalidation_info: Option<bz_data::CommandInvalidationInfo>,
 }
 
 impl ActionNodeData {
@@ -1145,11 +1145,11 @@ impl fmt::Display for AnalysisFinishNodeKey {
 }
 
 impl BuildSignalsNodeKeyImpl for AnalysisFinishNodeKey {
-    fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry> {
+    fn critical_path_entry_proto(&self) -> Option<bz_data::critical_path_entry2::Entry> {
         Some(
-            buck2_data::critical_path_entry2::Analysis {
+            bz_data::critical_path_entry2::Analysis {
                 target: Some(
-                    buck2_data::critical_path_entry2::analysis::Target::StandardTarget(
+                    bz_data::critical_path_entry2::analysis::Target::StandardTarget(
                         self.target.as_proto(),
                     ),
                 ),
@@ -1172,7 +1172,7 @@ struct AnonTargetFinishNodeKey {
     /// Display name for identity/hashing
     display_name: String,
     /// Proto for the critical path entry
-    anon_target_proto: buck2_data::AnonTarget,
+    anon_target_proto: bz_data::AnonTarget,
 }
 
 impl PartialEq for AnonTargetFinishNodeKey {
@@ -1196,9 +1196,9 @@ impl fmt::Display for AnonTargetFinishNodeKey {
 }
 
 impl BuildSignalsNodeKeyImpl for AnonTargetFinishNodeKey {
-    fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry> {
+    fn critical_path_entry_proto(&self) -> Option<bz_data::critical_path_entry2::Entry> {
         Some(
-            buck2_data::critical_path_entry2::AnonAnalysis {
+            bz_data::critical_path_entry2::AnonAnalysis {
                 anon_target: Some(self.anon_target_proto.clone()),
                 part: Some(2),
             }

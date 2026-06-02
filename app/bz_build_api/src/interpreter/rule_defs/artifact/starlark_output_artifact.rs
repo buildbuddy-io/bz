@@ -13,14 +13,14 @@ use std::fmt::Debug;
 use std::fmt::Display;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_execute::execute::request::OutputType;
-use buck2_execute::path::artifact_path::ArtifactPath;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_artifact::artifact::artifact_type::BaseArtifactKind;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_execute::execute::request::OutputType;
+use bz_execute::path::artifact_path::ArtifactPath;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use dupe::Dupe;
 use either::Either;
 use starlark::any::ProvidesStaticType;
@@ -187,29 +187,29 @@ impl<'v, V: ValueLike<'v>> StarlarkArtifactLike<'v> for StarlarkOutputArtifactGe
     fn with_filename(
         &self,
         f: &dyn for<'b> Fn(&'b FileName) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         self.get_path().with_filename(f)
     }
 
-    fn is_source(&'v self) -> buck2_error::Result<bool> {
+    fn is_source(&'v self) -> bz_error::Result<bool> {
         Ok(false)
     }
 
-    fn is_directory(&'v self) -> buck2_error::Result<bool> {
+    fn is_directory(&'v self) -> bz_error::Result<bool> {
         Ok(match self.unpack() {
             Either::Left(v) => v.artifact.output_type() == OutputType::Directory,
             Either::Right(v) => v.is_directory()?,
         })
     }
 
-    fn is_symlink(&'v self) -> buck2_error::Result<bool> {
+    fn is_symlink(&'v self) -> bz_error::Result<bool> {
         Ok(match self.unpack() {
             Either::Left(v) => v.artifact.output_type() == OutputType::Symlink,
             Either::Right(v) => v.is_symlink()?,
         })
     }
 
-    fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
+    fn owner(&'v self) -> bz_error::Result<Option<BaseDeferredKey>> {
         Ok(
             bazel_artifact_owner(self.get_path()).or_else(|| match self.unpack() {
                 Either::Left(v) => v.artifact.owner(),
@@ -221,14 +221,14 @@ impl<'v, V: ValueLike<'v>> StarlarkArtifactLike<'v> for StarlarkOutputArtifactGe
     fn with_short_path(
         &self,
         f: &dyn for<'b> Fn(&'b ForwardRelativePath) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         Ok(self.get_path().with_short_path(f))
     }
 
     fn with_bazel_short_path(
         &self,
         f: &dyn Fn(&str) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         let path = bazel_artifact_short_path(self.get_path());
         Ok(f(&path))
     }
@@ -236,7 +236,7 @@ impl<'v, V: ValueLike<'v>> StarlarkArtifactLike<'v> for StarlarkOutputArtifactGe
     fn with_bazel_path(
         &self,
         f: &dyn Fn(&str) -> StringValue<'v>,
-    ) -> buck2_error::Result<StringValue<'v>> {
+    ) -> bz_error::Result<StringValue<'v>> {
         let path = bazel_artifact_path(self.get_path());
         Ok(f(&path))
     }
@@ -343,9 +343,9 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for StarlarkOutputArtifactGen<
         cli: &mut dyn CommandLineBuilder,
         ctx: &mut dyn CommandLineContext,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self.unpack() {
-            Either::Left(_) => Err(buck2_error::internal_error!(
+            Either::Left(_) => Err(bz_error::internal_error!(
                 "Cannot add an unfrozen output artifact to a command line. \
                      Output artifacts must be declared and bound to an action \
                      before they can be used in command lines"
@@ -362,7 +362,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for StarlarkOutputArtifactGen<
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self.unpack() {
             Either::Left(v) => {
                 visitor.visit_declared_output(v.output_artifact(), vec![]);
@@ -382,7 +382,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for StarlarkOutputArtifactGen<
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(())
     }
 }

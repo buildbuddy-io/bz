@@ -16,43 +16,43 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_signals::env::NodeDuration;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::cas_digest::CasDigestData;
-use buck2_common::cas_digest::DataDigester;
-use buck2_common::events::HasEvents;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_data::ActionErrorDiagnostics;
-use buck2_data::ActionSubErrors;
-use buck2_data::ToProtoMessage;
-use buck2_data::get_action_digest;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_event_observer::action_util::get_execution_time_ms;
-use buck2_events::dispatch::async_record_root_spans;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_events::dispatch::span_async;
-use buck2_events::span::SpanId;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::execute::kind::CommandExecutionKind;
-use buck2_execute::execute::output::CommandStdStreams;
-use buck2_execute::execute::result::CommandExecutionReport;
-use buck2_execute::execute::result::CommandExecutionStatus;
-use buck2_execute::output_size::OutputSize;
-use buck2_hash::BuckIndexMap;
-use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
-use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_util::time_span::TimeSpan;
-use buck2_util::time_span::TimeSpanBuilder;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::artifact_type::BaseArtifactKind;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_signals::env::NodeDuration;
+use bz_build_signals::env::WaitingData;
+use bz_common::cas_digest::CasDigestData;
+use bz_common::cas_digest::DataDigester;
+use bz_common::events::HasEvents;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_data::ActionErrorDiagnostics;
+use bz_data::ActionSubErrors;
+use bz_data::ToProtoMessage;
+use bz_data::get_action_digest;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_event_observer::action_util::get_execution_time_ms;
+use bz_events::dispatch::async_record_root_spans;
+use bz_events::dispatch::get_dispatcher;
+use bz_events::dispatch::span_async;
+use bz_events::span::SpanId;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::execute::kind::CommandExecutionKind;
+use bz_execute::execute::output::CommandStdStreams;
+use bz_execute::execute::result::CommandExecutionReport;
+use bz_execute::execute::result::CommandExecutionStatus;
+use bz_execute::output_size::OutputSize;
+use bz_hash::BuckIndexMap;
+use bz_interpreter::print_handler::EventDispatcherPrintHandler;
+use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_util::time_span::TimeSpan;
+use bz_util::time_span::TimeSpanBuilder;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::DiceTrackedInvalidationPath;
@@ -104,7 +104,7 @@ async fn build_action_impl(
     ctx: &mut DiceComputations<'_>,
     cancellation: &CancellationContext,
     key: &ActionKey,
-) -> buck2_error::Result<ActionExecutionValue> {
+) -> bz_error::Result<ActionExecutionValue> {
     // Compute is only called if we have cache miss
     debug!("compute {}", key);
 
@@ -128,7 +128,7 @@ async fn build_action_no_redirect(
     ctx: &mut DiceComputations<'_>,
     cancellation: &CancellationContext,
     action: Arc<RegisteredAction>,
-) -> buck2_error::Result<ActionExecutionValue> {
+) -> bz_error::Result<ActionExecutionValue> {
     let inputs = action.inputs()?;
     let waiting_data = WaitingData::new();
     let executor = ctx
@@ -255,9 +255,9 @@ async fn build_action_after_inputs(
     ensured_inputs: Arc<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>>,
     local_action_cache_input_set_digest: Arc<[u8]>,
     target_rule_type_name: Option<String>,
-    is_eligible_for_dedupe: buck2_data::EligibleForDedupe,
-    is_expected_eligible_for_dedupe: buck2_data::ExpectedEligibleForDedupe,
-) -> buck2_error::Result<ActionExecutionValue> {
+    is_eligible_for_dedupe: bz_data::EligibleForDedupe,
+    is_expected_eligible_for_dedupe: bz_data::ExpectedEligibleForDedupe,
+) -> bz_error::Result<ActionExecutionValue> {
     let start_event = action_execution_start_event(&action);
     ctx.per_transaction_data()
         .record_action_started_for_overlap(|| action.key().to_string());
@@ -288,7 +288,7 @@ async fn build_action_after_inputs(
 async fn ensure_action_input_set(
     ctx: &mut DiceComputations<'_>,
     inputs: &[ArtifactGroup],
-) -> buck2_error::Result<ActionInputSet> {
+) -> bz_error::Result<ActionInputSet> {
     let inputs: Arc<[ArtifactGroup]> = inputs.iter().cloned().collect::<Vec<_>>().into();
     ctx.compute(&ActionInputSetKey(inputs)).await?
 }
@@ -311,7 +311,7 @@ impl fmt::Display for ActionInputSetKey {
 
 #[async_trait]
 impl Key for ActionInputSetKey {
-    type Value = buck2_error::Result<ActionInputSet>;
+    type Value = bz_error::Result<ActionInputSet>;
 
     async fn compute(
         &self,
@@ -380,11 +380,11 @@ fn finalize_action_cache_digest(fingerprint: DataDigester) -> Vec<u8> {
     fingerprint.finalize().raw_digest().as_bytes().to_vec()
 }
 
-fn action_execution_start_event(action: &RegisteredAction) -> buck2_data::ActionExecutionStart {
-    buck2_data::ActionExecutionStart {
+fn action_execution_start_event(action: &RegisteredAction) -> bz_data::ActionExecutionStart {
+    bz_data::ActionExecutionStart {
         key: Some(action.key().as_proto()),
         kind: action.kind().into(),
-        name: Some(buck2_data::ActionName {
+        name: Some(bz_data::ActionName {
             category: action.category().as_str().to_owned(),
             identifier: action.identifier().unwrap_or("").to_owned(),
         }),
@@ -397,7 +397,7 @@ fn finish_action_execution(
     now: TimeSpanBuilder,
     action_execution_data: ActionExecutionData,
     spans: SmallVec<[SpanId; 1]>,
-) -> buck2_error::Result<ActionExecutionValue> {
+) -> bz_error::Result<ActionExecutionValue> {
     let execution_metrics = ActionExecutionMetrics {
         key: action.key().dupe(),
         execution_time_ms: action_execution_data
@@ -434,7 +434,7 @@ async fn collect_eager_paths(
     ctx: &mut DiceComputations<'_>,
     inputs: &[ArtifactGroup],
     artifact_fs: &ArtifactFs,
-) -> buck2_error::Result<Vec<ProjectRelativePathBuf>> {
+) -> bz_error::Result<Vec<ProjectRelativePathBuf>> {
     let mut eager_paths = HashSet::new();
     let mut queue: Vec<ArtifactGroup> = inputs.to_vec();
     let mut visited = HashSet::new();
@@ -488,9 +488,9 @@ async fn build_action_inner(
     local_action_cache_input_set_digest: Arc<[u8]>,
     action: &Arc<RegisteredAction>,
     target_rule_type_name: Option<String>,
-    is_eligible_for_dedupe: buck2_data::EligibleForDedupe,
-    is_expected_eligible_for_dedupe: buck2_data::ExpectedEligibleForDedupe,
-) -> (ActionExecutionData, Box<buck2_data::ActionExecutionEnd>) {
+    is_eligible_for_dedupe: bz_data::EligibleForDedupe,
+    is_expected_eligible_for_dedupe: bz_data::ExpectedEligibleForDedupe,
+) -> (ActionExecutionData, Box<bz_data::ActionExecutionEnd>) {
     let (execute_result, command_reports) = executor
         .execute(
             waiting_data,
@@ -521,9 +521,9 @@ async fn build_action_result(
     command_reports: Vec<CommandExecutionReport>,
     action: &Arc<RegisteredAction>,
     target_rule_type_name: Option<String>,
-    is_eligible_for_dedupe: buck2_data::EligibleForDedupe,
-    is_expected_eligible_for_dedupe: buck2_data::ExpectedEligibleForDedupe,
-) -> (ActionExecutionData, Box<buck2_data::ActionExecutionEnd>) {
+    is_eligible_for_dedupe: bz_data::EligibleForDedupe,
+    is_expected_eligible_for_dedupe: bz_data::ExpectedEligibleForDedupe,
+) -> (ActionExecutionData, Box<bz_data::ActionExecutionEnd>) {
     let local_action_cache_action_digest =
         local_action_cache_action_digest(&execute_result, &command_reports);
     if let Some(action_digest) = local_action_cache_action_digest {
@@ -532,7 +532,7 @@ async fn build_action_result(
         };
         let queue_duration = command_reports.last().and_then(|r| r.timing.queue_duration);
         let action_key = action.key().as_proto();
-        let action_name = buck2_data::ActionName {
+        let action_name = bz_data::ActionName {
             category: action.category().as_str().to_owned(),
             identifier: action.identifier().unwrap_or("").to_owned(),
         };
@@ -557,7 +557,7 @@ async fn build_action_result(
                 },
                 waiting_data: meta.waiting_data,
             },
-            Box::new(buck2_data::ActionExecutionEnd {
+            Box::new(bz_data::ActionExecutionEnd {
                 key: Some(action_key),
                 kind: action.kind().into(),
                 name: Some(action_name),
@@ -572,14 +572,14 @@ async fn build_action_result(
                 prefers_local: false,
                 requires_local: false,
                 allows_cache_upload: false,
-                cache_upload_result: buck2_data::UploadResult::DidNotUploadUnspecified as i32,
+                cache_upload_result: bz_data::UploadResult::DidNotUploadUnspecified as i32,
                 allows_dep_file_cache_upload: false,
-                dep_file_cache_upload_result: buck2_data::UploadResult::DidNotUploadUnspecified
+                dep_file_cache_upload_result: bz_data::UploadResult::DidNotUploadUnspecified
                     as i32,
                 dep_file_key: None,
                 eligible_for_full_hybrid: None,
-                buck2_revision: None,
-                buck2_build_time: None,
+                bz_revision: None,
+                bz_build_time: None,
                 hostname: None,
                 error_diagnostics: None,
                 input_files_bytes: meta.input_files_bytes,
@@ -629,7 +629,7 @@ async fn build_action_result(
 
     let action_key = action.key().as_proto();
 
-    let action_name = buck2_data::ActionName {
+    let action_name = bz_data::ActionName {
         category: action.category().as_str().to_owned(),
         identifier: action.identifier().unwrap_or("").to_owned(),
     };
@@ -649,8 +649,8 @@ async fn build_action_result(
     let mut dep_file_key = None;
     let mut eligible_for_full_hybrid = None;
 
-    let mut buck2_revision = None;
-    let mut buck2_build_time = None;
+    let mut bz_revision = None;
+    let mut bz_build_time = None;
     let mut hostname = None;
     let mut input_files_bytes = None;
     let mut scheduling_mode = None;
@@ -692,10 +692,10 @@ async fn build_action_result(
                 .map(|r| r.timing.time_span.duration());
             output_size = 0;
             // We define the below fields only in the instance of an action error
-            // so as to reduce Scribe traffic and log it in buck2_action_errors
-            buck2_revision = buck2_build_info::revision().map(|s| s.to_owned());
-            buck2_build_time = buck2_build_info::time_iso8601().map(|s| s.to_owned());
-            hostname = buck2_events::metadata::hostname();
+            // so as to reduce Scribe traffic and log it in bz_action_errors
+            bz_revision = bz_build_info::revision().map(|s| s.to_owned());
+            bz_build_time = bz_build_info::time_iso8601().map(|s| s.to_owned());
+            hostname = bz_events::metadata::hostname();
 
             let last_command = commands.last().cloned();
 
@@ -728,7 +728,7 @@ async fn build_action_result(
                 .get_dispatcher()
                 .instant_event(e.as_proto_event());
 
-            action_result = Err(buck2_error::Error::from(e)
+            action_result = Err(bz_error::Error::from(e)
                 // Make sure to mark the error as emitted so that it is not printed out to console
                 // again in this command. We still need to keep it around for the build report (and
                 // in the future) other commands
@@ -747,7 +747,7 @@ async fn build_action_result(
             outputs
                 .iter()
                 .filter_map(|(_artifact, value)| {
-                    Some(buck2_data::ActionOutput {
+                    Some(bz_data::ActionOutput {
                         tiny_digest: value.digest()?.tiny_digest().to_string(),
                     })
                 })
@@ -757,7 +757,7 @@ async fn build_action_result(
 
     let invalidation_info = action_invalidation_info(ctx, executor);
 
-    let execution_kind = execution_kind.unwrap_or(buck2_data::ActionExecutionKind::NotSet);
+    let execution_kind = execution_kind.unwrap_or(bz_data::ActionExecutionKind::NotSet);
 
     let re_platform_name = command_reports
         .last()
@@ -782,7 +782,7 @@ async fn build_action_result(
             },
             waiting_data: waiting_data.unwrap_or_default(),
         },
-        Box::new(buck2_data::ActionExecutionEnd {
+        Box::new(bz_data::ActionExecutionEnd {
             key: Some(action_key),
             kind: action.kind().into(),
             name: Some(action_name),
@@ -798,20 +798,20 @@ async fn build_action_result(
             requires_local: requires_local.unwrap_or_default(),
             allows_cache_upload: allows_cache_upload.unwrap_or_default(),
             cache_upload_result: if did_cache_upload.unwrap_or_default() {
-                buck2_data::UploadResult::Uploaded as i32
+                bz_data::UploadResult::Uploaded as i32
             } else {
-                buck2_data::UploadResult::DidNotUploadUnspecified as i32
+                bz_data::UploadResult::DidNotUploadUnspecified as i32
             },
             allows_dep_file_cache_upload: allows_dep_file_cache_upload.unwrap_or_default(),
             dep_file_cache_upload_result: if did_dep_file_cache_upload.unwrap_or_default() {
-                buck2_data::UploadResult::Uploaded as i32
+                bz_data::UploadResult::Uploaded as i32
             } else {
-                buck2_data::UploadResult::DidNotUploadUnspecified as i32
+                bz_data::UploadResult::DidNotUploadUnspecified as i32
             },
             dep_file_key: dep_file_key.map(|d| d.to_string()),
             eligible_for_full_hybrid,
-            buck2_revision,
-            buck2_build_time,
+            bz_revision,
+            bz_build_time,
             hostname,
             error_diagnostics,
             input_files_bytes,
@@ -828,7 +828,7 @@ async fn build_action_result(
 fn is_action_eligible_for_dedupe<'a>(
     action: &Arc<RegisteredAction>,
     inputs: impl IntoIterator<Item = &'a ArtifactGroup>,
-) -> buck2_data::EligibleForDedupe {
+) -> bz_data::EligibleForDedupe {
     let target_platform =
         if let BaseDeferredKey::TargetLabel(configured_label) = action.key().owner() {
             Some(configured_label.cfg())
@@ -837,50 +837,50 @@ fn is_action_eligible_for_dedupe<'a>(
         };
 
     if !action.all_outputs_are_content_based() {
-        return buck2_data::EligibleForDedupe::IneligibleOutput;
+        return bz_data::EligibleForDedupe::IneligibleOutput;
     }
 
     for ag in inputs {
         let eligibility = ag.is_eligible_for_dedupe(target_platform);
-        if eligibility != buck2_data::EligibleForDedupe::Eligible {
+        if eligibility != bz_data::EligibleForDedupe::Eligible {
             return eligibility;
         }
     }
 
-    buck2_data::EligibleForDedupe::Eligible
+    bz_data::EligibleForDedupe::Eligible
 }
 
 fn expected_eligible_for_dedupe(
     action: &Arc<RegisteredAction>,
-) -> buck2_data::ExpectedEligibleForDedupe {
+) -> bz_data::ExpectedEligibleForDedupe {
     match action.is_expected_eligible_for_dedupe() {
-        Some(true) => buck2_data::ExpectedEligibleForDedupe::ExpectedEligible,
-        Some(false) => buck2_data::ExpectedEligibleForDedupe::ExpectedIneligible,
-        None => buck2_data::ExpectedEligibleForDedupe::UnknownEligibility,
+        Some(true) => bz_data::ExpectedEligibleForDedupe::ExpectedEligible,
+        Some(false) => bz_data::ExpectedEligibleForDedupe::ExpectedIneligible,
+        None => bz_data::ExpectedEligibleForDedupe::UnknownEligibility,
     }
 }
 
 fn action_invalidation_info(
     ctx: &mut DiceComputations<'_>,
     executor: &BuckActionExecutor,
-) -> Option<buck2_data::CommandInvalidationInfo> {
+) -> Option<bz_data::CommandInvalidationInfo> {
     if !executor.invalidation_tracking_enabled() {
         return None;
     }
 
     fn to_proto(
         invalidation_path: &DiceTrackedInvalidationPath,
-    ) -> Option<buck2_data::command_invalidation_info::InvalidationSource> {
+    ) -> Option<bz_data::command_invalidation_info::InvalidationSource> {
         match invalidation_path {
             DiceTrackedInvalidationPath::Clean | DiceTrackedInvalidationPath::Unknown => None,
             DiceTrackedInvalidationPath::Invalidated(_) => {
-                Some(buck2_data::command_invalidation_info::InvalidationSource {})
+                Some(bz_data::command_invalidation_info::InvalidationSource {})
             }
         }
     }
 
     let invalidation_paths = ctx.get_invalidation_paths();
-    Some(buck2_data::CommandInvalidationInfo {
+    Some(bz_data::CommandInvalidationInfo {
         changed_any: to_proto(&invalidation_paths.normal_priority_path),
         changed_file: to_proto(&invalidation_paths.high_priority_path),
     })
@@ -912,9 +912,9 @@ fn local_action_cache_action_digest(
 }
 
 fn check_infra_error_patterns(
-    last_command: Option<&buck2_data::CommandExecution>,
-) -> Option<buck2_error::ErrorTag> {
-    use buck2_error::ErrorTag;
+    last_command: Option<&bz_data::CommandExecution>,
+) -> Option<bz_error::ErrorTag> {
+    use bz_error::ErrorTag;
 
     let stderr = last_command
         .and_then(|c| c.details.as_ref())
@@ -936,23 +936,23 @@ fn check_infra_error_patterns(
 // an actual error if the handler failed to run successfully.
 fn try_run_error_handler(
     action: Arc<RegisteredAction>,
-    last_command: Option<&buck2_data::CommandExecution>,
-    artifact_fs: buck2_error::Result<ArtifactFs>,
+    last_command: Option<&bz_data::CommandExecution>,
+    artifact_fs: bz_error::Result<ArtifactFs>,
     outputs: Option<&ActionOutputs>,
 ) -> Option<ActionErrorDiagnostics> {
-    use buck2_data::action_error_diagnostics::Data;
+    use bz_data::action_error_diagnostics::Data;
 
     fn create_error(
-        e: buck2_error::Error,
+        e: bz_error::Error,
     ) -> (
         Option<ActionErrorDiagnostics>,
-        buck2_data::ActionErrorHandlerExecutionEnd,
+        bz_data::ActionErrorHandlerExecutionEnd,
     ) {
         (
             Some(ActionErrorDiagnostics {
                 data: Some(Data::HandlerInvocationError(format!("{e:#}"))),
             }),
-            buck2_data::ActionErrorHandlerExecutionEnd {},
+            bz_data::ActionErrorHandlerExecutionEnd {},
         )
     }
 
@@ -962,7 +962,7 @@ fn try_run_error_handler(
 
             dispatcher
                 .clone()
-                .span(buck2_data::ActionErrorHandlerExecutionStart {}, || {
+                .span(bz_data::ActionErrorHandlerExecutionStart {}, || {
                     // patternlint-disable-next-line buck2-no-starlark-module: FIXME(JakobDegen): Wrong
                     Module::with_temp_heap(|env| {
                         let heap = env.heap();
@@ -1015,13 +1015,13 @@ fn try_run_error_handler(
                                 )),
                             },
                             Err(e) => {
-                                let e = buck2_error::Error::from(e).context("Error handler failed");
+                                let e = bz_error::Error::from(e).context("Error handler failed");
                                 Data::HandlerInvocationError(format!("{e:#}"))
                             }
                         };
                         (
                             Some(ActionErrorDiagnostics { data: Some(data) }),
-                            buck2_data::ActionErrorHandlerExecutionEnd {},
+                            bz_data::ActionErrorHandlerExecutionEnd {},
                         )
                     })
                 })
@@ -1045,18 +1045,18 @@ pub struct ActionWithExtraData {
 
 #[derive(Clone)]
 pub struct ActionExtraData {
-    pub execution_kind: buck2_data::ActionExecutionKind,
+    pub execution_kind: bz_data::ActionExecutionKind,
     pub execution_time_ms: Option<u64>,
     pub output_size: u64,
     pub target_rule_type_name: Option<String>,
     pub action_digest: Option<String>,
-    pub invalidation_info: Option<buck2_data::CommandInvalidationInfo>,
+    pub invalidation_info: Option<bz_data::CommandInvalidationInfo>,
     /// RE platform name if the action ran remotely.
     pub re_platform_name: Option<String>,
 }
 
 struct ActionExecutionData {
-    action_result: buck2_error::Result<ActionExecutionValue>,
+    action_result: bz_error::Result<ActionExecutionValue>,
     wall_time: Option<std::time::Duration>,
     queue_duration: Option<std::time::Duration>,
     memory_peak: Option<u64>,
@@ -1071,7 +1071,7 @@ impl ActionCalculation {
     pub async fn get_action(
         ctx: &mut DiceComputations<'_>,
         action_key: &ActionKey,
-    ) -> buck2_error::Result<Arc<RegisteredAction>> {
+    ) -> bz_error::Result<Arc<RegisteredAction>> {
         // In the typical case, this lookup is only going to require a single deferred holder lookup. There's three cases:
         // 1. a normal action defined in analysis: lookup the holder for that analysis, get the action
         // 2. an action bound to a dynamic_output and then bound to an action there: the initial holder_key will actually
@@ -1088,7 +1088,7 @@ impl ActionCalculation {
                 fn get_action_recurse<'a>(
                     ctx: &'a mut DiceComputations<'_>,
                     action_key: &'a ActionKey,
-                ) -> BoxFuture<'a, buck2_error::Result<Arc<RegisteredAction>>> {
+                ) -> BoxFuture<'a, bz_error::Result<Arc<RegisteredAction>>> {
                     async move { ActionCalculation::get_action(ctx, action_key).await }.boxed()
                 }
                 get_action_recurse(ctx, &action_key).await
@@ -1099,14 +1099,14 @@ impl ActionCalculation {
     fn build_action_value<'a>(
         ctx: &'a mut DiceComputations<'_>,
         action_key: &ActionKey,
-    ) -> impl Future<Output = buck2_error::Result<ActionExecutionValue>> + use<'a> {
+    ) -> impl Future<Output = bz_error::Result<ActionExecutionValue>> + use<'a> {
         ctx.compute(BuildKey::ref_cast(action_key)).map(|v| v?)
     }
 
     pub fn build_action<'a>(
         ctx: &'a mut DiceComputations<'_>,
         action_key: &ActionKey,
-    ) -> impl Future<Output = buck2_error::Result<ActionOutputs>> + use<'a> {
+    ) -> impl Future<Output = bz_error::Result<ActionOutputs>> + use<'a> {
         // build_action is called for every action key. We don't use `async fn` to ensure that it has minimal cost.
         // We don't currently consume this in buck_e2e but it's good to log for debugging purposes.
         debug!("build_action {}", action_key);
@@ -1117,7 +1117,7 @@ impl ActionCalculation {
     pub fn build_artifact<'a>(
         ctx: &'a mut DiceComputations<'_>,
         artifact: &BuildArtifact,
-    ) -> impl Future<Output = buck2_error::Result<ActionOutputs>> + use<'a> {
+    ) -> impl Future<Output = bz_error::Result<ActionOutputs>> + use<'a> {
         Self::build_action(ctx, artifact.key())
     }
 }
@@ -1132,7 +1132,7 @@ pub struct BuildKey(pub ActionKey);
 
 #[async_trait]
 impl Key for BuildKey {
-    type Value = buck2_error::Result<ActionExecutionValue>;
+    type Value = bz_error::Result<ActionExecutionValue>;
 
     async fn compute(
         &self,
@@ -1164,7 +1164,7 @@ impl Key for BuildKey {
 
 fn local_action_cache_command_execution_report_to_proto(
     report: &CommandExecutionReport,
-) -> Option<buck2_data::CommandExecution> {
+) -> Option<bz_data::CommandExecution> {
     let CommandExecutionStatus::Success {
         execution_kind: kind @ CommandExecutionKind::LocalActionCache { .. },
     } = &report.status
@@ -1175,8 +1175,8 @@ fn local_action_cache_command_execution_report_to_proto(
         return None;
     }
 
-    Some(buck2_data::CommandExecution {
-        details: Some(buck2_data::CommandExecutionDetails {
+    Some(bz_data::CommandExecution {
+        details: Some(bz_data::CommandExecutionDetails {
             cmd_stdout: String::new(),
             cmd_stderr: String::new(),
             command_kind: Some(kind.to_proto(true)),
@@ -1184,7 +1184,7 @@ fn local_action_cache_command_execution_report_to_proto(
             metadata: Some(report.timing.to_proto()),
             additional_message: report.additional_message.clone(),
         }),
-        status: Some(buck2_data::command_execution::Success {}.into()),
+        status: Some(bz_data::command_execution::Success {}.into()),
         inline_environment_metadata: Some(report.inline_environment_metadata),
     })
 }
@@ -1192,26 +1192,26 @@ fn local_action_cache_command_execution_report_to_proto(
 async fn command_execution_report_to_proto(
     report: &CommandExecutionReport,
     allow_omit_details: bool,
-) -> buck2_data::CommandExecution {
+) -> bz_data::CommandExecution {
     let details = command_details(report, allow_omit_details).await;
 
     let status = match &report.status {
-        CommandExecutionStatus::Success { .. } => buck2_data::command_execution::Success {}.into(),
+        CommandExecutionStatus::Success { .. } => bz_data::command_execution::Success {}.into(),
         CommandExecutionStatus::Cancelled { .. } => {
-            buck2_data::command_execution::Cancelled {}.into()
+            bz_data::command_execution::Cancelled {}.into()
         }
-        CommandExecutionStatus::Failure { .. } => buck2_data::command_execution::Failure {}.into(),
+        CommandExecutionStatus::Failure { .. } => bz_data::command_execution::Failure {}.into(),
         CommandExecutionStatus::WorkerFailure { .. } => {
-            buck2_data::command_execution::WorkerFailure {}.into()
+            bz_data::command_execution::WorkerFailure {}.into()
         }
         CommandExecutionStatus::TimedOut { duration, .. } => {
-            buck2_data::command_execution::Timeout {
+            bz_data::command_execution::Timeout {
                 duration: (*duration).try_into().ok(),
             }
             .into()
         }
         CommandExecutionStatus::Error { stage, error, .. } => {
-            buck2_data::command_execution::Error {
+            bz_data::command_execution::Error {
                 stage: (*stage).to_owned(),
                 error: format!("{error:#}"),
             }
@@ -1219,7 +1219,7 @@ async fn command_execution_report_to_proto(
         }
     };
 
-    buck2_data::CommandExecution {
+    bz_data::CommandExecution {
         details: Some(details),
         status: Some(status),
         inline_environment_metadata: Some(report.inline_environment_metadata),
@@ -1229,7 +1229,7 @@ async fn command_execution_report_to_proto(
 pub async fn command_details(
     command: &CommandExecutionReport,
     allow_omit_details: bool,
-) -> buck2_data::CommandExecutionDetails {
+) -> bz_data::CommandExecutionDetails {
     // If the top-level command failed then we don't want to omit any details. If it succeeded and
     // so did this command (it could succeed while not having a success here if we have rejected
     // executions), then we'll strip non-relevant stuff.
@@ -1258,7 +1258,7 @@ pub async fn command_details(
         .execution_kind()
         .map(|k| k.to_proto(omit_details));
 
-    buck2_data::CommandExecutionDetails {
+    bz_data::CommandExecutionDetails {
         cmd_stdout: stdout,
         cmd_stderr: stderr,
         command_kind,
@@ -1271,7 +1271,7 @@ pub async fn command_details(
 pub async fn get_target_rule_type_name(
     ctx: &mut DiceComputations<'_>,
     label: &ConfiguredTargetLabel,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     Ok(ctx
         .compute(&TargetRuleTypeNameKey(label.dupe()))
         .await??
@@ -1285,7 +1285,7 @@ struct TargetRuleTypeNameKey(ConfiguredTargetLabel);
 
 #[async_trait]
 impl Key for TargetRuleTypeNameKey {
-    type Value = buck2_error::Result<Arc<str>>;
+    type Value = bz_error::Result<Arc<str>>;
 
     async fn compute(
         &self,

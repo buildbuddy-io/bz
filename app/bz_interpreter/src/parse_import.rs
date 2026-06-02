@@ -10,19 +10,19 @@
 
 //! Parses imports for load_file() calls in build files.
 
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::CellAliasResolver;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_fs::paths::RelativePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::CellAliasResolver;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_fs::paths::RelativePath;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum ImportParseError {
     #[error(
@@ -87,7 +87,7 @@ fn parse_import_cell(alias: &str, repo_is_canonical: bool) -> Option<ImportCell<
 }
 
 impl ImportCell<'_> {
-    fn resolve(self, cell_resolver: &CellAliasResolver) -> buck2_error::Result<CellName> {
+    fn resolve(self, cell_resolver: &CellAliasResolver) -> bz_error::Result<CellName> {
         match self {
             ImportCell::Alias(alias) => cell_resolver.resolve(alias),
             ImportCell::Canonical(cell) => Ok(cell),
@@ -136,7 +136,7 @@ fn parse_bazel_repo_root_import(path: &str) -> Option<(ImportCell<'_>, &str)> {
 fn parse_import_file_path<'a>(
     import: &str,
     file_path: &'a str,
-) -> buck2_error::Result<&'a CellRelativePath> {
+) -> bz_error::Result<&'a CellRelativePath> {
     if file_path.is_empty() {
         return Err(ImportParseError::EmptyFileName(import.to_owned()).into());
     }
@@ -149,7 +149,7 @@ pub fn parse_import(
     cell_resolver: &CellAliasResolver,
     relative_import_option: RelativeImports,
     import: &str,
-) -> buck2_error::Result<CellPath> {
+) -> bz_error::Result<CellPath> {
     let opts: ParseImportOptions = ParseImportOptions {
         allow_missing_at_symbol: false,
         relative_import_option,
@@ -169,7 +169,7 @@ pub fn parse_import_with_config(
     cell_resolver: &CellAliasResolver,
     import: &str,
     opts: &ParseImportOptions,
-) -> buck2_error::Result<CellPath> {
+) -> bz_error::Result<CellPath> {
     Ok(parse_import_with_config_and_package_root(cell_resolver, import, opts)?.path)
 }
 
@@ -177,7 +177,7 @@ pub fn parse_import_with_config_and_package_root(
     cell_resolver: &CellAliasResolver,
     import: &str,
     opts: &ParseImportOptions,
-) -> buck2_error::Result<ParsedImport> {
+) -> bz_error::Result<ParsedImport> {
     match import.split_once(':') {
         None => {
             // import without `:`, so just try to parse the cell and cell relative paths
@@ -259,7 +259,7 @@ pub fn parse_bzl_path_with_config(
     import: &str,
     opts: &ParseImportOptions,
     build_cell_path: BuildFileCell,
-) -> buck2_error::Result<ImportPath> {
+) -> bz_error::Result<ImportPath> {
     let parsed = parse_import_with_config_and_package_root(cell_resolver, import, opts)?;
     ImportPath::new_with_build_file_cells_and_package_root(
         parsed.path,
@@ -270,11 +270,11 @@ pub fn parse_bzl_path_with_config(
 
 #[cfg(test)]
 mod tests {
-    use buck2_core::cells::alias::NonEmptyCellAlias;
-    use buck2_core::cells::external::bzlmod_cell_name;
-    use buck2_core::cells::name::CellName;
-    use buck2_fs::paths::file_name::FileName;
-    use buck2_hash::StdBuckHashMap;
+    use bz_core::cells::alias::NonEmptyCellAlias;
+    use bz_core::cells::external::bzlmod_cell_name;
+    use bz_core::cells::name::CellName;
+    use bz_fs::paths::file_name::FileName;
+    use bz_hash::StdBuckHashMap;
 
     use super::*;
 
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn root_package() -> buck2_error::Result<()> {
+    fn root_package() -> bz_error::Result<()> {
         assert_eq!(
             path("root", "package/path", "import.bzl"),
             parse_import(
@@ -321,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn cell_package() -> buck2_error::Result<()> {
+    fn cell_package() -> bz_error::Result<()> {
         assert_eq!(
             path("cell1", "package/path", "import.bzl"),
             parse_import(
@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn bazel_canonical_repo_package() -> buck2_error::Result<()> {
+    fn bazel_canonical_repo_package() -> bz_error::Result<()> {
         assert_eq!(
             path(&bzlmod_cell_name("rules_go+0.57.0"), "go", "def.bzl"),
             parse_import(
@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn bzlmod_internal_cell_package() -> buck2_error::Result<()> {
+    fn bzlmod_internal_cell_package() -> bz_error::Result<()> {
         assert_eq!(
             path(
                 "bzlmod_unknown_bzlmod_googleapis_cc__protobuf",
@@ -379,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn bazel_canonical_main_repo_package() -> buck2_error::Result<()> {
+    fn bazel_canonical_main_repo_package() -> bz_error::Result<()> {
         assert_eq!(
             path("root", "does/not", "exist"),
             parse_import(
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn bazel_package_target_path() -> buck2_error::Result<()> {
+    fn bazel_package_target_path() -> bz_error::Result<()> {
         assert_eq!(
             path(
                 "root",
@@ -419,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn bazel_repo_root_label_shorthand() -> buck2_error::Result<()> {
+    fn bazel_repo_root_label_shorthand() -> bz_error::Result<()> {
         assert_eq!(
             path("bzlmod_with_cfg_bzl_", "", "with_cfg.bzl"),
             parse_import(
@@ -437,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn package_relative() -> buck2_error::Result<()> {
+    fn package_relative() -> bz_error::Result<()> {
         assert_eq!(
             path("cell1", "package/path", "import.bzl"),
             parse_import(
@@ -468,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_colon() -> buck2_error::Result<()> {
+    fn missing_colon() -> bz_error::Result<()> {
         let import = "//package/path/import.bzl".to_owned();
         assert_eq!(
             parse_import(
@@ -487,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_filename() -> buck2_error::Result<()> {
+    fn empty_filename() -> bz_error::Result<()> {
         let path = "//package/path:".to_owned();
         match parse_import(
             &resolver(),
@@ -511,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn bad_alias() -> buck2_error::Result<()> {
+    fn bad_alias() -> bz_error::Result<()> {
         let path = "bad_alias//package/path:".to_owned();
         match parse_import(
             &resolver(),
@@ -532,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn file_relative_import_given_relative_paths_allowed() -> buck2_error::Result<()> {
+    fn file_relative_import_given_relative_paths_allowed() -> bz_error::Result<()> {
         assert_eq!(
             path("cell1", "package/path", "bar.bzl"),
             parse_import(
@@ -563,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn cell_relative_import_given_relative_paths_allowed() -> buck2_error::Result<()> {
+    fn cell_relative_import_given_relative_paths_allowed() -> bz_error::Result<()> {
         let importer = CellPath::testing_new("cell1//package/path");
         let importee = "foo/bar.bzl";
 
@@ -583,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn regular_import_given_relative_paths_allowed() -> buck2_error::Result<()> {
+    fn regular_import_given_relative_paths_allowed() -> bz_error::Result<()> {
         assert_eq!(
             path("cell1", "package/path", "import.bzl"),
             parse_import(
@@ -601,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn allows_non_at_symbols() -> buck2_error::Result<()> {
+    fn allows_non_at_symbols() -> bz_error::Result<()> {
         assert_eq!(
             path("cell1", "package/path", "import.bzl"),
             parse_import_with_config(
@@ -622,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn fails_relative_import_if_disallowed() -> buck2_error::Result<()> {
+    fn fails_relative_import_if_disallowed() -> bz_error::Result<()> {
         let imported_file = ":bar.bzl";
         let res = parse_import_with_config(
             &resolver(),

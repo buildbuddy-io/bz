@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use buck2_error::BuckErrorContext;
+use bz_error::BuckErrorContext;
 use nix::sys::signal::Signal;
 use sysinfo::Process;
 
@@ -22,7 +22,7 @@ pub(crate) fn process_creation_time(process: &Process) -> Option<Duration> {
     Some(Duration::from_secs(process.start_time()))
 }
 
-pub(crate) fn process_exists(pid: Pid) -> buck2_error::Result<bool> {
+pub(crate) fn process_exists(pid: Pid) -> bz_error::Result<bool> {
     Ok(match get_sysinfo_status(pid) {
         // It occasionally happens that systemd on a machine becomes unresponsive and stops reaping
         // its children. Unfortunately, there's not really much that we can do about that, and it
@@ -34,7 +34,7 @@ pub(crate) fn process_exists(pid: Pid) -> buck2_error::Result<bool> {
     })
 }
 
-pub(crate) fn kill(pid: Pid) -> buck2_error::Result<Option<KilledProcessHandleImpl>> {
+pub(crate) fn kill(pid: Pid) -> bz_error::Result<Option<KilledProcessHandleImpl>> {
     let pid_nix = pid.to_nix()?;
 
     match nix::sys::signal::kill(pid_nix, Signal::SIGKILL) {
@@ -49,7 +49,7 @@ pub(crate) struct KilledProcessHandleImpl {
 }
 
 impl KilledProcessHandleImpl {
-    pub(crate) fn has_exited(&self) -> buck2_error::Result<bool> {
+    pub(crate) fn has_exited(&self) -> bz_error::Result<bool> {
         Ok(!process_exists(self.pid)?)
     }
 }
@@ -59,7 +59,7 @@ mod tests {
     use std::thread::sleep;
     use std::time::Duration;
 
-    use buck2_util::process::background_command;
+    use bz_util::process::background_command;
 
     use crate::pid::Pid;
     use crate::unix::kill::process_exists;

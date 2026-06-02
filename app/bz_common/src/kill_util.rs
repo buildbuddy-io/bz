@@ -14,7 +14,7 @@ use std::time::Duration;
 pub async fn try_terminate_process_gracefully(
     pid: i32,
     timeout: Duration,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     #[cfg(unix)]
     {
         unix::try_terminate_process_gracefully(pid, timeout).await
@@ -22,8 +22,8 @@ pub async fn try_terminate_process_gracefully(
 
     #[cfg(not(unix))]
     {
-        Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Unimplemented,
+        Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Unimplemented,
             "Graceful process termination is not implemented for non-unix target family."
         ))
     }
@@ -42,7 +42,7 @@ mod unix {
     pub(crate) async fn try_terminate_process_gracefully(
         pid: i32,
         timeout: Duration,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let pid = nix::unistd::Pid::from_raw(pid);
         match send_signal_and_wait_for_shutdown(Signal::SIGTERM, pid, Some(timeout)).await {
             ControlFlow::Continue(_) => {}
@@ -68,7 +68,7 @@ mod unix {
 
     enum StoppedWaiting {
         Success,
-        UnexpectedError(buck2_error::Error),
+        UnexpectedError(bz_error::Error),
     }
 
     fn check_result(pid: nix::unistd::Pid, result: nix::Result<()>) -> ControlFlow<StoppedWaiting> {
@@ -78,8 +78,8 @@ mod unix {
             // There is no such process, our desired outcome.
             Err(nix::errno::Errno::ESRCH) => ControlFlow::Break(StoppedWaiting::Success),
             Err(e) => {
-                ControlFlow::Break(StoppedWaiting::UnexpectedError(buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
+                ControlFlow::Break(StoppedWaiting::UnexpectedError(bz_error::bz_error!(
+                    bz_error::ErrorTag::Tier0,
                     "Unexpected error while waiting for process `{}` to terminate (`{}`)",
                     pid,
                     e
@@ -124,7 +124,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_graceful_termination() -> buck2_error::Result<()> {
+    async fn test_graceful_termination() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
 
         // We cannot start child script directly else it will enter a zombie state
@@ -178,7 +178,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sigkill_when_graceful_termination_fails() -> buck2_error::Result<()> {
+    async fn test_sigkill_when_graceful_termination_fails() -> bz_error::Result<()> {
         let dir = tempfile::tempdir()?;
 
         // We cannot start child script directly else it will enter a zombie state

@@ -11,26 +11,26 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use buck2_core::target::label::label::TargetLabelRef;
-use buck2_core::target::name::TargetNameRef;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_node::attrs::attr::Attribute;
-use buck2_node::attrs::attr::CoercedValue;
-use buck2_node::attrs::attr_type::bool::BoolLiteral;
-use buck2_node::attrs::attr_type::string::StringLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
-use buck2_node::attrs::fmt_context::AttrFmtContext;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::attrs::spec::AttributeId;
-use buck2_node::attrs::spec::AttributeSpec;
-use buck2_node::attrs::spec::internal::NAME_ATTRIBUTE;
-use buck2_node::attrs::spec::internal::VISIBILITY_ATTRIBUTE;
-use buck2_node::attrs::spec::internal::WITHIN_VIEW_ATTRIBUTE;
-use buck2_node::attrs::spec::internal::attr_is_configurable;
-use buck2_node::attrs::values::AttrValues;
-use buck2_util::arc_str::ArcStr;
+use bz_core::target::label::label::TargetLabelRef;
+use bz_core::target::name::TargetNameRef;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_node::attrs::attr::Attribute;
+use bz_node::attrs::attr::CoercedValue;
+use bz_node::attrs::attr_type::bool::BoolLiteral;
+use bz_node::attrs::attr_type::string::StringLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::configurable::AttrIsConfigurable;
+use bz_node::attrs::fmt_context::AttrFmtContext;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::attrs::spec::AttributeId;
+use bz_node::attrs::spec::AttributeSpec;
+use bz_node::attrs::spec::internal::NAME_ATTRIBUTE;
+use bz_node::attrs::spec::internal::VISIBILITY_ATTRIBUTE;
+use bz_node::attrs::spec::internal::WITHIN_VIEW_ATTRIBUTE;
+use bz_node::attrs::spec::internal::attr_is_configurable;
+use bz_node::attrs::values::AttrValues;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 use starlark::docs::DocString;
 use starlark::eval::Evaluator;
@@ -52,9 +52,9 @@ use crate::attrs::AttributeCoerceExt;
 use crate::attrs::starlark_attribute::FrozenBazelComputedDefault;
 use crate::interpreter::module_internals::ModuleInternals;
 use crate::nodes::check_within_view::check_within_view;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum AttributeSpecParseError {
     #[error("Missing required attribute `{0}` for `{1}`")]
@@ -79,7 +79,7 @@ fn coerce_attr_value(
     configurable: AttrIsConfigurable,
     internals: &ModuleInternals,
     value: Value,
-) -> buck2_error::Result<CoercedValue> {
+) -> bz_error::Result<CoercedValue> {
     if attr_name == "testonly"
         && let Some(value) = i64::unpack_value(value)?
         && (value == 0 || value == 1)
@@ -185,7 +185,7 @@ fn apply_bazel_computed_defaults<'v>(
     internals: &ModuleInternals,
     computed_defaults: &SmallMap<String, FrozenBazelComputedDefault>,
     eval: &mut Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<AttrValues> {
+) -> bz_error::Result<AttrValues> {
     if computed_defaults.is_empty() {
         return Ok(attr_values);
     }
@@ -220,13 +220,13 @@ fn apply_bazel_computed_defaults<'v>(
                     )
                 })?;
             positional.push(
-                alloc_coerced_attr_value(value.value, eval).map_err(buck2_error::Error::from)?,
+                alloc_coerced_attr_value(value.value, eval).map_err(bz_error::Error::from)?,
             );
         }
 
         let raw_value = eval
             .eval_function(computed_default.callback().to_value(), &positional, &[])
-            .map_err(buck2_error::Error::from)?;
+            .map_err(bz_error::Error::from)?;
         let coerced = coerce_attr_value(
             attr_name,
             attribute,
@@ -309,7 +309,7 @@ pub trait AttributeSpecExt {
         param_parser: &mut ParametersParser<'v, '_>,
         size_hint: usize,
         use_bazel_target_names: bool,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         // "name" attribute value.
         &'v TargetNameRef,
         // Remaining attributes.
@@ -323,14 +323,14 @@ pub trait AttributeSpecExt {
         param_parser: &mut ParametersParser<'v, '_>,
         arg_count: usize,
         internals: &ModuleInternals,
-    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)>;
+    ) -> bz_error::Result<(&'v TargetNameRef, AttrValues)>;
 
     fn parse_named_values<'v>(
         &self,
         named: &SmallMap<StringValue<'v>, Value<'v>>,
         internals: &ModuleInternals,
         rule_name: &str,
-    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)>;
+    ) -> bz_error::Result<(&'v TargetNameRef, AttrValues)>;
 
     fn parse_named_values_with_bazel_computed_defaults<'v>(
         &self,
@@ -339,7 +339,7 @@ pub trait AttributeSpecExt {
         rule_name: &str,
         computed_defaults: &SmallMap<String, FrozenBazelComputedDefault>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)>;
+    ) -> bz_error::Result<(&'v TargetNameRef, AttrValues)>;
 
     /// Returns a starlark Parameters for the rule callable, but not default values.
     fn signature(&self, rule_name: String) -> ParametersSpec<Value<'_>>;
@@ -356,7 +356,7 @@ pub trait AttributeSpecExt {
 fn target_name<'v>(
     name: &'v str,
     use_bazel_target_names: bool,
-) -> buck2_error::Result<&'v TargetNameRef> {
+) -> bz_error::Result<&'v TargetNameRef> {
     if use_bazel_target_names {
         TargetNameRef::new_bazel(name)
     } else {
@@ -370,7 +370,7 @@ impl AttributeSpecExt for AttributeSpec {
         param_parser: &mut ParametersParser<'v, '_>,
         size_hint: usize,
         use_bazel_target_names: bool,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         &'v TargetNameRef,
         impl ExactSizeIterator<Item = (&'a str, AttributeId, &'a Attribute)> + 'a,
         AttrValues,
@@ -401,7 +401,7 @@ impl AttributeSpecExt for AttributeSpec {
         param_parser: &mut ParametersParser<'v, '_>,
         arg_count: usize,
         internals: &ModuleInternals,
-    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)> {
+    ) -> bz_error::Result<(&'v TargetNameRef, AttrValues)> {
         let (name, indices, mut attr_values) = self.start_parse(
             param_parser,
             arg_count,
@@ -505,7 +505,7 @@ impl AttributeSpecExt for AttributeSpec {
         named: &SmallMap<StringValue<'v>, Value<'v>>,
         internals: &ModuleInternals,
         rule_name: &str,
-    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)> {
+    ) -> bz_error::Result<(&'v TargetNameRef, AttrValues)> {
         for (provided_name, _) in named {
             if !self
                 .attr_specs()
@@ -643,7 +643,7 @@ impl AttributeSpecExt for AttributeSpec {
         rule_name: &str,
         computed_defaults: &SmallMap<String, FrozenBazelComputedDefault>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)> {
+    ) -> bz_error::Result<(&'v TargetNameRef, AttrValues)> {
         let (name, attr_values) = self.parse_named_values(named, internals, rule_name)?;
         let attr_values = apply_bazel_computed_defaults(
             self,

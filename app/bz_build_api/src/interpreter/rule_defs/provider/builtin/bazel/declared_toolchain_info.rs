@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
+use bz_build_api_derive::internal_provider;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -16,7 +16,7 @@ use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 
 /// Internal provider produced by Bazel's native `toolchain()` rule.
 #[internal_provider(declared_toolchain_info_creator)]

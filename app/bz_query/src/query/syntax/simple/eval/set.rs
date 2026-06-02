@@ -12,7 +12,7 @@ use std::fmt;
 use std::fmt::Display;
 
 use allocative::Allocative;
-use buck2_hash::BuckIndexSet;
+use bz_hash::BuckIndexSet;
 use display_container::fmt_container;
 use dupe::IterDupedExt;
 use fancy_regex::Regex;
@@ -59,10 +59,10 @@ impl<T: QueryTarget> TargetSet<T> {
         self.targets.len()
     }
 
-    pub(crate) fn filter<F: Fn(&T) -> buck2_error::Result<bool>>(
+    pub(crate) fn filter<F: Fn(&T) -> bz_error::Result<bool>>(
         &self,
         filter: F,
-    ) -> buck2_error::Result<TargetSet<T>> {
+    ) -> bz_error::Result<TargetSet<T>> {
         let mut targets = LabelIndexedSet::new();
         for target in self.targets.iter() {
             if filter(target)? {
@@ -80,12 +80,12 @@ impl<T: QueryTarget> TargetSet<T> {
         FileSet::new(files)
     }
 
-    pub fn inputs(&self) -> buck2_error::Result<FileSet> {
+    pub fn inputs(&self) -> bz_error::Result<FileSet> {
         let mut files = BuckIndexSet::default();
         for target in self.targets.iter() {
             target.inputs_for_each(|file| {
                 files.insert(FileNode(file));
-                buck2_error::Ok(())
+                bz_error::Ok(())
             })?;
         }
         Ok(FileSet::new(files))
@@ -174,8 +174,8 @@ impl<T: QueryTarget> TargetSet<T> {
     pub fn attrfilter(
         &self,
         attribute: &str,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<TargetSet<T>> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<TargetSet<T>> {
         self.filter(move |node| {
             node.map_any_attr(attribute, |val| match val {
                 None => Ok(false),
@@ -187,8 +187,8 @@ impl<T: QueryTarget> TargetSet<T> {
     pub fn nattrfilter(
         &self,
         attribute: &str,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<TargetSet<T>> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<TargetSet<T>> {
         self.filter(move |node| {
             node.map_attr(attribute, |val| match val {
                 None => Ok(false),
@@ -201,30 +201,30 @@ impl<T: QueryTarget> TargetSet<T> {
         &self,
         attribute: &str,
         value: &str,
-    ) -> buck2_error::Result<TargetSet<T>> {
+    ) -> bz_error::Result<TargetSet<T>> {
         let regex = Regex::new(value)?;
-        let filter = move |s: &'_ str| -> buck2_error::Result<bool> { Ok(regex.is_match(s)?) };
+        let filter = move |s: &'_ str| -> bz_error::Result<bool> { Ok(regex.is_match(s)?) };
         self.attrfilter(attribute, &filter)
     }
 
     /// Filter targets by fully qualified name using regex partial match.
-    pub fn filter_name(&self, regex: &str) -> buck2_error::Result<TargetSet<T>> {
+    pub fn filter_name(&self, regex: &str) -> bz_error::Result<TargetSet<T>> {
         let mut re = RegexBuilder::new(regex);
         re.delegate_dfa_size_limit(100 << 20);
         let re = re.build()?;
         self.filter(|node| Ok(re.is_match(&node.label_for_filter())?))
     }
 
-    pub fn kind(&self, regex: &str) -> buck2_error::Result<TargetSet<T>> {
+    pub fn kind(&self, regex: &str) -> bz_error::Result<TargetSet<T>> {
         let re = Regex::new(regex)?;
         self.filter(|node| Ok(re.is_match(&node.rule_type())?))
     }
 
-    pub fn intersect(&self, right: &TargetSet<T>) -> buck2_error::Result<TargetSet<T>> {
+    pub fn intersect(&self, right: &TargetSet<T>) -> bz_error::Result<TargetSet<T>> {
         self.filter(|node| Ok(right.contains(node.node_key())))
     }
 
-    pub fn difference(&self, right: &TargetSet<T>) -> buck2_error::Result<TargetSet<T>> {
+    pub fn difference(&self, right: &TargetSet<T>) -> bz_error::Result<TargetSet<T>> {
         self.filter(|node| Ok(!right.contains(node.node_key())))
     }
 }

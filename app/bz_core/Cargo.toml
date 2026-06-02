@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 license = { workspace = true }
-name = "buck2_core"
+name = "bz_core"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -43,12 +43,12 @@ gazebo = { workspace = true }
 lock_free_hashtable = { workspace = true }
 static_interner = { workspace = true }
 
-buck2_data = { workspace = true }
-buck2_env = { workspace = true }
-buck2_error = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_hash = { workspace = true }
-buck2_util = { workspace = true }
+bz_data = { workspace = true }
+bz_env = { workspace = true }
+bz_error = { workspace = true }
+bz_fs = { workspace = true }
+bz_hash = { workspace = true }
+bz_util = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 common-path = { workspace = true }

@@ -11,16 +11,16 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use buck2_artifact::actions::key::ActionKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::soft_error;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::internal_error;
-use buck2_hash::BuckHashSet;
+use bz_artifact::actions::key::ActionKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::soft_error;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_error::internal_error;
+use bz_hash::BuckHashSet;
 use dupe::Dupe;
 
 use crate::build::detailed_aggregated_metrics::FxMultiMap;
-use crate::build::detailed_aggregated_metrics::buck2_sketches::compute_action_graph_sketch;
+use crate::build::detailed_aggregated_metrics::bz_sketches::compute_action_graph_sketch;
 use crate::build::detailed_aggregated_metrics::events::DetailedAggregatedMetricsEvent;
 use crate::build::detailed_aggregated_metrics::events::DetailedAggregatedMetricsEventHandler;
 use crate::build::detailed_aggregated_metrics::implementation::traverse::traverse_partial_action_graph;
@@ -46,8 +46,8 @@ use crate::deferred::calculation::DeferredHolder;
 /// build it occurred in. We expect the user to track which executions are relevant to the current build,
 /// and use that later to compute metrics both over the whole graph and just specific to the current build.
 pub struct DetailedAggregatedMetricsStateTracker {
-    observed_executions: buck2_hash::BuckHashMap<ActionKey, ActionExecutionMetrics>,
-    analysis_nodes: Arc<buck2_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>>,
+    observed_executions: bz_hash::BuckHashMap<ActionKey, ActionExecutionMetrics>,
+    analysis_nodes: Arc<bz_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>>,
 }
 
 impl DetailedAggregatedMetricsStateTracker {
@@ -71,8 +71,8 @@ impl DetailedAggregatedMetricsStateTracker {
 
     fn new() -> Self {
         Self {
-            analysis_nodes: Arc::new(buck2_hash::BuckHashMap::default()),
-            observed_executions: buck2_hash::BuckHashMap::default(),
+            analysis_nodes: Arc::new(bz_hash::BuckHashMap::default()),
+            observed_executions: bz_hash::BuckHashMap::default(),
         }
     }
 
@@ -101,7 +101,7 @@ impl DetailedAggregatedMetricsStateTracker {
     async fn compute_metrics(
         &self,
         events: PerBuildEvents,
-    ) -> buck2_error::Result<DetailedAggregatedMetrics> {
+    ) -> bz_error::Result<DetailedAggregatedMetrics> {
         let now = Instant::now();
 
         let futures = events
@@ -131,7 +131,7 @@ impl DetailedAggregatedMetricsStateTracker {
                 })
             });
 
-        let results = buck2_util::future::try_join_all(futures).await?;
+        let results = bz_util::future::try_join_all(futures).await?;
 
         let mut action_mappings: FxMultiMap<ActionKey, usize> = FxMultiMap::default();
         let mut target_mappings: FxMultiMap<ConfiguredTargetLabel, usize> = FxMultiMap::default();
@@ -208,7 +208,7 @@ impl DetailedAggregatedMetricsStateTracker {
     async fn compute_action_graph_sketch(
         &self,
         top_level_targets: &[TopLevelTargetSpec],
-    ) -> buck2_error::Result<ActionGraphSketchResult> {
+    ) -> bz_error::Result<ActionGraphSketchResult> {
         let futures = top_level_targets.iter().map(|spec| {
             let analysis_nodes = self.analysis_nodes.dupe();
             let label = spec.label.clone();
@@ -232,7 +232,7 @@ impl DetailedAggregatedMetricsStateTracker {
             })
         });
 
-        let results = buck2_util::future::try_join_all(futures).await?;
+        let results = bz_util::future::try_join_all(futures).await?;
 
         Ok(ActionGraphSketchResult {
             per_target_sketches: results,

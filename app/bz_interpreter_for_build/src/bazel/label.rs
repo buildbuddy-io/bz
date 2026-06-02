@@ -1,11 +1,11 @@
-use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::package::PackageLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_core::target::name::TargetNameRef;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::package::PackageLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetNameRef;
 
 pub(crate) fn bazel_absolute_label_parts(label: &str) -> Option<(String, String)> {
     if let Some((package, target)) = label.rsplit_once(':') {
@@ -26,7 +26,7 @@ pub(crate) fn bazel_absolute_label_parts(label: &str) -> Option<(String, String)
 pub(crate) fn parse_bazel_canonical_providers_label(
     label: &str,
     root_cell: CellName,
-) -> buck2_error::Result<Option<ProvidersLabel>> {
+) -> bz_error::Result<Option<ProvidersLabel>> {
     let Some(label) = label.strip_prefix("@@") else {
         return Ok(None);
     };
@@ -57,7 +57,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_bazel_canonical_label() -> buck2_error::Result<()> {
+    fn parses_bazel_canonical_label() -> bz_error::Result<()> {
         let label = parse_bazel_canonical_providers_label(
             "@@rules_uv+//uv/private:uv.lock.json",
             CellName::unchecked_new("root")?,
@@ -71,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_bazel_canonical_root_label() -> buck2_error::Result<()> {
+    fn parses_bazel_canonical_root_label() -> bz_error::Result<()> {
         let label =
             parse_bazel_canonical_providers_label("@@//foo/bar", CellName::unchecked_new("root")?)?
                 .unwrap();

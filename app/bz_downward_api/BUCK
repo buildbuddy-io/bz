@@ -3,12 +3,12 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_downward_api",
+    name = "bz_downward_api",
     srcs = glob(["src/**/*.rs"]),
     deps = [
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:tracing",
-        "//bz/app/bz_error:buck2_error",
-        "//bz/shed/buck2_hash:buck2_hash",
+        "//bz/app/bz_error:bz_error",
+        "//bz/shed/bz_hash:bz_hash",
     ],
 )

@@ -10,10 +10,10 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::cells::name::CellName;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_util::late_binding::LateBinding;
+use bz_core::cells::name::CellName;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::target::label::label::TargetLabel;
+use bz_util::late_binding::LateBinding;
 use derive_more::Display;
 use dice::DiceComputations;
 use dupe::Dupe;
@@ -24,7 +24,7 @@ pub trait ConfigurationCalculationDyn: Send + Sync + 'static {
         &self,
         dice: &mut DiceComputations<'_>,
         target: &TargetLabel,
-    ) -> buck2_error::Result<ConfigurationData>;
+    ) -> bz_error::Result<ConfigurationData>;
 }
 
 /// For config_settings that need to be resolved when producing a ResolvedConfiguration, the buckconfig values are looked up in

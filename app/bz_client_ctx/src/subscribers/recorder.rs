@@ -19,51 +19,51 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use buck2_cli_proto::command_result;
-use buck2_common::build_count::BuildCount;
-use buck2_common::build_count::BuildCountManager;
-use buck2_common::convert::ProstDurationExt;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_core::buck2_env;
-use buck2_core::soft_error;
-use buck2_data::ErrorReport;
-use buck2_data::FileWatcherProvider;
-use buck2_data::FileWatcherStart;
-use buck2_data::InvocationOutcome;
-use buck2_data::ProcessedErrorReport;
-use buck2_data::SchedulingMode;
-use buck2_data::SoftError;
-use buck2_data::SystemInfo;
-use buck2_data::TargetCfg;
-use buck2_data::error::ErrorTag;
-use buck2_error::BuckErrorContext;
-use buck2_error::ExitCode;
-use buck2_error::Tier;
-use buck2_error::buck2_error;
-use buck2_error::classify::ERROR_TAG_UNCLASSIFIED;
-use buck2_error::classify::ErrorLike;
-use buck2_error::classify::source_area;
-use buck2_error::internal_error;
-use buck2_error::source_location::SourceLocation;
-use buck2_event_log::ttl::manifold_event_log_ttl;
-use buck2_event_observer::action_stats;
-use buck2_event_observer::cache_hit_rate::total_cache_hit_rate;
-use buck2_event_observer::last_command_execution_kind;
-use buck2_event_observer::last_command_execution_kind::LastCommandExecutionKind;
-use buck2_event_observer::last_command_execution_kind::get_last_command_execution_time;
-use buck2_events::BuckEvent;
-use buck2_events::daemon_id::DaemonId;
-use buck2_events::sink::remote::ScribeConfig;
-use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_util::network_speed_average::NetworkSpeedAverage;
-use buck2_util::sliding_window::SlidingWindow;
-use buck2_wrapper_common::BUCK_WRAPPER_START_TIME_ENV_VAR;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_cli_proto::command_result;
+use bz_common::build_count::BuildCount;
+use bz_common::build_count::BuildCountManager;
+use bz_common::convert::ProstDurationExt;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_core::bz_env;
+use bz_core::soft_error;
+use bz_data::ErrorReport;
+use bz_data::FileWatcherProvider;
+use bz_data::FileWatcherStart;
+use bz_data::InvocationOutcome;
+use bz_data::ProcessedErrorReport;
+use bz_data::SchedulingMode;
+use bz_data::SoftError;
+use bz_data::SystemInfo;
+use bz_data::TargetCfg;
+use bz_data::error::ErrorTag;
+use bz_error::BuckErrorContext;
+use bz_error::ExitCode;
+use bz_error::Tier;
+use bz_error::bz_error;
+use bz_error::classify::ERROR_TAG_UNCLASSIFIED;
+use bz_error::classify::ErrorLike;
+use bz_error::classify::source_area;
+use bz_error::internal_error;
+use bz_error::source_location::SourceLocation;
+use bz_event_log::ttl::manifold_event_log_ttl;
+use bz_event_observer::action_stats;
+use bz_event_observer::cache_hit_rate::total_cache_hit_rate;
+use bz_event_observer::last_command_execution_kind;
+use bz_event_observer::last_command_execution_kind::LastCommandExecutionKind;
+use bz_event_observer::last_command_execution_kind::get_last_command_execution_time;
+use bz_events::BuckEvent;
+use bz_events::daemon_id::DaemonId;
+use bz_events::sink::remote::ScribeConfig;
+use bz_events::sink::remote::new_remote_event_sink_if_enabled;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_util::network_speed_average::NetworkSpeedAverage;
+use bz_util::sliding_window::SlidingWindow;
+use bz_wrapper_common::BUCK_WRAPPER_START_TIME_ENV_VAR;
+use bz_wrapper_common::invocation_id::TraceId;
 use console::strip_ansi_codes;
 use dupe::Dupe;
 use gazebo::prelude::VecExt;
@@ -87,14 +87,14 @@ use crate::subscribers::system_warning::check_download_speed;
 use crate::subscribers::system_warning::check_memory_pressure;
 use crate::subscribers::system_warning::check_remaining_disk_space;
 
-pub fn process_memory(snapshot: &buck2_data::Snapshot) -> Option<u64> {
-    // buck2_rss is the resident set size observed by daemon (exluding subprocesses).
-    // On MacOS buck2_rss is not stored and also RSS in general is not a reliable indicator due to swapping which moves pages from resident set to disk.
-    // Hence, we take max of buck2_rss and malloc_bytes_active (coming from jemalloc and is available on Macs as well).
+pub fn process_memory(snapshot: &bz_data::Snapshot) -> Option<u64> {
+    // bz_rss is the resident set size observed by daemon (exluding subprocesses).
+    // On MacOS bz_rss is not stored and also RSS in general is not a reliable indicator due to swapping which moves pages from resident set to disk.
+    // Hence, we take max of bz_rss and malloc_bytes_active (coming from jemalloc and is available on Macs as well).
     snapshot
         .malloc_bytes_active
         .into_iter()
-        .chain(snapshot.buck2_rss)
+        .chain(snapshot.bz_rss)
         .max()
 }
 
@@ -109,7 +109,7 @@ pub struct InvocationRecorder {
     start_time: SystemTime,
     build_count_manager: Option<BuildCountManager>,
     trace_id: TraceId,
-    command_end: Option<buck2_data::CommandEnd>,
+    command_end: Option<bz_data::CommandEnd>,
     command_duration: Option<prost_types::Duration>,
     re_session_id: Option<String>,
     re_experiment_name: Option<String>,
@@ -125,15 +125,15 @@ pub struct InvocationRecorder {
     run_fallback_re_queue_count: u64,
     run_local_only_count: u64,
     local_actions_executed_via_worker: u64,
-    first_snapshot: Option<buck2_data::Snapshot>,
-    last_snapshot: Option<buck2_data::Snapshot>,
+    first_snapshot: Option<bz_data::Snapshot>,
+    last_snapshot: Option<bz_data::Snapshot>,
     min_attempted_build_count_since_rebase: u64,
     min_build_count_since_rebase: u64,
     cache_upload_count: u64,
     cache_upload_attempt_count: u64,
     dep_file_upload_count: u64,
     dep_file_upload_attempt_count: u64,
-    parsed_target_patterns: Option<buck2_data::ParsedTargetPatterns>,
+    parsed_target_patterns: Option<bz_data::ParsedTargetPatterns>,
     filesystem: Option<String>,
     watchman_version: Option<String>,
     eden_version: Option<String>,
@@ -165,7 +165,7 @@ pub struct InvocationRecorder {
     time_to_first_infra_failure_test_result: Option<Duration>,
 
     system_info: SystemInfo,
-    file_watcher_stats: Option<buck2_data::FileWatcherStats>,
+    file_watcher_stats: Option<bz_data::FileWatcherStats>,
     file_watcher_duration: Option<Duration>,
     time_to_last_action_execution_end: Option<Duration>,
     initial_sink_success_count: Option<u64>,
@@ -189,7 +189,7 @@ pub struct InvocationRecorder {
     critical_path_backend: Option<String>,
     bxl_ensure_artifacts_duration: Option<prost_types::Duration>,
     install_duration: Option<prost_types::Duration>,
-    install_device_metadata: Vec<buck2_data::DeviceMetadata>,
+    install_device_metadata: Vec<bz_data::DeviceMetadata>,
     installer_log_url: Option<String>,
     initial_re_upload_bytes: Option<u64>,
     initial_re_download_bytes: Option<u64>,
@@ -212,10 +212,10 @@ pub struct InvocationRecorder {
     concurrent_command_ids: StdBuckHashSet<String>,
     daemon_connection_failure: bool,
     /// Daemon started by this command.
-    daemon_was_started: Option<buck2_data::DaemonWasStartedReason>,
+    daemon_was_started: Option<bz_data::DaemonWasStartedReason>,
     should_restart: bool,
-    client_metadata: Vec<buck2_data::ClientMetadata>,
-    agent_context: Vec<buck2_data::AgentContextEntry>,
+    client_metadata: Vec<bz_data::ClientMetadata>,
+    agent_context: Vec<bz_data::AgentContextEntry>,
     command_errors: Vec<ErrorReport>,
     exit_code: Option<u32>,
     exit_result_name: Option<String>,
@@ -279,7 +279,7 @@ pub struct InvocationRecorder {
     // Track peak allprocs memory pressure (PSI full avg60 %)
     memory_max_pressure_60s_avg_allprocs: Option<f64>,
     // CommandOptions data
-    command_options: Option<buck2_data::CommandOptions>,
+    command_options: Option<bz_data::CommandOptions>,
     // Initial IO counters captured at invocation start
     initial_io_copy_count: Option<u32>,
     initial_io_symlink_count: Option<u32>,
@@ -390,7 +390,7 @@ impl InvocationRecorder {
             concurrent_command_blocking_duration: None,
             // Use a null daemon_id here initially - if we later get metadata back from the daemon,
             // we'll overwrite this then
-            metadata: buck2_events::metadata::collect(&DaemonId::null()),
+            metadata: bz_events::metadata::collect(&DaemonId::null()),
             analysis_count: 0,
             load_count: 0,
             daemon_in_memory_state_is_corrupted: false,
@@ -608,13 +608,13 @@ impl InvocationRecorder {
         &mut self,
         is_success: bool,
         command_name: &str,
-    ) -> buck2_error::Result<Option<BuildCount>> {
+    ) -> bz_error::Result<Option<BuildCount>> {
         if let Some(stats) = &self.file_watcher_stats {
             if let Some(merge_base) = &stats.branched_from_revision {
                 match &self.parsed_target_patterns {
                     None => {
                         if is_success {
-                            return Err(buck2_error!(
+                            return Err(bz_error!(
                                 ErrorTag::InvalidEvent,
                                 "successful {} commands should have resolved target patterns",
                                 command_name
@@ -678,7 +678,7 @@ impl InvocationRecorder {
         for error in self.command_errors.drain(..) {
             // FIXME this error should be updated at the source if possible, and not only in the invocation record.
             let error: ErrorReport = if error.tags.contains(&(ErrorTag::ClientGrpc as i32)) {
-                let error: buck2_error::Error = error.into();
+                let error: bz_error::Error = error.into();
                 // Add stderr to GRPC connection errors if available
                 let error = classify_server_stderr(error, &self.server_stderr);
                 let error = if self.server_stderr.is_empty() {
@@ -979,14 +979,14 @@ impl InvocationRecorder {
 
         let errors = self.finalize_errors();
 
-        let record = buck2_data::InvocationRecord {
+        let record = bz_data::InvocationRecord {
             command_name: Some(self.command_name.unwrap_or("unknown").to_owned()),
             command_end: self.command_end.take(),
             command_duration: self.command_duration.take(),
             client_walltime: duration_since(SystemTime::now(), self.start_time)
                 .try_into()
                 .ok(),
-            wrapper_start_time: buck2_env!(BUCK_WRAPPER_START_TIME_ENV_VAR, type=u64)
+            wrapper_start_time: bz_env!(BUCK_WRAPPER_START_TIME_ENV_VAR, type=u64)
                 .ok()
                 .flatten()
                 .or_else(|| {
@@ -1231,7 +1231,7 @@ impl InvocationRecorder {
             self.trace_id.dupe(),
             None,
             None,
-            buck2_data::RecordEvent {
+            bz_data::RecordEvent {
                 data: Some((Box::new(record)).into()),
             }
             .into(),
@@ -1247,7 +1247,7 @@ impl InvocationRecorder {
                 serde_json::to_writer(&mut out, event.event())
                     .buck_error_context("Error writing")?;
                 out.flush().buck_error_context("Error flushing")?;
-                buck2_error::Ok(())
+                bz_error::Ok(())
             })();
 
             if let Err(e) = &res {
@@ -1277,10 +1277,10 @@ impl InvocationRecorder {
 
     // Collects client-side state and data, suitable for telemetry.
     // NOTE: If data is visible from the daemon, put it in cli::metadata::collect()
-    fn default_metadata() -> buck2_data::TypedMetadata {
+    fn default_metadata() -> bz_data::TypedMetadata {
         let mut ints = StdBuckHashMap::default();
         ints.insert("is_tty".to_owned(), std::io::stderr().is_tty() as i64);
-        buck2_data::TypedMetadata {
+        bz_data::TypedMetadata {
             ints,
             strings: StdBuckHashMap::default(),
         }
@@ -1288,9 +1288,9 @@ impl InvocationRecorder {
 
     fn handle_command_start(
         &mut self,
-        command: &buck2_data::CommandStart,
+        command: &bz_data::CommandStart,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.metadata.extend(command.metadata.clone());
         self.time_to_command_start = Some(duration_since(event.timestamp(), self.start_time));
         Ok(())
@@ -1298,14 +1298,14 @@ impl InvocationRecorder {
 
     async fn handle_command_end(
         &mut self,
-        command: &buck2_data::CommandEnd,
+        command: &bz_data::CommandEnd,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // Awkwardly unpacks the SpanEnd event so we can read its duration.
         let command_end = match event.data() {
-            buck2_data::buck_event::Data::SpanEnd(end) => end.clone(),
+            bz_data::buck_event::Data::SpanEnd(end) => end.clone(),
             _ => {
-                return Err(buck2_error!(
+                return Err(bz_error!(
                     ErrorTag::InvalidEvent,
                     "handle_command_end was passed a CommandEnd not contained in a SpanEndEvent"
                 ));
@@ -1318,10 +1318,10 @@ impl InvocationRecorder {
             .ok_or_else(|| internal_error!("Missing command data"))?;
 
         let build_count = match command_data {
-            buck2_data::command_end::Data::Build(..)
-            | buck2_data::command_end::Data::Test(..)
-            | buck2_data::command_end::Data::Install(..) => {
-                let build_completed = if let Some(buck2_data::BuildResult { build_completed }) =
+            bz_data::command_end::Data::Build(..)
+            | bz_data::command_end::Data::Test(..)
+            | bz_data::command_end::Data::Install(..) => {
+                let build_completed = if let Some(bz_data::BuildResult { build_completed }) =
                     command.build_result
                 {
                     build_completed
@@ -1352,9 +1352,9 @@ impl InvocationRecorder {
     }
     fn handle_command_critical_start(
         &mut self,
-        command: &buck2_data::CommandCriticalStart,
+        command: &bz_data::CommandCriticalStart,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.metadata.extend(command.metadata.clone());
         self.time_to_command_critical_section =
             Some(duration_since(event.timestamp(), self.start_time));
@@ -1362,18 +1362,18 @@ impl InvocationRecorder {
     }
     fn handle_command_critical_end(
         &mut self,
-        command: &buck2_data::CommandCriticalEnd,
+        command: &bz_data::CommandCriticalEnd,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.metadata.extend(command.metadata.clone());
         Ok(())
     }
 
     fn handle_action_execution_start(
         &mut self,
-        _action: &buck2_data::ActionExecutionStart,
+        _action: &bz_data::ActionExecutionStart,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if self.time_to_first_action_execution.is_none() {
             self.time_to_first_action_execution =
                 Some(duration_since(event.timestamp(), self.start_time));
@@ -1392,13 +1392,13 @@ impl InvocationRecorder {
     }
     fn handle_action_execution_end(
         &mut self,
-        action: &buck2_data::ActionExecutionEnd,
+        action: &bz_data::ActionExecutionEnd,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // Decrement current in-progress actions counter
         self.current_in_progress_actions = self.current_in_progress_actions.saturating_sub(1);
 
-        if action.kind == buck2_data::ActionKind::Run as i32 {
+        if action.kind == bz_data::ActionKind::Run as i32 {
             if action_stats::was_fallback_action(action) {
                 self.run_fallback_count += 1;
             }
@@ -1447,7 +1447,7 @@ impl InvocationRecorder {
         if action.commands.iter().any(|c| {
             matches!(
                 c.status,
-                Some(buck2_data::command_execution::Status::Failure(..))
+                Some(bz_data::command_execution::Status::Failure(..))
             )
         }) {
             self.run_command_failure_count += 1;
@@ -1463,9 +1463,9 @@ impl InvocationRecorder {
 
     fn handle_analysis_start(
         &mut self,
-        _analysis: &buck2_data::AnalysisStart,
+        _analysis: &bz_data::AnalysisStart,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.time_to_first_analysis
             .get_or_insert_with(|| duration_since(event.timestamp(), self.start_time));
         Ok(())
@@ -1473,9 +1473,9 @@ impl InvocationRecorder {
 
     fn handle_load_start(
         &mut self,
-        _eval: &buck2_data::LoadBuildFileStart,
+        _eval: &bz_data::LoadBuildFileStart,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.time_to_load_first_build_file
             .get_or_insert_with(|| duration_since(event.timestamp(), self.start_time));
         Ok(())
@@ -1483,9 +1483,9 @@ impl InvocationRecorder {
 
     fn handle_executor_stage_start(
         &mut self,
-        executor_stage: &buck2_data::ExecutorStageStart,
+        executor_stage: &bz_data::ExecutorStageStart,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let span_id = if let Some(span_id) = event.span_id() {
             span_id
         } else {
@@ -1493,8 +1493,8 @@ impl InvocationRecorder {
         };
 
         match &executor_stage.stage {
-            Some(buck2_data::executor_stage_start::Stage::Re(re_stage)) => match &re_stage.stage {
-                Some(buck2_data::re_stage::Stage::Execute(_)) => {
+            Some(bz_data::executor_stage_start::Stage::Re(re_stage)) => match &re_stage.stage {
+                Some(bz_data::re_stage::Stage::Execute(_)) => {
                     self.executor_stages_by_span
                         .insert(span_id.into(), ExecutorStageType::RemoteAction);
                     self.current_in_progress_remote_actions =
@@ -1506,8 +1506,8 @@ impl InvocationRecorder {
                     self.time_to_first_command_execution_start
                         .get_or_insert_with(|| duration_since(event.timestamp(), self.start_time));
                 }
-                Some(buck2_data::re_stage::Stage::WorkerUpload(_))
-                | Some(buck2_data::re_stage::Stage::WorkerDownload(_)) => {
+                Some(bz_data::re_stage::Stage::WorkerUpload(_))
+                | Some(bz_data::re_stage::Stage::WorkerDownload(_)) => {
                     self.executor_stages_by_span
                         .insert(span_id.into(), ExecutorStageType::RemoteUpload);
                     self.current_in_progress_remote_uploads =
@@ -1519,8 +1519,8 @@ impl InvocationRecorder {
                 }
                 _ => {}
             },
-            Some(buck2_data::executor_stage_start::Stage::Local(local_stage)) => {
-                if let Some(buck2_data::local_stage::Stage::Execute(_)) = &local_stage.stage {
+            Some(bz_data::executor_stage_start::Stage::Local(local_stage)) => {
+                if let Some(bz_data::local_stage::Stage::Execute(_)) = &local_stage.stage {
                     self.executor_stages_by_span
                         .insert(span_id.into(), ExecutorStageType::LocalAction);
                     self.current_in_progress_local_actions =
@@ -1540,9 +1540,9 @@ impl InvocationRecorder {
 
     fn handle_executor_stage_end(
         &mut self,
-        _executor_stage: buck2_data::ExecutorStageEnd,
+        _executor_stage: bz_data::ExecutorStageEnd,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // Look up the stage type from the span ID and decrement the appropriate counter
         if let Some(span_id) = event.span_id() {
             if let Some(stage_type) = self.executor_stages_by_span.remove(&span_id.into()) {
@@ -1567,9 +1567,9 @@ impl InvocationRecorder {
 
     fn handle_cache_upload_end(
         &mut self,
-        cache_upload: &buck2_data::CacheUploadEnd,
+        cache_upload: &bz_data::CacheUploadEnd,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if cache_upload.success {
             self.cache_upload_count += 1;
         }
@@ -1579,9 +1579,9 @@ impl InvocationRecorder {
 
     fn handle_dep_file_upload_end(
         &mut self,
-        upload: &buck2_data::DepFileUploadEnd,
+        upload: &bz_data::DepFileUploadEnd,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if upload.success {
             self.dep_file_upload_count += 1;
         }
@@ -1591,9 +1591,9 @@ impl InvocationRecorder {
 
     fn handle_re_session_created(
         &mut self,
-        session: &buck2_data::RemoteExecutionSessionCreated,
+        session: &bz_data::RemoteExecutionSessionCreated,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.re_session_id = Some(session.session_id.clone());
         self.re_experiment_name = Some(session.experiment_name.clone());
         self.persistent_cache_mode = session.persistent_cache_mode.clone();
@@ -1602,9 +1602,9 @@ impl InvocationRecorder {
 
     fn handle_materialization_end(
         &mut self,
-        materialization: &buck2_data::MaterializationEnd,
+        materialization: &bz_data::MaterializationEnd,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.materialization_output_size += materialization.total_bytes;
         self.materialization_files += materialization.file_count;
         Ok(())
@@ -1612,8 +1612,8 @@ impl InvocationRecorder {
 
     fn handle_materializer_state_info(
         &mut self,
-        materializer_state_info: buck2_data::MaterializerStateInfo,
-    ) -> buck2_error::Result<()> {
+        materializer_state_info: bz_data::MaterializerStateInfo,
+    ) -> bz_error::Result<()> {
         self.initial_materializer_entries_from_sqlite =
             Some(materializer_state_info.num_entries_from_sqlite);
         Ok(())
@@ -1621,13 +1621,13 @@ impl InvocationRecorder {
 
     fn handle_bxl_ensure_artifacts_end(
         &mut self,
-        _bxl_ensure_artifacts_end: buck2_data::BxlEnsureArtifactsEnd,
+        _bxl_ensure_artifacts_end: bz_data::BxlEnsureArtifactsEnd,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let bxl_ensure_artifacts_end = match event.data() {
-            buck2_data::buck_event::Data::SpanEnd(end) => end.clone(),
+            bz_data::buck_event::Data::SpanEnd(end) => end.clone(),
             _ => {
-                return Err(buck2_error!(
+                return Err(bz_error!(
                     ErrorTag::InvalidEvent,
                     "handle_bxl_ensure_artifacts_end was passed a BxlEnsureArtifacts not contained in a SpanEndEvent"
                 ));
@@ -1640,8 +1640,8 @@ impl InvocationRecorder {
 
     fn handle_install_finished(
         &mut self,
-        install_finished: &buck2_data::InstallFinished,
-    ) -> buck2_error::Result<()> {
+        install_finished: &bz_data::InstallFinished,
+    ) -> bz_error::Result<()> {
         self.install_duration = install_finished.duration;
         self.install_device_metadata = install_finished.device_metadata.clone();
         self.installer_log_url = install_finished.log_url.clone();
@@ -1650,22 +1650,22 @@ impl InvocationRecorder {
 
     fn handle_system_info(
         &mut self,
-        system_info: &buck2_data::SystemInfo,
-    ) -> buck2_error::Result<()> {
+        system_info: &bz_data::SystemInfo,
+    ) -> bz_error::Result<()> {
         self.system_info = system_info.clone();
         Ok(())
     }
 
     fn handle_test_discovery(
         &mut self,
-        test_info: &buck2_data::TestDiscovery,
+        test_info: &bz_data::TestDiscovery,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match &test_info.data {
-            Some(buck2_data::test_discovery::Data::Session(session_info)) => {
+            Some(bz_data::test_discovery::Data::Session(session_info)) => {
                 self.test_info = Some(session_info.info.clone());
             }
-            Some(buck2_data::test_discovery::Data::Tests(..)) | None => {}
+            Some(bz_data::test_discovery::Data::Tests(..)) | None => {}
         }
 
         Ok(())
@@ -1673,9 +1673,9 @@ impl InvocationRecorder {
 
     fn handle_test_discovery_start(
         &mut self,
-        _test_discovery: &buck2_data::TestDiscoveryStart,
+        _test_discovery: &bz_data::TestDiscoveryStart,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.time_to_first_test_discovery
             .get_or_insert_with(|| duration_since(event.timestamp(), self.start_time));
         Ok(())
@@ -1683,9 +1683,9 @@ impl InvocationRecorder {
 
     fn handle_test_run_start(
         &mut self,
-        _test_run: &buck2_data::TestRunStart,
+        _test_run: &bz_data::TestRunStart,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.time_to_first_test_run
             .get_or_insert_with(|| duration_since(event.timestamp(), self.start_time));
         Ok(())
@@ -1693,49 +1693,49 @@ impl InvocationRecorder {
 
     fn handle_test_result(
         &mut self,
-        test_result: &buck2_data::TestResult,
+        test_result: &bz_data::TestResult,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let duration = duration_since(event.timestamp(), self.start_time);
         match test_result.status() {
-            buck2_data::TestStatus::Pass => {
+            bz_data::TestStatus::Pass => {
                 self.time_to_first_pass_test_result.get_or_insert(duration);
             }
-            buck2_data::TestStatus::Fail => {
+            bz_data::TestStatus::Fail => {
                 self.time_to_first_fail_test_result.get_or_insert(duration);
             }
-            buck2_data::TestStatus::Fatal => {
+            bz_data::TestStatus::Fatal => {
                 self.time_to_first_fatal_test_result.get_or_insert(duration);
             }
-            buck2_data::TestStatus::Skip => {
+            bz_data::TestStatus::Skip => {
                 self.time_to_first_skip_test_result.get_or_insert(duration);
             }
-            buck2_data::TestStatus::InfraFailure => {
+            bz_data::TestStatus::InfraFailure => {
                 self.time_to_first_infra_failure_test_result
                     .get_or_insert(duration);
             }
-            buck2_data::TestStatus::Timeout => {
+            bz_data::TestStatus::Timeout => {
                 self.time_to_first_timeout_test_result
                     .get_or_insert(duration);
             }
-            buck2_data::TestStatus::Unknown => {
+            bz_data::TestStatus::Unknown => {
                 self.time_to_first_unknown_test_result
                     .get_or_insert(duration);
             }
             // Listing results, omit and rerun are not actual test results. Do nothing
-            buck2_data::TestStatus::ListingFailed
-            | buck2_data::TestStatus::ListingSuccess
-            | buck2_data::TestStatus::Omitted
-            | buck2_data::TestStatus::Rerun
-            | buck2_data::TestStatus::NotSetTestStatus => (),
+            bz_data::TestStatus::ListingFailed
+            | bz_data::TestStatus::ListingSuccess
+            | bz_data::TestStatus::Omitted
+            | bz_data::TestStatus::Rerun
+            | bz_data::TestStatus::NotSetTestStatus => (),
         };
         Ok(())
     }
 
     fn handle_dice_state_snapshot(
         &mut self,
-        dice_state_snapshot: &buck2_data::DiceStateSnapshot,
-    ) -> buck2_error::Result<()> {
+        dice_state_snapshot: &bz_data::DiceStateSnapshot,
+    ) -> bz_error::Result<()> {
         // Calculate the total in-progress keys and compute keys across all key types
         let mut total_in_progress = 0u64;
         let mut total_compute = 0u64;
@@ -1763,9 +1763,9 @@ impl InvocationRecorder {
 
     fn handle_build_graph_info(
         &mut self,
-        info: &buck2_data::BuildGraphExecutionInfo,
+        info: &bz_data::BuildGraphExecutionInfo,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut duration = Duration::default();
 
         for node in &info.critical_path2 {
@@ -1781,23 +1781,23 @@ impl InvocationRecorder {
 
     fn handle_io_provider_info(
         &mut self,
-        io_provider_info: &buck2_data::IoProviderInfo,
-    ) -> buck2_error::Result<()> {
+        io_provider_info: &bz_data::IoProviderInfo,
+    ) -> bz_error::Result<()> {
         if let Some(eden_version) = &io_provider_info.eden_version {
             self.eden_version = Some(eden_version.to_owned())
         }
         Ok(())
     }
 
-    fn handle_tag(&mut self, tag: &buck2_data::TagEvent) -> buck2_error::Result<()> {
+    fn handle_tag(&mut self, tag: &bz_data::TagEvent) -> bz_error::Result<()> {
         self.tags.extend(tag.tags.iter().cloned());
         Ok(())
     }
 
     fn handle_concurrent_commands(
         &mut self,
-        concurrent_commands: &buck2_data::ConcurrentCommands,
-    ) -> buck2_error::Result<()> {
+        concurrent_commands: &bz_data::ConcurrentCommands,
+    ) -> bz_error::Result<()> {
         concurrent_commands.trace_ids.iter().for_each(|c| {
             self.concurrent_command_ids.insert(c.clone());
         });
@@ -1808,9 +1808,9 @@ impl InvocationRecorder {
 
     fn handle_snapshot(
         &mut self,
-        update: &buck2_data::Snapshot,
+        update: &bz_data::Snapshot,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.max_malloc_bytes_active =
             max(self.max_malloc_bytes_active, update.malloc_bytes_active);
         self.max_malloc_bytes_allocated = max(
@@ -2079,10 +2079,10 @@ impl InvocationRecorder {
 
     fn handle_file_watcher_end(
         &mut self,
-        file_watcher: &buck2_data::FileWatcherEnd,
+        file_watcher: &bz_data::FileWatcherEnd,
         duration: Option<&prost_types::Duration>,
         _event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // We might receive this event twice, so ... deal with it by merging the two.
         // See: https://fb.workplace.com/groups/buck2dev/permalink/3396726613948720/
         self.file_watcher_stats =
@@ -2106,7 +2106,7 @@ impl InvocationRecorder {
     fn handle_file_watcher_start(
         &mut self,
         file_watcher: FileWatcherStart,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.file_watcher = FileWatcherProvider::try_from(file_watcher.provider)
             .ok()
             .map(|p| p.as_str_name().to_owned());
@@ -2115,16 +2115,16 @@ impl InvocationRecorder {
 
     fn handle_parsed_target_patterns(
         &mut self,
-        patterns: &buck2_data::ParsedTargetPatterns,
-    ) -> buck2_error::Result<()> {
+        patterns: &bz_data::ParsedTargetPatterns,
+    ) -> bz_error::Result<()> {
         self.parsed_target_patterns = Some(patterns.clone());
         Ok(())
     }
 
     fn handle_structured_error(
         &mut self,
-        err: &buck2_data::StructuredError,
-    ) -> buck2_error::Result<()> {
+        err: &bz_data::StructuredError,
+    ) -> bz_error::Result<()> {
         if let Some(soft_error_category) = err.soft_error_category.as_ref() {
             self.soft_error_categories
                 .insert(soft_error_category.to_owned());
@@ -2143,13 +2143,13 @@ impl InvocationRecorder {
 
     fn handle_dice_block_concurrent_command_end(
         &mut self,
-        _command: &buck2_data::DiceBlockConcurrentCommandEnd,
+        _command: &bz_data::DiceBlockConcurrentCommandEnd,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let block_concurrent_command = match event.data() {
-            buck2_data::buck_event::Data::SpanEnd(end) => end.clone(),
+            bz_data::buck_event::Data::SpanEnd(end) => end.clone(),
             _ => {
-                return Err(buck2_error!(
+                return Err(bz_error!(
                     ErrorTag::InvalidEvent,
                     "handle_dice_block_concurrent_command_end was passed a DiceBlockConcurrentCommandEnd not contained in a SpanEndEvent"
                 ));
@@ -2170,13 +2170,13 @@ impl InvocationRecorder {
 
     fn handle_dice_cleanup_end(
         &mut self,
-        _command: buck2_data::DiceCleanupEnd,
+        _command: bz_data::DiceCleanupEnd,
         event: &BuckEvent,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let dice_cleanup_end = match event.data() {
-            buck2_data::buck_event::Data::SpanEnd(end) => end.clone(),
+            bz_data::buck_event::Data::SpanEnd(end) => end.clone(),
             _ => {
-                return Err(buck2_error!(
+                return Err(bz_error!(
                     ErrorTag::InvalidEvent,
                     "handle_dice_cleanup_end was passed a DiceCleanupEnd not contained in a SpanEndEvent"
                 ));
@@ -2197,8 +2197,8 @@ impl InvocationRecorder {
 
     fn handle_version_control(
         &mut self,
-        revision: &buck2_data::VersionControlRevision,
-    ) -> buck2_error::Result<()> {
+        revision: &bz_data::VersionControlRevision,
+    ) -> bz_error::Result<()> {
         self.hg_revision = revision.hg_revision.clone().or(self.hg_revision.clone());
         self.has_local_changes = revision.has_local_changes.or(self.has_local_changes);
         self.version_control_errors
@@ -2209,13 +2209,13 @@ impl InvocationRecorder {
 
     fn handle_command_options(
         &mut self,
-        command_options: &buck2_data::CommandOptions,
-    ) -> buck2_error::Result<()> {
+        command_options: &bz_data::CommandOptions,
+    ) -> bz_error::Result<()> {
         self.command_options = Some(*command_options);
         Ok(())
     }
 
-    async fn handle_event(&mut self, event: &Arc<BuckEvent>) -> buck2_error::Result<()> {
+    async fn handle_event(&mut self, event: &Arc<BuckEvent>) -> bz_error::Result<()> {
         // TODO(nga): query now once in `EventsCtx`.
         let now = SystemTime::now();
         if let Ok(delay) = now.duration_since(event.timestamp()) {
@@ -2225,167 +2225,167 @@ impl InvocationRecorder {
         self.event_count += 1;
 
         match event.data() {
-            buck2_data::buck_event::Data::SpanStart(start) => {
+            bz_data::buck_event::Data::SpanStart(start) => {
                 match start
                     .data
                     .as_ref()
                     .ok_or_else(|| internal_error!("Missing `start`"))?
                 {
-                    buck2_data::span_start_event::Data::Command(command) => {
+                    bz_data::span_start_event::Data::Command(command) => {
                         self.handle_command_start(command, event)
                     }
-                    buck2_data::span_start_event::Data::CommandCritical(command) => {
+                    bz_data::span_start_event::Data::CommandCritical(command) => {
                         self.handle_command_critical_start(command, event)
                     }
-                    buck2_data::span_start_event::Data::ActionExecution(action) => {
+                    bz_data::span_start_event::Data::ActionExecution(action) => {
                         self.handle_action_execution_start(action, event)
                     }
-                    buck2_data::span_start_event::Data::Analysis(analysis) => {
+                    bz_data::span_start_event::Data::Analysis(analysis) => {
                         self.handle_analysis_start(analysis, event)
                     }
-                    buck2_data::span_start_event::Data::Load(eval) => {
+                    bz_data::span_start_event::Data::Load(eval) => {
                         self.handle_load_start(eval, event)
                     }
-                    buck2_data::span_start_event::Data::ExecutorStage(stage) => {
+                    bz_data::span_start_event::Data::ExecutorStage(stage) => {
                         self.handle_executor_stage_start(stage, event)
                     }
-                    buck2_data::span_start_event::Data::TestDiscovery(test_discovery) => {
+                    bz_data::span_start_event::Data::TestDiscovery(test_discovery) => {
                         self.handle_test_discovery_start(test_discovery, event)
                     }
-                    buck2_data::span_start_event::Data::TestStart(test_start) => {
+                    bz_data::span_start_event::Data::TestStart(test_start) => {
                         self.handle_test_run_start(test_start, event)
                     }
-                    buck2_data::span_start_event::Data::FileWatcher(file_watcher) => {
+                    bz_data::span_start_event::Data::FileWatcher(file_watcher) => {
                         self.handle_file_watcher_start(*file_watcher)
                     }
                     _ => Ok(()),
                 }
             }
-            buck2_data::buck_event::Data::SpanEnd(end) => {
+            bz_data::buck_event::Data::SpanEnd(end) => {
                 match end
                     .data
                     .as_ref()
                     .ok_or_else(|| internal_error!("Missing `end`"))?
                 {
-                    buck2_data::span_end_event::Data::Command(command) => {
+                    bz_data::span_end_event::Data::Command(command) => {
                         self.handle_command_end(command, event).await
                     }
-                    buck2_data::span_end_event::Data::CommandCritical(command) => {
+                    bz_data::span_end_event::Data::CommandCritical(command) => {
                         self.handle_command_critical_end(command, event)
                     }
-                    buck2_data::span_end_event::Data::ActionExecution(action) => {
+                    bz_data::span_end_event::Data::ActionExecution(action) => {
                         self.handle_action_execution_end(action, event)
                     }
-                    buck2_data::span_end_event::Data::FileWatcher(file_watcher) => {
+                    bz_data::span_end_event::Data::FileWatcher(file_watcher) => {
                         self.handle_file_watcher_end(file_watcher, end.duration.as_ref(), event)
                     }
-                    buck2_data::span_end_event::Data::CacheUpload(cache_upload) => {
+                    bz_data::span_end_event::Data::CacheUpload(cache_upload) => {
                         self.handle_cache_upload_end(cache_upload, event)
                     }
-                    buck2_data::span_end_event::Data::DepFileUpload(dep_file_upload) => {
+                    bz_data::span_end_event::Data::DepFileUpload(dep_file_upload) => {
                         self.handle_dep_file_upload_end(dep_file_upload, event)
                     }
-                    buck2_data::span_end_event::Data::Materialization(materialization) => {
+                    bz_data::span_end_event::Data::Materialization(materialization) => {
                         self.handle_materialization_end(materialization, event)
                     }
-                    buck2_data::span_end_event::Data::Analysis(..) => {
+                    bz_data::span_end_event::Data::Analysis(..) => {
                         self.analysis_count += 1;
                         Ok(())
                     }
-                    buck2_data::span_end_event::Data::Load(..) => {
+                    bz_data::span_end_event::Data::Load(..) => {
                         self.load_count += 1;
                         Ok(())
                     }
-                    buck2_data::span_end_event::Data::DiceBlockConcurrentCommand(
+                    bz_data::span_end_event::Data::DiceBlockConcurrentCommand(
                         block_concurrent_command,
                     ) => self
                         .handle_dice_block_concurrent_command_end(block_concurrent_command, event),
-                    buck2_data::span_end_event::Data::DiceCleanup(dice_cleanup_end) => {
+                    bz_data::span_end_event::Data::DiceCleanup(dice_cleanup_end) => {
                         self.handle_dice_cleanup_end(*dice_cleanup_end, event)
                     }
-                    buck2_data::span_end_event::Data::ExecutorStage(executor_stage) => {
+                    bz_data::span_end_event::Data::ExecutorStage(executor_stage) => {
                         self.handle_executor_stage_end(*executor_stage, event)
                     }
-                    buck2_data::span_end_event::Data::BxlEnsureArtifacts(_bxl_ensure_artifacts) => {
+                    bz_data::span_end_event::Data::BxlEnsureArtifacts(_bxl_ensure_artifacts) => {
                         self.handle_bxl_ensure_artifacts_end(*_bxl_ensure_artifacts, event)
                     }
                     _ => Ok(()),
                 }
             }
-            buck2_data::buck_event::Data::Instant(instant) => {
+            bz_data::buck_event::Data::Instant(instant) => {
                 match instant
                     .data
                     .as_ref()
                     .ok_or_else(|| internal_error!("Missing `data`"))?
                 {
-                    buck2_data::instant_event::Data::ReSession(session) => {
+                    bz_data::instant_event::Data::ReSession(session) => {
                         self.handle_re_session_created(session, event)
                     }
-                    buck2_data::instant_event::Data::BuildGraphInfo(info) => {
+                    bz_data::instant_event::Data::BuildGraphInfo(info) => {
                         self.handle_build_graph_info(info, event)
                     }
-                    buck2_data::instant_event::Data::TestDiscovery(discovery) => {
+                    bz_data::instant_event::Data::TestDiscovery(discovery) => {
                         self.handle_test_discovery(discovery, event)
                     }
-                    buck2_data::instant_event::Data::Snapshot(result) => {
+                    bz_data::instant_event::Data::Snapshot(result) => {
                         self.handle_snapshot(result, event)
                     }
-                    buck2_data::instant_event::Data::TagEvent(tag) => self.handle_tag(tag),
-                    buck2_data::instant_event::Data::IoProviderInfo(io_provider_info) => {
+                    bz_data::instant_event::Data::TagEvent(tag) => self.handle_tag(tag),
+                    bz_data::instant_event::Data::IoProviderInfo(io_provider_info) => {
                         self.handle_io_provider_info(io_provider_info)
                     }
-                    buck2_data::instant_event::Data::TargetPatterns(tag) => {
+                    bz_data::instant_event::Data::TargetPatterns(tag) => {
                         self.handle_parsed_target_patterns(tag)
                     }
-                    buck2_data::instant_event::Data::MaterializerStateInfo(materializer_state) => {
+                    bz_data::instant_event::Data::MaterializerStateInfo(materializer_state) => {
                         self.handle_materializer_state_info(*materializer_state)
                     }
-                    buck2_data::instant_event::Data::StructuredError(err) => {
+                    bz_data::instant_event::Data::StructuredError(err) => {
                         self.handle_structured_error(err)
                     }
-                    buck2_data::instant_event::Data::RestartConfiguration(conf) => {
+                    bz_data::instant_event::Data::RestartConfiguration(conf) => {
                         self.enable_restarter = conf.enable_restarter;
                         Ok(())
                     }
-                    buck2_data::instant_event::Data::ConcurrentCommands(concurrent_commands) => {
+                    bz_data::instant_event::Data::ConcurrentCommands(concurrent_commands) => {
                         self.handle_concurrent_commands(concurrent_commands)
                     }
-                    buck2_data::instant_event::Data::CellHasNewConfigs(_) => {
+                    bz_data::instant_event::Data::CellHasNewConfigs(_) => {
                         self.has_new_buckconfigs = true;
                         Ok(())
                     }
-                    buck2_data::instant_event::Data::InstallFinished(install_finished) => {
+                    bz_data::instant_event::Data::InstallFinished(install_finished) => {
                         self.handle_install_finished(install_finished)
                     }
-                    buck2_data::instant_event::Data::SystemInfo(system_info) => {
+                    bz_data::instant_event::Data::SystemInfo(system_info) => {
                         self.handle_system_info(system_info)
                     }
-                    buck2_data::instant_event::Data::TargetCfg(target_cfg) => {
+                    bz_data::instant_event::Data::TargetCfg(target_cfg) => {
                         self.target_cfg = Some(target_cfg.clone());
                         Ok(())
                     }
-                    buck2_data::instant_event::Data::VersionControlRevision(revision) => {
+                    bz_data::instant_event::Data::VersionControlRevision(revision) => {
                         self.handle_version_control(revision)
                     }
-                    buck2_data::instant_event::Data::PreviousCommandWithMismatchedConfig(
+                    bz_data::instant_event::Data::PreviousCommandWithMismatchedConfig(
                         command,
                     ) => {
                         self.previous_uuid_with_mismatched_config = Some(command.trace_id.clone());
                         Ok(())
                     }
-                    buck2_data::instant_event::Data::TestResult(result) => {
+                    bz_data::instant_event::Data::TestResult(result) => {
                         self.handle_test_result(result, event)
                     }
-                    buck2_data::instant_event::Data::DiceStateSnapshot(dice_state_snapshot) => {
+                    bz_data::instant_event::Data::DiceStateSnapshot(dice_state_snapshot) => {
                         self.handle_dice_state_snapshot(dice_state_snapshot)
                     }
-                    buck2_data::instant_event::Data::CommandOptions(command_options) => {
+                    bz_data::instant_event::Data::CommandOptions(command_options) => {
                         self.handle_command_options(command_options)
                     }
                     _ => Ok(()),
                 }
             }
-            buck2_data::buck_event::Data::Record(_) => Ok(()),
+            bz_data::buck_event::Data::Record(_) => Ok(()),
         }
     }
 }
@@ -2394,7 +2394,7 @@ const TIER0: &str = "INFRA";
 const ENVIRONMENT: &str = "ENVIRONMENT";
 const INPUT: &str = "USER";
 
-fn process_error_report(error: buck2_data::ErrorReport) -> buck2_data::ProcessedErrorReport {
+fn process_error_report(error: bz_data::ErrorReport) -> bz_data::ProcessedErrorReport {
     let best_tag = error.best_tag();
     let best_tag = best_tag
         .map_or(
@@ -2422,7 +2422,7 @@ fn process_error_report(error: buck2_data::ErrorReport) -> buck2_data::Processed
     let string_tags = error.string_tags.iter().map(|t| t.tag.clone());
     let tags = tags.chain(string_tags).collect();
 
-    buck2_data::ProcessedErrorReport {
+    bz_data::ProcessedErrorReport {
         message: strip_ansi_codes(&error.message).to_string(),
         telemetry_message: error
             .telemetry_message
@@ -2451,7 +2451,7 @@ impl EventSubscriber for InvocationRecorder {
         "invocation recorder"
     }
 
-    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
+    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> bz_error::Result<()> {
         for event in events {
             self.handle_event(event).await?;
         }
@@ -2461,7 +2461,7 @@ impl EventSubscriber for InvocationRecorder {
     async fn handle_console_interaction(
         &mut self,
         c: &Option<SuperConsoleToggle>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(c) = c {
             self.tags
                 .push(format!("superconsole-toggle:{}", c.key()).to_owned())
@@ -2471,8 +2471,8 @@ impl EventSubscriber for InvocationRecorder {
 
     async fn handle_command_result(
         &mut self,
-        result: &buck2_cli_proto::CommandResult,
-    ) -> buck2_error::Result<()> {
+        result: &bz_cli_proto::CommandResult,
+    ) -> bz_error::Result<()> {
         self.has_command_result = true;
         match &result.result {
             Some(command_result::Result::BuildResponse(res)) => {
@@ -2501,7 +2501,7 @@ impl EventSubscriber for InvocationRecorder {
         self.outcome = Some(self.outcome(exit_result));
     }
 
-    async fn handle_tailer_stderr(&mut self, stderr: &str) -> buck2_error::Result<()> {
+    async fn handle_tailer_stderr(&mut self, stderr: &str) -> bz_error::Result<()> {
         if self.server_stderr.len() > 100_000 {
             // Proper truncation of the head is tricky, and for practical purposes
             // discarding the whole thing is fine.
@@ -2522,10 +2522,10 @@ impl EventSubscriber for InvocationRecorder {
         self.has_end_of_stream = true;
     }
 
-    async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
+    async fn finalize(mut self: Box<Self>) -> bz_error::Result<()> {
         // Can't set this before the daemon forks.
         // Typically initialized already unless the command failed early.
-        let fb = buck2_common::fbinit::get_or_init_fbcode_globals();
+        let fb = bz_common::fbinit::get_or_init_fbcode_globals();
         let event = self.create_record_event();
         if let Some(scribe_sink) = new_remote_event_sink_if_enabled(
             fb,
@@ -2553,7 +2553,7 @@ impl EventSubscriber for InvocationRecorder {
         self.daemon_connection_failure = true;
     }
 
-    fn handle_daemon_started(&mut self, daemon_was_started: buck2_data::DaemonWasStartedReason) {
+    fn handle_daemon_started(&mut self, daemon_was_started: bz_data::DaemonWasStartedReason) {
         self.daemon_was_started = Some(daemon_was_started);
     }
 
@@ -2588,9 +2588,9 @@ where
 }
 
 fn merge_file_watcher_stats(
-    a: Option<buck2_data::FileWatcherStats>,
-    b: Option<buck2_data::FileWatcherStats>,
-) -> Option<buck2_data::FileWatcherStats> {
+    a: Option<bz_data::FileWatcherStats>,
+    b: Option<bz_data::FileWatcherStats>,
+) -> Option<bz_data::FileWatcherStats> {
     let (mut a, b) = match (a, b) {
         (Some(a), Some(b)) => (a, b),
         (a, None) => return a,
@@ -2635,12 +2635,12 @@ mod tests {
     use std::ffi::OsString;
     use std::time::SystemTime;
 
-    use buck2_data::InvocationOutcome;
-    use buck2_error::ErrorTag;
-    use buck2_error::ExitCode;
-    use buck2_error::buck2_error;
-    use buck2_error::internal_error;
-    use buck2_wrapper_common::invocation_id::TraceId;
+    use bz_data::InvocationOutcome;
+    use bz_error::ErrorTag;
+    use bz_error::ExitCode;
+    use bz_error::bz_error;
+    use bz_error::internal_error;
+    use bz_wrapper_common::invocation_id::TraceId;
 
     use crate::exit_result::ExitResult;
     use crate::subscribers::recorder::InvocationRecorder;
@@ -2680,7 +2680,7 @@ mod tests {
         let exit_result = ExitResult::exec(OsString::new(), vec![], None, vec![]);
         assert_eq!(recorder.outcome(&exit_result), InvocationOutcome::Success);
 
-        let err = buck2_error!(ErrorTag::IoClientBrokenPipe, "test");
+        let err = bz_error!(ErrorTag::IoClientBrokenPipe, "test");
         let exit_result = ExitResult::err(err);
         assert_eq!(recorder.outcome(&exit_result), InvocationOutcome::Cancelled);
     }

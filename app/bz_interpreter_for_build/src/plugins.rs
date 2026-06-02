@@ -11,9 +11,9 @@
 use std::cell::RefCell;
 
 use allocative::Allocative;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::plugins::PluginKind;
-use buck2_interpreter::plugins::PLUGIN_KIND_FROM_VALUE;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::plugins::PluginKind;
+use bz_interpreter::plugins::PLUGIN_KIND_FROM_VALUE;
 use derive_more::Display;
 use dupe::Dupe;
 use either::Either;
@@ -83,7 +83,7 @@ impl<'v> StarlarkValue<'v> for StarlarkPluginKind {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum PluginKindError {
     #[error("Plugin kind has not yet been assigned to a global")]
@@ -93,7 +93,7 @@ enum PluginKindError {
 }
 
 impl StarlarkPluginKind {
-    pub fn expect_bound(&self) -> buck2_error::Result<PluginKind> {
+    pub fn expect_bound(&self) -> bz_error::Result<PluginKind> {
         match &*self.0.borrow() {
             InnerStarlarkPluginKind::Unbound(_) => Err(PluginKindError::NotBound.into()),
             InnerStarlarkPluginKind::Bound(kind) => Ok(kind.dupe()),
@@ -135,14 +135,14 @@ impl Freeze for StarlarkPluginKind {
 
 fn plugin_kind_from_value_typed<'v>(
     v: ValueTypedComplex<'v, StarlarkPluginKind>,
-) -> buck2_error::Result<PluginKind> {
+) -> bz_error::Result<PluginKind> {
     match v.unpack() {
         Either::Left(unfrozen) => unfrozen.expect_bound(),
         Either::Right(frozen) => Ok(frozen.0.dupe()),
     }
 }
 
-fn plugin_kind_from_value<'v>(v: Value<'v>) -> buck2_error::Result<PluginKind> {
+fn plugin_kind_from_value<'v>(v: Value<'v>) -> bz_error::Result<PluginKind> {
     let Some(v) = ValueTypedComplex::new(v) else {
         return Err(PluginKindError::NotAPluginKind(v.to_repr()).into());
     };

@@ -15,37 +15,37 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::Action;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::UnregisteredAction;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
-use buck2_build_api::actions::impls::json;
-use buck2_build_api::actions::impls::json::JsonUnpack;
-use buck2_build_api::actions::impls::json::validate_json;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::command_line_arg_like_impl;
-use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::category::CategoryRef;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_error::internal_error;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::materialize::materializer::WriteRequest;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::buck_indexmap;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::Action;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::UnregisteredAction;
+use bz_build_api::actions::execute::action_executor::ActionExecutionKind;
+use bz_build_api::actions::execute::action_executor::ActionExecutionMetadata;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::actions::execute::error::ExecuteError;
+use bz_build_api::actions::impls::json;
+use bz_build_api::actions::impls::json::JsonUnpack;
+use bz_build_api::actions::impls::json::validate_json;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::command_line_arg_like_impl;
+use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_build_signals::env::WaitingData;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::category::CategoryRef;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_error::internal_error;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::materialize::materializer::WriteRequest;
+use bz_hash::BuckIndexMap;
+use bz_hash::BuckIndexSet;
+use bz_hash::buck_indexmap;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark::any::ProvidesStaticType;
@@ -69,7 +69,7 @@ use starlark::values::type_repr::StarlarkTypeRepr;
 use crate::actions::impls::run::DepFilesPlaceholderArtifactPathMapper;
 use crate::actions::impls::write::CommandLineContentBasedInputVisitor;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum WriteJsonActionValidationError {
     #[error("WriteJsonAction received no outputs")]
@@ -101,7 +101,7 @@ impl UnregisteredWriteJsonAction {
     pub(crate) fn cli<'v>(
         artifact: Value<'v>,
         content: Value<'v>,
-    ) -> buck2_error::Result<StarlarkWriteJsonCommandLineArg<'v>> {
+    ) -> bz_error::Result<StarlarkWriteJsonCommandLineArg<'v>> {
         Ok(StarlarkWriteJsonCommandLineArg { artifact, content })
     }
 }
@@ -112,7 +112,7 @@ impl UnregisteredAction for UnregisteredWriteJsonAction {
         outputs: BuckIndexSet<BuildArtifact>,
         starlark_data: Option<OwnedFrozenValue>,
         _error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         let contents = starlark_data.expect("module data to be present");
         let action = WriteJsonAction::new(contents, outputs, *self)?;
         Ok(Box::new(action))
@@ -131,7 +131,7 @@ impl WriteJsonAction {
         contents: OwnedFrozenValue,
         outputs: BuckIndexSet<BuildArtifact>,
         inner: UnregisteredWriteJsonAction,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         validate_json(JsonUnpack::unpack_value_err(contents.value())?)?;
 
         let mut outputs = outputs.into_iter();
@@ -155,7 +155,7 @@ impl WriteJsonAction {
         &self,
         fs: &ExecutorFs,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<Vec<u8>> {
+    ) -> bz_error::Result<Vec<u8>> {
         let mut writer = Vec::new();
         json::write_json(
             JsonUnpack::unpack_value_err(self.contents.value())?,
@@ -171,11 +171,11 @@ impl WriteJsonAction {
 
 #[async_trait]
 impl Action for WriteJsonAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::Write
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::Write
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         if self.inner.use_dep_files_placeholder_for_content_based_paths {
             return Ok(Cow::Borrowed(&[]));
         }
@@ -208,9 +208,9 @@ impl Action for WriteJsonAction {
         fs: &ExecutorFs,
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> BuckIndexMap<String, String> {
-        let res: buck2_error::Result<String> = try {
+        let res: bz_error::Result<String> = try {
             let content = self.get_contents(fs, artifact_path_mapping)?;
-            String::from_utf8(content).map_err(buck2_error::Error::from)?
+            String::from_utf8(content).map_err(bz_error::Error::from)?
         };
         // TODO(cjhopman): We should change this api to support returning a Result.
         buck_indexmap! {
@@ -322,7 +322,7 @@ impl<'v, V: ValueLike<'v>> StarlarkWriteJsonCommandLineArgGen<V> {
     pub fn visit_contents(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let content = self.content.to_value();
         json::visit_json_artifacts(content, visitor)
     }
@@ -338,7 +338,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for StarlarkWriteJsonCommandLi
         builder: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         ValueAsCommandLineLike::unpack_value_err(self.artifact.to_value())?
             .0
             .add_to_command_line(builder, context, artifact_path_mapping)
@@ -347,7 +347,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for StarlarkWriteJsonCommandLi
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let artifact = self.artifact.to_value();
         let content = self.content.to_value();
         ValueAsCommandLineLike::unpack_value_err(artifact)?
@@ -365,7 +365,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for StarlarkWriteJsonCommandLi
         &self,
         _visitor: &mut dyn WriteToFileMacroVisitor,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         // In the write_json implementation, the commandlinebuilders we use don't support args.
         Ok(())
     }

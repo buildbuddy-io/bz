@@ -13,43 +13,43 @@ use std::fmt;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::cells::external::bazel_canonical_label_key;
-use buck2_core::plugins::PluginKind;
-use buck2_error::internal_error;
-use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
-use buck2_interpreter::late_binding_ty::ProviderReprLate;
-use buck2_interpreter::starlark_promise::StarlarkPromise;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::rule::FROZEN_BAZEL_ASPECT_INFO_GET_IMPL;
-use buck2_interpreter::types::rule::FROZEN_BAZEL_ASPECTS_GET_IMPL;
-use buck2_interpreter::types::rule::FROZEN_BAZEL_ATTR_ASPECTS_GET_IMPL;
-use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
-use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
-use buck2_interpreter::types::target_label::StarlarkTargetLabel;
-use buck2_interpreter::types::transition::transition_id_from_value;
-use buck2_interpreter::types::transition::transition_id_from_value_for_bazel_attr;
-use buck2_node::attrs::attr::Attribute;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::attr_type::bool::BoolLiteral;
-use buck2_node::attrs::attr_type::dict::DictLiteral;
-use buck2_node::attrs::attr_type::list::ListLiteral;
-use buck2_node::attrs::attr_type::string::StringLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::display::AttrDisplayWithContextExt;
-use buck2_node::attrs::spec::AttributeSpec;
-use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
-use buck2_node::nodes::unconfigured::RuleKind;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_node::rule::BazelImplicitOutput;
-use buck2_node::rule::BazelOutputAttr;
-use buck2_node::rule::BazelToolchainRequirement;
-use buck2_node::rule::Rule;
-use buck2_node::rule::RuleIncomingTransition;
-use buck2_node::rule_type::RuleType;
-use buck2_node::rule_type::StarlarkRuleType;
-use buck2_util::arc_str::ArcSlice;
-use buck2_util::arc_str::ArcStr;
+use bz_core::cells::external::bazel_canonical_label_key;
+use bz_core::plugins::PluginKind;
+use bz_error::internal_error;
+use bz_interpreter::late_binding_ty::AnalysisContextReprLate;
+use bz_interpreter::late_binding_ty::ProviderReprLate;
+use bz_interpreter::starlark_promise::StarlarkPromise;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::rule::FROZEN_BAZEL_ASPECT_INFO_GET_IMPL;
+use bz_interpreter::types::rule::FROZEN_BAZEL_ASPECTS_GET_IMPL;
+use bz_interpreter::types::rule::FROZEN_BAZEL_ATTR_ASPECTS_GET_IMPL;
+use bz_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
+use bz_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use bz_interpreter::types::transition::transition_id_from_value;
+use bz_interpreter::types::transition::transition_id_from_value_for_bazel_attr;
+use bz_node::attrs::attr::Attribute;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::attr_type::bool::BoolLiteral;
+use bz_node::attrs::attr_type::dict::DictLiteral;
+use bz_node::attrs::attr_type::list::ListLiteral;
+use bz_node::attrs::attr_type::string::StringLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::display::AttrDisplayWithContextExt;
+use bz_node::attrs::spec::AttributeSpec;
+use bz_node::bzl_or_bxl_path::BzlOrBxlPath;
+use bz_node::nodes::unconfigured::RuleKind;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_node::rule::BazelImplicitOutput;
+use bz_node::rule::BazelOutputAttr;
+use bz_node::rule::BazelToolchainRequirement;
+use bz_node::rule::Rule;
+use bz_node::rule::RuleIncomingTransition;
+use bz_node::rule_type::RuleType;
+use bz_node::rule_type::StarlarkRuleType;
+use bz_util::arc_str::ArcSlice;
+use bz_util::arc_str::ArcStr;
 use derive_more::Display;
 use dupe::Dupe;
 use either::Either;
@@ -451,7 +451,7 @@ impl<'v> Display for StarlarkRuleCallable<'v> {
 }
 
 /// Errors around rule declaration, instantiation, validation, etc
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum RuleError {
     #[error("The output of rule() may only be called after the module is loaded")]
@@ -492,7 +492,7 @@ enum RuleError {
 
 fn bazel_build_setting_attrs(
     build_setting: Option<Value<'_>>,
-) -> buck2_error::Result<Vec<(String, Attribute)>> {
+) -> bz_error::Result<Vec<(String, Attribute)>> {
     let Some(build_setting_value) = build_setting else {
         return Ok(Vec::new());
     };
@@ -531,13 +531,13 @@ fn bazel_build_setting_attrs(
 
 fn add_bazel_common_implicit_attrs(
     attrs: &mut Vec<(String, Attribute)>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     fn add_if_absent(
         attrs: &mut Vec<(String, Attribute)>,
         name: &str,
         default: CoercedAttr,
         attr_type: AttrType,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if attrs.iter().any(|(existing, _)| existing == name) {
             return Ok(());
         }
@@ -642,13 +642,13 @@ fn add_bazel_common_implicit_attrs(
     Ok(())
 }
 
-fn add_bazel_test_implicit_attrs(attrs: &mut Vec<(String, Attribute)>) -> buck2_error::Result<()> {
+fn add_bazel_test_implicit_attrs(attrs: &mut Vec<(String, Attribute)>) -> bz_error::Result<()> {
     fn add_if_absent(
         attrs: &mut Vec<(String, Attribute)>,
         name: &str,
         default: CoercedAttr,
         attr_type: AttrType,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if attrs.iter().any(|(existing, _)| existing == name) {
             return Ok(());
         }
@@ -696,11 +696,11 @@ fn add_bazel_test_implicit_attrs(attrs: &mut Vec<(String, Attribute)>) -> buck2_
 
 fn add_bazel_executable_implicit_attrs(
     attrs: &mut Vec<(String, Attribute)>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     fn add_string_list_attr(
         attrs: &mut Vec<(String, Attribute)>,
         name: &str,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if attrs.iter().any(|(existing, _)| existing == name) {
             return Ok(());
         }
@@ -728,7 +728,7 @@ fn normalize_bazel_toolchain_key(key: &str) -> String {
 fn bazel_toolchain_key_from_value(
     value: Value<'_>,
     label_ctx: &dyn AttrCoercionContext,
-) -> buck2_error::Result<String> {
+) -> bz_error::Result<String> {
     if let Some(toolchain) = StarlarkProvidersLabel::from_value(value) {
         return Ok(normalize_bazel_toolchain_key(&bazel_canonical_label_key(
             toolchain.label().target(),
@@ -756,7 +756,7 @@ fn bazel_toolchain_key_from_value(
 fn bazel_toolchain_requirement_from_value(
     value: Value<'_>,
     label_ctx: &dyn AttrCoercionContext,
-) -> buck2_error::Result<BazelToolchainRequirement> {
+) -> bz_error::Result<BazelToolchainRequirement> {
     let mandatory = StructRef::from_value(value)
         .and_then(|st| {
             st.iter()
@@ -764,7 +764,7 @@ fn bazel_toolchain_requirement_from_value(
         })
         .map(|value| {
             value.unpack_bool().ok_or_else(|| {
-                buck2_error::Error::from(RuleError::UnsupportedBazelToolchain(value.to_repr()))
+                bz_error::Error::from(RuleError::UnsupportedBazelToolchain(value.to_repr()))
             })
         })
         .transpose()?
@@ -777,7 +777,7 @@ fn bazel_toolchain_requirement_from_value(
 
 fn bazel_implicit_outputs_from_value(
     outputs: Option<Value<'_>>,
-) -> buck2_error::Result<Vec<BazelImplicitOutput>> {
+) -> bz_error::Result<Vec<BazelImplicitOutput>> {
     let Some(outputs) = outputs else {
         return Ok(Vec::new());
     };
@@ -832,7 +832,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         bazel_initializer_attrs: Vec<String>,
         artifact_promise_mappings: Option<ArtifactPromiseMappings<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<StarlarkRuleCallable<'v>> {
+    ) -> bz_error::Result<StarlarkRuleCallable<'v>> {
         let build_context = BuildContext::from_context(eval)?;
 
         let rule_path: BzlOrBxlPath = match (&build_context.additional, &implementation) {
@@ -882,7 +882,7 @@ impl<'v> StarlarkRuleCallable<'v> {
                     Ok((name.to_owned(), value.clone_attribute()))
                 }
             })
-            .collect::<buck2_error::Result<Vec<(String, Attribute)>>>()?;
+            .collect::<bz_error::Result<Vec<(String, Attribute)>>>()?;
         for (name, aspects) in &bazel_attr_aspects {
             collect_bazel_aspect_hidden_attributes(name, aspects, &mut sorted_validated_attrs);
         }
@@ -896,7 +896,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             .map(|toolchain| {
                 bazel_toolchain_requirement_from_value(toolchain, &toolchain_label_ctx)
             })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
+            .collect::<bz_error::Result<Vec<_>>>()?;
         let is_bazel_build_setting = build_setting.is_some();
         let build_setting_attrs = bazel_build_setting_attrs(build_setting)?;
         if !build_setting_attrs.is_empty() {
@@ -989,7 +989,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             StarlarkCallable<'v, (FrozenValue,), UnpackList<FrozenValue>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Self::new(
             implementation,
             attrs,
@@ -1027,7 +1027,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             StarlarkCallable<'v, (FrozenValue,), UnpackList<FrozenValue>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Self::new_anon_impl(
             RuleImpl::BuildRule(implementation),
             attrs,
@@ -1046,7 +1046,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             StarlarkCallable<'v, (FrozenValue,), UnpackList<FrozenValue>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Self::new_anon_impl(
             RuleImpl::BxlAnon(implementation),
             attrs,
@@ -1102,7 +1102,7 @@ impl<'v> StarlarkValue<'v> for StarlarkRuleCallable<'v> {
         _args: &Arguments<'v, '_>,
         _eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Err(buck2_error::Error::from(RuleError::RuleCalledBeforeFreezing).into())
+        Err(bz_error::Error::from(RuleError::RuleCalledBeforeFreezing).into())
     }
 
     fn documentation(&self) -> DocItem {
@@ -1249,7 +1249,7 @@ starlark_simple_value!(FrozenStarlarkRuleCallable);
 
 fn unpack_frozen_rule(
     rule: FrozenValue,
-) -> buck2_error::Result<FrozenValueTyped<'static, FrozenStarlarkRuleCallable>> {
+) -> bz_error::Result<FrozenValueTyped<'static, FrozenStarlarkRuleCallable>> {
     FrozenValueTyped::new(rule).ok_or_else(|| internal_error!("Expecting FrozenRuleCallable"))
 }
 
@@ -1349,7 +1349,7 @@ impl FrozenStarlarkRuleCallable {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<SmallMap<StringValue<'v>, Value<'v>>> {
         if args.positions(eval.heap())?.next().is_some() {
-            return Err(buck2_error::Error::from(RuleError::BazelInitializerPositionalArgs).into());
+            return Err(bz_error::Error::from(RuleError::BazelInitializerPositionalArgs).into());
         }
 
         let mut named = args.names_map()?;
@@ -1379,7 +1379,7 @@ impl FrozenStarlarkRuleCallable {
             return Ok(named);
         }
         let initialized = DictRef::from_value(initialized).ok_or_else(|| {
-            buck2_error::Error::from(RuleError::InvalidBazelInitializerReturn(
+            bz_error::Error::from(RuleError::InvalidBazelInitializerReturn(
                 initialized.get_type().to_owned(),
             ))
         })?;
@@ -1387,7 +1387,7 @@ impl FrozenStarlarkRuleCallable {
         for (key, value) in initialized.iter() {
             let Some(key) = key.unpack_str() else {
                 return Err(
-                    buck2_error::Error::from(RuleError::InvalidBazelInitializerReturnKey(
+                    bz_error::Error::from(RuleError::InvalidBazelInitializerReturnKey(
                         key.get_type().to_owned(),
                     ))
                     .into(),
@@ -1399,7 +1399,7 @@ impl FrozenStarlarkRuleCallable {
                     != value.unpack_str()
                 {
                     return Err(
-                        buck2_error::Error::from(RuleError::BazelInitializerChangedName).into(),
+                        bz_error::Error::from(RuleError::BazelInitializerChangedName).into(),
                     );
                 }
                 continue;
@@ -1432,7 +1432,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRuleCallable {
         if self.bazel_initializer.is_some() || !self.bazel_computed_defaults.is_empty() {
             if self.bazel_initializer.is_none() && args.positions(eval.heap())?.next().is_some() {
                 return Err(
-                    buck2_error::Error::from(RuleError::BazelInitializerPositionalArgs).into(),
+                    bz_error::Error::from(RuleError::BazelInitializerPositionalArgs).into(),
                 );
             }
             let named = self.apply_bazel_initializer(args, eval)?;
@@ -1658,7 +1658,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             .map(|toolchain| {
                 bazel_toolchain_requirement_from_value(toolchain, &toolchain_label_ctx)
             })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
+            .collect::<bz_error::Result<Vec<_>>>()?;
         let bazel_implicit_outputs = bazel_implicit_outputs_from_value(outputs)?;
 
         let _unused = (
@@ -1688,7 +1688,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             (Some(r#impl), None) => (r#impl, has_bazel_rule_options),
             (None, Some(implementation)) => (implementation, true),
             _ => {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     RuleError::MissingOrConflictingImplementation,
                 )
                 .into());

@@ -10,7 +10,7 @@
 
 use std::fmt::Display;
 
-use buck2_core::package::source_path::SourcePathRef;
+use bz_core::package::source_path::SourcePathRef;
 use dupe::Dupe;
 use either::Either;
 use serde_json::to_value;
@@ -23,7 +23,7 @@ use crate::attrs::fmt_context::AttrFmtContext;
 use crate::attrs::json::ToJsonWithContext;
 
 impl ToJsonWithContext for ConfiguredAttr {
-    fn to_json(&self, ctx: &AttrFmtContext) -> buck2_error::Result<serde_json::Value> {
+    fn to_json(&self, ctx: &AttrFmtContext) -> bz_error::Result<serde_json::Value> {
         match self {
             ConfiguredAttr::Bool(v) => Ok(to_value(v)?),
             ConfiguredAttr::Int(v) => Ok(to_value(v)?),
@@ -55,8 +55,8 @@ impl ToJsonWithContext for ConfiguredAttr {
 impl AnyMatches for ConfiguredAttr {
     fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         match self {
             ConfiguredAttr::String(v) | ConfiguredAttr::EnumVariant(v) => filter(v),
             ConfiguredAttr::List(vals) => vals.any_matches(filter),
@@ -86,7 +86,7 @@ impl AnyMatches for ConfiguredAttr {
 }
 
 impl ToJsonWithContext for CoercedAttr {
-    fn to_json(&self, ctx: &AttrFmtContext) -> buck2_error::Result<serde_json::Value> {
+    fn to_json(&self, ctx: &AttrFmtContext) -> bz_error::Result<serde_json::Value> {
         CoercedAttr::to_json(self, ctx)
     }
 }
@@ -94,8 +94,8 @@ impl ToJsonWithContext for CoercedAttr {
 impl AnyMatches for CoercedAttr {
     fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         CoercedAttr::any_matches(self, filter)
     }
 }

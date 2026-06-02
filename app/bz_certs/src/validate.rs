@@ -11,15 +11,15 @@
 use std::ffi::OsString;
 use std::sync::Arc;
 
-use buck2_error::buck2_error;
-use buck2_util::process::async_background_command;
+use bz_error::bz_error;
+use bz_util::process::async_background_command;
 use dupe::Dupe;
 use tokio::sync::Mutex;
 
 use crate::certs;
 use crate::certs::load_certs;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(environment, tag = NoValidCerts)]
 enum InvalidCertsError {
     #[error(
@@ -59,11 +59,11 @@ async fn is_vpnless_cert_valid() -> bool {
 }
 
 /// Check if the provided certs exists and if it is still valid at the current time.
-async fn verify(path: &OsString) -> buck2_error::Result<()> {
+async fn verify(path: &OsString) -> bz_error::Result<()> {
     let certs = load_certs(path).await?;
     if certs.is_empty() {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Environment,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Environment,
             "Could not find any certs to validate at '{0}'",
             path.to_string_lossy()
         ));
@@ -79,8 +79,8 @@ async fn verify(path: &OsString) -> buck2_error::Result<()> {
     });
 
     if !valid {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Environment,
+        return Err(bz_error!(
+            bz_error::ErrorTag::Environment,
             "Certificate Expired: expired certs found at '{0}'",
             path.to_string_lossy()
         ));
@@ -89,7 +89,7 @@ async fn verify(path: &OsString) -> buck2_error::Result<()> {
     Ok(())
 }
 
-pub async fn validate_certs() -> buck2_error::Result<()> {
+pub async fn validate_certs() -> bz_error::Result<()> {
     if cfg!(not(fbcode_build)) {
         return Ok(());
     }
@@ -138,7 +138,7 @@ impl CertState {
     }
 }
 
-pub async fn check_cert_state(cert_state: CertState) -> Option<buck2_error::Error> {
+pub async fn check_cert_state(cert_state: CertState) -> Option<bz_error::Error> {
     let mut valid = cert_state.state.lock().await;
 
     // If previous state is error, then we need to check regardless of the current state

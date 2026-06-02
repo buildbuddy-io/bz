@@ -14,24 +14,24 @@ use std::path::Path;
 
 use async_recursion::async_recursion;
 use async_trait::async_trait;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::file_ops::dice::DiceFileComputations;
-use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::file_ops::metadata::RawSymlink;
-use buck2_common::io::IoProvider;
-use buck2_common::io::fs::FsIoProvider;
-use buck2_core::cells::CellResolver;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::stdout_partial_output::StdoutPartialOutput;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
-use buck2_util::commas::commas;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::file_ops::dice::DiceFileComputations;
+use bz_common::file_ops::metadata::RawPathMetadata;
+use bz_common::file_ops::metadata::RawSymlink;
+use bz_common::io::IoProvider;
+use bz_common::io::fs::FsIoProvider;
+use bz_core::cells::CellResolver;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::stdout_partial_output::StdoutPartialOutput;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
+use bz_util::commas::commas;
 use dice::DiceComputations;
 use dice::DiceTransaction;
 use dupe::Dupe;
@@ -41,9 +41,9 @@ use crate::ctx::ServerCommandContext;
 
 pub(crate) async fn file_status_command(
     ctx: &ServerCommandContext<'_>,
-    partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-    req: buck2_cli_proto::FileStatusRequest,
-) -> buck2_error::Result<buck2_cli_proto::GenericResponse> {
+    partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+    req: bz_cli_proto::FileStatusRequest,
+) -> bz_error::Result<bz_cli_proto::GenericResponse> {
     run_server_command(
         FileStatusServerCommand { req },
         ctx,
@@ -52,7 +52,7 @@ pub(crate) async fn file_status_command(
     .await
 }
 struct FileStatusServerCommand {
-    req: buck2_cli_proto::FileStatusRequest,
+    req: bz_cli_proto::FileStatusRequest,
 }
 
 struct FileStatusResult<'a> {
@@ -76,7 +76,7 @@ impl FileStatusResult<'_> {
         path: &ProjectRelativePath,
         fs: &T,
         dice: &T,
-    ) -> buck2_error::Result<()>
+    ) -> bz_error::Result<()>
     where
         T: PartialEq + fmt::Display + ?Sized,
     {
@@ -110,17 +110,17 @@ impl fmt::Display for DirList {
 
 #[async_trait]
 impl ServerCommandTemplate for FileStatusServerCommand {
-    type StartEvent = buck2_data::FileStatusCommandStart;
-    type EndEvent = buck2_data::FileStatusCommandEnd;
-    type Response = buck2_cli_proto::GenericResponse;
-    type PartialResult = buck2_cli_proto::StdoutBytes;
+    type StartEvent = bz_data::FileStatusCommandStart;
+    type EndEvent = bz_data::FileStatusCommandEnd;
+    type Response = bz_cli_proto::GenericResponse;
+    type PartialResult = bz_cli_proto::StdoutBytes;
 
     async fn command(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
         mut stdout: PartialResultDispatcher<Self::PartialResult>,
         mut ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         let cell_resolver = &ctx.get_cell_resolver().await?;
         let project_root = server_ctx.project_root();
         let digest_config = ctx.global_data().get_digest_config();
@@ -143,8 +143,8 @@ impl ServerCommandTemplate for FileStatusServerCommand {
             check_file_status(&mut ctx, cell_resolver, io, &path, &mut result).await?;
         }
         if result.bad != 0 {
-            Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "Failed with {} mismatches",
                 result.bad
             ))
@@ -154,7 +154,7 @@ impl ServerCommandTemplate for FileStatusServerCommand {
                 "No mismatches detected ({} entries checked)",
                 result.checked
             )?;
-            Ok(buck2_cli_proto::GenericResponse {})
+            Ok(bz_cli_proto::GenericResponse {})
         }
     }
 }
@@ -166,7 +166,7 @@ async fn check_file_status(
     io: &dyn IoProvider,
     path: &ProjectRelativePath,
     result: &mut FileStatusResult,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     result.checking();
 
     let cell_path = cell_resolver.get_cell_path(path);
@@ -250,7 +250,7 @@ async fn check_file_status(
             // No point checking file types here, we'll do that when we inspect them.
             let mut fs_names = fs_read_dir
                 .iter()
-                .map(|f| buck2_error::Ok(FileName::new(&f.file_name)?.to_owned()))
+                .map(|f| bz_error::Ok(FileName::new(&f.file_name)?.to_owned()))
                 .collect::<Result<Vec<_>, _>>()?;
 
             let mut dice_names = dice_read_dir

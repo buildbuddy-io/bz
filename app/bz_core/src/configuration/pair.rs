@@ -9,7 +9,7 @@
  */
 
 use allocative::Allocative;
-use buck2_hash::BuckHasher;
+use bz_hash::BuckHasher;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
 use pagable::Pagable;
@@ -19,7 +19,7 @@ use strong_hash::StrongHash;
 
 use crate::configuration::data::ConfigurationData;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ConfigurationError {
     #[error("`ConfigurationPair` has unexpected `exec_cfg`")]
@@ -61,7 +61,7 @@ impl Configuration {
     }
 
     #[inline]
-    pub fn check_no_exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
+    pub fn check_no_exec_cfg(&self) -> bz_error::Result<ConfigurationNoExec> {
         if self.exec_cfg().is_some() {
             return Err(ConfigurationError::HasExecCfg.into());
         }

@@ -1,5 +1,5 @@
 [package]
-name = "buck2_action_metadata_proto"
+name = "bz_action_metadata_proto"
 
 edition = "2024"
 license = { workspace = true }
@@ -12,4 +12,4 @@ tonic = { workspace = true }
 tonic-prost = { workspace = true }
 
 [build-dependencies]
-buck2_protoc_dev = { workspace = true }
+bz_protoc_dev = { workspace = true }

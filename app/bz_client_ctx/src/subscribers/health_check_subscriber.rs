@@ -13,16 +13,16 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_core::soft_error;
-use buck2_data::buck_event::Data::*;
-use buck2_error::internal_error;
-use buck2_events::BuckEvent;
-use buck2_health_check::health_check_client::HealthCheckClient;
-use buck2_health_check::health_check_client::StreamingHealthCheckClient;
-use buck2_health_check::interface::HealthCheckContextEvent;
-use buck2_health_check::interface::HealthCheckEvent;
-use buck2_health_check::report::DisplayReport;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_core::soft_error;
+use bz_data::buck_event::Data::*;
+use bz_error::internal_error;
+use bz_events::BuckEvent;
+use bz_health_check::health_check_client::HealthCheckClient;
+use bz_health_check::health_check_client::StreamingHealthCheckClient;
+use bz_health_check::interface::HealthCheckContextEvent;
+use bz_health_check::interface::HealthCheckEvent;
+use bz_health_check::report::DisplayReport;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::error::TrySendError;
 
@@ -45,7 +45,7 @@ pub struct HealthCheckSubscriber {
 
 #[async_trait]
 impl EventSubscriber for HealthCheckSubscriber {
-    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> buck2_error::Result<()> {
+    async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> bz_error::Result<()> {
         for ev in events {
             self.handle_event(ev).await?;
         }
@@ -85,7 +85,7 @@ impl HealthCheckSubscriber {
         })
     }
 
-    async fn handle_event(&mut self, event: &Arc<BuckEvent>) -> buck2_error::Result<()> {
+    async fn handle_event(&mut self, event: &Arc<BuckEvent>) -> bz_error::Result<()> {
         if self.event_sender.is_none() || self.health_check_client.is_none() {
             return Ok(());
         }
@@ -93,10 +93,10 @@ impl HealthCheckSubscriber {
 
         let health_check_event = match event.data() {
             SpanStart(start) => match &start.data {
-                Some(buck2_data::span_start_event::Data::Command(command)) => {
+                Some(bz_data::span_start_event::Data::Command(command)) => {
                     Some(HealthCheckEvent::HealthCheckContextEvent(
                         HealthCheckContextEvent::CommandStart(
-                            buck2_data::CommandStartWithTraceId {
+                            bz_data::CommandStartWithTraceId {
                                 trace_id: trace_id.map(|id| id.to_string()).unwrap_or_default(),
                                 command_start: Some(command.clone()),
                                 timestamp: Some(event.timestamp().into()),
@@ -107,7 +107,7 @@ impl HealthCheckSubscriber {
                 _ => None,
             },
             SpanEnd(end) => {
-                use buck2_data::span_end_event::Data::*;
+                use bz_data::span_end_event::Data::*;
                 match end
                     .data
                     .as_ref()
@@ -143,7 +143,7 @@ impl HealthCheckSubscriber {
                 }
             }
             Instant(instant) => {
-                use buck2_data::instant_event::Data::*;
+                use bz_data::instant_event::Data::*;
                 match instant
                     .data
                     .as_ref()
@@ -160,7 +160,7 @@ impl HealthCheckSubscriber {
                     Snapshot(_snapshot) => {
                         // Create a new HealthCheckSnapshotData from the snapshot
                         let snapshot_data =
-                            buck2_health_check::interface::HealthCheckSnapshotData {
+                            bz_health_check::interface::HealthCheckSnapshotData {
                                 timestamp: event.timestamp(),
                             };
                         Some(HealthCheckEvent::Snapshot(snapshot_data))
@@ -221,7 +221,7 @@ impl HealthCheckSubscriber {
         self.health_check_client.take();
         let _ignored = soft_error!(
             "health_check_subscriber_error",
-            buck2_error::buck2_error!(buck2_error::ErrorTag::HealthCheck, "{}", error)
+            bz_error::bz_error!(bz_error::ErrorTag::HealthCheck, "{}", error)
         );
     }
 }
@@ -230,14 +230,14 @@ impl HealthCheckSubscriber {
 mod tests {
     use std::time::SystemTime;
 
-    use buck2_data::ActionExecutionEnd;
-    use buck2_data::ActionKind;
-    use buck2_health_check::interface::HealthCheckType;
-    use buck2_health_check::report::DisplayReport;
-    use buck2_health_check::report::HealthIssue;
-    use buck2_health_check::report::Message;
-    use buck2_health_check::report::Severity;
-    use buck2_wrapper_common::invocation_id::TraceId;
+    use bz_data::ActionExecutionEnd;
+    use bz_data::ActionKind;
+    use bz_health_check::interface::HealthCheckType;
+    use bz_health_check::report::DisplayReport;
+    use bz_health_check::report::HealthIssue;
+    use bz_health_check::report::Message;
+    use bz_health_check::report::Severity;
+    use bz_wrapper_common::invocation_id::TraceId;
     use tokio::sync::mpsc::Receiver;
     use tokio::sync::mpsc::{self};
     use tokio::task::JoinHandle;
@@ -300,7 +300,7 @@ mod tests {
         ]
     }
 
-    fn test_event(data: buck2_data::buck_event::Data) -> Arc<BuckEvent> {
+    fn test_event(data: bz_data::buck_event::Data) -> Arc<BuckEvent> {
         Arc::new(BuckEvent::new(
             SystemTime::now(),
             TraceId::new(),
@@ -310,25 +310,25 @@ mod tests {
         ))
     }
 
-    fn event_for_excess_cache_miss() -> buck2_data::buck_event::Data {
+    fn event_for_excess_cache_miss() -> bz_data::buck_event::Data {
         let action_end = ActionExecutionEnd {
             kind: ActionKind::Run as i32,
-            invalidation_info: Some(buck2_data::CommandInvalidationInfo {
+            invalidation_info: Some(bz_data::CommandInvalidationInfo {
                 changed_file: None,
                 changed_any: None,
             }),
             ..Default::default()
         };
-        buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
-            data: Some(buck2_data::span_end_event::Data::ActionExecution(Box::new(
+        bz_data::buck_event::Data::SpanEnd(bz_data::SpanEndEvent {
+            data: Some(bz_data::span_end_event::Data::ActionExecution(Box::new(
                 action_end,
             ))),
-            ..buck2_data::SpanEndEvent::default()
+            ..bz_data::SpanEndEvent::default()
         })
     }
 
     #[tokio::test]
-    async fn test_health_check_subscriber() -> buck2_error::Result<()> {
+    async fn test_health_check_subscriber() -> bz_error::Result<()> {
         let (tags_tx, mut tags_rx) = mpsc::channel::<Vec<String>>(10);
         let (reports_tx, mut reports_rx) = mpsc::channel::<Vec<DisplayReport>>(10);
         let (events_tx, events_rx) = mpsc::channel::<HealthCheckEvent>(EVENT_CHANNEL_SIZE);
@@ -340,8 +340,8 @@ mod tests {
 
         // Create a snapshot event
         let event = test_event(
-            buck2_data::InstantEvent {
-                data: Some(Box::new(buck2_data::Snapshot::default()).into()),
+            bz_data::InstantEvent {
+                data: Some(Box::new(bz_data::Snapshot::default()).into()),
             }
             .into(),
         );
@@ -387,7 +387,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_limit_exceeded() -> buck2_error::Result<()> {
+    async fn test_event_limit_exceeded() -> bz_error::Result<()> {
         let (events_tx, mut events_rx) = mpsc::channel::<HealthCheckEvent>(EVENT_CHANNEL_SIZE);
 
         let mut subscriber = HealthCheckSubscriber::new_with_client(
@@ -395,9 +395,9 @@ mod tests {
             events_tx,
         );
 
-        let event = test_event(buck2_data::buck_event::Data::Instant(
-            buck2_data::InstantEvent {
-                data: Some(Box::new(buck2_data::Snapshot::default()).into()),
+        let event = test_event(bz_data::buck_event::Data::Instant(
+            bz_data::InstantEvent {
+                data: Some(Box::new(bz_data::Snapshot::default()).into()),
             },
         ));
 
@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_slow_client() -> buck2_error::Result<()> {
+    async fn test_slow_client() -> bz_error::Result<()> {
         let (events_tx, events_rx_guard) = mpsc::channel::<HealthCheckEvent>(EVENT_CHANNEL_SIZE);
 
         let mut subscriber = HealthCheckSubscriber::new_with_client(
@@ -433,9 +433,9 @@ mod tests {
             events_tx,
         );
 
-        let event = test_event(buck2_data::buck_event::Data::Instant(
-            buck2_data::InstantEvent {
-                data: Some(Box::new(buck2_data::Snapshot::default()).into()),
+        let event = test_event(bz_data::buck_event::Data::Instant(
+            bz_data::InstantEvent {
+                data: Some(Box::new(bz_data::Snapshot::default()).into()),
             },
         ));
 
@@ -457,7 +457,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dropped_client() -> buck2_error::Result<()> {
+    async fn test_dropped_client() -> bz_error::Result<()> {
         let (events_tx, events_rx_guard) = mpsc::channel::<HealthCheckEvent>(EVENT_CHANNEL_SIZE);
 
         let mut subscriber = HealthCheckSubscriber::new_with_client(
@@ -465,9 +465,9 @@ mod tests {
             events_tx,
         );
 
-        let event = test_event(buck2_data::buck_event::Data::Instant(
-            buck2_data::InstantEvent {
-                data: Some(Box::new(buck2_data::Snapshot::default()).into()),
+        let event = test_event(bz_data::buck_event::Data::Instant(
+            bz_data::InstantEvent {
+                data: Some(Box::new(bz_data::Snapshot::default()).into()),
             },
         ));
 

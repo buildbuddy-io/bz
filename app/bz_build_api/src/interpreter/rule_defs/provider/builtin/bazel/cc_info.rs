@@ -6,21 +6,21 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::fs::buck_out_path::BazelOutputPathKind;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::provider::id::ProviderId;
-use buck2_execute::execute::request::OutputType;
-use buck2_hash::buck_indexset;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::provider::callable::ProviderCallableLike;
-use buck2_util::late_binding::LateBinding;
+use bz_build_api_derive::internal_provider;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::fs::buck_out_path::BazelOutputPathKind;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::provider::id::ProviderId;
+use bz_execute::execute::request::OutputType;
+use bz_hash::buck_indexset;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::provider::callable::ProviderCallableLike;
+use bz_util::late_binding::LateBinding;
 use dupe::Dupe;
 use serde::Serializer;
 use sha2::Digest;
@@ -61,7 +61,7 @@ use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::UnpackTuple;
 use starlark_map::StarlarkHasher;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::actions::impls::solib_symlink::UnregisteredSolibSymlinkAction;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
@@ -453,7 +453,7 @@ impl<'v> StarlarkValue<'v> for CcNativeProviderCallable {
 }
 
 impl ProviderCallableLike for CcNativeProviderCallable {
-    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+    fn id(&self) -> bz_error::Result<&Arc<ProviderId>> {
         Ok(&self.id)
     }
 }

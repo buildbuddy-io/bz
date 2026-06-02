@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::buck2_env;
-use buck2_error::BuckErrorContext;
+use bz_core::bz_env;
+use bz_error::BuckErrorContext;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 
@@ -19,8 +19,8 @@ pub struct ChunkReader {
 }
 
 impl ChunkReader {
-    pub fn new() -> buck2_error::Result<Self> {
-        let chunk_size = buck2_env!(
+    pub fn new() -> bz_error::Result<Self> {
+        let chunk_size = bz_env!(
             "BUCK2_TEST_MANIFOLD_CHUNK_BYTES",
             type=u64,
             applicability=testing,
@@ -29,7 +29,7 @@ impl ChunkReader {
         Ok(ChunkReader { chunk_size })
     }
 
-    pub async fn read<R>(&self, reader: &mut R) -> Result<Vec<u8>, buck2_error::Error>
+    pub async fn read<R>(&self, reader: &mut R) -> Result<Vec<u8>, bz_error::Error>
     where
         R: AsyncRead + Unpin,
     {

@@ -15,16 +15,16 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::source_path::SourcePathRef;
-use buck2_core::plugins::PluginKind;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_error::internal_error;
-use buck2_util::arc_str::ArcStr;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::package::PackageLabel;
+use bz_core::package::source_path::SourcePathRef;
+use bz_core::plugins::PluginKind;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_error::internal_error;
+use bz_util::arc_str::ArcStr;
 use dupe::Dupe;
 use pagable::Pagable;
 use strong_hash::StrongHash;
@@ -65,15 +65,15 @@ use crate::rule_type::RuleType;
 use crate::visibility::VisibilitySpecification;
 
 fn package_pattern_matches(
-    pattern: &buck2_core::pattern::pattern::ParsedPattern<
-        buck2_core::pattern::pattern_type::TargetPatternExtra,
+    pattern: &bz_core::pattern::pattern::ParsedPattern<
+        bz_core::pattern::pattern_type::TargetPatternExtra,
     >,
     package: &PackageLabel,
 ) -> bool {
     match pattern {
-        buck2_core::pattern::pattern::ParsedPattern::Target(..) => false,
-        buck2_core::pattern::pattern::ParsedPattern::Package(pkg) => pkg == package,
-        buck2_core::pattern::pattern::ParsedPattern::Recursive(cell_path) => {
+        bz_core::pattern::pattern::ParsedPattern::Target(..) => false,
+        bz_core::pattern::pattern::ParsedPattern::Package(pkg) => pkg == package,
+        bz_core::pattern::pattern::ParsedPattern::Recursive(cell_path) => {
             package.as_cell_path().starts_with(cell_path.as_ref())
         }
     }
@@ -296,7 +296,7 @@ impl TargetNode {
         self.as_ref().special_attr_or_none(key)
     }
 
-    pub fn visibility(&self) -> buck2_error::Result<&VisibilitySpecification> {
+    pub fn visibility(&self) -> bz_error::Result<&VisibilitySpecification> {
         match self.0.attributes.get(VISIBILITY_ATTRIBUTE.id) {
             Some(CoercedAttr::Visibility(v)) => Ok(v),
             Some(a) => {
@@ -338,7 +338,7 @@ impl TargetNode {
         Some(group.contains_package(package, &self.label().pkg(), package_groups))
     }
 
-    pub fn is_visible_to(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
+    pub fn is_visible_to(&self, target: &TargetLabel) -> bz_error::Result<bool> {
         if self.label().pkg() == target.pkg() {
             return Ok(true);
         }
@@ -348,7 +348,7 @@ impl TargetNode {
         Ok(self.package_group_visibility_matches(target)?)
     }
 
-    pub fn is_visible_to_package(&self, package: &PackageLabel) -> buck2_error::Result<bool> {
+    pub fn is_visible_to_package(&self, package: &PackageLabel) -> bz_error::Result<bool> {
         if self.label().pkg() == *package {
             return Ok(true);
         }
@@ -358,7 +358,7 @@ impl TargetNode {
         Ok(self.package_group_visibility_matches_package(package)?)
     }
 
-    fn visibility_matches_package(&self, package: &PackageLabel) -> buck2_error::Result<bool> {
+    fn visibility_matches_package(&self, package: &PackageLabel) -> bz_error::Result<bool> {
         match &self.visibility()?.0 {
             crate::visibility::VisibilityPatternList::Public => Ok(true),
             crate::visibility::VisibilityPatternList::List(patterns) => Ok(patterns
@@ -367,7 +367,7 @@ impl TargetNode {
         }
     }
 
-    fn package_group_visibility_matches(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
+    fn package_group_visibility_matches(&self, target: &TargetLabel) -> bz_error::Result<bool> {
         let Some(package_groups) = self.package.package_groups.get() else {
             return Ok(false);
         };
@@ -376,10 +376,10 @@ impl TargetNode {
             crate::visibility::VisibilityPatternList::Public => Ok(true),
             crate::visibility::VisibilityPatternList::List(patterns) => {
                 for pattern in patterns {
-                    if let buck2_core::pattern::pattern::ParsedPattern::Target(
+                    if let bz_core::pattern::pattern::ParsedPattern::Target(
                         package,
                         group,
-                        buck2_core::pattern::pattern_type::TargetPatternExtra,
+                        bz_core::pattern::pattern_type::TargetPatternExtra,
                     ) = &pattern.0
                         && package == &self.label().pkg()
                         && let Some(group) = package_groups.get(group)
@@ -396,7 +396,7 @@ impl TargetNode {
     fn package_group_visibility_matches_package(
         &self,
         package: &PackageLabel,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         let Some(package_groups) = self.package.package_groups.get() else {
             return Ok(false);
         };
@@ -405,10 +405,10 @@ impl TargetNode {
             crate::visibility::VisibilityPatternList::Public => Ok(true),
             crate::visibility::VisibilityPatternList::List(patterns) => {
                 for pattern in patterns {
-                    if let buck2_core::pattern::pattern::ParsedPattern::Target(
+                    if let bz_core::pattern::pattern::ParsedPattern::Target(
                         group_package,
                         group,
-                        buck2_core::pattern::pattern_type::TargetPatternExtra,
+                        bz_core::pattern::pattern_type::TargetPatternExtra,
                     ) = &pattern.0
                         && group_package == &self.label().pkg()
                         && let Some(group) = package_groups.get(group)
@@ -425,7 +425,7 @@ impl TargetNode {
     pub fn bazel_implicit_attr_visibility_package(
         &self,
         attr_name: &str,
-    ) -> buck2_error::Result<Option<PackageLabel>> {
+    ) -> bz_error::Result<Option<PackageLabel>> {
         if !self.0.rule.is_bazel_rule || !attr_name.starts_with('_') {
             return Ok(None);
         }
@@ -481,7 +481,7 @@ impl TargetNode {
         &'a self,
         key: &str,
         opts: AttrInspectOptions,
-    ) -> buck2_error::Result<Option<CoercedAttrFull<'a>>> {
+    ) -> bz_error::Result<Option<CoercedAttrFull<'a>>> {
         self.as_ref().attr(key, opts)
     }
 
@@ -511,15 +511,15 @@ impl TargetNode {
         }
 
         impl<'a> CoercedAttrTraversal<'a> for TestCollector<'a> {
-            fn input(&mut self, _path: SourcePathRef) -> buck2_error::Result<()> {
+            fn input(&mut self, _path: SourcePathRef) -> bz_error::Result<()> {
                 Ok(())
             }
 
-            fn dep(&mut self, _dep: &ProvidersLabel) -> buck2_error::Result<()> {
+            fn dep(&mut self, _dep: &ProvidersLabel) -> bz_error::Result<()> {
                 Ok(())
             }
 
-            fn label(&mut self, label: &'a ProvidersLabel) -> buck2_error::Result<()> {
+            fn label(&mut self, label: &'a ProvidersLabel) -> bz_error::Result<()> {
                 self.labels.push(label);
                 Ok(())
             }
@@ -554,7 +554,7 @@ impl TargetNode {
     }
 
     #[inline]
-    pub fn metadata(&self) -> buck2_error::Result<Option<&MetadataMap>> {
+    pub fn metadata(&self) -> bz_error::Result<Option<&MetadataMap>> {
         self.as_ref().metadata()
     }
 
@@ -587,7 +587,7 @@ impl<'a> TargetNodeRef<'a> {
     pub fn bazel_implicit_attr_visibility_package(
         self,
         attr_name: &str,
-    ) -> buck2_error::Result<Option<PackageLabel>> {
+    ) -> bz_error::Result<Option<PackageLabel>> {
         let rule = &self.0.get().rule;
         if !rule.is_bazel_rule || !attr_name.starts_with('_') {
             return Ok(None);
@@ -623,7 +623,7 @@ impl<'a> TargetNodeRef<'a> {
         self,
         key: &str,
         opts: AttrInspectOptions,
-    ) -> buck2_error::Result<Option<CoercedAttrFull<'a>>> {
+    ) -> bz_error::Result<Option<CoercedAttrFull<'a>>> {
         self.0
             .get()
             .rule
@@ -719,7 +719,7 @@ impl<'a> TargetNodeRef<'a> {
                 (x, self.special_attr_or_none(x).unwrap()))
     }
 
-    pub fn metadata(self) -> buck2_error::Result<Option<&'a MetadataMap>> {
+    pub fn metadata(self) -> bz_error::Result<Option<&'a MetadataMap>> {
         self.known_attr_or_none(METADATA_ATTRIBUTE.id, AttrInspectOptions::All)
             .map(|attr| match attr.value {
                 CoercedAttr::Metadata(m) => Ok(m),
@@ -728,7 +728,7 @@ impl<'a> TargetNodeRef<'a> {
             .transpose()
     }
 
-    pub fn target_modifiers(self) -> buck2_error::Result<Option<&'a TargetModifiersValue>> {
+    pub fn target_modifiers(self) -> bz_error::Result<Option<&'a TargetModifiersValue>> {
         self.known_attr_or_none(TARGET_MODIFIERS_ATTRIBUTE.id, AttrInspectOptions::All)
             .map(|attr| match attr.value {
                 CoercedAttr::TargetModifiers(m) => Ok(m),
@@ -819,12 +819,12 @@ impl<'a> TargetNodeRef<'a> {
         }
 
         impl CoercedAttrTraversal<'_> for InputsCollector {
-            fn input(&mut self, path: SourcePathRef) -> buck2_error::Result<()> {
+            fn input(&mut self, path: SourcePathRef) -> bz_error::Result<()> {
                 self.inputs.push(path.to_cell_path());
                 Ok(())
             }
 
-            fn dep(&mut self, _dep: &ProvidersLabel) -> buck2_error::Result<()> {
+            fn dep(&mut self, _dep: &ProvidersLabel) -> bz_error::Result<()> {
                 Ok(())
             }
         }
@@ -839,8 +839,8 @@ impl<'a> TargetNodeRef<'a> {
 }
 
 pub mod testing {
-    use buck2_core::package::PackageLabel;
-    use buck2_fs::paths::file_name::FileNameBuf;
+    use bz_core::package::PackageLabel;
+    use bz_fs::paths::file_name::FileNameBuf;
     use serde_json::map::Map;
     use serde_json::value::Value;
 
@@ -933,7 +933,7 @@ pub mod testing {
         target: &TargetsMap,
         pkg: PackageLabel,
         opts: AttrInspectOptions,
-    ) -> buck2_error::Result<Value> {
+    ) -> bz_error::Result<Value> {
         let map: Map<String, Value> = target
             .iter()
             .map(|(target_name, values)| {
@@ -948,14 +948,14 @@ pub mod testing {
                             })?,
                         ))
                     })
-                    .collect::<buck2_error::Result<Map<String, Value>>>()?;
+                    .collect::<bz_error::Result<Map<String, Value>>>()?;
                 json_values.insert(
                     "__type__".to_owned(),
                     Value::String(values.rule_type().to_string()),
                 );
                 Ok((target_name.to_string(), Value::from(json_values)))
             })
-            .collect::<buck2_error::Result<Map<String, Value>>>()?;
+            .collect::<bz_error::Result<Map<String, Value>>>()?;
         Ok(Value::from(map))
     }
 }

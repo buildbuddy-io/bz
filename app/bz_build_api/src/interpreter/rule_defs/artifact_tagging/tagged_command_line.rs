@@ -95,7 +95,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for StarlarkTaggedCommandLineG
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         ValueAsCommandLineLike::unpack_value_err(self.inner.value().to_value())?
             .0
             .add_to_command_line(cli, context, artifact_path_mapping)
@@ -104,7 +104,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for StarlarkTaggedCommandLineG
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut visitor = self.inner.wrap_visitor(visitor);
 
         ValueAsCommandLineLike::unpack_value_err(self.inner.value().to_value())?
@@ -121,7 +121,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for StarlarkTaggedCommandLineG
         &self,
         visitor: &mut dyn WriteToFileMacroVisitor,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         ValueAsCommandLineLike::unpack_value_err(self.inner.value().to_value())?
             .0
             .visit_write_to_file_macros(visitor, artifact_path_mapping)

@@ -10,8 +10,8 @@
 
 use std::fmt::Formatter;
 
-use buck2_query::query::environment::AttrFmtOptions;
-use buck2_query::query::environment::QueryTarget;
+use bz_query::query::environment::AttrFmtOptions;
+use bz_query::query::environment::QueryTarget;
 use dupe::Dupe;
 
 /// Extensions of `QueryTarget` needed in query commands.

@@ -15,15 +15,15 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckDashMap;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckDashMap;
 
 use crate::file_ops::metadata::FileType;
 use crate::file_ops::metadata::RawDirEntry;
@@ -116,7 +116,7 @@ fn cached_readdir_proves_absence<'a>(
     })
 }
 
-#[derive(Debug, Allocative, buck2_error::Error)]
+#[derive(Debug, Allocative, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum ReadDirError {
     #[error("Directory `{path}` does not exist")]
@@ -129,7 +129,7 @@ pub enum ReadDirError {
     #[error("Path `{0}` is `{1}`, not a directory")]
     NotADirectory(CellPath, String),
     #[error(transparent)]
-    Error(buck2_error::Error),
+    Error(bz_error::Error),
 }
 
 #[derive(Debug, Allocative)]
@@ -139,8 +139,8 @@ pub enum DirectoryDoesNotExistSuggestion {
     NoSuggestion,
 }
 
-impl From<buck2_error::Error> for ReadDirError {
-    fn from(value: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for ReadDirError {
+    fn from(value: bz_error::Error) -> Self {
         Self::Error(value)
     }
 }
@@ -150,22 +150,22 @@ pub trait IoProvider: Allocative + Send + Sync {
     async fn read_file_if_exists_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<String>>;
+    ) -> bz_error::Result<Option<String>>;
 
     async fn read_dir_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Vec<RawDirEntry>>;
+    ) -> bz_error::Result<Vec<RawDirEntry>>;
 
     async fn read_path_metadata_if_exists_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>>;
+    ) -> bz_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>>;
 
     async fn read_path_metadata_if_exists_for_no_watchfs_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
         Ok(self
             .read_path_metadata_if_exists_impl(path)
             .await?
@@ -176,19 +176,19 @@ pub trait IoProvider: Allocative + Send + Sync {
         &self,
         path: ProjectRelativePathBuf,
         _cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
         self.read_path_metadata_if_exists_for_no_watchfs_impl(path)
             .await
     }
 
     /// Request that this I/O provider be up to date with whatever I/O operations the user might
     /// have done until this point.
-    async fn settle(&self) -> buck2_error::Result<()>;
+    async fn settle(&self) -> bz_error::Result<()>;
 
     fn name(&self) -> &'static str;
 
     /// Returns the Eden version of the underlying system of the IoProvider, if available.
-    async fn eden_version(&self) -> buck2_error::Result<Option<String>>;
+    async fn eden_version(&self) -> bz_error::Result<Option<String>>;
 
     fn project_root(&self) -> &ProjectRoot;
 
@@ -199,7 +199,7 @@ impl dyn IoProvider + '_ {
     pub async fn read_file_if_exists(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<String>> {
+    ) -> bz_error::Result<Option<String>> {
         self.read_file_if_exists_impl(path)
             .await
             .tag(ErrorTag::IoSource)
@@ -208,14 +208,14 @@ impl dyn IoProvider + '_ {
     pub async fn read_dir(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Vec<RawDirEntry>> {
+    ) -> bz_error::Result<Vec<RawDirEntry>> {
         self.read_dir_impl(path).await.tag(ErrorTag::IoSource)
     }
 
     pub async fn read_path_metadata_if_exists(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>> {
         self.read_path_metadata_if_exists_impl(path)
             .await
             .tag(ErrorTag::IoSource)
@@ -224,7 +224,7 @@ impl dyn IoProvider + '_ {
     pub async fn read_path_metadata_if_exists_for_no_watchfs(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
         self.read_path_metadata_if_exists_for_no_watchfs_impl(path)
             .await
             .tag(ErrorTag::IoSource)
@@ -234,7 +234,7 @@ impl dyn IoProvider + '_ {
         &self,
         path: ProjectRelativePathBuf,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
         self.read_path_metadata_if_exists_for_no_watchfs_impl_with_cache(path, cache)
             .await
             .tag(ErrorTag::IoSource)

@@ -16,11 +16,11 @@ use std::hash::Hasher;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::package::PackageLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_util::arc_str::ThinArcStr;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::package::PackageLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_util::arc_str::ThinArcStr;
 use dupe::Dupe;
 use strong_hash::StrongHash;
 
@@ -100,7 +100,7 @@ pub enum StarlarkEvalKind {
     Unknown(ThinArcStr),
 }
 impl StarlarkEvalKind {
-    pub fn as_path(&self) -> buck2_error::Result<ForwardRelativePathBuf> {
+    pub fn as_path(&self) -> bz_error::Result<ForwardRelativePathBuf> {
         let mut path = self.to_string();
 
         // Just replace some characters to make a path that's a little easier to deal with in the shell.

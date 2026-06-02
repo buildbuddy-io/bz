@@ -29,18 +29,18 @@ cargo_build_script(
     edition = "2024",
     aliases = aliases(build = True, build_proc_macro = True),
     deps = all_crate_deps(build = True) + [
-        "//app/bz_protoc_dev:buck2_protoc_dev",
+        "//app/bz_protoc_dev:bz_protoc_dev",
     ],
     proc_macro_deps = all_crate_deps(build_proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
     build_script_env = {
-        "BUCK2_BUILD_PROTOC": "$(execpath //bazel_tools/tools/proto:buck2_protoc)",
-        "BUCK2_BUILD_PROTOC_INCLUDE": "$(execpath //bazel_tools/tools/proto:buck2_protoc_descriptor_proto)",
+        "BUCK2_BUILD_PROTOC": "$(execpath //bazel_tools/tools/proto:bz_protoc)",
+        "BUCK2_BUILD_PROTOC_INCLUDE": "$(execpath //bazel_tools/tools/proto:bz_protoc_descriptor_proto)",
     },
     tools = [
-        "//bazel_tools/tools/proto:buck2_protoc",
-        "//bazel_tools/tools/proto:buck2_protoc_descriptor_proto",
-        "//bazel_tools/tools/proto:buck2_protoc_well_known_protos",
+        "//bazel_tools/tools/proto:bz_protoc",
+        "//bazel_tools/tools/proto:bz_protoc_descriptor_proto",
+        "//bazel_tools/tools/proto:bz_protoc_well_known_protos",
     ],
     data = glob(["**/*.proto", "**/*.lalrpop"], allow_empty = True) + [
         "//app/bz_action_metadata_proto:action_metadata.proto",
@@ -67,7 +67,7 @@ rust_library(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":build_script",
-        "//app/bz_data:buck2_data",
+        "//app/bz_data:bz_data",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

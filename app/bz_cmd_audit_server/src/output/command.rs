@@ -11,22 +11,22 @@
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_build_api::actions::query::FIND_MATCHING_ACTION;
-use buck2_build_api::actions::query::PRINT_ACTION_NODE;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::audit_output::AUDIT_OUTPUT;
-use buck2_build_api::audit_output::AuditOutputResult;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::output::command::AuditOutputCommand;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_core::cells::CellResolver;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_build_api::actions::query::FIND_MATCHING_ACTION;
+use bz_build_api::actions::query::PRINT_ACTION_NODE;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::audit_output::AUDIT_OUTPUT;
+use bz_build_api::audit_output::AuditOutputResult;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::output::command::AuditOutputCommand;
+use bz_common::dice::cells::HasCellResolver;
+use bz_core::cells::CellResolver;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use dice::DiceComputations;
 use dupe::Dupe;
 
@@ -34,7 +34,7 @@ use crate::ServerAuditSubcommand;
 use crate::output::buck_out_path_parser::BuckOutPathParser;
 use crate::output::buck_out_path_parser::BuckOutPathType;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub(crate) enum AuditOutputError {
     #[error(
@@ -55,7 +55,7 @@ async fn audit_output<'v>(
     cell_resolver: CellResolver,
     dice_ctx: &'v mut DiceComputations<'_>,
     global_cfg_options: &'v GlobalCfgOptions,
-) -> buck2_error::Result<Option<AuditOutputResult>> {
+) -> bz_error::Result<Option<AuditOutputResult>> {
     let buck_out_parser = BuckOutPathParser::new(cell_resolver);
     let parsed = buck_out_parser.parse(output_path)?;
 
@@ -136,9 +136,9 @@ impl ServerAuditSubcommand for AuditOutputCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(server_ctx
             .with_dice_ctx(|server_ctx, mut dice_ctx| async move {
                 // First, we parse the buck-out path to get a target label. Next, we configure the target

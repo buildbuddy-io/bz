@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_cli_proto::common_build_options::ExecutionStrategy;
-use buck2_core::buck2_env_name;
-use buck2_error::buck2_error;
-use buck2_error::conversion::clap::buck_error_clap_parser;
+use bz_cli_proto::common_build_options::ExecutionStrategy;
+use bz_core::bz_env_name;
+use bz_error::bz_error;
+use bz_error::conversion::clap::buck_error_clap_parser;
 use clap::ArgGroup;
 use clap::builder::FalseyValueParser;
 use tracing::warn;
@@ -36,7 +36,7 @@ pub struct BuildReportOption {
     truncate_error_content: bool,
 }
 
-fn parse_build_report_option(s: &str) -> buck2_error::Result<BuildReportOption> {
+fn parse_build_report_option(s: &str) -> bz_error::Result<BuildReportOption> {
     let mut fill_out_failures = false;
     let mut include_package_project_relative_paths = false;
     let mut include_artifact_hash_information = false;
@@ -120,7 +120,7 @@ pub struct CommonBuildOptions {
     pub num_threads: Option<u32>,
 
     /// Enable only local execution. Will reject actions that cannot execute locally.
-    #[clap(long, group = "build_strategy", env = buck2_env_name!("BUCK_OFFLINE_BUILD"), value_parser = FalseyValueParser::new())]
+    #[clap(long, group = "build_strategy", env = bz_env_name!("BUCK_OFFLINE_BUILD"), value_parser = FalseyValueParser::new())]
     local_only: bool,
 
     /// Enable only remote execution. Will reject actions that cannot execute remotely.
@@ -133,7 +133,7 @@ pub struct CommonBuildOptions {
     prefer_local: bool,
 
     /// Enable hybrid execution. Will prefer executing actions that can execute remotely on RE and will avoid racing local and remote execution.
-    #[clap(long, group = "build_strategy", env = buck2_env_name!("BUCK_PREFER_REMOTE"), value_parser = FalseyValueParser::new())]
+    #[clap(long, group = "build_strategy", env = bz_env_name!("BUCK_PREFER_REMOTE"), value_parser = FalseyValueParser::new())]
     prefer_remote: bool,
 
     /// Experimental: Disable all execution.
@@ -143,7 +143,7 @@ pub struct CommonBuildOptions {
     /// Do not perform remote cache queries or cache writes. If remote execution is enabled, the RE
     /// service might still deduplicate actions, so for e.g. benchmarking, using a random isolation
     /// dir is preferred.
-    #[clap(long, env = buck2_env_name!("BUCK_OFFLINE_BUILD"), value_parser = FalseyValueParser::new())]
+    #[clap(long, env = bz_env_name!("BUCK_OFFLINE_BUILD"), value_parser = FalseyValueParser::new())]
     no_remote_cache: bool,
 
     /// Could be used to enable the action cache writes on the RE worker when no_remote_cache is specified
@@ -210,15 +210,15 @@ pub struct CommonBuildOptions {
 }
 
 impl CommonBuildOptions {
-    fn execution_strategy(&self, force_remote_only: bool) -> buck2_error::Result<i32> {
+    fn execution_strategy(&self, force_remote_only: bool) -> bz_error::Result<i32> {
         if force_remote_only {
             if self.local_only
                 || self.prefer_local
                 || self.prefer_remote
                 || self.unstable_no_execution
             {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "--rbe/--bb imply --remote-only and cannot be combined with another build strategy flag"
                 ));
             }
@@ -248,7 +248,7 @@ impl CommonBuildOptions {
         }
     }
 
-    pub fn to_proto(&self) -> buck2_cli_proto::CommonBuildOptions {
+    pub fn to_proto(&self) -> bz_cli_proto::CommonBuildOptions {
         self.to_proto_with_remote_only(false)
             .expect("forcing remote-only is the only fallible build option normalization")
     }
@@ -256,7 +256,7 @@ impl CommonBuildOptions {
     pub fn to_proto_with_remote_only(
         &self,
         force_remote_only: bool,
-    ) -> buck2_error::Result<buck2_cli_proto::CommonBuildOptions> {
+    ) -> bz_error::Result<bz_cli_proto::CommonBuildOptions> {
         let (unstable_print_build_report, unstable_build_report_filename) = self.build_report();
         let unstable_streaming_build_report_filename =
             self.streaming_build_report.clone().unwrap_or_default();
@@ -282,14 +282,14 @@ impl CommonBuildOptions {
             .any(|option| option.truncate_error_content);
         let concurrency = self
             .num_threads
-            .map(|num| buck2_cli_proto::Concurrency { concurrency: num });
+            .map(|num| bz_cli_proto::Concurrency { concurrency: num });
         let enable_optional_validations = self
             .enable_optional_validations
             .iter()
             .map(|s| s.to_owned())
             .collect();
 
-        Ok(buck2_cli_proto::CommonBuildOptions {
+        Ok(bz_cli_proto::CommonBuildOptions {
             concurrency,
             execution_strategy: self.execution_strategy(force_remote_only)?,
             unstable_print_build_report,
@@ -386,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn forced_remote_only_sets_remote_only_strategy() -> buck2_error::Result<()> {
+    fn forced_remote_only_sets_remote_only_strategy() -> bz_error::Result<()> {
         let opts = TestBuildOptions::try_parse_from(["buck2"])?.opts;
         let proto = opts.to_proto_with_remote_only(true)?;
 
@@ -398,7 +398,7 @@ mod tests {
     }
 
     #[test]
-    fn forced_remote_only_allows_explicit_remote_only() -> buck2_error::Result<()> {
+    fn forced_remote_only_allows_explicit_remote_only() -> bz_error::Result<()> {
         let opts = TestBuildOptions::try_parse_from(["buck2", "--remote-only"])?.opts;
         let proto = opts.to_proto_with_remote_only(true)?;
 
@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn forced_remote_only_rejects_conflicting_strategy() -> buck2_error::Result<()> {
+    fn forced_remote_only_rejects_conflicting_strategy() -> bz_error::Result<()> {
         let opts = TestBuildOptions::try_parse_from(["buck2", "--local-only"])?.opts;
 
         let err = opts.to_proto_with_remote_only(true).unwrap_err();

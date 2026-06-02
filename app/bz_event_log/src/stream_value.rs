@@ -9,8 +9,8 @@
  */
 
 use allocative::Allocative;
-use buck2_cli_proto::CommandResult;
-use buck2_cli_proto::PartialResult;
+use bz_cli_proto::CommandResult;
+use bz_cli_proto::PartialResult;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -19,5 +19,5 @@ use serde::Serialize;
 pub enum StreamValue {
     Result(Box<CommandResult>),
     PartialResult(Box<PartialResult>),
-    Event(Box<buck2_data::BuckEvent>),
+    Event(Box<bz_data::BuckEvent>),
 }

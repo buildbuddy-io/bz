@@ -10,10 +10,10 @@
 
 use std::time::Duration;
 
-use buck2_event_observer::display;
-use buck2_event_observer::display::TargetDisplayOptions;
-use buck2_event_observer::fmt_duration;
-use buck2_event_observer::span_tracker::BuckEventSpanInfo;
+use bz_event_observer::display;
+use bz_event_observer::display::TargetDisplayOptions;
+use bz_event_observer::fmt_duration;
+use bz_event_observer::span_tracker::BuckEventSpanInfo;
 use derive_more::From;
 use superconsole::Component;
 use superconsole::Dimensions;
@@ -50,14 +50,14 @@ impl Table {
 }
 
 impl Component for Table {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// Zips together each time and label lines, but gives the times preferential treatment.
     fn draw_unchecked(
         &self,
         Dimensions { width, .. }: Dimensions,
         _mode: DrawMode,
-    ) -> buck2_error::Result<Lines> {
+    ) -> bz_error::Result<Lines> {
         let combined = self
             .rows
             .iter()
@@ -110,7 +110,7 @@ impl TimedRow {
         timekeeper: &Timekeeper,
         cutoffs: &Cutoffs,
         display_platform: bool,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let event = display::display_event(
             &span.event,
             TargetDisplayOptions::for_console(display_platform),
@@ -126,7 +126,7 @@ impl TimedRow {
         time: String,
         age: Duration,
         cutoffs: &Cutoffs,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Self::styled(padding, style(event), style(time), age, cutoffs)
     }
 
@@ -136,7 +136,7 @@ impl TimedRow {
         time: StyledContent<String>,
         age: Duration,
         cutoffs: &Cutoffs,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let event = Span::new_styled(styled_for_delay(event, age, cutoffs))?;
 
         let line = if padding > 0 {
@@ -156,13 +156,13 @@ impl TimedRow {
 struct LinesComponent(Lines);
 
 impl Component for LinesComponent {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         _dimensions: Dimensions,
         _mode: DrawMode,
-    ) -> buck2_error::Result<Lines> {
+    ) -> bz_error::Result<Lines> {
         Ok(self.0.clone())
     }
 }

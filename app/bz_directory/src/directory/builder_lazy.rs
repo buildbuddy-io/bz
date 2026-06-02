@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_core::directory_digest::DirectoryDigest;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_core::directory_digest::DirectoryDigest;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 
 use crate::directory::builder::DirectoryBuilder;
 use crate::directory::builder::DirectoryInsertError;
@@ -71,7 +71,7 @@ where
     /// directory, but the fast paths in the directory builder can only be hit with shared
     /// directories.
     pub fn merge(&mut self, dir: SharedDirectory<L, H>) -> Result<(), DirectoryMergeError> {
-        if buck2_core::faster_directories::is_enabled() {
+        if bz_core::faster_directories::is_enabled() {
             self.to_merge.push(dir);
             Ok(())
         } else {
@@ -85,7 +85,7 @@ where
         path: ForwardRelativePathBuf,
         entry: DirectoryEntry<SharedDirectory<L, H>, L>,
     ) -> Result<(), DirectoryInsertError> {
-        if buck2_core::faster_directories::is_enabled() {
+        if bz_core::faster_directories::is_enabled() {
             self.to_insert.push((path, entry));
             Ok(())
         } else {
@@ -95,14 +95,14 @@ where
         }
     }
 
-    pub fn finalize(self) -> buck2_error::Result<DirectoryBuilder<L, H>> {
+    pub fn finalize(self) -> bz_error::Result<DirectoryBuilder<L, H>> {
         self.finalize_with_insert_conflict_handler(|_| false)
     }
 
     pub fn finalize_with_insert_conflict_handler(
         self,
         mut ignore_insert_conflict: impl FnMut(&L) -> bool,
-    ) -> buck2_error::Result<DirectoryBuilder<L, H>> {
+    ) -> bz_error::Result<DirectoryBuilder<L, H>> {
         self.finalize_with_conflict_handlers(&mut ignore_insert_conflict, |_| false)
     }
 
@@ -110,7 +110,7 @@ where
         self,
         ignore_insert_conflict: &mut impl FnMut(&L) -> bool,
         leaf_covers_dir: impl Fn(&L) -> bool,
-    ) -> buck2_error::Result<DirectoryBuilder<L, H>> {
+    ) -> bz_error::Result<DirectoryBuilder<L, H>> {
         let mut to_merge = self.to_merge;
         to_merge.sort_by_key(|d| std::cmp::Reverse(d.size()));
         to_merge.dedup();
@@ -196,7 +196,7 @@ mod tests {
     type LazyTestDirectoryBuilder = LazyDirectoryBuilder<NopEntry, TestDigest>;
 
     #[test]
-    fn test_smoke() -> buck2_error::Result<()> {
+    fn test_smoke() -> bz_error::Result<()> {
         let interner = DashMapDirectoryInterner::new();
 
         let mut a = LazyTestDirectoryBuilder::empty();

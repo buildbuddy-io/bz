@@ -10,17 +10,17 @@
 
 //! Translation between buck core data and the test spec data types
 
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_core::cells::CellResolver;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_data::ToProtoMessage;
-use buck2_error::BuckErrorContext;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::directory::ActionDirectoryEntry;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_test_api::data::ConfiguredTarget;
-use buck2_test_api::data::RemoteObject;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_core::cells::CellResolver;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_data::ToProtoMessage;
+use bz_error::BuckErrorContext;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::directory::ActionDirectoryEntry;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_test_api::data::ConfiguredTarget;
+use bz_test_api::data::RemoteObject;
 
 use crate::session::TestSession;
 
@@ -30,7 +30,7 @@ pub(crate) fn build_configured_target_handle(
     cell_resolver: &CellResolver,
     test_config_unification_rollout: bool,
     package_oncall: Option<String>,
-) -> buck2_error::Result<ConfiguredTarget> {
+) -> bz_error::Result<ConfiguredTarget> {
     let label = target.target().unconfigured();
     let cell = label.pkg().cell_name().to_string();
     let package = label.pkg().cell_relative_path().to_string();
@@ -57,10 +57,10 @@ pub(crate) fn build_configured_target_handle(
 }
 
 pub(crate) fn convert_test_result(
-    test_result: buck2_test_api::data::TestResult,
+    test_result: bz_test_api::data::TestResult,
     session: &TestSession,
-) -> buck2_error::Result<buck2_data::TestResult> {
-    let buck2_test_api::data::TestResult {
+) -> bz_error::Result<bz_data::TestResult> {
+    let bz_test_api::data::TestResult {
         name,
         status,
         msg,
@@ -72,10 +72,10 @@ pub(crate) fn convert_test_result(
 
     let test_target = session.get(test_target)?;
 
-    Ok(buck2_data::TestResult {
+    Ok(bz_data::TestResult {
         name,
         status: status.try_into().buck_error_context("Invalid `status`")?,
-        msg: msg.map(|msg| buck2_data::test_result::OptionalMsg { msg }),
+        msg: msg.map(|msg| bz_data::test_result::OptionalMsg { msg }),
         duration: duration.and_then(|d| d.try_into().ok()),
         details,
         target_label: Some(test_target.target().as_proto()),
@@ -97,9 +97,9 @@ pub(crate) fn convert_artifact(name: String, artifact: &ArtifactValue) -> Option
     convert_directory_entry(name, artifact.entry())
 }
 
-fn convert_digest(digest: &FileDigest) -> buck2_test_api::data::CasDigest {
+fn convert_digest(digest: &FileDigest) -> bz_test_api::data::CasDigest {
     let hash = format!("{}", digest.raw_digest());
-    buck2_test_api::data::CasDigest {
+    bz_test_api::data::CasDigest {
         hash,
         size_bytes: digest.size() as i64,
     }

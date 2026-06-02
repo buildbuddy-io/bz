@@ -11,12 +11,12 @@
 use std::borrow::Cow;
 
 use allocative::Allocative;
-use buck2_build_api::query::bxl::BxlUqueryFunctions;
-use buck2_build_api::query::bxl::NEW_BXL_UQUERY_FUNCTIONS;
-use buck2_build_api::query::oneshot::QUERY_FRONTEND;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::syntax::simple::functions::helpers::CapturedExpr;
+use bz_build_api::query::bxl::BxlUqueryFunctions;
+use bz_build_api::query::bxl::NEW_BXL_UQUERY_FUNCTIONS;
+use bz_build_api::query::oneshot::QUERY_FRONTEND;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::syntax::simple::functions::helpers::CapturedExpr;
 use derivative::Derivative;
 use derive_more::Display;
 use dice::DiceComputations;
@@ -77,7 +77,7 @@ impl<'v> StarlarkValue<'v> for StarlarkUQueryCtx<'v> {
 
 pub(crate) async fn get_uquery_env(
     ctx: &BxlContextCoreData,
-) -> buck2_error::Result<Box<dyn BxlUqueryFunctions>> {
+) -> bz_error::Result<Box<dyn BxlUqueryFunctions>> {
     (NEW_BXL_UQUERY_FUNCTIONS.get()?)(
         ctx.project_root().dupe(),
         ctx.cell_name(),
@@ -93,7 +93,7 @@ impl<'v> AllocValue<'v> for StarlarkUQueryCtx<'v> {
 }
 
 impl<'v> StarlarkUQueryCtx<'v> {
-    pub(crate) fn new(ctx: ValueTyped<'v, BxlContext<'v>>) -> buck2_error::Result<Self> {
+    pub(crate) fn new(ctx: ValueTyped<'v, BxlContext<'v>>) -> bz_error::Result<Self> {
         Ok(Self { ctx })
     }
 }
@@ -102,7 +102,7 @@ async fn unpack_targets<'c, 'v>(
     this: &'c StarlarkUQueryCtx<'v>,
     dice: &'c mut DiceComputations<'_>,
     targets: TargetListExprArg<'v>,
-) -> buck2_error::Result<Cow<'v, TargetSet<TargetNode>>> {
+) -> bz_error::Result<Cow<'v, TargetSet<TargetNode>>> {
     TargetListExpr::<'v, TargetNode>::unpack(targets, &this.ctx, dice)
         .await?
         .get(dice)
@@ -128,7 +128,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
                 async {
                     let filter = filter
                         .into_option()
-                        .try_map(buck2_query_parser::parse_expr)?;
+                        .try_map(bz_query_parser::parse_expr)?;
                     let from = unpack_targets(this, dice, from).await?;
                     let to = unpack_targets(this, dice, to).await?;
                     get_uquery_env(&this.ctx)
@@ -160,7 +160,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
                 async {
                     let filter = filter
                         .into_option()
-                        .try_map(buck2_query_parser::parse_expr)?;
+                        .try_map(bz_query_parser::parse_expr)?;
 
                     let from = unpack_targets(this, dice, from).await?;
                     let to = unpack_targets(this, dice, to).await?;
@@ -276,7 +276,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
                     async {
                         let filter = filter
                             .into_option()
-                            .try_map(buck2_query_parser::parse_expr)?;
+                            .try_map(bz_query_parser::parse_expr)?;
 
                         let targets = unpack_targets(this, dice, universe).await?;
 
@@ -319,7 +319,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
                     async {
                         let filter = filter
                             .into_option()
-                            .try_map(buck2_query_parser::parse_expr)?;
+                            .try_map(bz_query_parser::parse_expr)?;
 
                         let universe = unpack_targets(this, dice, universe).await?;
                         let targets = unpack_targets(this, dice, from).await?;

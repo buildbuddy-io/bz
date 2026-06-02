@@ -16,17 +16,17 @@ use std::hash::Hasher;
 use std::iter;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
-use buck2_build_api::actions::calculation::ActionCalculation;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::artifact_groups::ResolvedArtifactGroup;
-use buck2_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use buck2_execute::path::artifact_path::ArtifactPath;
-use buck2_hash::BuckIndexSet;
+use bz_artifact::artifact::artifact_type::BaseArtifactKind;
+use bz_build_api::actions::calculation::ActionCalculation;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::artifact_groups::ResolvedArtifactGroup;
+use bz_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_execute::path::artifact_path::ArtifactPath;
+use bz_hash::BuckIndexSet;
 use derive_more::Display;
 use dice::DiceComputations;
 use dupe::Dupe;
@@ -68,9 +68,9 @@ pub(crate) struct EnsuredArtifactGroupInner {
 pub(crate) async fn visit_artifact_path_without_associated_deduped(
     ags: &[ArtifactGroup],
     abs: bool,
-    mut visitor: impl FnMut(ArtifactPath, bool) -> buck2_error::Result<()>,
+    mut visitor: impl FnMut(ArtifactPath, bool) -> bz_error::Result<()>,
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // If there's a case where a tset projection returns a projection, we want to make sure
     // we are not reprocessing the nested projection over again. Since we are using
 
@@ -127,9 +127,9 @@ impl<'v> EnsuredArtifactGroup<'v> {
 
     pub(crate) async fn visit_artifact_path_without_associated_deduped(
         &self,
-        visitor: impl FnMut(ArtifactPath, bool) -> buck2_error::Result<()>,
+        visitor: impl FnMut(ArtifactPath, bool) -> bz_error::Result<()>,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         visit_artifact_path_without_associated_deduped(self.inner(), self.abs, visitor, ctx).await
     }
 }
@@ -184,7 +184,7 @@ pub(crate) enum ArtifactArg<'v> {
 }
 
 impl<'v> ArtifactArg<'v> {
-    pub(crate) fn into_ensured_artifact(self) -> buck2_error::Result<EnsuredArtifact> {
+    pub(crate) fn into_ensured_artifact(self) -> bz_error::Result<EnsuredArtifact> {
         match self {
             ArtifactArg::Artifact(artifact) => Ok(EnsuredArtifact {
                 artifact: artifact.dupe(),
@@ -475,7 +475,7 @@ impl LazyBuildArtifact {
     pub(crate) async fn build_artifacts(
         &self,
         ctx: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<Vec<ActionOutputs>> {
+    ) -> bz_error::Result<Vec<ActionOutputs>> {
         let res = ctx
             .try_compute_join(&self.artifacts_to_build, |ctx, artifact_group| {
                 async move {

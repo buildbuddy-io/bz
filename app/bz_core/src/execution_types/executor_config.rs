@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_hash::BuckHasher;
+use bz_hash::BuckHasher;
 use derive_more::Display;
 use dupe::Dupe;
 use itertools::Itertools;
@@ -56,7 +56,7 @@ pub struct RemoteEnabledExecutorOptions {
     pub priority: Option<i32>,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum RemoteExecutorDependencyErrors {
     #[error("RE dependency requires `{0}` to be set")]
@@ -104,7 +104,7 @@ pub struct ReGangWorker {
 }
 
 impl ReGangWorker {
-    pub fn parse(worker_map: SmallMap<&str, &str>) -> buck2_error::Result<ReGangWorker> {
+    pub fn parse(worker_map: SmallMap<&str, &str>) -> bz_error::Result<ReGangWorker> {
         let capabilities: SortedMap<String, String> = worker_map
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -128,7 +128,7 @@ pub enum ReGangLocality {
     NetworkDomain,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ReGangLocalityErrors {
     #[error("Invalid locality value `{0}`. Expected one of: region, datacenter, network_domain")]
@@ -136,7 +136,7 @@ enum ReGangLocalityErrors {
 }
 
 impl ReGangLocality {
-    pub fn parse(s: &str) -> buck2_error::Result<ReGangLocality> {
+    pub fn parse(s: &str) -> bz_error::Result<ReGangLocality> {
         match s.to_lowercase().as_str() {
             "region" => Ok(ReGangLocality::Region),
             "datacenter" => Ok(ReGangLocality::Datacenter),
@@ -160,7 +160,7 @@ pub struct ReGang {
     pub num_sub_groups: Option<i32>,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ReGangErrors {
     #[error("RE gang requires `{0}` to be set")]
@@ -179,7 +179,7 @@ impl ReGang {
         num_of_workers: i32,
         locality: Option<ReGangLocality>,
         num_sub_groups: Option<i32>,
-    ) -> buck2_error::Result<ReGang> {
+    ) -> bz_error::Result<ReGang> {
         if num_of_workers <= 0 {
             return Err(ReGangErrors::InvalidNumOfWorkers(num_of_workers).into());
         }
@@ -204,7 +204,7 @@ impl ReGang {
 }
 
 impl RemoteExecutorDependency {
-    pub fn parse(dep_map: SmallMap<&str, &str>) -> buck2_error::Result<RemoteExecutorDependency> {
+    pub fn parse(dep_map: SmallMap<&str, &str>) -> bz_error::Result<RemoteExecutorDependency> {
         fn username() -> Option<String> {
             #[cfg(fbcode_build)]
             {
@@ -275,7 +275,7 @@ impl RemoteExecutorUseCase {
 
     /// The "buck2-default" use case. This is meant to be used when no use case is configured. It's
     /// not meant to be used for convenience when a use case is not available where it's needed!
-    pub fn buck2_default() -> Self {
+    pub fn bz_default() -> Self {
         static USE_CASE: Lazy<RemoteExecutorUseCase> =
             Lazy::new(|| RemoteExecutorUseCase::new("buck2-default".to_owned()));
         *USE_CASE
@@ -291,7 +291,7 @@ impl Hash for RemoteExecutorUseCase {
 }
 
 impl FromStr for RemoteExecutorUseCase {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(RemoteExecutorUseCase::new(s.to_owned()))
@@ -399,7 +399,7 @@ pub enum OutputPathsBehavior {
 }
 
 impl FromStr for OutputPathsBehavior {
-    type Err = buck2_error::Error;
+    type Err = bz_error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -407,8 +407,8 @@ impl FromStr for OutputPathsBehavior {
             "compatibility" => Ok(OutputPathsBehavior::Compatibility),
             #[cfg(not(fbcode_build))]
             "output_paths" => Ok(OutputPathsBehavior::OutputPaths),
-            _ => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
+            _ => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid OutputPathsBehavior: `{}`",
                 s
             )),

@@ -9,15 +9,15 @@
  */
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_build_api::dynamic_value::DynamicValue;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
-use buck2_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
-use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
-use buck2_error::buck2_error;
-use buck2_hash::BuckIndexSet;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_build_api::dynamic_value::DynamicValue;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::unpack_artifact::UnpackNonPromiseInputArtifact;
+use bz_core::deferred::dynamic::DynamicLambdaResultsKey;
+use bz_error::bz_error;
+use bz_hash::BuckIndexSet;
 use dupe::Dupe;
 use starlark::collections::SmallSet;
 use starlark::typing::Ty;
@@ -164,7 +164,7 @@ impl<'v> DynamicAttrValue<Value<'v>> {
 }
 
 impl<'v> DynamicAttrValue<Value<'v>> {
-    fn bind(&self, bind: &mut DynamicActionsOutputArtifactBinder) -> buck2_error::Result<()> {
+    fn bind(&self, bind: &mut DynamicActionsOutputArtifactBinder) -> bz_error::Result<()> {
         match self {
             DynamicAttrValue::Output(output) => {
                 let v =
@@ -249,7 +249,7 @@ impl<'v> DynamicAttrValues<Value<'v>> {
 }
 
 impl<'v> DynamicAttrValues<Value<'v>> {
-    pub(crate) fn bind(&self, key: &DynamicLambdaResultsKey) -> buck2_error::Result<()> {
+    pub(crate) fn bind(&self, key: &DynamicLambdaResultsKey) -> bz_error::Result<()> {
         let mut bind = DynamicActionsOutputArtifactBinder::new(key);
         self.values.iter().try_for_each(|v| v.bind(&mut bind))
     }
@@ -297,7 +297,7 @@ impl DynamicAttrType {
     pub(crate) fn coerce<'v>(
         &self,
         value: Value<'v>,
-    ) -> buck2_error::Result<DynamicAttrValue<Value<'v>>> {
+    ) -> bz_error::Result<DynamicAttrValue<Value<'v>>> {
         match self {
             DynamicAttrType::Output => {
                 let artifact = ValueTyped::<StarlarkOutputArtifact<'v>>::unpack_value_err(value)?;
@@ -317,8 +317,8 @@ impl DynamicAttrType {
             }
             DynamicAttrType::Value(ty) => {
                 if !ty.matches(value) {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Expecting a value of type `{}`, got: {}",
                         ty,
                         value.to_string_for_type_error()
@@ -340,8 +340,8 @@ impl DynamicAttrType {
                 let mut res = SmallMap::with_capacity(dict.len());
                 for (key, value) in dict.iter_hashed() {
                     if !key_ty.matches(key.into_key()) {
-                        return Err(buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        return Err(bz_error!(
+                            bz_error::ErrorTag::Input,
                             "Expecting a key of type `{}`, got: {}",
                             key_ty,
                             key.to_string_for_type_error()
@@ -354,8 +354,8 @@ impl DynamicAttrType {
             DynamicAttrType::Tuple(elem_tys) => {
                 let tuple = <&TupleRef>::unpack_value_err(value)?;
                 if tuple.len() != elem_tys.len() {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Expecting a tuple of length {}, got: {}",
                         elem_tys.len(),
                         tuple.len()

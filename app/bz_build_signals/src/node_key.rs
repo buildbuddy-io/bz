@@ -14,7 +14,7 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
 
-use buck2_hash::BuckHasher;
+use bz_hash::BuckHasher;
 use cmp_any::PartialEqAny;
 use dupe::Dupe;
 
@@ -22,7 +22,7 @@ use dupe::Dupe;
 pub trait BuildSignalsNodeKeyImpl:
     Eq + PartialEq + Hash + Display + Debug + Send + Sync + 'static
 {
-    fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry> {
+    fn critical_path_entry_proto(&self) -> Option<bz_data::critical_path_entry2::Entry> {
         None
     }
 
@@ -35,7 +35,7 @@ pub trait BuildSignalsNodeKeyDyn: Send + Sync + 'static {
     fn eq_token(&self) -> PartialEqAny<'_>;
     fn dislpay(&self) -> &dyn Display;
     fn debug(&self) -> &dyn Debug;
-    fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry>;
+    fn critical_path_entry_proto(&self) -> Option<bz_data::critical_path_entry2::Entry>;
     fn hash(&self) -> u64;
     fn kind(&self) -> &'static str;
 }
@@ -53,7 +53,7 @@ impl<T: BuildSignalsNodeKeyImpl> BuildSignalsNodeKeyDyn for T {
         self
     }
 
-    fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry> {
+    fn critical_path_entry_proto(&self) -> Option<bz_data::critical_path_entry2::Entry> {
         self.critical_path_entry_proto()
     }
 
@@ -76,7 +76,7 @@ impl BuildSignalsNodeKey {
         BuildSignalsNodeKey(Arc::new(key))
     }
 
-    pub fn critical_path_entry_proto(&self) -> Option<buck2_data::critical_path_entry2::Entry> {
+    pub fn critical_path_entry_proto(&self) -> Option<bz_data::critical_path_entry2::Entry> {
         self.0.critical_path_entry_proto()
     }
 

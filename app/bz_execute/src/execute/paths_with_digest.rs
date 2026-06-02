@@ -12,10 +12,10 @@ use std::fmt::Display;
 use std::io;
 use std::io::Write;
 
-use buck2_common::cas_digest::CasDigestConfig;
-use buck2_common::file_ops::metadata::FileDigest;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_common::cas_digest::CasDigestConfig;
+use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use serde::Serialize;
 use serde::Serializer;
 
@@ -55,7 +55,7 @@ impl<'a> PathsWithDigestBuilder<'a> {
         self.paths.push(PathWithDigest { path, digest });
     }
 
-    pub fn build(self) -> buck2_error::Result<PathsWithDigestBlobData> {
+    pub fn build(self) -> bz_error::Result<PathsWithDigestBlobData> {
         let json = MetadataJson {
             digests: self.paths,
             // Increment this version if format changes
@@ -70,7 +70,7 @@ impl<'a> PathsWithDigestBuilder<'a> {
     pub fn build_digest(
         self,
         digest_config: CasDigestConfig,
-    ) -> buck2_error::Result<TrackedFileDigest> {
+    ) -> bz_error::Result<TrackedFileDigest> {
         let json = MetadataJson {
             digests: self.paths,
             // Increment this version if format changes
@@ -88,7 +88,7 @@ impl<'a> PathsWithDigestBuilder<'a> {
 }
 
 struct DigestWriter {
-    digester: buck2_common::cas_digest::Digester<buck2_common::file_ops::metadata::FileDigestKind>,
+    digester: bz_common::cas_digest::Digester<bz_common::file_ops::metadata::FileDigestKind>,
 }
 
 impl Write for DigestWriter {

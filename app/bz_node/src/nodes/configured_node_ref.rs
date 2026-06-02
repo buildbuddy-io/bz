@@ -11,7 +11,7 @@
 use std::hash::Hash;
 use std::hash::Hasher;
 
-use buck2_query::query::graph::successors::GraphSuccessors;
+use bz_query::query::graph::successors::GraphSuccessors;
 use dupe::Dupe;
 use starlark_map::StarlarkHashValue;
 

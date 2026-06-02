@@ -13,13 +13,13 @@ use std::io;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_interpreter::file_type::StarlarkFileType;
-use buck2_node::metadata::key::MetadataKey;
-use buck2_node::metadata::key::MetadataKeyRef;
-use buck2_node::metadata::super_package_values::SuperPackageValues;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_interpreter::file_type::StarlarkFileType;
+use bz_node::metadata::key::MetadataKey;
+use bz_node::metadata::key::MetadataKeyRef;
+use bz_node::metadata::super_package_values::SuperPackageValues;
 use dupe::Dupe;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
@@ -40,7 +40,7 @@ use starlark_map::small_map::SmallMap;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::package_file_extra::PackageFileExtra;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum PackageValueError {
     #[error("key already set in this file: `{0}`")]
@@ -55,7 +55,7 @@ pub struct SuperPackageValuesImpl {
 }
 
 impl SuperPackageValuesImpl {
-    pub fn get(values: &dyn SuperPackageValues) -> buck2_error::Result<&SuperPackageValuesImpl> {
+    pub fn get(values: &dyn SuperPackageValues) -> bz_error::Result<&SuperPackageValuesImpl> {
         values
             .as_any()
             .downcast_ref::<SuperPackageValuesImpl>()
@@ -72,7 +72,7 @@ impl SuperPackageValuesImpl {
     pub(crate) fn merge(
         parent: &Arc<dyn SuperPackageValues>,
         this_package: SmallMap<MetadataKey, OwnedFrozenStarlarkPackageValue>,
-    ) -> buck2_error::Result<Arc<dyn SuperPackageValues>> {
+    ) -> bz_error::Result<Arc<dyn SuperPackageValues>> {
         if this_package.is_empty() {
             Ok(parent.dupe())
         } else {
@@ -95,7 +95,7 @@ impl SuperPackageValues for SuperPackageValuesImpl {
         self.values.is_empty()
     }
 
-    fn package_values_json(&self) -> buck2_error::Result<SmallMap<MetadataKey, serde_json::Value>> {
+    fn package_values_json(&self) -> bz_error::Result<SmallMap<MetadataKey, serde_json::Value>> {
         let mut values = SmallMap::with_capacity(self.values.len());
         for (key, value) in &self.values {
             values.insert(key.clone(), value.to_json_value()?);
@@ -110,7 +110,7 @@ impl SuperPackageValues for SuperPackageValuesImpl {
     fn get_package_value_json(
         &self,
         key: &MetadataKeyRef,
-    ) -> buck2_error::Result<Option<serde_json::Value>> {
+    ) -> bz_error::Result<Option<serde_json::Value>> {
         match self.values.get(key) {
             Some(value) => Ok(Some(value.to_json_value()?)),
             None => Ok(None),
@@ -129,7 +129,7 @@ pub(crate) struct FrozenStarlarkPackageValue(FrozenValue);
 pub struct OwnedFrozenStarlarkPackageValue(OwnedFrozenValue);
 
 impl<'v> StarlarkPackageValue<'v> {
-    pub(crate) fn new(value: Value<'v>) -> buck2_error::Result<StarlarkPackageValue<'v>> {
+    pub(crate) fn new(value: Value<'v>) -> bz_error::Result<StarlarkPackageValue<'v>> {
         serde_json::to_writer(io::sink(), &value).buck_error_context(
             "Value must be serializable to JSON to be stored as package value",
         )?;
@@ -164,11 +164,11 @@ impl OwnedFrozenStarlarkPackageValue {
         OwnedFrozenStarlarkPackageValue(unsafe { OwnedFrozenValue::new(owner, value.0) })
     }
 
-    pub(crate) fn to_json_value(&self) -> buck2_error::Result<serde_json::Value> {
+    pub(crate) fn to_json_value(&self) -> bz_error::Result<serde_json::Value> {
         self.0
             .value()
             .to_json_value()
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
             .internal_error("Not valid JSON, should have been validated at construction")
     }
 
@@ -184,7 +184,7 @@ pub(crate) fn write_package_value_impl<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     fn_name: &str,
 ) -> starlark::Result<NoneType> {
-    let key = MetadataKeyRef::new(key).map_err(buck2_error::Error::from)?;
+    let key = MetadataKeyRef::new(key).map_err(bz_error::Error::from)?;
 
     let package_ctx = BuildContext::from_context(eval)?
         .additional
@@ -194,7 +194,7 @@ pub(crate) fn write_package_value_impl<'v>(
 
     if package_file_extra.package_values.borrow().contains_key(key) {
         return Err(
-            buck2_error::Error::from(PackageValueError::KeyAlreadySetInThisFile(key.to_owned()))
+            bz_error::Error::from(PackageValueError::KeyAlreadySetInThisFile(key.to_owned()))
                 .into(),
         );
     }
@@ -202,7 +202,7 @@ pub(crate) fn write_package_value_impl<'v>(
     if !overwrite {
         if package_ctx.parent.package_values().contains_key(key) {
             return Err(
-                buck2_error::Error::from(PackageValueError::KeySetInParentFile(key.to_owned()))
+                bz_error::Error::from(PackageValueError::KeySetInParentFile(key.to_owned()))
                     .into(),
             );
         }
@@ -240,7 +240,7 @@ pub(crate) fn read_parent_package_value_impl<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     fn_name: &str,
 ) -> starlark::Result<Value<'v>> {
-    let key = MetadataKeyRef::new(key).map_err(buck2_error::Error::from)?;
+    let key = MetadataKeyRef::new(key).map_err(bz_error::Error::from)?;
 
     let package_ctx = BuildContext::from_context(eval)?
         .additional
@@ -266,7 +266,7 @@ pub(crate) fn register_read_package_value(globals: &mut GlobalsBuilder) {
         #[starlark(require = pos)] key: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let key = MetadataKeyRef::new(key).map_err(buck2_error::Error::from)?;
+        let key = MetadataKeyRef::new(key).map_err(bz_error::Error::from)?;
 
         let build_ctx = BuildContext::from_context(eval)?;
         let build_ctx = build_ctx

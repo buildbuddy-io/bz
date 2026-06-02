@@ -28,7 +28,7 @@ import sys
 import tempfile
 
 
-def find_buck2_root():
+def find_bz_root():
     """Find the fbcode directory to run buck commands from."""
     d = os.path.dirname(os.path.abspath(__file__))
     while d != "/":
@@ -44,7 +44,7 @@ def find_buck2_root():
     return os.environ.get("FBCODE_DIR", "/home/cjhopman/fbsource-3/fbcode")
 
 
-FBCODE = find_buck2_root()
+FBCODE = find_bz_root()
 GEN_TARGET = "fbcode//bz/games:sokoban_gen"
 SOKOBAN_TARGET = "fbcode//bz/games:sokoban"
 

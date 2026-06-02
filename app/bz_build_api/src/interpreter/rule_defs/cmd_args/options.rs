@@ -14,18 +14,18 @@ use std::fmt::Debug;
 use std::fmt::Formatter;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_fs::paths::RelativePath;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_interpreter::types::cell_root::CellRoot;
-use buck2_interpreter::types::project_root::StarlarkProjectRoot;
-use buck2_interpreter::types::regex::StarlarkBuckRegex;
-use buck2_util::thin_box::ThinBoxSlice;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_fs::paths::RelativePath;
+use bz_fs::paths::RelativePathBuf;
+use bz_interpreter::types::cell_root::CellRoot;
+use bz_interpreter::types::project_root::StarlarkProjectRoot;
+use bz_interpreter::types::regex::StarlarkBuckRegex;
+use bz_util::thin_box::ThinBoxSlice;
 use derive_more::Display;
 use display_container::fmt_container;
 use dupe::Dupe;
@@ -76,7 +76,7 @@ impl Display for QuoteStyle {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum CommandLineArgError {
     #[error("Unknown quoting style `{0}`")]
@@ -88,7 +88,7 @@ enum CommandLineArgError {
 }
 
 impl QuoteStyle {
-    pub fn parse(s: &str) -> buck2_error::Result<QuoteStyle> {
+    pub fn parse(s: &str) -> bz_error::Result<QuoteStyle> {
         match s {
             "shell" => Ok(QuoteStyle::Shell),
             _ => Err(CommandLineArgError::UnknownQuotingStyle(s.to_owned()).into()),
@@ -108,7 +108,7 @@ pub enum ParamFileFormat {
 }
 
 impl ParamFileFormat {
-    pub(crate) fn parse(s: &str) -> buck2_error::Result<Self> {
+    pub(crate) fn parse(s: &str) -> bz_error::Result<Self> {
         match s {
             "shell" => Ok(Self::Shell),
             "multiline" => Ok(Self::Multiline),
@@ -626,7 +626,7 @@ impl ArtifactPathMapper for RelativeOriginArtifactPathMapper<'_> {
     fn artifact_value(
         &self,
         artifact: &Artifact,
-    ) -> Option<&buck2_execute::artifact_value::ArtifactValue> {
+    ) -> Option<&bz_execute::artifact_value::ArtifactValue> {
         self.artifact_path_mapping.artifact_value(artifact)
     }
 }
@@ -636,7 +636,7 @@ impl<'v> RelativeOrigin<'v> {
         &self,
         ctx: &C,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<RelativePathBuf>
+    ) -> bz_error::Result<RelativePathBuf>
     where
         C: CommandLineContext + ?Sized,
     {
@@ -647,7 +647,7 @@ impl<'v> RelativeOrigin<'v> {
                     // FIXME(JakobDegen): This is not the only place where we do it, but it's
                     // nonetheless an extremely non-local assertion
                     Either::Left(_) => {
-                        return Err(buck2_error::internal_error!(
+                        return Err(bz_error::internal_error!(
                             "Non-frozen output artifacts can't be added to CLIs"
                         ));
                     }
@@ -700,9 +700,9 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
         f: impl for<'b> FnOnce(
             &'b mut dyn CommandLineBuilder,
             &'b mut dyn CommandLineContext,
-        ) -> buck2_error::Result<R>,
+        ) -> bz_error::Result<R>,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<R> {
+    ) -> bz_error::Result<R> {
         struct ExtrasBuilder<'a, 'v> {
             builder: &'a mut dyn CommandLineBuilder,
             opts: &'a CommandLineOptionsRef<'v, 'a>,
@@ -723,7 +723,7 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
                 &self,
                 artifact: &Artifact,
                 artifact_path_mapping: &dyn ArtifactPathMapper,
-            ) -> buck2_error::Result<CommandLineLocation<'_>> {
+            ) -> bz_error::Result<CommandLineLocation<'_>> {
                 let resolved = self.ctx.resolve_artifact(artifact, artifact_path_mapping)?;
                 self.apply_path_options(resolved)
             }
@@ -731,7 +731,7 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
             fn resolve_output_artifact(
                 &self,
                 artifact: &Artifact,
-            ) -> buck2_error::Result<CommandLineLocation<'_>> {
+            ) -> bz_error::Result<CommandLineLocation<'_>> {
                 let resolved = self.ctx.resolve_output_artifact(artifact)?;
                 self.apply_path_options(resolved)
             }
@@ -739,7 +739,7 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
             fn resolve_project_path(
                 &self,
                 path: ProjectRelativePathBuf,
-            ) -> buck2_error::Result<CommandLineLocation<'_>> {
+            ) -> bz_error::Result<CommandLineLocation<'_>> {
                 let resolved = self.ctx.resolve_project_path(path)?;
                 self.apply_path_options(resolved)
             }
@@ -748,7 +748,7 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
                 self.ctx.fs()
             }
 
-            fn next_macro_file_path(&mut self) -> buck2_error::Result<RelativePathBuf> {
+            fn next_macro_file_path(&mut self) -> bz_error::Result<RelativePathBuf> {
                 let macro_path = self.ctx.next_macro_file_path()?;
                 if let Some(relative_to_path) = &self.relative_to {
                     Ok(relative_to_path.relative(macro_path))
@@ -760,7 +760,7 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
             fn add_param_file(
                 &mut self,
                 content: Vec<u8>,
-            ) -> buck2_error::Result<CommandLineLocation<'_>> {
+            ) -> bz_error::Result<CommandLineLocation<'_>> {
                 let path_separator = self.fs().path_separator();
                 let location = self.ctx.add_param_file(content)?;
                 if let Some(relative_to_path) = &self.relative_to {
@@ -783,7 +783,7 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
             fn apply_path_options<'b>(
                 &self,
                 resolved: CommandLineLocation<'b>,
-            ) -> buck2_error::Result<CommandLineLocation<'b>> {
+            ) -> bz_error::Result<CommandLineLocation<'b>> {
                 let Self {
                     relative_to, opts, ..
                 } = self;
@@ -922,7 +922,7 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
         &self,
         ctx: &C,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<Option<RelativePathBuf>>
+    ) -> bz_error::Result<Option<RelativePathBuf>>
     where
         C: CommandLineContext + ?Sized,
     {

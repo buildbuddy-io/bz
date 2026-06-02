@@ -11,11 +11,11 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::configuration::transition::id::TransitionId;
-use buck2_core::plugins::PluginKind;
+use bz_core::configuration::transition::id::TransitionId;
+use bz_core::plugins::PluginKind;
 #[allow(unused_imports)]
-use buck2_hash::BuckHasher;
-use buck2_util::arc_str::ArcStr;
+use bz_hash::BuckHasher;
+use bz_util::arc_str::ArcStr;
 use pagable::Pagable;
 use static_interner::interner;
 

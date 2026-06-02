@@ -41,7 +41,7 @@ buck2 kill
 BUCK_LOG=module_name=trace buck2 <command>
 # Example
 BUCK_LOG=starlark=trace buck2 uquery cell//path/to:target
-BUCK_LOG=buck2_execute_impl::materializers=trace buck2 build cell//path/to:target
+BUCK_LOG=bz_execute_impl::materializers=trace buck2 build cell//path/to:target
 ```
 
 Or use `./buck2.py` instead of `buck2` to run local changes
@@ -83,7 +83,7 @@ fbcode/buck2/buck2.py test ...
 To get access to Tpx's stderr and stdout if you are print-debugging, you need to also get Buck2 to have the right log level for it:
 
 ```sh
-BUCK_LOG=buck2_test=debug buck2 test
+BUCK_LOG=bz_test=debug buck2 test
 ```
 
 Remember that you need a daemon restart to change `BUCK_LOG`.

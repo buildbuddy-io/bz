@@ -19,15 +19,15 @@ const MAX_FILE_CHANGE_RECORDS: usize = 100;
 
 #[derive(Allocative)]
 pub(crate) struct FileWatcherStats {
-    stats: buck2_data::FileWatcherStats,
+    stats: bz_data::FileWatcherStats,
     // Bounded by MAX_FILE_CHANGE_RECORDS
-    changes: Vec<buck2_data::FileWatcherEvent>,
+    changes: Vec<bz_data::FileWatcherEvent>,
     // Did we not insert things into changes
     changes_missed: bool,
 }
 
 impl FileWatcherStats {
-    pub(crate) fn new(stats: buck2_data::FileWatcherStats, min_count: usize) -> Self {
+    pub(crate) fn new(stats: bz_data::FileWatcherStats, min_count: usize) -> Self {
         let changes = Vec::with_capacity(std::cmp::min(MAX_FILE_CHANGE_RECORDS, min_count));
 
         Self {
@@ -46,14 +46,14 @@ impl FileWatcherStats {
     pub(crate) fn add(
         &mut self,
         path: String,
-        event: buck2_data::FileWatcherEventType,
-        kind: buck2_data::FileWatcherKind,
+        event: bz_data::FileWatcherEventType,
+        kind: bz_data::FileWatcherKind,
     ) {
         self.stats.events_total += 1;
         self.stats.events_processed += 1;
 
         if self.changes.len() < MAX_FILE_CHANGE_RECORDS {
-            self.changes.push(buck2_data::FileWatcherEvent {
+            self.changes.push(bz_data::FileWatcherEvent {
                 event: event as i32,
                 kind: kind as i32,
                 path,
@@ -63,7 +63,7 @@ impl FileWatcherStats {
         }
     }
 
-    pub(crate) fn finish(self) -> buck2_data::FileWatcherStats {
+    pub(crate) fn finish(self) -> bz_data::FileWatcherStats {
         let Self {
             mut stats,
             changes,

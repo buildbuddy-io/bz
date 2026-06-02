@@ -10,12 +10,12 @@
 
 use std::collections::BTreeMap;
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_event_log::stream_value::StreamValue;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_event_log::stream_value::StreamValue;
 use derive_more::Display;
 use futures::Stream;
 use futures::TryStreamExt;
@@ -32,7 +32,7 @@ pub struct ExternalConfigDiffCommand {
     diff_event_log: DiffEventLogOptions,
 }
 
-fn insert_config_value(dict: &mut BTreeMap<String, String>, config: &buck2_data::ConfigValue) {
+fn insert_config_value(dict: &mut BTreeMap<String, String>, config: &bz_data::ConfigValue) {
     let config_cell = config
         .cell
         .clone()
@@ -48,21 +48,21 @@ fn insert_config_value(dict: &mut BTreeMap<String, String>, config: &buck2_data:
     );
 }
 
-fn insert_config_values(dict: &mut BTreeMap<String, String>, configs: &[buck2_data::ConfigValue]) {
+fn insert_config_values(dict: &mut BTreeMap<String, String>, configs: &[bz_data::ConfigValue]) {
     configs
         .iter()
         .for_each(|config_value| insert_config_value(dict, config_value))
 }
 
-fn process_buckconfig_data(dict: &mut BTreeMap<String, String>, event: &buck2_data::BuckEvent) {
-    use buck2_data::buckconfig_component::Data::ConfigFile;
-    use buck2_data::buckconfig_component::Data::ConfigValue;
-    use buck2_data::buckconfig_component::Data::GlobalExternalConfigFile;
-    use buck2_data::config_file::Data::GlobalExternalConfig;
-    use buck2_data::config_file::Data::ProjectRelativePath;
+fn process_buckconfig_data(dict: &mut BTreeMap<String, String>, event: &bz_data::BuckEvent) {
+    use bz_data::buckconfig_component::Data::ConfigFile;
+    use bz_data::buckconfig_component::Data::ConfigValue;
+    use bz_data::buckconfig_component::Data::GlobalExternalConfigFile;
+    use bz_data::config_file::Data::GlobalExternalConfig;
+    use bz_data::config_file::Data::ProjectRelativePath;
 
-    if let Some(buck2_data::buck_event::Data::Instant(end)) = event.data.as_ref() {
-        if let Some(buck2_data::instant_event::Data::BuckconfigInputValues(input)) =
+    if let Some(bz_data::buck_event::Data::Instant(end)) = event.data.as_ref() {
+        if let Some(bz_data::instant_event::Data::BuckconfigInputValues(input)) =
             end.data.as_ref()
         {
             input
@@ -92,8 +92,8 @@ fn process_buckconfig_data(dict: &mut BTreeMap<String, String>, event: &buck2_da
 }
 
 async fn get_external_buckconfig_dict(
-    mut events: impl Stream<Item = buck2_error::Result<StreamValue>> + Unpin + Send,
-) -> buck2_error::Result<BTreeMap<String, String>> {
+    mut events: impl Stream<Item = bz_error::Result<StreamValue>> + Unpin + Send,
+) -> bz_error::Result<BTreeMap<String, String>> {
     let mut dict: BTreeMap<String, String> = BTreeMap::new();
     while let Some(event) = events.try_next().await? {
         if let StreamValue::Event(event) = event {
@@ -148,7 +148,7 @@ impl BuckSubcommand for ExternalConfigDiffCommand {
         let (invocation1, events1) = log_path1.unpack_stream().await?;
         let (invocation2, events2) = log_path2.unpack_stream().await?;
 
-        buck2_client_ctx::println!(
+        bz_client_ctx::println!(
             "Identifying the diff of external buckconfigs between: \n{} and \n{}",
             invocation1.display_command_line(),
             invocation2.display_command_line()
@@ -179,7 +179,7 @@ impl BuckSubcommand for ExternalConfigDiffCommand {
             }
         }
         let json_diffs = serde_json::to_string_pretty(&diffs)?;
-        buck2_client_ctx::println!("{}", json_diffs)?;
+        bz_client_ctx::println!("{}", json_diffs)?;
         ExitResult::success()
     }
 }

@@ -245,7 +245,7 @@ async def test_no_tracing_does_not_write_offline_cache_for_http_archive(
     skip_for_os=["windows"],
     extra_buck_config={"buck2": {"sqlite_materializer_state": "false"}},
 )
-@env("BUCK_LOG", "buck2_execute_impl::materializers=trace")
+@env("BUCK_LOG", "bz_execute_impl::materializers=trace")
 async def test_fake_offline_http_archive_uses_offline_cache(buck: Buck) -> None:
     hg_init(cwd=buck.cwd)
 
@@ -329,7 +329,7 @@ async def test_no_tracing_does_not_write_offline_cache_for_cas_artifact(
     skip_for_os=["windows"],
     extra_buck_config={"buck2": {"sqlite_materializer_state": "false"}},
 )
-@env("BUCK_LOG", "buck2_execute_impl::materializers=trace")
+@env("BUCK_LOG", "bz_execute_impl::materializers=trace")
 async def test_fake_offline_cas_artifact_uses_offline_cache(buck: Buck) -> None:
     hg_init(cwd=buck.cwd)
 
@@ -473,7 +473,7 @@ async def test_manifest_lists_are_sorted(buck: Buck) -> None:
     skip_for_os=["windows"],
     extra_buck_config={"buck2": {"sqlite_materializer_state": "false"}},
 )
-@env("BUCK_LOG", "buck2_execute_impl::materializers=trace")
+@env("BUCK_LOG", "bz_execute_impl::materializers=trace")
 async def test_run_action_with_allow_offline_output_cache(buck: Buck) -> None:
     """Test RunAction caching when allow_offline_output_cache=True."""
     hg_init(cwd=buck.cwd)
@@ -566,7 +566,7 @@ async def test_run_action_cache_includes_in_manifest(buck: Buck) -> None:
     skip_for_os=["windows"],
     extra_buck_config={"buck2": {"sqlite_materializer_state": "false"}},
 )
-@env("BUCK_LOG", "buck2_execute_impl::materializers=trace")
+@env("BUCK_LOG", "bz_execute_impl::materializers=trace")
 async def test_genrule_with_allow_offline_output_cache(buck: Buck) -> None:
     """Test genrule caching when allow_offline_output_cache=True."""
     hg_init(cwd=buck.cwd)

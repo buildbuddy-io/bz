@@ -12,14 +12,14 @@ use std::iter::empty;
 use std::iter::once;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_execute::execute::request::NetworkAccess;
-use buck2_hash::BuckIndexMap;
-use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_build_api_derive::internal_provider;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_execute::execute::request::NetworkAccess;
+use bz_hash::BuckIndexMap;
+use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use either::Either;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
@@ -41,7 +41,7 @@ use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::tuple::TupleRef;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
@@ -147,7 +147,7 @@ impl FrozenExternalRunnerTestInfo {
             .unwrap()
             .unwrap()
             .into_option()
-            .unwrap_or_else(buck2_core::is_open_source)
+            .unwrap_or_else(bz_core::is_open_source)
     }
 
     pub fn run_from_project_root(&self) -> bool {
@@ -220,7 +220,7 @@ impl FrozenExternalRunnerTestInfo {
     pub fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for member in self.command() {
             match member {
                 TestCommandMember::Literal(..) => {}
@@ -251,7 +251,7 @@ impl<'v> TestCommandMember<'v> {
         cli: &mut dyn CommandLineBuilder,
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match self {
             Self::Literal(literal) => {
                 literal.add_to_command_line(cli, context, artifact_path_mapping)
@@ -263,7 +263,7 @@ impl<'v> TestCommandMember<'v> {
     }
 }
 
-fn iter_value<'v>(value: Value<'v>) -> buck2_error::Result<impl Iterator<Item = Value<'v>> + 'v> {
+fn iter_value<'v>(value: Value<'v>) -> bz_error::Result<impl Iterator<Item = Value<'v>> + 'v> {
     match Either::<&ListRef, &TupleRef>::unpack_value_err(value)? {
         Either::Left(list) => Ok(list.iter()),
         Either::Right(tuple) => Ok(tuple.iter()),
@@ -272,7 +272,7 @@ fn iter_value<'v>(value: Value<'v>) -> buck2_error::Result<impl Iterator<Item = 
 
 fn iter_test_command<'v>(
     command: Value<'v>,
-) -> impl Iterator<Item = buck2_error::Result<TestCommandMember<'v>>> {
+) -> impl Iterator<Item = bz_error::Result<TestCommandMember<'v>>> {
     if command.is_none() {
         return Either::Left(Either::Left(empty()));
     }
@@ -305,7 +305,7 @@ fn iter_test_command<'v>(
 
 fn iter_test_env<'v>(
     env: Value<'v>,
-) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> {
+) -> impl Iterator<Item = bz_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> {
     if env.is_none() {
         return Either::Left(Either::Left(empty()));
     }
@@ -313,8 +313,8 @@ fn iter_test_env<'v>(
     let env = match DictRef::from_value(env) {
         Some(env) => env,
         None => {
-            return Either::Left(Either::Right(once(Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Either::Left(Either::Right(once(Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid `env`: Expected a dict, got: `{}`",
                 env
             )))));
@@ -339,7 +339,7 @@ fn iter_test_env<'v>(
 fn iter_opt_str_list<'v>(
     list: Value<'v>,
     name: &'static str,
-) -> impl Iterator<Item = buck2_error::Result<&'v str>> {
+) -> impl Iterator<Item = bz_error::Result<&'v str>> {
     if list.is_none() {
         return Either::Left(Either::Left(empty()));
     }
@@ -364,7 +364,7 @@ fn iter_opt_str_list<'v>(
 
 fn iter_executor_overrides<'v>(
     executor_overrides: Value<'v>,
-) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v StarlarkCommandExecutorConfig)>> {
+) -> impl Iterator<Item = bz_error::Result<(&'v str, &'v StarlarkCommandExecutorConfig)>> {
     if executor_overrides.is_none() {
         return Either::Left(Either::Left(empty()));
     }
@@ -372,8 +372,8 @@ fn iter_executor_overrides<'v>(
     let executor_overrides = match DictRef::from_value(executor_overrides) {
         Some(executor_overrides) => executor_overrides,
         None => {
-            return Either::Left(Either::Right(once(Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Either::Left(Either::Right(once(Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid `executor_overrides`: Expected a dict, got: `{}`",
                 executor_overrides
             )))));
@@ -397,7 +397,7 @@ fn iter_executor_overrides<'v>(
 
 fn iter_local_resources<'v>(
     local_resources: Value<'v>,
-) -> impl Iterator<Item = buck2_error::Result<(&'v str, Option<&'v ConfiguredProvidersLabel>)>> {
+) -> impl Iterator<Item = bz_error::Result<(&'v str, Option<&'v ConfiguredProvidersLabel>)>> {
     if local_resources.is_none() {
         return Either::Left(Either::Left(empty()));
     }
@@ -405,8 +405,8 @@ fn iter_local_resources<'v>(
     let local_resources = match DictRef::from_value(local_resources) {
         Some(local_resources) => local_resources,
         None => {
-            return Either::Left(Either::Right(once(Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Either::Left(Either::Right(once(Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid `local_resources`: Expected a dict, got: `{}`",
                 local_resources
             )))));
@@ -426,8 +426,8 @@ fn iter_local_resources<'v>(
             Some(
                 StarlarkConfiguredProvidersLabel::from_value(value)
                     .ok_or_else(|| {
-                        buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        bz_error!(
+                            bz_error::ErrorTag::Input,
                             "{}",
                             format!("Invalid value in `local_resources` for key `{}`", key)
                         )
@@ -442,7 +442,7 @@ fn iter_local_resources<'v>(
 
 fn unpack_opt_executor<'v>(
     executor: Value<'v>,
-) -> buck2_error::Result<Option<&'v StarlarkCommandExecutorConfig>> {
+) -> bz_error::Result<Option<&'v StarlarkCommandExecutorConfig>> {
     if executor.is_none() {
         return Ok(None);
     }
@@ -453,7 +453,7 @@ fn unpack_opt_executor<'v>(
     Ok(Some(executor))
 }
 
-fn unpack_opt_worker<'v>(worker: Value<'v>) -> buck2_error::Result<Option<&'v WorkerInfo<'v>>> {
+fn unpack_opt_worker<'v>(worker: Value<'v>) -> bz_error::Result<Option<&'v WorkerInfo<'v>>> {
     if worker.is_none() {
         return Ok(None);
     }
@@ -464,9 +464,9 @@ fn unpack_opt_worker<'v>(worker: Value<'v>) -> buck2_error::Result<Option<&'v Wo
     Ok(Some(worker))
 }
 
-fn check_all<I, T>(it: I) -> buck2_error::Result<()>
+fn check_all<I, T>(it: I) -> bz_error::Result<()>
 where
-    I: IntoIterator<Item = buck2_error::Result<T>>,
+    I: IntoIterator<Item = bz_error::Result<T>>,
 {
     for e in it {
         e?;
@@ -476,17 +476,17 @@ where
 
 fn unwrap_all<I, T>(it: I) -> impl Iterator<Item = T>
 where
-    I: IntoIterator<Item = buck2_error::Result<T>>,
+    I: IntoIterator<Item = bz_error::Result<T>>,
 {
     it.into_iter().map(|e| e.unwrap())
 }
 
-fn parse_network_access(s: &str) -> buck2_error::Result<NetworkAccess> {
+fn parse_network_access(s: &str) -> bz_error::Result<NetworkAccess> {
     match s {
         "all" => Ok(NetworkAccess::All),
         "none" => Ok(NetworkAccess::None),
-        _ => Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        _ => Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Invalid network_access value `{}`, expected `all` or `none`",
             s
         )),
@@ -495,7 +495,7 @@ fn parse_network_access(s: &str) -> buck2_error::Result<NetworkAccess> {
 
 fn validate_external_runner_test_info<'v, V>(
     info: &ExternalRunnerTestInfoGen<V>,
-) -> buck2_error::Result<()>
+) -> bz_error::Result<()>
 where
     V: ValueLike<'v>,
 {
@@ -511,7 +511,7 @@ where
     ))?;
 
     let provided_local_resources = iter_local_resources(info.local_resources.get().to_value())
-        .collect::<buck2_error::Result<
+        .collect::<bz_error::Result<
         BuckIndexMap<&str, Option<&ConfiguredProvidersLabel>>,
     >>()?;
 
@@ -519,10 +519,10 @@ where
     if !required_local_resources.is_none() {
         for resource_type in iter_value(required_local_resources).buck_error_context("`required_local_resources` should be a list or a tuple of `RequiredTestLocalResource` objects")? {
             let resource_type = StarlarkRequiredTestLocalResource::from_value(resource_type)
-                .ok_or_else(|| buck2_error!(buck2_error::ErrorTag::Input, "`required_local_resources` should only contain `RequiredTestLocalResource` values, got {}", resource_type))?;
+                .ok_or_else(|| bz_error!(bz_error::ErrorTag::Input, "`required_local_resources` should only contain `RequiredTestLocalResource` values, got {}", resource_type))?;
             if !provided_local_resources.contains_key(&resource_type.name as &str) {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return Err(bz_error!(
+                    bz_error::ErrorTag::Input,
                     "`required_local_resources` contains `{}` which is not present in `local_resources`",
                     resource_type.name
                 ));

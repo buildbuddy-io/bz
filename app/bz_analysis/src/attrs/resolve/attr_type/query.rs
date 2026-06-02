@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
-use buck2_node::attrs::attr_type::dep::DepAttrType;
-use buck2_node::attrs::attr_type::query::QueryAttr;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersName;
+use bz_node::attrs::attr_type::dep::DepAttrType;
+use bz_node::attrs::attr_type::query::QueryAttr;
 use dupe::Dupe;
 use starlark::values::Value;
 
@@ -22,14 +22,14 @@ pub(crate) trait ConfiguredQueryAttrExt {
     fn resolve<'v>(
         &self,
         ctx: &mut dyn AttrResolutionContext<'v>,
-    ) -> buck2_error::Result<Value<'v>>;
+    ) -> bz_error::Result<Value<'v>>;
 }
 
 impl ConfiguredQueryAttrExt for QueryAttr<ConfiguredProvidersLabel> {
     fn resolve<'v>(
         &self,
         ctx: &mut dyn AttrResolutionContext<'v>,
-    ) -> buck2_error::Result<Value<'v>> {
+    ) -> bz_error::Result<Value<'v>> {
         let query_results = ctx.resolve_query(&self.query.query)?;
         let mut dependencies = Vec::new();
 

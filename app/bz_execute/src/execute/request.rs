@@ -12,27 +12,27 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_common::local_resource_state::LocalResourceState;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
-use buck2_core::execution_types::executor_config::ReGangWorker;
-use buck2_core::execution_types::executor_config::RemoteExecutorCustomImage;
-use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuckOutScratchPath;
-use buck2_core::fs::buck_out_path::BuckOutTestPath;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::soft_error;
-pub use buck2_data::NetworkAccess;
-use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
-use buck2_error::buck2_error;
-use buck2_hash::BuckIndexSet;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::local_resource_state::LocalResourceState;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::execution_types::executor_config::MetaInternalExtraParams;
+use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RemoteExecutorCustomImage;
+use bz_core::execution_types::executor_config::RemoteExecutorDependency;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuckOutScratchPath;
+use bz_core::fs::buck_out_path::BuckOutTestPath;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::soft_error;
+pub use bz_data::NetworkAccess;
+use bz_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::fingerprinted_directory::FingerprintedDirectory;
+use bz_error::bz_error;
+use bz_hash::BuckIndexSet;
 use derive_more::Display;
 use dupe::Dupe;
 use gazebo::variants::UnpackVariants;
@@ -110,7 +110,7 @@ pub enum OutputCreationBehavior {
     Parent,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[error("Incompatible executor preferences: `{}` & `{}`", a, b)]
 #[buck2(input)]
 struct IncompatibleExecutorPreferences {
@@ -135,7 +135,7 @@ pub enum ExecutorPreference {
 }
 
 impl ExecutorPreference {
-    pub fn and(self, other: Self) -> buck2_error::Result<Self> {
+    pub fn and(self, other: Self) -> bz_error::Result<Self> {
         let requires_remote = self.requires_remote() || other.requires_remote();
         let requires_local = self.requires_local() || other.requires_local();
 
@@ -245,7 +245,7 @@ impl CommandExecutionPaths {
         fs: &ArtifactFs,
         digest_config: DigestConfig,
         interner: Option<&DashMapDirectoryInterner<ActionDirectoryMember, TrackedFileDigest>>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let (mut builder, external_symlink_upload_paths, resolved_symlink_upload_paths) =
             inputs_directory(&inputs, digest_config, fs)?;
 
@@ -267,7 +267,7 @@ impl CommandExecutionPaths {
                 let output_type = resolved.output_type;
                 Ok((resolved.into_path(), output_type))
             })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
+            .collect::<bz_error::Result<Vec<_>>>()?;
 
         let input_directory = builder.fingerprint(digest_config.as_directory_serializer());
 
@@ -276,7 +276,7 @@ impl CommandExecutionPaths {
             None => input_directory,
         };
 
-        let input_files_bytes = if buck2_core::faster_directories::is_enabled() {
+        let input_files_bytes = if bz_core::faster_directories::is_enabled() {
             input_directory.size()
         } else {
             Self::calculate_inputs_size_bytes(&input_directory)
@@ -327,7 +327,7 @@ impl CommandExecutionPaths {
         fs: &ArtifactFs,
         digest_config: DigestConfig,
         interner: Option<&DashMapDirectoryInterner<ActionDirectoryMember, TrackedFileDigest>>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let Self {
             mut inputs,
             outputs,
@@ -374,7 +374,7 @@ impl CommandExecutionPaths {
     pub fn output_paths_relative_to_working_directory(
         &self,
         working_directory: &ProjectRelativePath,
-    ) -> buck2_error::Result<Vec<(ProjectRelativePathBuf, OutputType)>> {
+    ) -> bz_error::Result<Vec<(ProjectRelativePathBuf, OutputType)>> {
         self.output_paths
             .iter()
             .map(|(path, output_type)| {
@@ -389,10 +389,10 @@ impl CommandExecutionPaths {
     pub fn output_path_relative_to_working_directory(
         path: &ProjectRelativePath,
         working_directory: &ProjectRelativePath,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let relative = path.strip_prefix_opt(working_directory).ok_or_else(|| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
+            bz_error!(
+                bz_error::ErrorTag::Input,
                 "Remote execution output path `{}` is outside working directory `{}`",
                 path,
                 working_directory
@@ -563,7 +563,7 @@ impl CommandExecutionRequest {
         fs: &ArtifactFs,
         digest_config: DigestConfig,
         interner: Option<&DashMapDirectoryInterner<ActionDirectoryMember, TrackedFileDigest>>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let override_paths =
             self.paths
                 .add_outputs_as_inputs(output_paths, fs, digest_config, interner)?;
@@ -732,12 +732,12 @@ impl CommandExecutionRequest {
     pub fn with_required_local_resources(
         mut self,
         required_local_resources: Vec<LocalResourceState>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let original_len = required_local_resources.len();
         self.required_local_resources = required_local_resources.into_iter().collect();
         if self.required_local_resources.len() != original_len {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "Each provided local resource state is supposed to come from a different target."
             ));
         }
@@ -899,7 +899,7 @@ pub enum OutputType {
     Symlink,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum OutputTypeError {
     #[error("Expected {1:?}, but `{0}` is already declared as {2:?}")]
@@ -913,7 +913,7 @@ impl OutputType {
         self,
         path_for_error_message: impl Display,
         output_type: OutputType,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if self == OutputType::Directory && output_type == OutputType::FileOrDirectory {
             // If we treat paths whose declared type is FileOrDirectory like files, then that's incompatible with directory
             soft_error!(
@@ -963,7 +963,7 @@ impl CommandExecutionOutputRef<'_> {
         &self,
         fs: &ArtifactFs,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
+    ) -> bz_error::Result<ResolvedCommandExecutionOutput> {
         match self {
             Self::BuildArtifact {
                 path, output_type, ..
@@ -988,7 +988,7 @@ impl CommandExecutionOutputRef<'_> {
         &self,
         fs: &ArtifactFs,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
+    ) -> bz_error::Result<ResolvedCommandExecutionOutput> {
         match self {
             Self::BuildArtifact {
                 produced_path: Some(path),
@@ -1013,7 +1013,7 @@ impl CommandExecutionOutputRef<'_> {
     pub fn resolve_configuration_hash_path(
         &self,
         fs: &ArtifactFs,
-    ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
+    ) -> bz_error::Result<ResolvedCommandExecutionOutput> {
         match self {
             Self::BuildArtifact {
                 path, output_type, ..
@@ -1129,7 +1129,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn output_path_relative_to_empty_working_directory_is_unchanged() -> buck2_error::Result<()> {
+    fn output_path_relative_to_empty_working_directory_is_unchanged() -> bz_error::Result<()> {
         let path = ProjectRelativePath::new("buck-out/bin/cfg/pkg/out")?;
         let relative = CommandExecutionPaths::output_path_relative_to_working_directory(
             path,
@@ -1140,7 +1140,7 @@ mod tests {
     }
 
     #[test]
-    fn output_path_relative_to_working_directory_strips_prefix() -> buck2_error::Result<()> {
+    fn output_path_relative_to_working_directory_strips_prefix() -> bz_error::Result<()> {
         let path =
             ProjectRelativePath::new("buck-out/v2/__bazel_execroot/action/buck-out/bin/cfg/out")?;
         let working_directory = ProjectRelativePath::new("buck-out/v2/__bazel_execroot/action")?;
@@ -1153,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn output_path_outside_working_directory_is_rejected() -> buck2_error::Result<()> {
+    fn output_path_outside_working_directory_is_rejected() -> bz_error::Result<()> {
         let path = ProjectRelativePath::new("buck-out/bin/cfg/out")?;
         let working_directory = ProjectRelativePath::new("buck-out/v2/__bazel_execroot/action")?;
         assert!(

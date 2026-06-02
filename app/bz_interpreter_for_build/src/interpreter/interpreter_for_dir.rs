@@ -20,49 +20,49 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use allocative::Allocative;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::package_listing::PackageListingStrategy;
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::bxl::BxlFilePath;
-use buck2_core::bzl::ImportPath;
-use buck2_core::cells::build_file_cell::BuildFileCell;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::cells::external::is_bzlmod_cell_name;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::package::package_relative_path::PackageRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_event_observer::humanized::HumanizedBytes;
-use buck2_events::dispatch::get_dispatcher;
-use buck2_interpreter::factory::BuckStarlarkModule;
-use buck2_interpreter::factory::FinishedStarlarkEvaluation;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::file_loader::InterpreterFileLoader;
-use buck2_interpreter::file_loader::LoadResolver;
-use buck2_interpreter::file_loader::LoadedModules;
-use buck2_interpreter::file_type::StarlarkFileType;
-use buck2_interpreter::import_paths::ImplicitImportPaths;
-use buck2_interpreter::package_imports::ImplicitImport;
-use buck2_interpreter::parse_import::ParseImportOptions;
-use buck2_interpreter::parse_import::RelativeImports;
-use buck2_interpreter::parse_import::parse_import_with_config_and_package_root;
-use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_interpreter::paths::package::PackageFilePath;
-use buck2_interpreter::paths::path::OwnedStarlarkPath;
-use buck2_interpreter::paths::path::StarlarkPath;
-use buck2_interpreter::prelude_path::PreludePath;
-use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
-use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
-use buck2_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
-use buck2_node::nodes::eval_result::EvaluationResult;
-use buck2_node::nodes::eval_result::EvaluationResultWithStats;
-use buck2_node::super_package::SuperPackage;
-use buck2_util::per_thread_instruction_counter::PerThreadInstructionCounter;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::package_listing::PackageListingStrategy;
+use bz_common::package_listing::listing::PackageListing;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::bxl::BxlFilePath;
+use bz_core::bzl::ImportPath;
+use bz_core::cells::build_file_cell::BuildFileCell;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::package::package_relative_path::PackageRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_event_observer::humanized::HumanizedBytes;
+use bz_events::dispatch::get_dispatcher;
+use bz_interpreter::factory::BuckStarlarkModule;
+use bz_interpreter::factory::FinishedStarlarkEvaluation;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::file_loader::InterpreterFileLoader;
+use bz_interpreter::file_loader::LoadResolver;
+use bz_interpreter::file_loader::LoadedModules;
+use bz_interpreter::file_type::StarlarkFileType;
+use bz_interpreter::import_paths::ImplicitImportPaths;
+use bz_interpreter::package_imports::ImplicitImport;
+use bz_interpreter::parse_import::ParseImportOptions;
+use bz_interpreter::parse_import::RelativeImports;
+use bz_interpreter::parse_import::parse_import_with_config_and_package_root;
+use bz_interpreter::paths::module::OwnedStarlarkModulePath;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_interpreter::paths::package::PackageFilePath;
+use bz_interpreter::paths::path::OwnedStarlarkPath;
+use bz_interpreter::paths::path::StarlarkPath;
+use bz_interpreter::prelude_path::PreludePath;
+use bz_interpreter::print_handler::EventDispatcherPrintHandler;
+use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
+use bz_node::nodes::eval_result::EvaluationResult;
+use bz_node::nodes::eval_result::EvaluationResultWithStats;
+use bz_node::super_package::SuperPackage;
+use bz_util::per_thread_instruction_counter::PerThreadInstructionCounter;
 use dice::CancellationContext;
 use dupe::Dupe;
 use gazebo::prelude::*;
@@ -96,12 +96,12 @@ use crate::super_package::eval_ctx::PackageFileEvalCtx;
 
 const DEFAULT_STARLARK_MEMORY_USAGE_LIMIT: u64 = 2 * (1 << 30);
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[error("Tabs are not allowed in Buck files: `{0}`")]
 #[buck2(input)]
 struct StarlarkTabsError(OwnedStarlarkPath);
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 enum StarlarkPeakMemoryError {
     #[error(
         "Starlark peak memory usage for {0} is {1} which exceeds the limit {2}! Please reduce memory usage to prevent OOMs. See {3} for debugging tips."
@@ -122,7 +122,7 @@ pub struct ParseData {
     pub(crate) bazel_package_data_requests: Option<BTreeSet<BazelPackageDataRequest>>,
 }
 
-pub type ParseResult = Result<ParseData, buck2_error::Error>;
+pub type ParseResult = Result<ParseData, bz_error::Error>;
 
 impl ParseData {
     fn new(
@@ -130,7 +130,7 @@ impl ParseData {
         implicit_imports: Vec<OwnedStarlarkModulePath>,
         resolver: &dyn LoadResolver,
         is_build_file: bool,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let mut loads = implicit_imports.into_map(|x| (None, x));
         for x in ast.loads() {
             let path = resolver
@@ -374,7 +374,7 @@ fn parse_glob_prefix(prefix: &str) -> GlobListingPrefix {
 }
 
 pub fn get_starlark_warning_link() -> &'static str {
-    if buck2_core::is_open_source() {
+    if bz_core::is_open_source() {
         "https://buck2.build/docs/users/faq/starlark_peak_mem"
     } else {
         "https://fburl.com/starlark_peak_mem_warning"
@@ -409,7 +409,7 @@ struct InterpreterLoadResolver {
     build_file_cell: BuildFileCell,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum LoadResolutionError {
     #[error(
@@ -429,7 +429,7 @@ impl LoadResolver for InterpreterLoadResolver {
         &self,
         path: &str,
         location: Option<&FileSpan>,
-    ) -> buck2_error::Result<OwnedStarlarkModulePath> {
+    ) -> bz_error::Result<OwnedStarlarkModulePath> {
         let relative_import_option = RelativeImports::Allow {
             current_dir_with_allowed_relative: &self.config.current_dir_with_allowed_relative_dirs,
         };
@@ -549,13 +549,13 @@ pub(crate) enum BuildFileEvalResult {
 }
 
 enum BuildFileEvalControl {
-    Error(buck2_error::Error),
+    Error(bz_error::Error),
     NeedsPackageListing(PackageListingStrategy),
     NeedsBazelPackageData(BTreeSet<BazelPackageDataRequest>),
 }
 
-impl From<buck2_error::Error> for BuildFileEvalControl {
-    fn from(error: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for BuildFileEvalControl {
+    fn from(error: bz_error::Error) -> Self {
         Self::Error(error)
     }
 }
@@ -571,14 +571,14 @@ impl InterpreterForDir {
                 == other.current_dir_with_allowed_relative_dirs
     }
 
-    fn verbose_gc() -> buck2_error::Result<bool> {
+    fn verbose_gc() -> bz_error::Result<bool> {
         match std::env::var_os("BUCK2_STARLARK_VERBOSE_GC") {
             Some(val) => Ok(!val.is_empty()),
             None => Ok(false),
         }
     }
 
-    fn is_ignore_attrs_for_profiling() -> buck2_error::Result<bool> {
+    fn is_ignore_attrs_for_profiling() -> bz_error::Result<bool> {
         // If unsure, feel free to break this code or just delete it.
         // It is intended only for profiling of very specific use cases.
         let ignore_attrs_for_profiling = match std::env::var_os("BUCK2_IGNORE_ATTRS_FOR_PROFILING")
@@ -600,7 +600,7 @@ impl InterpreterForDir {
         global_state: Arc<GlobalInterpreterState>,
         implicit_import_paths: Arc<ImplicitImportPaths>,
         current_dir_with_allowed_relative_dirs: Arc<CellPathWithAllowedRelativeDir>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Ok(Self {
             global_state,
             cell_info,
@@ -646,7 +646,7 @@ impl InterpreterForDir {
         env: BuckStarlarkModule<'v>,
         starlark_path: StarlarkPath<'_>,
         loaded_modules: &LoadedModules,
-    ) -> buck2_error::Result<BuckStarlarkModule<'v>> {
+    ) -> bz_error::Result<BuckStarlarkModule<'v>> {
         if let Some(prelude_import) = self.prelude_import(starlark_path)? {
             let prelude_env = loaded_modules
                 .map
@@ -664,13 +664,13 @@ impl InterpreterForDir {
                 env.set("native", native.to_value());
             }
             if let Ok(Some(bazel_native_rules)) =
-                prelude_env.env().get_option("buck2_bazel_native_rules")
+                prelude_env.env().get_option("bz_bazel_native_rules")
             {
                 // NativeRuleCallable resolves its backing through the caller's public module
                 // bindings, while implicit prelude imports are private.
                 // Safe because `import_public_symbols` above retained the prelude module heap.
                 let bazel_native_rules = unsafe { bazel_native_rules.unchecked_frozen_value() };
-                env.set("buck2_bazel_native_rules", bazel_native_rules.to_value());
+                env.set("bz_bazel_native_rules", bazel_native_rules.to_value());
             }
             if let StarlarkPath::BuildFile(_) = starlark_path {
                 for (name, value) in prelude_env.extra_globals_from_prelude_for_buck_files()? {
@@ -682,7 +682,7 @@ impl InterpreterForDir {
         env.set_extra_value_no_overwrite(env.heap().alloc_complex(StarlarkAnyComplex {
             value: InterpreterExtraValue::default(),
         }))
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Interpreter))?;
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Interpreter))?;
 
         Ok(env)
     }
@@ -704,7 +704,7 @@ impl InterpreterForDir {
         super_package: SuperPackage,
         package_boundary_exception: bool,
         loaded_modules: &LoadedModules,
-    ) -> buck2_error::Result<(BuckStarlarkModule<'v>, ModuleInternals)> {
+    ) -> bz_error::Result<(BuckStarlarkModule<'v>, ModuleInternals)> {
         let internals = self.global_state.configuror.new_extra_context(
             &self.cell_info,
             build_file.clone(),
@@ -760,12 +760,12 @@ impl InterpreterForDir {
 
     fn cell_default_prelude_import(
         prelude_import: &PreludePath,
-    ) -> buck2_error::Result<ImportPath> {
+    ) -> bz_error::Result<ImportPath> {
         let prelude_file = CellRelativePathBuf::unchecked_new("prelude.bzl".to_owned());
         ImportPath::new_same_cell(CellPath::new(prelude_import.prelude_cell(), prelude_file))
     }
 
-    fn prelude_import(&self, import: StarlarkPath) -> buck2_error::Result<Option<ImportPath>> {
+    fn prelude_import(&self, import: StarlarkPath) -> bz_error::Result<Option<ImportPath>> {
         let prelude_import = self.global_state.configuror.prelude_import();
         if let Some(prelude_import) = prelude_import {
             let import_path = import.path();
@@ -796,7 +796,7 @@ impl InterpreterForDir {
         self: &Arc<Self>,
         import: StarlarkPath,
         content: String,
-    ) -> buck2_error::Result<ParseResult> {
+    ) -> bz_error::Result<ParseResult> {
         // Indentation with tabs is prohibited by starlark spec and configured starlark dialect.
         // This check also prohibits tabs even where spaces are not significant,
         // for example inside parentheses in function call arguments,
@@ -820,7 +820,7 @@ impl InterpreterForDir {
         let ast = match AstModule::parse(project_relative_path.as_str(), content, &dialect) {
             Ok(ast) => ast,
             Err(e) => {
-                return Ok(Err(buck2_error::Error::from(e).context(format!(
+                return Ok(Err(bz_error::Error::from(e).context(format!(
                     "Error parsing: `{}`",
                     OwnedStarlarkPath::new(import)
                 ))));
@@ -851,7 +851,7 @@ impl InterpreterForDir {
         self: &Arc<Self>,
         import: StarlarkPath<'_>,
         import_string: &str,
-    ) -> buck2_error::Result<OwnedStarlarkModulePath> {
+    ) -> bz_error::Result<OwnedStarlarkModulePath> {
         self.load_resolver(import).resolve_load(import_string, None)
     }
 
@@ -865,7 +865,7 @@ impl InterpreterForDir {
         eval_provider: StarlarkEvaluatorProvider,
         unstable_typecheck: bool,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<(FinishedStarlarkEvaluation, EvalResult)> {
+    ) -> bz_error::Result<(FinishedStarlarkEvaluation, EvalResult)> {
         let import = extra_context.starlark_path();
         let globals = self.global_state.globals();
         let file_loader =
@@ -936,7 +936,7 @@ impl InterpreterForDir {
         loaded_modules: LoadedModules,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<FrozenModule> {
+    ) -> bz_error::Result<FrozenModule> {
         BuckStarlarkModule::with_profiling(|env| {
             let env = self.create_env(env, starlark_path.into(), &loaded_modules)?;
             let extra_context = match starlark_path {
@@ -986,13 +986,13 @@ impl InterpreterForDir {
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<crate::bazel::repository::BazelModuleExtensionEvaluation> {
+    ) -> bz_error::Result<crate::bazel::repository::BazelModuleExtensionEvaluation> {
         BuckStarlarkModule::with_profiling(|env| {
             let extension_value = extension_module
                 .get_option(extension_name)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))?
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Input))?
                 .ok_or_else(|| {
-                    buck2_error::Error::from(
+                    bz_error::Error::from(
                         crate::bazel::repository::BazelRepositoryError::ModuleExtensionSymbolMissing {
                             path: extension_path.to_string(),
                             extension: extension_name.to_owned(),
@@ -1091,7 +1091,7 @@ impl InterpreterForDir {
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<String> {
+    ) -> bz_error::Result<String> {
         BuckStarlarkModule::with_profiling(|env| {
             let extra_context = PerFileTypeContext::Bzl(BzlEvalCtx::new(extension_path.clone()));
             let extra = BuildContext::new(
@@ -1137,14 +1137,14 @@ impl InterpreterForDir {
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<crate::bazel::repository::BazelRepositoryRuleEvaluation> {
+    ) -> bz_error::Result<crate::bazel::repository::BazelRepositoryRuleEvaluation> {
         BuckStarlarkModule::with_profiling(|env| {
             let rule_value = rule_module
                 .get_any_visibility(&invocation.rule_id.name)
                 .map(|(value, _)| value)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))
+                .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Input))
                 .or_else(|_| {
-                    Err(buck2_error::Error::from(
+                    Err(bz_error::Error::from(
                         crate::bazel::repository::BazelRepositoryError::RepositoryRuleSymbolMissing {
                             path: rule_path.to_string(),
                             rule: invocation.rule_id.name.clone(),
@@ -1243,7 +1243,7 @@ impl InterpreterForDir {
         loaded_modules: LoadedModules,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<SuperPackage> {
+    ) -> bz_error::Result<SuperPackage> {
         BuckStarlarkModule::with_profiling(|env| {
             let env = self.create_env(
                 env,
@@ -1308,7 +1308,7 @@ impl InterpreterForDir {
         eval_provider: StarlarkEvaluatorProvider,
         unstable_typecheck: bool,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<BuildFileEvalResult> {
+    ) -> bz_error::Result<BuildFileEvalResult> {
         match BuckStarlarkModule::with_profiling(|env| {
             let package_listing_restart = Arc::new(RefCell::new(None));
             let bazel_package_data_restart = Arc::new(RefCell::new(BTreeSet::new()));
@@ -1381,7 +1381,7 @@ impl InterpreterForDir {
             if starlark_peak_mem_check_enabled && starlark_peak_allocated_bytes > starlark_mem_limit
             {
                 Err(
-                    buck2_error::Error::from(StarlarkPeakMemoryError::ExceedsThreshold(
+                    bz_error::Error::from(StarlarkPeakMemoryError::ExceedsThreshold(
                         build_file.to_owned(),
                         HumanizedBytes::fixed_width(starlark_peak_allocated_bytes),
                         HumanizedBytes::fixed_width(starlark_mem_limit),

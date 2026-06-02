@@ -19,18 +19,18 @@ use std::time::Duration;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::async_once_cell::AsyncOnceCell;
-use buck2_core::buck2_env;
-use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
-use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_re_configuration::RemoteExecutionStaticMetadata;
+use bz_core::async_once_cell::AsyncOnceCell;
+use bz_core::bz_env;
+use bz_core::execution_types::executor_config::MetaInternalExtraParams;
+use bz_core::execution_types::executor_config::RemoteExecutorDependency;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_re_configuration::RemoteExecutionStaticMetadata;
 use chrono::DateTime;
 use chrono::Utc;
 use dupe::Dupe;
@@ -104,7 +104,7 @@ pub struct RemoteExecutionConfig {
 }
 
 impl RemoteExecutionConfig {
-    async fn connect_now(&self) -> buck2_error::Result<RemoteExecutionClient> {
+    async fn connect_now(&self) -> bz_error::Result<RemoteExecutionClient> {
         RemoteExecutionClient::new_retry(self).await
     }
 }
@@ -115,7 +115,7 @@ pub trait ReConnectionObserver: Allocative + 'static + Send + Sync {
 
 #[derive(Allocative)]
 struct LazyRemoteExecutionClient {
-    client: AsyncOnceCell<buck2_error::Result<RemoteExecutionClient>>,
+    client: AsyncOnceCell<bz_error::Result<RemoteExecutionClient>>,
     observers: Mutex<Vec<Weak<dyn ReConnectionObserver>>>,
     config: RemoteExecutionConfig,
 }
@@ -141,7 +141,7 @@ impl LazyRemoteExecutionClient {
         }
     }
 
-    async fn get(&self) -> buck2_error::Result<&RemoteExecutionClient> {
+    async fn get(&self) -> bz_error::Result<&RemoteExecutionClient> {
         // The future from self.init() is large and very rarely required. We want
         // to ensure that (1) it doesn't contribute to the size of the get() future
         // (which is used for basically every call) and (2) isn't even allocated on
@@ -155,7 +155,7 @@ impl LazyRemoteExecutionClient {
         }
     }
 
-    async fn init(&self) -> buck2_error::Result<RemoteExecutionClient> {
+    async fn init(&self) -> bz_error::Result<RemoteExecutionClient> {
         let client = self.config.connect_now().await?;
 
         let mut observers = self.observers.lock().unwrap();
@@ -242,9 +242,9 @@ impl ReConnectionManager {
         }
     }
 
-    pub fn get_network_stats(&self) -> buck2_error::Result<RemoteExecutionClientStats> {
+    pub fn get_network_stats(&self) -> bz_error::Result<RemoteExecutionClientStats> {
         let client_stats = RE::get_network_stats()
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
             .buck_error_context("Error getting RE network stats")?;
 
         // Those two fields come from RE and are always available.
@@ -272,7 +272,7 @@ impl ReConnectionManager {
 
 #[async_trait]
 impl ReGetSessionId for ReConnectionManager {
-    async fn get_session_id(&self) -> buck2_error::Result<String> {
+    async fn get_session_id(&self) -> bz_error::Result<String> {
         self.get_re_connection().get_client().get_session_id().await
     }
 }
@@ -335,13 +335,13 @@ impl UnconfiguredRemoteExecutionClient {
         }
     }
 
-    fn lock(&self) -> buck2_error::Result<Arc<Arc<LazyRemoteExecutionClient>>> {
+    fn lock(&self) -> bz_error::Result<Arc<Arc<LazyRemoteExecutionClient>>> {
         self.data
             .upgrade()
             .ok_or_else(|| internal_error!("Internal error: the underlying RE connection has terminated because the corresponding guard has been dropped."))
     }
 
-    pub async fn get_session_id(&self) -> buck2_error::Result<String> {
+    pub async fn get_session_id(&self) -> bz_error::Result<String> {
         let session_id = self.lock()?.get().await?.get_session_id().to_owned();
         Ok(session_id)
     }
@@ -354,11 +354,11 @@ impl UnconfiguredRemoteExecutionClient {
 }
 
 impl ManagedRemoteExecutionClient {
-    pub async fn get_session_id(&self) -> buck2_error::Result<String> {
+    pub async fn get_session_id(&self) -> bz_error::Result<String> {
         self.inner.get_session_id().await
     }
 
-    fn lock(&self) -> buck2_error::Result<Arc<Arc<LazyRemoteExecutionClient>>> {
+    fn lock(&self) -> bz_error::Result<Arc<Arc<LazyRemoteExecutionClient>>> {
         self.inner.lock()
     }
 
@@ -367,7 +367,7 @@ impl ManagedRemoteExecutionClient {
         action_digest: ActionDigest,
         platform: &RE::Platform,
         identity: Option<&ReActionIdentity<'_>>,
-    ) -> buck2_error::Result<Option<ActionResultResponse>> {
+    ) -> bz_error::Result<Option<ActionResultResponse>> {
         Ok(self
             .lock()?
             .get()
@@ -389,7 +389,7 @@ impl ManagedRemoteExecutionClient {
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
         deduplicate_get_digests_ttl_calls: bool,
-    ) -> buck2_error::Result<UploadStats> {
+    ) -> bz_error::Result<UploadStats> {
         self.lock()?
             .get()
             .await?
@@ -413,7 +413,7 @@ impl ManagedRemoteExecutionClient {
         files_with_digest: Vec<NamedDigest>,
         directories: Vec<remote_execution::Path>,
         inlined_blobs_with_digest: Vec<InlinedBlobWithDigest>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.lock()?
             .get()
             .await?
@@ -431,7 +431,7 @@ impl ManagedRemoteExecutionClient {
         action_digest: ActionDigest,
         platform: &RE::Platform,
         dependencies: impl IntoIterator<Item = &'a RemoteExecutorDependency>,
-        re_gang_workers: &[buck2_core::execution_types::executor_config::ReGangWorker],
+        re_gang_workers: &[bz_core::execution_types::executor_config::ReGangWorker],
         identity: &ReActionIdentity<'_>,
         manager: &mut CommandExecutionManager,
         skip_cache_read: bool,
@@ -442,7 +442,7 @@ impl ManagedRemoteExecutionClient {
         meta_internal_extra_params: &MetaInternalExtraParams,
         worker_tool_action_digest: Option<ActionDigest>,
         priority: Option<i32>,
-    ) -> buck2_error::Result<ExecuteResponseOrCancelled> {
+    ) -> bz_error::Result<ExecuteResponseOrCancelled> {
         self.lock()?
             .get()
             .await?
@@ -470,7 +470,7 @@ impl ManagedRemoteExecutionClient {
         &self,
         files: Vec<NamedDigestWithPermissions>,
         priority_control: DynamicPriorityHandle,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.lock()?
             .get()
             .await?
@@ -482,7 +482,7 @@ impl ManagedRemoteExecutionClient {
         &self,
         identity: Option<&ReActionIdentity<'_>>,
         digests: Vec<TDigest>,
-    ) -> buck2_error::Result<Vec<T>> {
+    ) -> bz_error::Result<Vec<T>> {
         self.lock()?
             .get()
             .await?
@@ -490,7 +490,7 @@ impl ManagedRemoteExecutionClient {
             .await
     }
 
-    pub async fn download_blob(&self, digest: &TDigest) -> buck2_error::Result<Vec<u8>> {
+    pub async fn download_blob(&self, digest: &TDigest) -> bz_error::Result<Vec<u8>> {
         self.lock()?
             .get()
             .await?
@@ -498,7 +498,7 @@ impl ManagedRemoteExecutionClient {
             .await
     }
 
-    pub async fn upload_blob(&self, blob: InlinedBlobWithDigest) -> buck2_error::Result<TDigest> {
+    pub async fn upload_blob(&self, blob: InlinedBlobWithDigest) -> bz_error::Result<TDigest> {
         self.lock()?
             .get()
             .await?
@@ -509,7 +509,7 @@ impl ManagedRemoteExecutionClient {
     pub async fn get_digest_expirations(
         &self,
         digests: Vec<TDigest>,
-    ) -> buck2_error::Result<Vec<(TDigest, DateTime<Utc>)>> {
+    ) -> bz_error::Result<Vec<(TDigest, DateTime<Utc>)>> {
         self.lock()?
             .get()
             .await?
@@ -521,7 +521,7 @@ impl ManagedRemoteExecutionClient {
         &self,
         digests: Vec<TDigest>,
         ttl: Duration,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.lock()?
             .get()
             .await?
@@ -536,8 +536,8 @@ impl ManagedRemoteExecutionClient {
         identity: Option<&ReActionIdentity<'_>>,
         platform: &RE::Platform,
         write_type: ActionCacheWriteType,
-    ) -> buck2_error::Result<WriteActionResultResponse> {
-        if buck2_env!(
+    ) -> bz_error::Result<WriteActionResultResponse> {
+        if bz_env!(
             "BUCK2_TEST_SKIP_ACTION_CACHE_WRITE",
             bool,
             applicability = testing

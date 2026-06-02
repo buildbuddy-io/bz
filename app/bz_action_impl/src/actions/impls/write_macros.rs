@@ -13,34 +13,34 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_api::actions::Action;
-use buck2_build_api::actions::ActionExecutionCtx;
-use buck2_build_api::actions::UnregisteredAction;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionKind;
-use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
-use buck2_build_api::actions::execute::action_executor::ActionOutputs;
-use buck2_build_api::actions::execute::error::ExecuteError;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineLocation;
-use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::arg_builder::ArgBuilder;
-use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::category::CategoryRef;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::internal_error;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_execute::execute::command_executor::ActionExecutionTimingData;
-use buck2_execute::materialize::materializer::WriteRequest;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_hash::BuckIndexSet;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_api::actions::Action;
+use bz_build_api::actions::ActionExecutionCtx;
+use bz_build_api::actions::UnregisteredAction;
+use bz_build_api::actions::execute::action_executor::ActionExecutionKind;
+use bz_build_api::actions::execute::action_executor::ActionExecutionMetadata;
+use bz_build_api::actions::execute::action_executor::ActionOutputs;
+use bz_build_api::actions::execute::error::ExecuteError;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineLocation;
+use bz_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::arg_builder::ArgBuilder;
+use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use bz_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
+use bz_build_signals::env::WaitingData;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::category::CategoryRef;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::internal_error;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_execute::execute::command_executor::ActionExecutionTimingData;
+use bz_execute::materialize::materializer::WriteRequest;
+use bz_fs::paths::RelativePathBuf;
+use bz_hash::BuckIndexSet;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark::values::OwnedFrozenValue;
@@ -73,7 +73,7 @@ impl UnregisteredAction for UnregisteredWriteMacrosToFileAction {
         outputs: BuckIndexSet<BuildArtifact>,
         starlark_data: Option<OwnedFrozenValue>,
         _error_handler: Option<OwnedFrozenValue>,
-    ) -> buck2_error::Result<Box<dyn Action>> {
+    ) -> bz_error::Result<Box<dyn Action>> {
         let contents = starlark_data.expect("Action data should be present");
 
         let action = WriteMacrosToFileAction::new(contents, outputs, *self)?;
@@ -82,7 +82,7 @@ impl UnregisteredAction for UnregisteredWriteMacrosToFileAction {
     }
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum WriteMacrosActionValidationError {
     #[error("At least one output file must be specified for a write macros action")]
@@ -107,7 +107,7 @@ impl WriteMacrosToFileAction {
         contents: OwnedFrozenValue,
         outputs: BuckIndexSet<BuildArtifact>,
         inner: UnregisteredWriteMacrosToFileAction,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         if outputs.is_empty() {
             Err(WriteMacrosActionValidationError::NoOutputsSpecified.into())
         } else if ValueAsCommandLineLike::unpack_value(contents.value())?.is_none() {
@@ -129,11 +129,11 @@ impl WriteMacrosToFileAction {
 
 #[async_trait]
 impl Action for WriteMacrosToFileAction {
-    fn kind(&self) -> buck2_data::ActionKind {
-        buck2_data::ActionKind::WriteMacrosToFile
+    fn kind(&self) -> bz_data::ActionKind {
+        bz_data::ActionKind::WriteMacrosToFile
     }
 
-    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+    fn inputs(&self) -> bz_error::Result<Cow<'_, [ArtifactGroup]>> {
         if self.inner.use_dep_files_placeholder_for_content_based_paths {
             return Ok(Cow::Borrowed(&[]));
         }
@@ -230,7 +230,7 @@ impl Action for WriteMacrosToFileAction {
                             configuration_path,
                         })
                     })
-                    .collect::<buck2_error::Result<_>>()
+                    .collect::<bz_error::Result<_>>()
             }))
             .await?;
 
@@ -275,7 +275,7 @@ impl WriteToFileMacroVisitor for MacroToFileWriter<'_> {
         &mut self,
         resolved_macro: &ResolvedMacro,
         artifact_path_mapping: &dyn ArtifactPathMapper,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let content = {
             let mut builder = MacroOutput {
                 result: String::new(),
@@ -291,8 +291,8 @@ impl WriteToFileMacroVisitor for MacroToFileWriter<'_> {
 
     fn set_current_relative_to_path(
         &mut self,
-        generate: &dyn Fn(&dyn CommandLineContext) -> buck2_error::Result<Option<RelativePathBuf>>,
-    ) -> buck2_error::Result<()> {
+        generate: &dyn Fn(&dyn CommandLineContext) -> bz_error::Result<Option<RelativePathBuf>>,
+    ) -> bz_error::Result<()> {
         self.relative_to_path = generate(&DefaultCommandLineContext::new(self.fs))?;
         Ok(())
     }
@@ -324,7 +324,7 @@ impl CommandLineContext for MacroContext<'_> {
     fn resolve_project_path(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
         Ok(CommandLineLocation::from_relative_path(
             self.relativize_path(path),
             self.fs.path_separator(),
@@ -335,7 +335,7 @@ impl CommandLineContext for MacroContext<'_> {
         self.fs
     }
 
-    fn next_macro_file_path(&mut self) -> buck2_error::Result<RelativePathBuf> {
+    fn next_macro_file_path(&mut self) -> bz_error::Result<RelativePathBuf> {
         unreachable!("write-to-file macros could not be nested")
     }
 }

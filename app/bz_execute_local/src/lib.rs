@@ -22,15 +22,15 @@ use std::task::Poll;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_resource_control::ActionFreezeEventReceiver;
-use buck2_resource_control::OrphanProcessInfo;
-use buck2_resource_control::action_scene::ActionCgroupResult;
-use buck2_resource_control::path::CgroupPathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_resource_control::ActionFreezeEventReceiver;
+use bz_resource_control::OrphanProcessInfo;
+use bz_resource_control::action_scene::ActionCgroupResult;
+use bz_resource_control::path::CgroupPathBuf;
 use bytes::Bytes;
 use futures::future::Future;
 use futures::future::FutureExt;
@@ -64,8 +64,8 @@ mod win;
 pub struct CollectedExecutionStats {
     pub cpu_instructions_user: Option<u64>,
     pub cpu_instructions_kernel: Option<u64>,
-    pub userspace_events: Option<buck2_data::CpuCounter>,
-    pub kernel_events: Option<buck2_data::CpuCounter>,
+    pub userspace_events: Option<bz_data::CpuCounter>,
+    pub kernel_events: Option<bz_data::CpuCounter>,
 }
 
 #[derive(Debug)]
@@ -128,7 +128,7 @@ pub struct StdRedirectPaths {
 /// Before sending any events, it will send the cgroup path if cgroup pools are enabled.
 #[pin_project]
 struct CommandEventStream<Status, Stdio> {
-    exit: Option<buck2_error::Result<(GatherOutputStatus, Vec<OrphanProcessInfo>)>>,
+    exit: Option<bz_error::Result<(GatherOutputStatus, Vec<OrphanProcessInfo>)>>,
 
     done: bool,
 
@@ -156,10 +156,10 @@ where
 
 impl<Status, Stdio> Stream for CommandEventStream<Status, Stdio>
 where
-    Status: Future<Output = buck2_error::Result<(GatherOutputStatus, Vec<OrphanProcessInfo>)>>,
-    Stdio: Stream<Item = buck2_error::Result<StdioEvent>> + InterruptNotifiable,
+    Status: Future<Output = bz_error::Result<(GatherOutputStatus, Vec<OrphanProcessInfo>)>>,
+    Stdio: Stream<Item = bz_error::Result<StdioEvent>> + InterruptNotifiable,
 {
-    type Item = buck2_error::Result<CommandEvent>;
+    type Item = bz_error::Result<CommandEvent>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
@@ -196,7 +196,7 @@ where
 
 async fn timeout_into_cancellation(
     timeout: Option<Duration>,
-) -> buck2_error::Result<GatherOutputStatus> {
+) -> bz_error::Result<GatherOutputStatus> {
     match timeout {
         Some(t) => {
             tokio::time::sleep(t).await;
@@ -217,9 +217,9 @@ pub async fn spawn_command_and_stream_events<T>(
     retry_on_txt_busy: bool,
     cgroup_path: Option<CgroupPathBuf>,
     freeze_rx: impl ActionFreezeEventReceiver,
-) -> buck2_error::Result<impl Stream<Item = buck2_error::Result<CommandEvent>>>
+) -> bz_error::Result<impl Stream<Item = bz_error::Result<CommandEvent>>>
 where
-    T: Future<Output = buck2_error::Result<GatherOutputStatus>> + Send + Unpin,
+    T: Future<Output = bz_error::Result<GatherOutputStatus>> + Send + Unpin,
 {
     cmd.stdin(Stdio::null());
     if let Some(std_redirects) = &std_redirects {
@@ -240,7 +240,7 @@ where
     let process_details = if retry_on_txt_busy {
         spawn_retry_txt_busy(cmd, || tokio::time::sleep(Duration::from_millis(50))).await
     } else {
-        cmd.spawn().map_err(|x| buck2_error::Error::from(x.0))
+        cmd.spawn().map_err(|x| bz_error::Error::from(x.0))
     };
 
     let timeout = timeout_into_cancellation(timeout);
@@ -299,7 +299,7 @@ where
             futures::pin_mut!(status);
             futures::pin_mut!(cancellation);
 
-            buck2_error::Ok(match futures::future::select(status, cancellation).await {
+            bz_error::Ok(match futures::future::select(status, cancellation).await {
                 futures::future::Either::Left((result, _)) => {
                     let (status, orphans) = result?;
                     Outcome::Finished(status, orphans)
@@ -348,9 +348,9 @@ pub struct CommandResult {
     pub orphan_processes: Vec<OrphanProcessInfo>,
 }
 
-pub async fn decode_command_event_stream<S>(stream: S) -> buck2_error::Result<CommandResult>
+pub async fn decode_command_event_stream<S>(stream: S) -> bz_error::Result<CommandResult>
 where
-    S: Stream<Item = buck2_error::Result<CommandEvent>>,
+    S: Stream<Item = bz_error::Result<CommandEvent>>,
 {
     futures::pin_mut!(stream);
 
@@ -374,8 +374,8 @@ where
         }
     }
 
-    Err(buck2_error::buck2_error!(
-        buck2_error::ErrorTag::Tier0,
+    Err(bz_error::bz_error!(
+        bz_error::ErrorTag::Tier0,
         "Stream did not yield CommandEvent::Exit",
     ))
 }
@@ -383,7 +383,7 @@ where
 /// Dependency injection for kill. We use this in testing.
 #[async_trait]
 pub(crate) trait KillProcess {
-    async fn kill(self, process: &mut ProcessGroup) -> buck2_error::Result<()>;
+    async fn kill(self, process: &mut ProcessGroup) -> bz_error::Result<()>;
 }
 
 #[derive(Default)]
@@ -393,7 +393,7 @@ pub struct DefaultKillProcess {
 
 #[async_trait]
 impl KillProcess for DefaultKillProcess {
-    async fn kill(self, process_group: &mut ProcessGroup) -> buck2_error::Result<()> {
+    async fn kill(self, process_group: &mut ProcessGroup) -> bz_error::Result<()> {
         let pid = match process_group.id() {
             Some(pid) => pid,
             None => {
@@ -415,7 +415,7 @@ impl KillProcess for DefaultKillProcess {
 pub fn maybe_absolutize_exe<'a>(
     exe: &'a (impl AsRef<Path> + ?Sized),
     spawned_process_cwd: &'_ AbsPath,
-) -> buck2_error::Result<Cow<'a, Path>> {
+) -> bz_error::Result<Cow<'a, Path>> {
     let exe = exe.as_ref();
 
     let abs = spawned_process_cwd.join(exe);
@@ -447,7 +447,7 @@ pub fn maybe_absolutize_exe<'a>(
 async fn spawn_retry_txt_busy<F, D>(
     mut cmd: ProcessCommand,
     mut delay: F,
-) -> buck2_error::Result<ProcessGroup>
+) -> bz_error::Result<ProcessGroup>
 where
     F: FnMut() -> D,
     D: Future<Output = ()>,
@@ -488,8 +488,8 @@ mod tests {
     use std::time::Instant;
 
     use assert_matches::assert_matches;
-    use buck2_error::buck2_error;
-    use buck2_util::process::background_command;
+    use bz_error::bz_error;
+    use bz_util::process::background_command;
     use dupe::Dupe;
 
     use super::*;
@@ -498,7 +498,7 @@ mod tests {
     async fn gather_output(
         cmd: Command,
         timeout: Option<Duration>,
-    ) -> buck2_error::Result<CommandResult> {
+    ) -> bz_error::Result<CommandResult> {
         let stream = spawn_command_and_stream_events(
             cmd,
             timeout,
@@ -515,7 +515,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_gather_output() -> buck2_error::Result<()> {
+    async fn test_gather_output() -> bz_error::Result<()> {
         let mut cmd = if cfg!(windows) {
             background_command("powershell")
         } else {
@@ -537,7 +537,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_gather_does_not_wait_for_children() -> buck2_error::Result<()> {
+    async fn test_gather_does_not_wait_for_children() -> bz_error::Result<()> {
         // If we wait for sleep, this will time out.
         let mut cmd = if cfg!(windows) {
             background_command("powershell")
@@ -571,7 +571,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_gather_output_timeout() -> buck2_error::Result<()> {
+    async fn test_gather_output_timeout() -> bz_error::Result<()> {
         let now = Instant::now();
 
         let cmd = if cfg!(windows) {
@@ -605,7 +605,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_spawn_retry_txt_busy() -> buck2_error::Result<()> {
+    async fn test_spawn_retry_txt_busy() -> bz_error::Result<()> {
         use tokio::fs::OpenOptions;
         use tokio::io::AsyncWriteExt;
 
@@ -640,7 +640,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_spawn_retry_other_error() -> buck2_error::Result<()> {
+    async fn test_spawn_retry_other_error() -> bz_error::Result<()> {
         let tempdir = tempfile::tempdir()?;
         let bin = tempdir.path().join("bin"); // Does not actually exist
 
@@ -653,7 +653,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_terminates_process_group() -> buck2_error::Result<()> {
+    async fn test_kill_terminates_process_group() -> bz_error::Result<()> {
         use sysinfo::Pid;
         use sysinfo::System;
 
@@ -693,8 +693,8 @@ mod tests {
                     return Ok(());
                 }
             }
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Tier0,
+            return Err(bz_error!(
+                bz_error::ErrorTag::Tier0,
                 "PID still exits: {}",
                 pid
             ));
@@ -703,7 +703,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stream_command_events_ends() -> buck2_error::Result<()> {
+    async fn test_stream_command_events_ends() -> bz_error::Result<()> {
         let mut cmd = if cfg!(windows) {
             background_command("powershell")
         } else {
@@ -731,7 +731,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_signal_exit_code() -> buck2_error::Result<()> {
+    async fn test_signal_exit_code() -> bz_error::Result<()> {
         use nix::sys::signal::Signal;
 
         let mut cmd = background_command("sh");
@@ -747,14 +747,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_kills_before_dropping_decoder() -> buck2_error::Result<()> {
+    async fn timeout_kills_before_dropping_decoder() -> bz_error::Result<()> {
         struct Kill {
             killed: Arc<Mutex<bool>>,
         }
 
         #[async_trait]
         impl KillProcess for Kill {
-            async fn kill(self, process_group: &mut ProcessGroup) -> buck2_error::Result<()> {
+            async fn kill(self, process_group: &mut ProcessGroup) -> bz_error::Result<()> {
                 *self.killed.lock().unwrap() = true;
 
                 // We still need to kill the process. On Windows in particular our test will hang
@@ -773,11 +773,11 @@ mod tests {
             async fn decode_status(
                 self,
                 _status: ExitStatus,
-            ) -> buck2_error::Result<DecodedStatus> {
+            ) -> bz_error::Result<DecodedStatus> {
                 panic!("Should not be called in this test since we timeout")
             }
 
-            async fn cancel(self) -> buck2_error::Result<()> {
+            async fn cancel(self) -> bz_error::Result<()> {
                 assert!(*self.killed.lock().unwrap());
                 *self.cancelled.lock().unwrap() = true;
                 Ok(())
@@ -823,7 +823,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_no_stdio_stream_command_events() -> buck2_error::Result<()> {
+    async fn test_no_stdio_stream_command_events() -> bz_error::Result<()> {
         let mut cmd = background_command("sh");
         cmd.args(["-c", "echo hello"]);
 

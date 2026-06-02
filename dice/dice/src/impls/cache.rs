@@ -14,7 +14,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use allocative::Allocative;
-use buck2_hash::BuckHasherBuilder;
+use bz_hash::BuckHasherBuilder;
 use dashmap::DashMap;
 use dice_error::result::CancellationReason;
 use dupe::Dupe;

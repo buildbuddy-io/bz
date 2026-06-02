@@ -14,24 +14,24 @@ use std::hash::Hasher;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_build_api::bxl::types::BxlFunctionLabel;
-use buck2_core::content_hash::ContentBasedPathHash;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKeyBxl;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
-use buck2_core::deferred::base_deferred_key::PathResolutionError;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_data::ToProtoMessage;
-use buck2_data::action_key_owner::BaseDeferredKeyProto;
-use buck2_error::internal_error;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::BuckDefaultHasher;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_util::strong_hasher::Blake3StrongHasher;
+use bz_build_api::bxl::types::BxlFunctionLabel;
+use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::base_deferred_key::BaseDeferredKeyBxl;
+use bz_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
+use bz_core::deferred::base_deferred_key::PathResolutionError;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_data::ToProtoMessage;
+use bz_data::action_key_owner::BaseDeferredKeyProto;
+use bz_error::internal_error;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::BuckDefaultHasher;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_util::strong_hasher::Blake3StrongHasher;
 use cmp_any::PartialEqAny;
 use dupe::Dupe;
 use pagable::Pagable;
@@ -101,7 +101,7 @@ impl BxlKey {
 
     pub(crate) fn from_base_deferred_key_dyn_impl_err(
         key: BaseDeferredKeyBxl,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         BxlDynamicKey::from_base_deferred_key_dyn_impl(key)
             .map(|k| BxlKey(k.0.key.dupe()))
             .ok_or_else(|| internal_error!("Not BxlKey"))
@@ -145,8 +145,8 @@ struct BxlKeyData {
 }
 
 impl BxlKeyData {
-    fn as_proto(&self) -> buck2_data::BxlFunctionKey {
-        buck2_data::BxlFunctionKey {
+    fn as_proto(&self) -> bz_data::BxlFunctionKey {
+        bz_data::BxlFunctionKey {
             label: Some(self.spec.as_proto()),
         }
     }
@@ -187,7 +187,7 @@ impl BxlDynamicKey {
 
     pub(crate) fn from_base_deferred_key_dyn_impl_err(
         key: BaseDeferredKeyBxl,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         Self::from_base_deferred_key_dyn_impl(key)
             .ok_or_else(|| internal_error!("Not BxlDynamicKey"))
     }
@@ -219,7 +219,7 @@ impl BaseDeferredKeyDyn for BxlDynamicKeyData {
         path: &ForwardRelativePath,
         path_resolution_method: BuckOutPathKind,
         content_hash: Option<&ContentBasedPathHash>,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let label = &self.key.spec;
         let cell_relative_path = label.bxl_path.path().path().as_str();
 

@@ -37,7 +37,7 @@ materializing the artifacts. The core is written in Rust.
 
 The following diagram shows the high-level overview.
 
-<img src={useBaseUrl('/img/buck2_rule_workflow.png')} alt='justifyContent'/>
+<img src={useBaseUrl('/img/bz_rule_workflow.png')} alt='justifyContent'/>
 
 The Buck2 CLI runs in a client process, which sends commands to the Buck2 daemon
 via gRPC. The daemon goes through several phases after receiving a request from
@@ -54,7 +54,7 @@ via gRPC.
 The following diagram shows the Execution Model, which consists of 5 phases and
 states.
 
-<img src={useBaseUrl('/img/buck2_architecture.png')} alt='justifyContent'/>
+<img src={useBaseUrl('/img/bz_architecture.png')} alt='justifyContent'/>
 
 Each of the phases and states shown in the Execution Model, are detailed in the
 following sub-sections.

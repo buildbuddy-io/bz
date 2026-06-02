@@ -11,9 +11,9 @@
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_error::internal_error;
-use buck2_hash::BuckIndexMap;
+use bz_build_api_derive::internal_provider;
+use bz_error::internal_error;
+use bz_hash::BuckIndexMap;
 use either::Either;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
@@ -34,7 +34,7 @@ use starlark::values::dict::UnpackDictEntries;
 use starlark::values::float::UnpackFloat;
 use starlark::values::none::NoneOr;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
@@ -78,7 +78,7 @@ pub struct LocalResourceInfoGen<V: ValueLifetimeless> {
     setup_timeout_seconds: ValueOfUncheckedGeneric<V, NoneOr<UnpackFloat>>,
 }
 
-fn validate_local_resource_info<'v, V>(info: &LocalResourceInfoGen<V>) -> buck2_error::Result<()>
+fn validate_local_resource_info<'v, V>(info: &LocalResourceInfoGen<V>) -> bz_error::Result<()>
 where
     V: ValueLike<'v>,
 {
@@ -87,8 +87,8 @@ where
         .cast::<UnpackDictEntries<&str, &str>>()
         .unpack()?;
     if env_vars.entries.is_empty() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Value for `resource_env_vars` field is an empty dictionary: `{}`",
             info.resource_env_vars
         ));
@@ -101,8 +101,8 @@ where
         Either::Right(b) => b.is_empty(),
     };
     if setup_is_empty {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Value for `setup` field is an empty command line: `{}`",
             info.setup
         ));

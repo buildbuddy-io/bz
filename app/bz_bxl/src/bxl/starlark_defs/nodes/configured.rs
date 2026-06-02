@@ -15,45 +15,45 @@ use std::fmt;
 use std::path::Path;
 
 use allocative::Allocative;
-use buck2_analysis::analysis::calculation::get_dep_analysis;
-use buck2_analysis::analysis::calculation::resolve_queries;
-use buck2_analysis::analysis::env::RuleAnalysisAttrResolutionContext;
-use buck2_analysis::analysis::env::get_deps_from_analysis_results;
-use buck2_analysis::attrs::resolve::configured_attr::ConfiguredAttrExt;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::actions::query::PackageLabelOption;
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_build_api::bxl::unconfigured_attribute::StarlarkCoercedAttr;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::configuration_info::ConfigurationInfo;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::dice::data::HasIoProvider;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::source_path::SourcePathRef;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
-use buck2_node::attrs::attr_type::arg::StringWithMacros;
-use buck2_node::attrs::attr_type::dict::DictLiteral;
-use buck2_node::attrs::attr_type::list::ListLiteral;
-use buck2_node::attrs::attr_type::query::QueryAttr;
-use buck2_node::attrs::attr_type::transition_dep::CoercedTransitionDep;
-use buck2_node::attrs::attr_type::tuple::TupleLiteral;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::configured_attr::ConfiguredAttr;
-use buck2_node::attrs::configured_traversal::ConfiguredAttrTraversal;
-use buck2_node::attrs::display::AttrDisplayWithContext;
-use buck2_node::attrs::fmt_context::AttrFmtContext;
-use buck2_node::attrs::inspect_options::AttrInspectOptions;
-use buck2_node::attrs::serialize::AttrSerializeWithContext;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
+use bz_analysis::analysis::calculation::get_dep_analysis;
+use bz_analysis::analysis::calculation::resolve_queries;
+use bz_analysis::analysis::env::RuleAnalysisAttrResolutionContext;
+use bz_analysis::analysis::env::get_deps_from_analysis_results;
+use bz_analysis::attrs::resolve::configured_attr::ConfiguredAttrExt;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_build_api::actions::query::PackageLabelOption;
+use bz_build_api::analysis::AnalysisResult;
+use bz_build_api::bxl::unconfigured_attribute::StarlarkCoercedAttr;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::provider::builtin::configuration_info::ConfigurationInfo;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::dice::data::HasIoProvider;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::package::PackageLabel;
+use bz_core::package::source_path::SourcePathRef;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
+use bz_node::attrs::attr_type::arg::StringWithMacros;
+use bz_node::attrs::attr_type::dict::DictLiteral;
+use bz_node::attrs::attr_type::list::ListLiteral;
+use bz_node::attrs::attr_type::query::QueryAttr;
+use bz_node::attrs::attr_type::transition_dep::CoercedTransitionDep;
+use bz_node::attrs::attr_type::tuple::TupleLiteral;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::configured_attr::ConfiguredAttr;
+use bz_node::attrs::configured_traversal::ConfiguredAttrTraversal;
+use bz_node::attrs::display::AttrDisplayWithContext;
+use bz_node::attrs::fmt_context::AttrFmtContext;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::attrs::serialize::AttrSerializeWithContext;
+use bz_node::nodes::configured::ConfiguredTargetNode;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;
@@ -92,7 +92,7 @@ use crate::bxl::starlark_defs::nodes::configured::attr_resolution_ctx::LazyAttrR
 
 mod attr_resolution_ctx;
 
-fn attr_with_stripped_cfg(attr: &ConfiguredAttr) -> buck2_error::Result<CoercedAttr> {
+fn attr_with_stripped_cfg(attr: &ConfiguredAttr) -> bz_error::Result<CoercedAttr> {
     Ok(match attr {
         ConfiguredAttr::Bool(v) => CoercedAttr::Bool(*v),
         ConfiguredAttr::Int(v) => CoercedAttr::Int(*v),
@@ -101,20 +101,20 @@ fn attr_with_stripped_cfg(attr: &ConfiguredAttr) -> buck2_error::Result<CoercedA
         ConfiguredAttr::List(list) => CoercedAttr::List(ListLiteral(
             list.iter()
                 .map(attr_with_stripped_cfg)
-                .collect::<buck2_error::Result<Vec<_>>>()?
+                .collect::<bz_error::Result<Vec<_>>>()?
                 .into(),
         )),
         ConfiguredAttr::Tuple(tuple) => CoercedAttr::Tuple(TupleLiteral(
             tuple
                 .iter()
                 .map(attr_with_stripped_cfg)
-                .collect::<buck2_error::Result<Vec<_>>>()?
+                .collect::<bz_error::Result<Vec<_>>>()?
                 .into(),
         )),
         ConfiguredAttr::Dict(dict) => CoercedAttr::Dict(DictLiteral(
             dict.iter()
                 .map(|(k, v)| Ok((attr_with_stripped_cfg(k)?, attr_with_stripped_cfg(v)?)))
-                .collect::<buck2_error::Result<Vec<_>>>()?
+                .collect::<bz_error::Result<Vec<_>>>()?
                 .into(),
         )),
         ConfiguredAttr::None => CoercedAttr::None,
@@ -131,7 +131,7 @@ fn attr_with_stripped_cfg(attr: &ConfiguredAttr) -> buck2_error::Result<CoercedA
         ConfiguredAttr::SplitTransitionDep(dep) => {
             let deps: StdBuckHashSet<_> = dep.deps.values().map(|l| l.unconfigured()).collect();
             if deps.len() != 1 {
-                return Err(buck2_error::internal_error!(
+                return Err(bz_error::internal_error!(
                     "ConfiguredSplitTransitionDep should have exactly one dep, but found {}",
                     deps.len()
                 ));
@@ -142,7 +142,7 @@ fn attr_with_stripped_cfg(attr: &ConfiguredAttr) -> buck2_error::Result<CoercedA
                 deps.iter()
                     .next()
                     .ok_or_else(|| {
-                        buck2_error::internal_error!("deps is empty after checking length")
+                        bz_error::internal_error!("deps is empty after checking length")
                     })?
                     .dupe(),
             )
@@ -167,58 +167,58 @@ fn attr_with_stripped_cfg(attr: &ConfiguredAttr) -> buck2_error::Result<CoercedA
                     parts
                         .iter()
                         .map(|part| match part {
-                            buck2_node::attrs::attr_type::arg::StringWithMacrosPart::String(s) => {
-                                buck2_node::attrs::attr_type::arg::StringWithMacrosPart::String(
+                            bz_node::attrs::attr_type::arg::StringWithMacrosPart::String(s) => {
+                                bz_node::attrs::attr_type::arg::StringWithMacrosPart::String(
                                     s.clone(),
                                 )
                             }
-                            buck2_node::attrs::attr_type::arg::StringWithMacrosPart::Macro(
+                            bz_node::attrs::attr_type::arg::StringWithMacrosPart::Macro(
                                 write_to_file,
                                 macr,
-                            ) => buck2_node::attrs::attr_type::arg::StringWithMacrosPart::Macro(
+                            ) => bz_node::attrs::attr_type::arg::StringWithMacrosPart::Macro(
                                 *write_to_file,
                                 match macr {
-                                    buck2_node::attrs::attr_type::arg::MacroBase::Location {
+                                    bz_node::attrs::attr_type::arg::MacroBase::Location {
                                         label,
                                         dep_kind,
-                                    } => buck2_node::attrs::attr_type::arg::MacroBase::Location {
+                                    } => bz_node::attrs::attr_type::arg::MacroBase::Location {
                                         label: label.unconfigured(),
                                         dep_kind: *dep_kind,
                                     },
-                                    buck2_node::attrs::attr_type::arg::MacroBase::Exe {
+                                    bz_node::attrs::attr_type::arg::MacroBase::Exe {
                                         label,
                                         exec_dep,
-                                    } => buck2_node::attrs::attr_type::arg::MacroBase::Exe {
+                                    } => bz_node::attrs::attr_type::arg::MacroBase::Exe {
                                         label: label.unconfigured(),
                                         exec_dep: *exec_dep,
                                     },
-                                    buck2_node::attrs::attr_type::arg::MacroBase::UserUnkeyedPlaceholder(
+                                    bz_node::attrs::attr_type::arg::MacroBase::UserUnkeyedPlaceholder(
                                         var_name,
                                     ) => {
-                                        buck2_node::attrs::attr_type::arg::MacroBase::UserUnkeyedPlaceholder(
+                                        bz_node::attrs::attr_type::arg::MacroBase::UserUnkeyedPlaceholder(
                                             var_name.clone(),
                                         )
                                     }
-                                    buck2_node::attrs::attr_type::arg::MacroBase::UserKeyedPlaceholder(
+                                    bz_node::attrs::attr_type::arg::MacroBase::UserKeyedPlaceholder(
                                         box_value,
                                     ) => {
                                         let (var_name, target, arg) = &**box_value;
-                                        buck2_node::attrs::attr_type::arg::MacroBase::UserKeyedPlaceholder(
+                                        bz_node::attrs::attr_type::arg::MacroBase::UserKeyedPlaceholder(
                                             Box::new((var_name.clone(), target.unconfigured(), arg.clone())),
                                         )
                                     }
-                                    buck2_node::attrs::attr_type::arg::MacroBase::Query(
+                                    bz_node::attrs::attr_type::arg::MacroBase::Query(
                                         query_macro,
                                     ) => {
-                                        buck2_node::attrs::attr_type::arg::MacroBase::Query(
+                                        bz_node::attrs::attr_type::arg::MacroBase::Query(
                                             Box::new(
-                                                buck2_node::attrs::attr_type::query::QueryMacroBase {
+                                                bz_node::attrs::attr_type::query::QueryMacroBase {
                                                     expansion_type: query_macro
                                                         .expansion_type
                                                         .clone(),
-                                                    query: buck2_node::attrs::attr_type::query::QueryAttrBase {
+                                                    query: bz_node::attrs::attr_type::query::QueryAttrBase {
                                                         query: query_macro.query.query.clone(),
-                                                        resolved_literals: buck2_node::attrs::attr_type::query::ResolvedQueryLiterals(
+                                                        resolved_literals: bz_node::attrs::attr_type::query::ResolvedQueryLiterals(
                                                             query_macro
                                                                 .query
                                                                 .resolved_literals
@@ -232,15 +232,15 @@ fn attr_with_stripped_cfg(attr: &ConfiguredAttr) -> buck2_error::Result<CoercedA
                                             ),
                                         )
                                     }
-                                    buck2_node::attrs::attr_type::arg::MacroBase::Source(path) => {
-                                        buck2_node::attrs::attr_type::arg::MacroBase::Source(
+                                    bz_node::attrs::attr_type::arg::MacroBase::Source(path) => {
+                                        bz_node::attrs::attr_type::arg::MacroBase::Source(
                                             path.clone(),
                                         )
                                     }
-                                    buck2_node::attrs::attr_type::arg::MacroBase::UnrecognizedMacro(
+                                    bz_node::attrs::attr_type::arg::MacroBase::UnrecognizedMacro(
                                         macr,
                                     ) => {
-                                        buck2_node::attrs::attr_type::arg::MacroBase::UnrecognizedMacro(
+                                        bz_node::attrs::attr_type::arg::MacroBase::UnrecognizedMacro(
                                             macr.clone(),
                                         )
                                     }
@@ -255,9 +255,9 @@ fn attr_with_stripped_cfg(attr: &ConfiguredAttr) -> buck2_error::Result<CoercedA
         }
         ConfiguredAttr::Query(query) => CoercedAttr::Query(Box::new(QueryAttr {
             providers: query.providers.clone(),
-            query: buck2_node::attrs::attr_type::query::QueryAttrBase {
+            query: bz_node::attrs::attr_type::query::QueryAttrBase {
                 query: query.query.query.clone(),
-                resolved_literals: buck2_node::attrs::attr_type::query::ResolvedQueryLiterals(
+                resolved_literals: bz_node::attrs::attr_type::query::ResolvedQueryLiterals(
                     query
                         .query
                         .resolved_literals
@@ -518,7 +518,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<Value<'v>> {
         let configured_node = this.0.as_ref();
 
-        let dep_analysis: buck2_error::Result<Vec<(&ConfiguredTargetLabel, AnalysisResult)>> = ctx
+        let dep_analysis: bz_error::Result<Vec<(&ConfiguredTargetLabel, AnalysisResult)>> = ctx
             .via_dice(eval, |ctx| {
                 ctx.via(|dice_ctx| get_dep_analysis(configured_node, dice_ctx).boxed_local())
             });
@@ -619,11 +619,11 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             inputs: Vec<StarlarkArtifact>,
         }
         impl ConfiguredAttrTraversal for InputsCollector {
-            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
                 Ok(())
             }
 
-            fn input(&mut self, path: SourcePathRef) -> buck2_error::Result<()> {
+            fn input(&mut self, path: SourcePathRef) -> bz_error::Result<()> {
                 self.inputs
                     .push(StarlarkArtifact::new(Artifact::from(SourceArtifact::new(
                         path.to_owned(),
@@ -680,11 +680,11 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
             target: CellPath,
         }
         impl ConfiguredAttrTraversal for SourceFinder {
-            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+            fn dep(&mut self, _dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
                 Ok(())
             }
 
-            fn input(&mut self, path: SourcePathRef) -> buck2_error::Result<()> {
+            fn input(&mut self, path: SourcePathRef) -> bz_error::Result<()> {
                 if path.to_cell_path() == self.target {
                     self.found = Some(StarlarkArtifact::new(Artifact::from(SourceArtifact::new(
                         path.to_owned(),
@@ -737,7 +737,7 @@ fn configured_target_node_value_methods(builder: &mut MethodsBuilder) {
     /// ```
     fn deps<'v>(
         this: &'v StarlarkConfiguredTargetNode,
-        // ) -> buck2_error::Result<Vec<StarlarkConfiguredTargetNode>> {
+        // ) -> bz_error::Result<Vec<StarlarkConfiguredTargetNode>> {
     ) -> starlark::Result<AllocList<impl IntoIterator<Item = StarlarkConfiguredTargetNode> + 'v>>
     {
         Ok(AllocList(

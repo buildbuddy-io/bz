@@ -11,24 +11,24 @@
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_build_api::query::oneshot::QUERY_FRONTEND;
-use buck2_cli_proto::HasClientContext as _;
-use buck2_cli_proto::UqueryRequest;
-use buck2_cli_proto::UqueryResponse;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_error::internal_error;
-use buck2_node::attrs::display::AttrDisplayWithContext;
-use buck2_node::attrs::display::AttrDisplayWithContextExt;
-use buck2_node::attrs::fmt_context::AttrFmtContext;
-use buck2_node::attrs::serialize::AttrSerializeWithContext;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_node::nodes::unconfigured::TargetNodeData;
-use buck2_query::query::environment::AttrFmtOptions;
-use buck2_query::query::syntax::simple::eval::values::QueryEvaluationResult;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_build_api::query::oneshot::QUERY_FRONTEND;
+use bz_cli_proto::HasClientContext as _;
+use bz_cli_proto::UqueryRequest;
+use bz_cli_proto::UqueryResponse;
+use bz_common::dice::cells::HasCellResolver;
+use bz_error::internal_error;
+use bz_node::attrs::display::AttrDisplayWithContext;
+use bz_node::attrs::display::AttrDisplayWithContextExt;
+use bz_node::attrs::fmt_context::AttrFmtContext;
+use bz_node::attrs::serialize::AttrSerializeWithContext;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_node::nodes::unconfigured::TargetNodeData;
+use bz_query::query::environment::AttrFmtOptions;
+use bz_query::query::syntax::simple::eval::values::QueryEvaluationResult;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use dice::DiceTransaction;
 use dupe::Dupe;
 
@@ -84,9 +84,9 @@ impl QueryCommandTarget for TargetNode {
 
 pub(crate) async fn uquery_command(
     ctx: &dyn ServerCommandContextTrait,
-    partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+    partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
     req: UqueryRequest,
-) -> buck2_error::Result<UqueryResponse> {
+) -> bz_error::Result<UqueryResponse> {
     run_server_command(UqueryServerCommand { req }, ctx, partial_result_dispatcher).await
 }
 
@@ -96,17 +96,17 @@ struct UqueryServerCommand {
 
 #[async_trait]
 impl ServerCommandTemplate for UqueryServerCommand {
-    type StartEvent = buck2_data::QueryCommandStart;
-    type EndEvent = buck2_data::QueryCommandEnd;
+    type StartEvent = bz_data::QueryCommandStart;
+    type EndEvent = bz_data::QueryCommandEnd;
     type Response = UqueryResponse;
-    type PartialResult = buck2_cli_proto::StdoutBytes;
+    type PartialResult = bz_cli_proto::StdoutBytes;
 
     async fn command(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
         mut partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         uquery(
             server_ctx,
             partial_result_dispatcher.as_writer(),
@@ -122,7 +122,7 @@ async fn uquery(
     mut stdout: impl Write,
     mut ctx: DiceTransaction,
     request: &UqueryRequest,
-) -> buck2_error::Result<UqueryResponse> {
+) -> bz_error::Result<UqueryResponse> {
     let cell_resolver = ctx.get_cell_resolver().await?;
     let output_configuration = QueryResultPrinter::from_request_options(
         &cell_resolver,

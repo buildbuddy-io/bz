@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_query::query::syntax::simple::functions::description::QUERY_ENVIRONMENT_DESCRIPTION_BY_TYPE;
-use buck2_query::query::syntax::simple::functions::description::QueryType;
+use bz_query::query::syntax::simple::functions::description::QUERY_ENVIRONMENT_DESCRIPTION_BY_TYPE;
+use bz_query::query::syntax::simple::functions::description::QueryType;
 
 use crate::aquery::environment::AqueryEnvironment;
 use crate::cquery::environment::CqueryEnvironment;

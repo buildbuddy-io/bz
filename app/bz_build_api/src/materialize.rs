@@ -11,26 +11,26 @@
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_signals::env::WaitingCategory;
-use buck2_build_signals::env::WaitingData;
-use buck2_cli_proto::build_request::Materializations;
-use buck2_cli_proto::build_request::Uploads;
-use buck2_common::legacy_configs::dice::HasLegacyConfigs;
-use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::legacy_configs::view::LegacyBuckConfigView;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_error::BuckErrorContext;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact_utils::ArtifactValueBuilder;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::directory::ActionDirectoryBuilder;
-use buck2_execute::execute::blobs::ActionBlobs;
-use buck2_execute::materialize::materializer::HasMaterializer;
-use buck2_hash::BuckDashSet;
+use bz_artifact::artifact::artifact_type::BaseArtifactKind;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_signals::env::WaitingCategory;
+use bz_build_signals::env::WaitingData;
+use bz_cli_proto::build_request::Materializations;
+use bz_cli_proto::build_request::Uploads;
+use bz_common::legacy_configs::dice::HasLegacyConfigs;
+use bz_common::legacy_configs::key::BuckconfigKeyRef;
+use bz_common::legacy_configs::view::LegacyBuckConfigView;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_error::BuckErrorContext;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact_utils::ArtifactValueBuilder;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::directory::ActionDirectoryBuilder;
+use bz_execute::execute::blobs::ActionBlobs;
+use bz_execute::materialize::materializer::HasMaterializer;
+use bz_hash::BuckDashSet;
 use dice::DiceComputations;
 use dice::UserComputationData;
 use dice_futures::spawn::spawn_dropcancel;
@@ -51,7 +51,7 @@ pub async fn materialize_and_upload_artifact_group(
     artifact_group: &ArtifactGroup,
     contexts: MaterializationAndUploadContext,
     queue_tracker: &Arc<BuckDashSet<BuildArtifact>>,
-) -> buck2_error::Result<ArtifactGroupValues> {
+) -> bz_error::Result<ArtifactGroupValues> {
     let (values, _) = {
         let fut = ctx.try_compute2(
             |ctx| {
@@ -84,7 +84,7 @@ async fn materialize_artifact_group(
     artifact_group: &ArtifactGroup,
     materialization_context: MaterializationContext,
     queue_tracker: &Arc<BuckDashSet<BuildArtifact>>,
-) -> buck2_error::Result<ArtifactGroupValues> {
+) -> bz_error::Result<ArtifactGroupValues> {
     let values = ctx.ensure_artifact_group(artifact_group).await?;
 
     let mut waiting_data = WaitingData::new();
@@ -155,7 +155,7 @@ async fn materialize_artifact_group(
                         )
                         .await
                         .buck_error_context("Failed to materialize artifacts")?;
-                        buck2_error::Ok(())
+                        bz_error::Ok(())
                     }
                 };
                 materialize_futs.push(spawn_dropcancel(
@@ -166,7 +166,7 @@ async fn materialize_artifact_group(
             }
         }
 
-        buck2_util::future::try_join_all(materialize_futs).await?;
+        bz_util::future::try_join_all(materialize_futs).await?;
     }
 
     Ok(values)
@@ -175,7 +175,7 @@ async fn materialize_artifact_group(
 async fn ensure_uploaded(
     ctx: &mut DiceComputations<'_>,
     artifact_group: &ArtifactGroup,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let digest_config = ctx.global_data().get_digest_config();
     let artifact_fs = ctx.get_artifact_fs().await?;
     let mut dir = ActionDirectoryBuilder::empty();
@@ -190,7 +190,7 @@ async fn ensure_uploaded(
             }
             .as_ref(),
         )?;
-        buck2_execute::directory::insert_artifact(&mut dir, path, value)?;
+        bz_execute::directory::insert_artifact(&mut dir, path, value)?;
     }
     let dir = dir.fingerprint(digest_config.as_directory_serializer());
     let re_use_case = ctx
@@ -204,7 +204,7 @@ async fn ensure_uploaded(
         })
         .ok()
         .flatten()
-        .map_or_else(RemoteExecutorUseCase::buck2_default, |v| {
+        .map_or_else(RemoteExecutorUseCase::bz_default, |v| {
             RemoteExecutorUseCase::new((*v).to_owned())
         });
     ctx.per_transaction_data()

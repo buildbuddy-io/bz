@@ -11,9 +11,9 @@
 use std::fmt::Write;
 
 use allocative::Allocative;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_data::ToProtoMessage;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_data::ToProtoMessage;
 use dupe::Dupe;
 use pagable::Pagable;
 use static_assertions::assert_eq_size;
@@ -90,10 +90,10 @@ impl ActionKey {
 }
 
 impl ToProtoMessage for ActionKey {
-    type Message = buck2_data::ActionKey;
+    type Message = bz_data::ActionKey;
 
     fn as_proto(&self) -> Self::Message {
-        buck2_data::ActionKey {
+        bz_data::ActionKey {
             id: (self.id.0 as usize).to_ne_bytes().to_vec(),
             owner: Some(self.owner().to_proto().into()),
             key: self.action_key(),

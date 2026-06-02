@@ -12,55 +12,55 @@
 
 use std::sync::Arc;
 
-use buck2_cli_proto::HasClientContext;
-use buck2_cli_proto::profile_request::ProfileOpts;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::pattern::unparsed::UnparsedPatternPredicate;
-use buck2_core::pattern::unparsed::UnparsedPatterns;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_interpreter::starlark_profiler::config::StarlarkProfilerConfiguration;
-use buck2_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
+use bz_cli_proto::HasClientContext;
+use bz_cli_proto::profile_request::ProfileOpts;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::pattern::unparsed::UnparsedPatternPredicate;
+use bz_core::pattern::unparsed::UnparsedPatterns;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::conversion::from_any_with_tag;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_interpreter::starlark_profiler::config::StarlarkProfilerConfiguration;
+use bz_interpreter::starlark_profiler::data::StarlarkProfileDataAndStats;
 use starlark::eval::ProfileMode;
 
-pub fn proto_to_profile_mode(proto: buck2_cli_proto::ProfileMode) -> ProfileMode {
+pub fn proto_to_profile_mode(proto: bz_cli_proto::ProfileMode) -> ProfileMode {
     match proto {
-        buck2_cli_proto::ProfileMode::HeapAllocated => ProfileMode::HeapAllocated,
-        buck2_cli_proto::ProfileMode::HeapRetained => ProfileMode::HeapRetained,
-        buck2_cli_proto::ProfileMode::HeapFlameAllocated => ProfileMode::HeapFlameAllocated,
-        buck2_cli_proto::ProfileMode::HeapFlameRetained => ProfileMode::HeapFlameRetained,
-        buck2_cli_proto::ProfileMode::HeapSummaryAllocated => ProfileMode::HeapSummaryAllocated,
-        buck2_cli_proto::ProfileMode::HeapSummaryRetained => ProfileMode::HeapSummaryRetained,
-        buck2_cli_proto::ProfileMode::TimeFlame => ProfileMode::TimeFlame,
-        buck2_cli_proto::ProfileMode::Statement => ProfileMode::Statement,
-        buck2_cli_proto::ProfileMode::Bytecode => ProfileMode::Bytecode,
-        buck2_cli_proto::ProfileMode::BytecodePairs => ProfileMode::BytecodePairs,
-        buck2_cli_proto::ProfileMode::Typecheck => ProfileMode::Typecheck,
-        buck2_cli_proto::ProfileMode::Coverage => ProfileMode::Coverage,
-        buck2_cli_proto::ProfileMode::None => ProfileMode::None,
+        bz_cli_proto::ProfileMode::HeapAllocated => ProfileMode::HeapAllocated,
+        bz_cli_proto::ProfileMode::HeapRetained => ProfileMode::HeapRetained,
+        bz_cli_proto::ProfileMode::HeapFlameAllocated => ProfileMode::HeapFlameAllocated,
+        bz_cli_proto::ProfileMode::HeapFlameRetained => ProfileMode::HeapFlameRetained,
+        bz_cli_proto::ProfileMode::HeapSummaryAllocated => ProfileMode::HeapSummaryAllocated,
+        bz_cli_proto::ProfileMode::HeapSummaryRetained => ProfileMode::HeapSummaryRetained,
+        bz_cli_proto::ProfileMode::TimeFlame => ProfileMode::TimeFlame,
+        bz_cli_proto::ProfileMode::Statement => ProfileMode::Statement,
+        bz_cli_proto::ProfileMode::Bytecode => ProfileMode::Bytecode,
+        bz_cli_proto::ProfileMode::BytecodePairs => ProfileMode::BytecodePairs,
+        bz_cli_proto::ProfileMode::Typecheck => ProfileMode::Typecheck,
+        bz_cli_proto::ProfileMode::Coverage => ProfileMode::Coverage,
+        bz_cli_proto::ProfileMode::None => ProfileMode::None,
     }
 }
 
 pub fn starlark_profiler_configuration_from_request(
-    req: &buck2_cli_proto::ProfileRequest,
+    req: &bz_cli_proto::ProfileRequest,
     project_root: &ProjectRoot,
-) -> buck2_error::Result<StarlarkProfilerConfiguration> {
-    let profiler_proto = buck2_cli_proto::ProfileMode::try_from(req.profile_mode)
+) -> bz_error::Result<StarlarkProfilerConfiguration> {
+    let profiler_proto = bz_cli_proto::ProfileMode::try_from(req.profile_mode)
         .buck_error_context("Invalid profiler")?;
 
     let profile_mode = proto_to_profile_mode(profiler_proto);
 
     match req.profile_opts.as_ref().expect("Missing profile opts") {
         ProfileOpts::TargetProfile(opts) => {
-            let action = buck2_cli_proto::target_profile::Action::try_from(opts.action)
+            let action = bz_cli_proto::target_profile::Action::try_from(opts.action)
                 .buck_error_context("Invalid action")?;
             Ok(match (action, opts.recursive) {
-                (buck2_cli_proto::target_profile::Action::Loading, false) => {
+                (bz_cli_proto::target_profile::Action::Loading, false) => {
                     let working_dir = AbsNormPath::new(&req.client_context()?.working_dir)?;
                     let working_dir = project_root.relativize(working_dir)?;
                     StarlarkProfilerConfiguration::ProfileLoading(
@@ -71,13 +71,13 @@ pub fn starlark_profiler_configuration_from_request(
                         )),
                     )
                 }
-                (buck2_cli_proto::target_profile::Action::Loading, true) => {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                (bz_cli_proto::target_profile::Action::Loading, true) => {
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Recursive profiling is not supported for loading profiling, but you can pass multiple target patterns."
                     ));
                 }
-                (buck2_cli_proto::target_profile::Action::Analysis, false) => {
+                (bz_cli_proto::target_profile::Action::Analysis, false) => {
                     let working_dir = AbsNormPath::new(&req.client_context()?.working_dir)?;
                     let working_dir = project_root.relativize(working_dir)?;
                     StarlarkProfilerConfiguration::ProfileAnalysis(
@@ -88,7 +88,7 @@ pub fn starlark_profiler_configuration_from_request(
                         )),
                     )
                 }
-                (buck2_cli_proto::target_profile::Action::Analysis, true) => {
+                (bz_cli_proto::target_profile::Action::Analysis, true) => {
                     StarlarkProfilerConfiguration::ProfileAnalysis(
                         profile_mode,
                         UnparsedPatternPredicate::Any,
@@ -105,7 +105,7 @@ pub fn write_starlark_profile(
     profile_data: &StarlarkProfileDataAndStats,
     targets: &[String],
     output: &AbsPath,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // input path from --profile-output
     fs_util::create_dir_if_not_exists(output).categorize_input()?;
 
@@ -154,7 +154,7 @@ pub fn write_starlark_flamegraph(
     mut profile: String,
     output_prefix: &AbsPath,
     mut options: inferno::flamegraph::Options,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     if profile.is_empty() {
         // inferno does not like empty flamegraphs.
         profile = "empty 1\n".to_owned();
@@ -162,7 +162,7 @@ pub fn write_starlark_flamegraph(
     let mut svg = Vec::new();
 
     inferno::flamegraph::from_reader(&mut options, profile.as_bytes(), &mut svg)
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Profile))
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Profile))
         .buck_error_context("writing SVG from profile data")?;
 
     let src_path = output_prefix.with_added_extension("src");
@@ -181,10 +181,10 @@ pub fn get_profile_response(
     profile_data: Arc<StarlarkProfileDataAndStats>,
     targets: &[String],
     output: &AbsPath,
-) -> buck2_error::Result<buck2_cli_proto::ProfileResponse> {
+) -> bz_error::Result<bz_cli_proto::ProfileResponse> {
     write_starlark_profile(profile_data.as_ref(), targets, output)?;
 
-    Ok(buck2_cli_proto::ProfileResponse {
+    Ok(bz_cli_proto::ProfileResponse {
         elapsed: Some(profile_data.duration().try_into()?),
         total_retained_bytes: profile_data.total_retained_bytes() as u64,
     })

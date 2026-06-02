@@ -14,15 +14,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::buck2_env;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::RelativePath;
-use buck2_fs::paths::RelativePathBuf;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_core::bz_env;
+use bz_core::cells::cell_path::CellPath;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::RelativePath;
+use bz_fs::paths::RelativePathBuf;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
 use compact_str::CompactString;
 use derive_more::Display;
 use dupe::Dupe;
@@ -235,7 +235,7 @@ impl FileDigestConfig {
 
 impl FileDigest {
     /// Obtain the digest of the file if you can.
-    pub fn from_file(file: &AbsPath, config: FileDigestConfig) -> buck2_error::Result<Self> {
+    pub fn from_file(file: &AbsPath, config: FileDigestConfig) -> bz_error::Result<Self> {
         let metadata = fs_util::symlink_metadata(file).categorize_internal()?;
         Self::from_file_with_metadata(file, config, &metadata)
     }
@@ -245,8 +245,8 @@ impl FileDigest {
         file: &AbsPath,
         config: FileDigestConfig,
         metadata: &std::fs::Metadata,
-    ) -> buck2_error::Result<Self> {
-        if !buck2_env!("BUCK2_DISABLE_FILE_ATTR", bool)? {
+    ) -> bz_error::Result<Self> {
+        if !bz_env!("BUCK2_DISABLE_FILE_ATTR", bool)? {
             if let Some(digest) = Self::from_file_attr(file, config, metadata) {
                 return Ok(digest);
             }
@@ -321,8 +321,8 @@ impl FileDigest {
         file: &AbsPath,
         config: FileDigestConfig,
         metadata: &std::fs::Metadata,
-    ) -> buck2_error::Result<Self> {
-        if buck2_env!("BUCK2_DISABLE_COMPUTED_FILE_DIGEST_CACHE", bool)? {
+    ) -> bz_error::Result<Self> {
+        if bz_env!("BUCK2_DISABLE_COMPUTED_FILE_DIGEST_CACHE", bool)? {
             return Self::from_file_disk_uncached(file, config);
         }
 
@@ -343,7 +343,7 @@ impl FileDigest {
     fn from_file_disk_uncached(
         file: &AbsPath,
         config: FileDigestConfig,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let f = fs_util::open_file(file).categorize_internal()?;
         FileDigest::from_reader(f, config.as_cas_digest_config())
     }

@@ -13,9 +13,9 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
 
 use anyhow::Context as _;
-use buck2_miniperf_proto::MiniperfCounter;
-use buck2_miniperf_proto::MiniperfCounters;
-use buck2_miniperf_proto::MiniperfOutput;
+use bz_miniperf_proto::MiniperfCounter;
+use bz_miniperf_proto::MiniperfCounters;
+use bz_miniperf_proto::MiniperfOutput;
 use perf_event::Builder;
 use perf_event::events::Hardware;
 use smallvec::SmallVec;

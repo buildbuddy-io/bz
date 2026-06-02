@@ -12,7 +12,7 @@ use std::borrow::Borrow;
 use std::ops::Deref;
 
 use allocative::Allocative;
-use buck2_util::arc_str::ThinArcStr;
+use bz_util::arc_str::ThinArcStr;
 use dupe::Dupe;
 use pagable::Pagable;
 use serde::Deserialize;
@@ -44,7 +44,7 @@ pub const EQ_SIGN_SUBST: &str = "_eqsb_";
 // TODO intern this?
 pub struct TargetName(#[pagable(flatten_serde)] ThinArcStr);
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum TargetNameError {
     #[error(
@@ -70,7 +70,7 @@ enum TargetNameError {
 
 impl TargetName {
     #[inline]
-    pub fn new(name: &str) -> buck2_error::Result<Self> {
+    pub fn new(name: &str) -> bz_error::Result<Self> {
         TargetNameRef::new(name)?;
         Ok(Self(ThinArcStr::from(name)))
     }
@@ -80,12 +80,12 @@ impl TargetName {
     }
 
     #[inline]
-    pub fn new_bazel(name: &str) -> buck2_error::Result<Self> {
+    pub fn new_bazel(name: &str) -> bz_error::Result<Self> {
         TargetNameRef::new_bazel(name)?;
         Ok(Self(ThinArcStr::from(name)))
     }
 
-    fn bad_name_error(name: &str) -> buck2_error::Error {
+    fn bad_name_error(name: &str) -> bz_error::Error {
         if let Some((_, p)) = name.split_once('[') {
             if p.contains(']') {
                 return TargetNameError::FoundProvidersLabel(name.to_owned()).into();
@@ -94,7 +94,7 @@ impl TargetName {
         TargetNameError::InvalidName(name.to_owned()).into()
     }
 
-    fn verify(name: &str) -> buck2_error::Result<()> {
+    fn verify(name: &str) -> bz_error::Result<()> {
         const VALID_CHARS: &str =
             r"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_,.=-\/~@!+$";
         const SET: AsciiCharSet = AsciiCharSet::new(VALID_CHARS);
@@ -134,11 +134,11 @@ impl TargetName {
         Ok(())
     }
 
-    fn bazel_bad_name_error(name: &str, msg: &str) -> buck2_error::Error {
+    fn bazel_bad_name_error(name: &str, msg: &str) -> bz_error::Error {
         TargetNameError::InvalidBazelName(name.to_owned(), msg.to_owned()).into()
     }
 
-    fn verify_bazel(name: &str) -> buck2_error::Result<()> {
+    fn verify_bazel(name: &str) -> bz_error::Result<()> {
         fn bazel_always_allowed_target_char(c: char) -> bool {
             c.is_alphanumeric() || c >= '\u{80}' || " \"#$&'()*+,;<=>?[]{|}~!%-@^_`".contains(c)
         }
@@ -302,13 +302,13 @@ pub struct TargetNameRef(str);
 
 impl TargetNameRef {
     #[inline]
-    pub fn new(name: &str) -> buck2_error::Result<&TargetNameRef> {
+    pub fn new(name: &str) -> bz_error::Result<&TargetNameRef> {
         TargetName::verify(name)?;
         Ok(TargetNameRef::unchecked_new(name))
     }
 
     #[inline]
-    pub fn new_bazel(name: &str) -> buck2_error::Result<&TargetNameRef> {
+    pub fn new_bazel(name: &str) -> bz_error::Result<&TargetNameRef> {
         TargetName::verify_bazel(name)?;
         Ok(TargetNameRef::unchecked_new(name))
     }
@@ -351,7 +351,7 @@ mod tests {
     use std::hash::Hash;
     use std::hash::Hasher;
 
-    use buck2_util::arc_str::ThinArcStr;
+    use bz_util::arc_str::ThinArcStr;
 
     use crate::target::name::TargetName;
     use crate::target::name::TargetNameRef;

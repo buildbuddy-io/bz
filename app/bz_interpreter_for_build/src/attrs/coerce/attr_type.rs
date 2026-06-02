@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_node::attrs::attr_type::AttrType;
-use buck2_node::attrs::attr_type::AttrTypeInner;
-use buck2_node::attrs::coerced_attr::CoercedAttr;
-use buck2_node::attrs::coercion_context::AttrCoercionContext;
-use buck2_node::attrs::configurable::AttrIsConfigurable;
+use bz_core::provider::label::ProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::attr_type::AttrTypeInner;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::coercion_context::AttrCoercionContext;
+use bz_node::attrs::configurable::AttrIsConfigurable;
 use dupe::Dupe;
 use starlark::values::Value;
 
@@ -50,7 +50,7 @@ mod within_view;
 pub(crate) fn coerce_providers_label_from_value(
     ctx: &dyn AttrCoercionContext,
     value: Value,
-) -> buck2_error::Result<ProvidersLabel> {
+) -> bz_error::Result<ProvidersLabel> {
     if let Some(label) = StarlarkProvidersLabel::from_value(value) {
         Ok(label.label().dupe())
     } else {
@@ -66,7 +66,7 @@ pub trait AttrTypeExt {
         configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         self.this().0.inner.coerce_item(configurable, ctx, value)
     }
 
@@ -75,7 +75,7 @@ pub trait AttrTypeExt {
         configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         self.coerce_with_default(configurable, ctx, value, None)
     }
 
@@ -85,7 +85,7 @@ pub trait AttrTypeExt {
         ctx: &dyn AttrCoercionContext,
         value: Value,
         default: Option<&CoercedAttr>,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         CoercedAttr::coerce(self.this(), configurable, ctx, value, default)
     }
 
@@ -106,7 +106,7 @@ pub trait AttrTypeInnerExt {
         configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr>;
+    ) -> bz_error::Result<CoercedAttr>;
 
     fn starlark_type(&self) -> TyMaybeSelect;
 }
@@ -117,7 +117,7 @@ impl AttrTypeInnerExt for AttrTypeInner {
         configurable: AttrIsConfigurable,
         ctx: &dyn AttrCoercionContext,
         value: Value,
-    ) -> buck2_error::Result<CoercedAttr> {
+    ) -> bz_error::Result<CoercedAttr> {
         match self {
             Self::Any(x) => x.coerce_item(configurable, ctx, value),
             Self::Arg(x) => x.coerce_item(configurable, ctx, value),

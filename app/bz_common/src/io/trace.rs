@@ -9,11 +9,11 @@
  */
 
 use allocative::Allocative;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_hash::BuckDashSet;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_hash::BuckDashSet;
 
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
@@ -118,7 +118,7 @@ impl IoProvider for TracingIoProvider {
     async fn read_file_if_exists_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<String>> {
+    ) -> bz_error::Result<Option<String>> {
         let res = self.io.read_file_if_exists_impl(path.clone()).await?;
         if res.is_some() {
             self.add_project_path(path);
@@ -135,7 +135,7 @@ impl IoProvider for TracingIoProvider {
     async fn read_dir_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Vec<RawDirEntry>> {
+    ) -> bz_error::Result<Vec<RawDirEntry>> {
         let entries = self.io.read_dir_impl(path.clone()).await?;
         self.add_project_path(path.clone());
         for entry in entries.iter() {
@@ -148,7 +148,7 @@ impl IoProvider for TracingIoProvider {
     async fn read_path_metadata_if_exists_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>> {
         let res = self
             .io
             .read_path_metadata_if_exists_impl(path.clone())
@@ -172,7 +172,7 @@ impl IoProvider for TracingIoProvider {
     async fn read_path_metadata_if_exists_for_no_watchfs_impl(
         &self,
         path: ProjectRelativePathBuf,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
         let res = self
             .io
             .read_path_metadata_if_exists_for_no_watchfs_impl(path.clone())
@@ -194,7 +194,7 @@ impl IoProvider for TracingIoProvider {
         Ok(res)
     }
 
-    async fn settle(&self) -> buck2_error::Result<()> {
+    async fn settle(&self) -> bz_error::Result<()> {
         self.io.settle().await
     }
 
@@ -202,7 +202,7 @@ impl IoProvider for TracingIoProvider {
         self.io.name()
     }
 
-    async fn eden_version(&self) -> buck2_error::Result<Option<String>> {
+    async fn eden_version(&self) -> bz_error::Result<Option<String>> {
         self.io.eden_version().await
     }
 

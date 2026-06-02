@@ -8,17 +8,17 @@
  * above-listed licenses.
  */
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_data::ActionKey;
-use buck2_data::ActionName;
-use buck2_data::get_action_digest;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_event_observer::display::TargetDisplayOptions;
-use buck2_event_observer::display::display_action_identity;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_data::ActionKey;
+use bz_data::ActionName;
+use bz_data::get_action_digest;
+use bz_event_log::stream_value::StreamValue;
+use bz_event_observer::display::TargetDisplayOptions;
+use bz_event_observer::display::display_action_identity;
 use futures::Stream;
 use futures::TryStreamExt;
 use linked_hash_map::LinkedHashMap;
@@ -41,12 +41,12 @@ struct ActionExecutionData {
 }
 
 fn get_action_execution_data(
-    event: &buck2_data::BuckEvent,
+    event: &bz_data::BuckEvent,
 ) -> Option<(ActionKey, ActionExecutionData)> {
     event.data.as_ref().and_then(|data| match data {
-        buck2_data::buck_event::Data::SpanEnd(end) => {
+        bz_data::buck_event::Data::SpanEnd(end) => {
             end.data.as_ref().and_then(|data| match data {
-                buck2_data::span_end_event::Data::ActionExecution(data) => {
+                bz_data::span_end_event::Data::ActionExecution(data) => {
                     data.key.as_ref().map(|key: &ActionKey| {
                         (
                             key.clone(),
@@ -71,8 +71,8 @@ fn get_action_execution_data(
 }
 
 async fn get_digest_map(
-    mut events: impl Stream<Item = buck2_error::Result<StreamValue>> + Unpin + Send,
-) -> buck2_error::Result<LinkedHashMap<ActionKey, ActionExecutionData>> {
+    mut events: impl Stream<Item = bz_error::Result<StreamValue>> + Unpin + Send,
+) -> bz_error::Result<LinkedHashMap<ActionKey, ActionExecutionData>> {
     let mut out = LinkedHashMap::new();
 
     while let Some(event) = events.try_next().await? {
@@ -89,7 +89,7 @@ fn print_divergence_msg(
     action: &ActionKey,
     ad1: Option<&ActionExecutionData>,
     ad2: &ActionExecutionData,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     let action_identity = display_action_identity(
         Some(action),
         ad2.name.as_ref(),
@@ -117,7 +117,7 @@ fn print_divergence_msg(
             ad2.output_tiny_digests
         ),
     ];
-    buck2_client_ctx::println!("{}", output.join("\n"))?;
+    bz_client_ctx::println!("{}", output.join("\n"))?;
 
     Ok(())
 }
@@ -136,7 +136,7 @@ impl BuckSubcommand for ActionDivergenceCommand {
         let (invocation1, events1) = log_path1.unpack_stream().await?;
         let (invocation2, events2) = log_path2.unpack_stream().await?;
 
-        buck2_client_ctx::println!(
+        bz_client_ctx::println!(
             "Analyzing divergent actions between: \n{} and \n{}",
             invocation1.display_command_line(),
             invocation2.display_command_line()
@@ -161,7 +161,7 @@ impl BuckSubcommand for ActionDivergenceCommand {
             break;
         }
         if !divergence_found {
-            buck2_client_ctx::println!("No divergent actions found.")?;
+            bz_client_ctx::println!("No divergent actions found.")?;
         }
         ExitResult::success()
     }

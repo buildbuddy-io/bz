@@ -10,7 +10,7 @@
 
 use std::fmt;
 
-use buck2_core::directory_digest::DirectoryDigest;
+use bz_core::directory_digest::DirectoryDigest;
 
 use crate::directory::directory::Directory;
 use crate::directory::directory_ref::FingerprintedDirectoryRef;

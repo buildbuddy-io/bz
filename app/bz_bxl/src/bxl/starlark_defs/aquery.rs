@@ -9,16 +9,16 @@
  */
 
 use allocative::Allocative;
-use buck2_build_api::actions::query::ActionQueryNode;
-use buck2_build_api::query::bxl::BxlAqueryFunctions;
-use buck2_build_api::query::bxl::NEW_BXL_AQUERY_FUNCTIONS;
-use buck2_build_api::query::oneshot::QUERY_FRONTEND;
-use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
-use buck2_query::query::syntax::simple::functions::helpers::CapturedExpr;
+use bz_build_api::actions::query::ActionQueryNode;
+use bz_build_api::query::bxl::BxlAqueryFunctions;
+use bz_build_api::query::bxl::NEW_BXL_AQUERY_FUNCTIONS;
+use bz_build_api::query::oneshot::QUERY_FRONTEND;
+use bz_core::configuration::compatibility::IncompatiblePlatformReason;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
+use bz_query::query::syntax::simple::functions::helpers::CapturedExpr;
 use derivative::Derivative;
 use derive_more::Display;
 use dice::DiceComputations;
@@ -93,7 +93,7 @@ impl<'v> StarlarkAQueryCtx<'v> {
     pub(crate) fn new(
         ctx: ValueTyped<'v, BxlContext<'v>>,
         global_target_platform: ValueAsStarlarkTargetLabel<'v>,
-    ) -> buck2_error::Result<StarlarkAQueryCtx<'v>> {
+    ) -> bz_error::Result<StarlarkAQueryCtx<'v>> {
         let global_cfg_options = ctx.resolve_global_cfg_options(global_target_platform, vec![])?;
 
         Ok(Self {
@@ -106,7 +106,7 @@ impl<'v> StarlarkAQueryCtx<'v> {
 pub(crate) async fn get_aquery_env(
     ctx: &BxlContext<'_>,
     global_cfg_options_override: &GlobalCfgOptions,
-) -> buck2_error::Result<Box<dyn BxlAqueryFunctions>> {
+) -> bz_error::Result<Box<dyn BxlAqueryFunctions>> {
     (NEW_BXL_AQUERY_FUNCTIONS.get()?)(
         global_cfg_options_override.clone(),
         ctx.project_root().dupe(),
@@ -133,7 +133,7 @@ async fn unpack_action_nodes<'v>(
     this: &StarlarkAQueryCtx<'v>,
     dice: &mut DiceComputations<'_>,
     expr: UnpackActionNodes<'v>,
-) -> buck2_error::Result<TargetSet<ActionQueryNode>> {
+) -> bz_error::Result<TargetSet<ActionQueryNode>> {
     let aquery_env = get_aquery_env(&this.ctx, &this.global_cfg_options_override).await?;
     let providers = match expr {
         UnpackActionNodes::ActionQueryNodes(action_nodes) => {
@@ -201,7 +201,7 @@ fn aquery_methods(builder: &mut MethodsBuilder) {
                     async {
                         let filter = filter
                             .into_option()
-                            .try_map(buck2_query_parser::parse_expr)?;
+                            .try_map(bz_query_parser::parse_expr)?;
 
                         let universe = unpack_action_nodes(this, dice, universe).await?;
 

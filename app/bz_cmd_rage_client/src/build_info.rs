@@ -12,18 +12,18 @@ use std::fmt;
 use std::time::Duration;
 use std::time::SystemTime;
 
-use buck2_event_log::read::EventLogPathBuf;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_event_log::utils::Invocation;
-use buck2_events::BuckEvent;
-use buck2_util::truncate::truncate;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_event_log::read::EventLogPathBuf;
+use bz_event_log::stream_value::StreamValue;
+use bz_event_log::utils::Invocation;
+use bz_events::BuckEvent;
+use bz_util::truncate::truncate;
+use bz_wrapper_common::invocation_id::TraceId;
 use chrono::DateTime;
 use chrono::Local;
 use futures::TryStreamExt;
 use humantime::format_duration;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum BuildInfoError {
     #[error("Failed to read event log")]
@@ -42,7 +42,7 @@ pub(crate) struct BuildInfo {
     pub timestamp: DateTime<Local>,
     pub command: String,
     working_dir: String,
-    pub buck2_revision: String,
+    pub bz_revision: String,
     pub command_duration: Option<Duration>,
     pub daemon_uptime_s: Option<u64>,
     pub re_session_id: Option<String>,
@@ -56,7 +56,7 @@ impl fmt::Display for BuildInfo {
 timestamp: {}
 command: {}
 working dir: {}
-buck2_revision: {}
+bz_revision: {}
 command duration: {}
 daemon uptime: {}
 RE session id: {}
@@ -65,7 +65,7 @@ RE session id: {}
             self.timestamp.format("%c %Z"),
             self.command,
             self.working_dir,
-            self.buck2_revision,
+            self.bz_revision,
             seconds_to_string(self.command_duration.map(|d| d.as_secs())),
             seconds_to_string(self.daemon_uptime_s),
             self.re_session_id
@@ -75,7 +75,7 @@ RE session id: {}
     }
 }
 
-pub(crate) async fn get(log: &EventLogPathBuf) -> buck2_error::Result<BuildInfo> {
+pub(crate) async fn get(log: &EventLogPathBuf) -> bz_error::Result<BuildInfo> {
     let (invocation, events) = log.unpack_stream().await?;
     let mut filtered_events = events.try_filter_map(|log| {
         let maybe_buck_event = match log {
@@ -104,7 +104,7 @@ pub(crate) async fn get(log: &EventLogPathBuf) -> buck2_error::Result<BuildInfo>
             Err(e) => Err(e),
         };
         if let Err(e) = res {
-            buck2_client_ctx::eprintln!("Error found when iterating through logs: {:#}", e)?;
+            bz_client_ctx::eprintln!("Error found when iterating through logs: {:#}", e)?;
             break;
         }
     }
@@ -125,7 +125,7 @@ pub(crate) async fn get(log: &EventLogPathBuf) -> buck2_error::Result<BuildInfo>
         timestamp: t_start,
         command: format_cmd(&invocation),
         working_dir: invocation.working_dir,
-        buck2_revision: info.revision.unwrap_or_else(|| "".to_owned()),
+        bz_revision: info.revision.unwrap_or_else(|| "".to_owned()),
         command_duration: duration,
         daemon_uptime_s: info.daemon_uptime_s,
         re_session_id: info.re_session_id,
@@ -134,20 +134,20 @@ pub(crate) async fn get(log: &EventLogPathBuf) -> buck2_error::Result<BuildInfo>
     Ok(output)
 }
 
-fn extract_info(info: &mut LogInfo, event: Box<buck2_data::BuckEvent>) -> buck2_error::Result<()> {
-    if let Some(buck2_data::buck_event::Data::SpanStart(span)) = &event.data
-        && let Some(buck2_data::span_start_event::Data::Command(action)) = &span.data
+fn extract_info(info: &mut LogInfo, event: Box<bz_data::BuckEvent>) -> bz_error::Result<()> {
+    if let Some(bz_data::buck_event::Data::SpanStart(span)) = &event.data
+        && let Some(bz_data::span_start_event::Data::Command(action)) = &span.data
     {
         if info.revision.is_none()
-            && action.metadata.contains_key("buck2_revision")
-            && let Some(buck2_revision) = action.metadata.get("buck2_revision")
+            && action.metadata.contains_key("bz_revision")
+            && let Some(bz_revision) = action.metadata.get("bz_revision")
         {
-            info.revision.get_or_insert(buck2_revision.clone());
+            info.revision.get_or_insert(bz_revision.clone());
         }
-    } else if let Some(buck2_data::buck_event::Data::Instant(span)) = &event.data {
-        if let Some(buck2_data::instant_event::Data::Snapshot(snapshot)) = &span.data {
+    } else if let Some(bz_data::buck_event::Data::Instant(span)) = &event.data {
+        if let Some(bz_data::instant_event::Data::Snapshot(snapshot)) = &span.data {
             info.daemon_uptime_s.get_or_insert(snapshot.daemon_uptime_s);
-        } else if let Some(buck2_data::instant_event::Data::ReSession(session)) = &span.data {
+        } else if let Some(bz_data::instant_event::Data::ReSession(session)) = &span.data {
             info.re_session_id.get_or_insert(session.session_id.clone());
         }
     }

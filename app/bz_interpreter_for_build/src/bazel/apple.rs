@@ -2,9 +2,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::provider::id::ProviderId;
-use buck2_interpreter::types::provider::callable::ProviderCallableLike;
-use buck2_interpreter::types::provider::callable::ProviderLike;
+use bz_core::provider::id::ProviderId;
+use bz_interpreter::types::provider::callable::ProviderCallableLike;
+use bz_interpreter::types::provider::callable::ProviderLike;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::collections::SmallMap;
@@ -152,7 +152,7 @@ impl<'v> StarlarkValue<'v> for BazelAppleProviderCallable {
 }
 
 impl ProviderCallableLike for BazelAppleProviderCallable {
-    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+    fn id(&self) -> bz_error::Result<&Arc<ProviderId>> {
         Ok(&self.id)
     }
 }

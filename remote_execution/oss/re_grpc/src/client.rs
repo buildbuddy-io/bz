@@ -26,8 +26,8 @@ use async_compression::tokio::bufread::DeflateDecoder;
 use async_compression::tokio::bufread::DeflateEncoder;
 use async_compression::tokio::bufread::ZstdDecoder;
 use async_compression::tokio::bufread::ZstdEncoder;
-use buck2_re_configuration::Buck2OssReConfiguration;
-use buck2_re_configuration::HttpHeader;
+use bz_re_configuration::Buck2OssReConfiguration;
+use bz_re_configuration::HttpHeader;
 use dupe::Dupe;
 use futures::Stream;
 use futures::future::BoxFuture;
@@ -1663,7 +1663,7 @@ where
         })
     });
 
-    buck2_util::future::try_join_all(writes).await?;
+    bz_util::future::try_join_all(writes).await?;
 
     Ok(DownloadResponse {
         inlined_blobs: Some(inlined_blobs),

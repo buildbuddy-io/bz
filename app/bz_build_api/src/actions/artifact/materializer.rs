@@ -11,15 +11,15 @@
 use std::time::Instant;
 
 use async_trait::async_trait;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_build_signals::env::NodeDuration;
-use buck2_build_signals::env::WaitingData;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_data::ToProtoMessage;
-use buck2_events::dispatch::current_span;
-use buck2_events::dispatch::span_async_simple;
-use buck2_execute::materialize::materializer::HasMaterializer;
-use buck2_util::time_span::TimeSpan;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_build_signals::env::NodeDuration;
+use bz_build_signals::env::WaitingData;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_data::ToProtoMessage;
+use bz_events::dispatch::current_span;
+use bz_events::dispatch::span_async_simple;
+use bz_execute::materialize::materializer::HasMaterializer;
+use bz_util::time_span::TimeSpan;
 use dice::DiceComputations;
 use dice::DiceComputationsData;
 use dupe::Dupe;
@@ -41,7 +41,7 @@ pub trait ArtifactMaterializer {
         required: bool,
         path: ProjectRelativePathBuf,
         requested_group: &ArtifactGroup,
-    ) -> buck2_error::Result<()>;
+    ) -> bz_error::Result<()>;
 }
 
 #[async_trait]
@@ -53,9 +53,9 @@ impl ArtifactMaterializer for DiceComputationsData {
         required: bool,
         path: ProjectRelativePathBuf,
         requested_group: &ArtifactGroup,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let materializer = self.per_transaction_data().get_materializer();
-        let start_event = buck2_data::MaterializeRequestedArtifactStart {
+        let start_event = bz_data::MaterializeRequestedArtifactStart {
             artifact: Some(artifact.as_proto()),
         };
 
@@ -64,7 +64,7 @@ impl ArtifactMaterializer for DiceComputationsData {
             async move {
                 let now = Instant::now();
 
-                let result: buck2_error::Result<_> = try {
+                let result: bz_error::Result<_> = try {
                     if required {
                         materializer.ensure_materialized(vec![path]).await?;
                     } else {
@@ -90,7 +90,7 @@ impl ArtifactMaterializer for DiceComputationsData {
 
                 result
             },
-            buck2_data::MaterializeRequestedArtifactEnd {
+            bz_data::MaterializeRequestedArtifactEnd {
                 artifact: Some(artifact.as_proto()),
             },
         )
@@ -107,7 +107,7 @@ impl ArtifactMaterializer for DiceComputations<'_> {
         required: bool,
         path: ProjectRelativePathBuf,
         requested_group: &ArtifactGroup,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.data()
             .try_materialize_requested_artifact(
                 artifact,

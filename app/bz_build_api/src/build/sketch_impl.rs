@@ -13,8 +13,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_sketches::TypedSketch;
-use buck2_util::strong_hasher::Blake3StrongHasher;
+use bz_sketches::TypedSketch;
+use bz_util::strong_hasher::Blake3StrongHasher;
 use derivative::Derivative;
 use dupe::Dupe;
 use pagable::PagablePanic;
@@ -178,12 +178,12 @@ impl<T: StrongHash, S: TypedSketch> VersionedSketcher<T, S> {
         MergeableGraphSketch::new(self.version, self.sketcher)
     }
 
-    pub(crate) fn merge(&mut self, other: &MergeableGraphSketch<T, S>) -> buck2_error::Result<()> {
+    pub(crate) fn merge(&mut self, other: &MergeableGraphSketch<T, S>) -> bz_error::Result<()> {
         if self.version == other.version {
             self.sketcher.merge(&other.sketcher);
             Ok(())
         } else {
-            Err(buck2_error::internal_error!(
+            Err(bz_error::internal_error!(
                 // This is currently an internal error because users cannot specify sketch version to use.
                 "Set sketch version mismatch between {} and {}. Cannot merge.",
                 self.version,

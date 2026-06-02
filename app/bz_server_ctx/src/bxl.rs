@@ -13,7 +13,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
-use buck2_util::late_binding::LateBinding;
+use bz_util::late_binding::LateBinding;
 use dice::UserComputationData;
 use dupe::Dupe;
 
@@ -26,15 +26,15 @@ pub trait BxlServerCommands: Send + Sync + 'static {
     async fn bxl(
         &self,
         ctx: &dyn ServerCommandContextTrait,
-        partial_result_dispatcher: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
-        req: buck2_cli_proto::BxlRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::BxlResponse>;
+        partial_result_dispatcher: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
+        req: bz_cli_proto::BxlRequest,
+    ) -> bz_error::Result<bz_cli_proto::BxlResponse>;
     async fn bxl_profile(
         &self,
         ctx: &dyn ServerCommandContextTrait,
         partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-        req: buck2_cli_proto::ProfileRequest,
-    ) -> buck2_error::Result<buck2_cli_proto::ProfileResponse>;
+        req: bz_cli_proto::ProfileRequest,
+    ) -> bz_error::Result<bz_cli_proto::ProfileResponse>;
 }
 
 pub static BXL_SERVER_COMMANDS: LateBinding<&'static dyn BxlServerCommands> =

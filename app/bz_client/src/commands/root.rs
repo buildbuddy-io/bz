@@ -10,16 +10,16 @@
 
 use std::str::FromStr;
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::immediate_config::ImmediateConfigContext;
-use buck2_client_ctx::path_arg::PathArg;
-use buck2_common::argv::Argv;
-use buck2_common::argv::SanitizedArgv;
-use buck2_common::invocation_roots::find_invocation_roots;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::working_dir::AbsWorkingDir;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::immediate_config::ImmediateConfigContext;
+use bz_client_ctx::path_arg::PathArg;
+use bz_common::argv::Argv;
+use bz_common::argv::SanitizedArgv;
+use bz_common::invocation_roots::find_invocation_roots;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::working_dir::AbsWorkingDir;
 
 #[derive(Debug, Clone, clap::ValueEnum)]
 enum RootKind {
@@ -66,7 +66,7 @@ impl RootCommand {
         self,
         _matches: BuckArgMatches<'_>,
         ctx: ClientCommandContext<'_>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let root = if matches!(self.kind, RootKind::Daemon) {
             ctx.paths()?.daemon_dir()?.path
         } else {
@@ -97,7 +97,7 @@ impl RootCommand {
             }
         };
 
-        buck2_client_ctx::println!("{}", root.to_string_lossy())?;
+        bz_client_ctx::println!("{}", root.to_string_lossy())?;
         Ok(())
     }
 

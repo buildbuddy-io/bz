@@ -13,7 +13,7 @@ use std::fmt::Debug;
 use crate::attrs::attr_type::AttrType;
 use crate::attrs::attr_type::AttrTypeInner;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum AnonRuleAttrError {
     #[error("Attr type `{0}` is not supported for anon rules")]
@@ -22,11 +22,11 @@ enum AnonRuleAttrError {
 
 /// Basic validation that anon target attr types defined in the anon_rule are supported.
 pub trait AnonRuleAttrValidation {
-    fn validate_for_anon_rule(&self) -> buck2_error::Result<()>;
+    fn validate_for_anon_rule(&self) -> bz_error::Result<()>;
 }
 
 impl AnonRuleAttrValidation for AttrType {
-    fn validate_for_anon_rule(&self) -> buck2_error::Result<()> {
+    fn validate_for_anon_rule(&self) -> bz_error::Result<()> {
         match &self.0.inner {
             AttrTypeInner::Any(_) => Ok(()),
             AttrTypeInner::Bool(_) => Ok(()),

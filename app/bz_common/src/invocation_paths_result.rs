@@ -12,13 +12,13 @@ use crate::invocation_paths::InvocationPaths;
 
 #[derive(Clone)]
 pub enum InvocationPathsResult {
-    OtherError(buck2_error::Error),
+    OtherError(bz_error::Error),
     Paths(InvocationPaths),
-    OutsideOfRepo(buck2_error::Error), // this error ignored for creating invocation record for log commands
+    OutsideOfRepo(bz_error::Error), // this error ignored for creating invocation record for log commands
 }
 
 impl InvocationPathsResult {
-    pub fn get_result(self) -> buck2_error::Result<InvocationPaths> {
+    pub fn get_result(self) -> bz_error::Result<InvocationPaths> {
         match self {
             InvocationPathsResult::OtherError(e) => Err(e),
             InvocationPathsResult::Paths(paths) => Ok(paths),

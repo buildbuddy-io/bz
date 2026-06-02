@@ -12,17 +12,17 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::Once;
 
-use buck2_core::error::StructuredErrorOptions;
-use buck2_core::error::initialize;
-use buck2_core::error::reset_soft_error_counters;
-use buck2_core::soft_error;
-use buck2_error::buck2_error;
+use bz_core::error::StructuredErrorOptions;
+use bz_core::error::initialize;
+use bz_core::error::reset_soft_error_counters;
+use bz_core::soft_error;
+use bz_error::bz_error;
 
 static RESULT: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn mock_handler(
     category: &str,
-    err: &buck2_error::Error,
+    err: &bz_error::Error,
     loc: (&str, u32, u32),
     options: StructuredErrorOptions,
 ) {
@@ -55,7 +55,7 @@ fn test_soft_error() {
     let before_error_line = line!();
     let _ignore_hard_error = soft_error!(
         "test_logged_soft_error",
-        buck2_error!(buck2_error::ErrorTag::Input, "Should be logged").into(),
+        bz_error!(bz_error::ErrorTag::Input, "Should be logged").into(),
     );
     assert_eq!(
         Some(&format!(
@@ -76,7 +76,7 @@ fn test_reset_counters() {
     for _ in 0..100 {
         let _ignore = soft_error!(
             "test_reset_counters",
-            buck2_error!(buck2_error::ErrorTag::Input, "Message").into()
+            bz_error!(bz_error::ErrorTag::Input, "Message").into()
         );
     }
 
@@ -91,7 +91,7 @@ fn test_reset_counters() {
     for _ in 0..100 {
         let _ignore = soft_error!(
             "test_reset_counters",
-            buck2_error!(buck2_error::ErrorTag::Input, "Message").into()
+            bz_error!(bz_error::ErrorTag::Input, "Message").into()
         );
     }
 

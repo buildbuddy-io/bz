@@ -26,12 +26,12 @@
 //! use std::borrow::Cow;
 //! use std::convert::TryFrom;
 //!
-//! use buck2_core::fs::project::ProjectRoot;
-//! use buck2_core::fs::project_rel_path::ProjectRelativePath;
-//! use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-//! use buck2_fs::paths::abs_norm_path::AbsNormPath;
-//! use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-//! use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+//! use bz_core::fs::project::ProjectRoot;
+//! use bz_core::fs::project_rel_path::ProjectRelativePath;
+//! use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+//! use bz_fs::paths::abs_norm_path::AbsNormPath;
+//! use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+//! use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 //! use relative_path::RelativePath;
 //!
 //! let root = if cfg!(not(windows)) {
@@ -66,7 +66,7 @@
 //!     fs.resolve(&project_rel_2).to_buf()
 //! );
 //!
-//! # buck2_error::Ok(())
+//! # bz_error::Ok(())
 //! ```
 
 use std::borrow::Borrow;
@@ -75,14 +75,14 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use allocative::Allocative;
-use buck2_fs::paths::IntoFileNameBufIterator;
-use buck2_fs::paths::file_name::FileName;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::paths::fmt::quoted_display;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathIter;
-use buck2_util::arc_str::StringInside;
+use bz_fs::paths::IntoFileNameBufIterator;
+use bz_fs::paths::file_name::FileName;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::paths::fmt::quoted_display;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathIter;
+use bz_util::arc_str::StringInside;
 use derivative::Derivative;
 use gazebo::prelude::IterOwned;
 use pagable::Pagable;
@@ -200,7 +200,7 @@ impl ProjectRelativePath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
     ///
     /// assert!(ProjectRelativePath::new("foo/bar").is_ok());
     /// assert!(ProjectRelativePath::new("").is_ok());
@@ -214,7 +214,7 @@ impl ProjectRelativePath {
     /// assert!(ProjectRelativePath::new(Path::new("normalize/./bar")).is_err());
     /// assert!(ProjectRelativePath::new(Path::new("normalize/../bar")).is_err());
     /// ```
-    pub fn new<P: ?Sized + AsRef<Path>>(p: &P) -> buck2_error::Result<&ProjectRelativePath> {
+    pub fn new<P: ?Sized + AsRef<Path>>(p: &P) -> bz_error::Result<&ProjectRelativePath> {
         Ok(ProjectRelativePath::ref_cast(ForwardRelativePath::new(p)?))
     }
 
@@ -236,9 +236,9 @@ impl ProjectRelativePath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// let path = ProjectRelativePath::new("foo/bar")?;
     /// let other = ForwardRelativePath::new("baz")?;
@@ -247,7 +247,7 @@ impl ProjectRelativePath {
     ///     path.join(other)
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn join<P: AsRef<ForwardRelativePath>>(&self, path: P) -> ProjectRelativePathBuf {
         ProjectRelativePathBuf(self.0.join(path.as_ref()))
@@ -256,14 +256,14 @@ impl ProjectRelativePath {
     /// Returns a relative path of the parent directory
     ///
     /// ```
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
     ///
     /// assert_eq!(
     ///     Some(ProjectRelativePath::new("foo")?),
     ///     ProjectRelativePath::new("foo/bar")?.parent()
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn parent(&self) -> Option<&ProjectRelativePath> {
         self.0.parent().map(ProjectRelativePath::ref_cast)
@@ -276,15 +276,15 @@ impl ProjectRelativePath {
     /// a directory, this is the directory name.
     ///
     /// ```
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    /// use buck2_fs::paths::file_name::FileName;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_fs::paths::file_name::FileName;
     ///
     /// assert_eq!(
     ///     Some(FileName::unchecked_new("bin")),
     ///     ProjectRelativePath::new("usr/bin")?.file_name()
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn file_name(&self) -> Option<&FileName> {
         self.0.file_name()
@@ -297,8 +297,8 @@ impl ProjectRelativePath {
     /// path is not a 'ForwardRelativePath'
     ///
     /// ```
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// let path = ProjectRelativePath::new("test/haha/foo.txt")?;
     ///
@@ -312,9 +312,9 @@ impl ProjectRelativePath {
     ///     true
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
-    pub fn strip_prefix<P>(&self, base: P) -> buck2_error::Result<&ForwardRelativePath>
+    pub fn strip_prefix<P>(&self, base: P) -> bz_error::Result<&ForwardRelativePath>
     where
         P: AsRef<ProjectRelativePath>,
     {
@@ -328,7 +328,7 @@ impl ProjectRelativePath {
         self.0.strip_prefix_opt(&base.as_ref().0)
     }
 
-    pub fn strip_suffix<P>(&self, suffix: P) -> buck2_error::Result<&ProjectRelativePath>
+    pub fn strip_suffix<P>(&self, suffix: P) -> bz_error::Result<&ProjectRelativePath>
     where
         P: AsRef<ForwardRelativePath>,
     {
@@ -347,13 +347,13 @@ impl ProjectRelativePath {
     /// Determines whether `base` is a prefix of `self`.
     ///
     /// ```
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
     ///
     /// let path = ProjectRelativePath::new("some/foo")?;
     ///
     /// assert!(path.starts_with(ProjectRelativePath::new("some")?));
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn starts_with<P: AsRef<ProjectRelativePath>>(&self, base: P) -> bool {
         self.0.starts_with(&base.as_ref().0)
@@ -365,14 +365,14 @@ impl ProjectRelativePath {
     /// ```
     /// use std::path::Path;
     ///
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// let path = ProjectRelativePath::new("some/foo")?;
     ///
     /// assert!(path.ends_with(ForwardRelativePath::new("foo").unwrap()));
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn ends_with<P: AsRef<ForwardRelativePath>>(&self, child: P) -> bool {
         self.0.ends_with(child.as_ref())
@@ -389,13 +389,13 @@ impl ProjectRelativePath {
     /// * Otherwise, the portion of the file name before the final `.`
     ///
     /// ```
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
     ///
     /// let path = ProjectRelativePath::new("foo.rs")?;
     ///
     /// assert_eq!(Some("foo"), path.file_stem());
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn file_stem(&self) -> Option<&str> {
         self.0.file_stem()
@@ -404,14 +404,14 @@ impl ProjectRelativePath {
     /// Extracts the extension of `self.file_name`, if possible.
     ///
     /// ```
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
     ///
     /// assert_eq!(
     ///     Some("rs"),
     ///     ProjectRelativePath::new("hi/foo.rs")?.extension()
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn extension(&self) -> Option<&str> {
         self.0.extension()
@@ -423,8 +423,8 @@ impl ProjectRelativePath {
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
     ///
     /// assert_eq!(
     ///     ProjectRelativePath::new("foo/bar")?.join_normalized("../baz.txt")?,
@@ -438,12 +438,12 @@ impl ProjectRelativePath {
     ///     true
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn join_normalized<P: AsRef<RelativePath>>(
         &self,
         path: P,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         let inner = self.0.join_normalized(path)?;
         // TODO need verify?
         Ok(ProjectRelativePathBuf(inner))
@@ -452,8 +452,8 @@ impl ProjectRelativePath {
     /// Iterator over the components of this path
     ///
     /// ```
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    /// use buck2_fs::paths::file_name::FileName;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_fs::paths::file_name::FileName;
     ///
     /// let p = ProjectRelativePath::new("foo/bar/baz")?;
     /// let mut it = p.iter();
@@ -463,7 +463,7 @@ impl ProjectRelativePath {
     /// assert_eq!(it.next(), Some(FileName::unchecked_new("baz")));
     /// assert_eq!(it.next(), None);
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn iter(&self) -> ForwardRelativePathIter<'_> {
         self.0.iter()
@@ -479,8 +479,8 @@ impl<'a> From<&'a ForwardRelativePath> for &'a ProjectRelativePath {
     /// ```
     /// use std::convert::From;
     ///
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// let f = ForwardRelativePath::new("foo")?;
     ///
@@ -489,7 +489,7 @@ impl<'a> From<&'a ForwardRelativePath> for &'a ProjectRelativePath {
     ///     ProjectRelativePath::new("foo")?
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     fn from(p: &'a ForwardRelativePath) -> &'a ProjectRelativePath {
         ProjectRelativePath::ref_cast(p)
@@ -542,7 +542,7 @@ impl ProjectRelativePathBuf {
     }
 
     /// Pushes a `RelativePath` to the existing buffer, normalizing it
-    pub fn push_normalized<P: AsRef<RelativePath>>(&mut self, path: P) -> buck2_error::Result<()> {
+    pub fn push_normalized<P: AsRef<RelativePath>>(&mut self, path: P) -> bz_error::Result<()> {
         self.0.push_normalized(path)
     }
 
@@ -570,15 +570,15 @@ impl From<ProjectRelativePathBuf> for RelativePathBuf {
 }
 
 impl<'a> TryFrom<&'a str> for &'a ProjectRelativePath {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion
     ///
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    /// use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_fs::paths::forward_rel_path::ForwardRelativePath;
     ///
     /// assert!(<&ProjectRelativePath>::try_from("foo/bar").is_ok());
     /// assert!(<&ProjectRelativePath>::try_from("").is_ok());
@@ -586,28 +586,28 @@ impl<'a> TryFrom<&'a str> for &'a ProjectRelativePath {
     /// assert!(<&ProjectRelativePath>::try_from("normalize/./bar").is_err());
     /// assert!(<&ProjectRelativePath>::try_from("normalize/../bar").is_err());
     /// ```
-    fn try_from(s: &'a str) -> buck2_error::Result<&'a ProjectRelativePath> {
+    fn try_from(s: &'a str) -> bz_error::Result<&'a ProjectRelativePath> {
         Ok(ProjectRelativePath::ref_cast(ForwardRelativePath::new(s)?))
     }
 }
 
 impl<'a> TryFrom<&'a RelativePath> for &'a ProjectRelativePath {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion
     ///
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    /// use buck2_fs::paths::RelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_fs::paths::RelativePath;
     ///
     /// assert!(<&ProjectRelativePath>::try_from(RelativePath::new("foo/bar")).is_ok());
     /// assert!(<&ProjectRelativePath>::try_from(RelativePath::new("")).is_ok());
     /// assert!(<&ProjectRelativePath>::try_from(RelativePath::new("normalize/./bar")).is_err());
     /// assert!(<&ProjectRelativePath>::try_from(RelativePath::new("normalize/../bar")).is_err());
     /// ```
-    fn try_from(s: &'a RelativePath) -> buck2_error::Result<&'a ProjectRelativePath> {
+    fn try_from(s: &'a RelativePath) -> bz_error::Result<&'a ProjectRelativePath> {
         Ok(ProjectRelativePath::ref_cast(ForwardRelativePath::new(
             s.as_str(),
         )?))
@@ -615,14 +615,14 @@ impl<'a> TryFrom<&'a RelativePath> for &'a ProjectRelativePath {
 }
 
 impl TryFrom<String> for ProjectRelativePathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion
     ///
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
     ///
     /// assert!(ProjectRelativePathBuf::try_from("foo/bar".to_owned()).is_ok());
     /// assert!(ProjectRelativePathBuf::try_from("".to_owned()).is_ok());
@@ -630,7 +630,7 @@ impl TryFrom<String> for ProjectRelativePathBuf {
     /// assert!(ProjectRelativePathBuf::try_from("normalize/./bar".to_owned()).is_err());
     /// assert!(ProjectRelativePathBuf::try_from("normalize/../bar".to_owned()).is_err());
     /// ```
-    fn try_from(s: String) -> buck2_error::Result<ProjectRelativePathBuf> {
+    fn try_from(s: String) -> bz_error::Result<ProjectRelativePathBuf> {
         Ok(ProjectRelativePathBuf::from(
             ForwardRelativePathBuf::try_from(s)?,
         ))
@@ -638,7 +638,7 @@ impl TryFrom<String> for ProjectRelativePathBuf {
 }
 
 impl TryFrom<RelativePathBuf> for ProjectRelativePathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion (TODO make ForwardRelativePath a no allocation
     /// conversion)
@@ -646,15 +646,15 @@ impl TryFrom<RelativePathBuf> for ProjectRelativePathBuf {
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-    /// use buck2_fs::paths::RelativePathBuf;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+    /// use bz_fs::paths::RelativePathBuf;
     ///
     /// assert!(ProjectRelativePathBuf::try_from(RelativePathBuf::from("foo/bar")).is_ok());
     /// assert!(ProjectRelativePathBuf::try_from(RelativePathBuf::from("")).is_ok());
     /// assert!(ProjectRelativePathBuf::try_from(RelativePathBuf::from("normalize/./bar")).is_err());
     /// assert!(ProjectRelativePathBuf::try_from(RelativePathBuf::from("normalize/../bar")).is_err());
     /// ```
-    fn try_from(p: RelativePathBuf) -> buck2_error::Result<ProjectRelativePathBuf> {
+    fn try_from(p: RelativePathBuf) -> bz_error::Result<ProjectRelativePathBuf> {
         Ok(ProjectRelativePathBuf::from(
             ForwardRelativePathBuf::try_from(p)?,
         ))
@@ -662,7 +662,7 @@ impl TryFrom<RelativePathBuf> for ProjectRelativePathBuf {
 }
 
 impl TryFrom<PathBuf> for ProjectRelativePathBuf {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     /// no allocation conversion
     ///
@@ -670,7 +670,7 @@ impl TryFrom<PathBuf> for ProjectRelativePathBuf {
     /// use std::convert::TryFrom;
     /// use std::path::PathBuf;
     ///
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
     ///
     /// assert!(ProjectRelativePathBuf::try_from(PathBuf::from("foo/bar")).is_ok());
     /// assert!(ProjectRelativePathBuf::try_from(PathBuf::from("")).is_ok());
@@ -678,7 +678,7 @@ impl TryFrom<PathBuf> for ProjectRelativePathBuf {
     /// assert!(ProjectRelativePathBuf::try_from(PathBuf::from("normalize/./bar")).is_err());
     /// assert!(ProjectRelativePathBuf::try_from(PathBuf::from("normalize/../bar")).is_err());
     /// ```
-    fn try_from(p: PathBuf) -> buck2_error::Result<ProjectRelativePathBuf> {
+    fn try_from(p: PathBuf) -> bz_error::Result<ProjectRelativePathBuf> {
         Ok(ProjectRelativePathBuf(ForwardRelativePathBuf::try_from(p)?))
     }
 }
@@ -735,14 +735,14 @@ impl<'a> IntoFileNameBufIterator for &'a ProjectRelativePathBuf {
 
 #[cfg(test)]
 mod tests {
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-    use buck2_hash::StdBuckHashMap;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_hash::StdBuckHashMap;
 
     use crate::fs::project_rel_path::ProjectRelativePath;
     use crate::fs::project_rel_path::ProjectRelativePathBuf;
 
     #[test]
-    fn path_display_is_readable() -> buck2_error::Result<()> {
+    fn path_display_is_readable() -> bz_error::Result<()> {
         let buf = ProjectRelativePathBuf::try_from("foo/bar".to_owned())?;
         assert_eq!("foo/bar", format!("{buf}"));
         assert_eq!("ProjectRelativePathBuf(\"foo/bar\")", format!("{buf:?}"));
@@ -754,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn path_is_comparable() -> buck2_error::Result<()> {
+    fn path_is_comparable() -> bz_error::Result<()> {
         let path1_buf = ProjectRelativePathBuf::try_from("foo".to_owned())?;
         let path2_buf = ProjectRelativePathBuf::try_from("foo".to_owned())?;
         let path3_buf = ProjectRelativePathBuf::try_from("bar".to_owned())?;
@@ -821,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn wrapped_paths_work_in_maps() -> buck2_error::Result<()> {
+    fn wrapped_paths_work_in_maps() -> bz_error::Result<()> {
         let mut map = StdBuckHashMap::default();
 
         let p1 = ForwardRelativePath::new("foo")?;

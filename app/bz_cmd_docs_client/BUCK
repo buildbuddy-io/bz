@@ -3,17 +3,17 @@ load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 oncall("build_infra")
 
 rust_library(
-    name = "buck2_cmd_docs_client",
+    name = "bz_cmd_docs_client",
     srcs = glob(["src/**/*.rs"]),
     deps = [
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:regex",
         "fbsource//third-party/rust:termimad",
-        "//bz/app/bz_cli_proto:buck2_cli_proto",
-        "//bz/app/bz_client_ctx:buck2_client_ctx",
-        "//bz/app/bz_error:buck2_error",
-        "//bz/app/bz_query:buck2_query",
+        "//bz/app/bz_cli_proto:bz_cli_proto",
+        "//bz/app/bz_client_ctx:bz_client_ctx",
+        "//bz/app/bz_error:bz_error",
+        "//bz/app/bz_query:bz_query",
         "//bz/gazebo/dupe:dupe",
     ],
 )

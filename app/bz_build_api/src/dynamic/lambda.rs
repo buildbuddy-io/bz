@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 pub enum DynamicLambdaError {
     #[error("dynamic_output and anon_target cannot be used together (yet)")]

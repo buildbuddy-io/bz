@@ -10,10 +10,10 @@
 
 use std::sync::Arc;
 
-use buck2_error::internal_error;
-use buck2_events::BuckEvent;
-use buck2_events::span::SpanId;
-use buck2_hash::StdBuckHashMap;
+use bz_error::internal_error;
+use bz_events::BuckEvent;
+use bz_events::span::SpanId;
+use bz_hash::StdBuckHashMap;
 use derivative::Derivative;
 use derive_more::From;
 use dupe::Dupe;
@@ -22,7 +22,7 @@ use linked_hash_map::LinkedHashMap;
 use crate::what_ran::WhatRanRelevantAction;
 use crate::what_ran::WhatRanState;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = InvalidEvent)]
 enum SpanTrackerError<T: SpanTrackable> {
     #[error(
@@ -70,7 +70,7 @@ impl<T: SpanTrackable + Dupe> Span<T> {
         }
     }
 
-    fn remove_child(&mut self, child: Span<T>, roots: &mut Roots<T>) -> buck2_error::Result<()> {
+    fn remove_child(&mut self, child: Span<T>, roots: &mut Roots<T>) -> bz_error::Result<()> {
         let removed = self.children.remove(&child.span_id).is_some();
 
         if !removed {
@@ -301,7 +301,7 @@ impl<T: SpanTrackable + Dupe> SpanTracker<T> {
         }
     }
 
-    pub fn start_at(&mut self, event: &T) -> buck2_error::Result<()> {
+    pub fn start_at(&mut self, event: &T) -> bz_error::Result<()> {
         if !event.is_shown() {
             return Ok(());
         }
@@ -336,7 +336,7 @@ impl<T: SpanTrackable + Dupe> SpanTracker<T> {
         Ok(())
     }
 
-    fn end(&mut self, event: &T) -> buck2_error::Result<()> {
+    fn end(&mut self, event: &T) -> bz_error::Result<()> {
         let span_id = event
             .span_id()
             .ok_or_else(|| SpanTrackerError::NonSpanEvent(event.dupe()))?;
@@ -443,15 +443,15 @@ impl SpanTrackable for BuckEvent {
     }
 
     fn is_boring(&self) -> bool {
-        use buck2_data::span_start_event::Data;
+        use bz_data::span_start_event::Data;
 
         match self.span_start_event().and_then(|span| span.data.as_ref()) {
             Some(Data::ExecutorStage(data)) => {
-                use buck2_data::executor_stage_start::Stage;
+                use bz_data::executor_stage_start::Stage;
 
                 match data.stage.as_ref() {
                     Some(Stage::Local(stage)) => {
-                        use buck2_data::local_stage::Stage;
+                        use bz_data::local_stage::Stage;
 
                         matches!(
                             stage.stage.as_ref(),
@@ -459,7 +459,7 @@ impl SpanTrackable for BuckEvent {
                         )
                     }
                     Some(Stage::Re(stage)) => {
-                        use buck2_data::re_stage::Stage;
+                        use bz_data::re_stage::Stage;
 
                         matches!(stage.stage.as_ref(), Some(Stage::Queue(..)))
                     }
@@ -476,7 +476,7 @@ impl SpanTrackable for BuckEvent {
     }
 
     fn dice_key_type(&self) -> Option<&'static str> {
-        use buck2_data::span_start_event::Data;
+        use bz_data::span_start_event::Data;
 
         match self.span_start_event().and_then(|span| span.data.as_ref()) {
             Some(Data::ActionExecution(..)) => Some("BuildKey"),
@@ -515,7 +515,7 @@ impl<T: SpanTrackable> SpanTrackable for Arc<T> {
 }
 
 pub fn is_span_shown(event: &BuckEvent) -> bool {
-    use buck2_data::span_start_event::Data;
+    use bz_data::span_start_event::Data;
 
     match event.span_start_event().and_then(|span| span.data.as_ref()) {
         Some(
@@ -573,7 +573,7 @@ pub type BuckEventSpanHandle<'a> = SpanHandle<'a, Arc<BuckEvent>>;
 pub type BuckEventSpanInfo = SpanInfo<Arc<BuckEvent>>;
 
 impl BuckEventSpanTracker {
-    pub fn handle_event(&mut self, event: &Arc<BuckEvent>) -> buck2_error::Result<()> {
+    pub fn handle_event(&mut self, event: &Arc<BuckEvent>) -> bz_error::Result<()> {
         if let Some(progress) = bzlmod_progress_event(event) {
             self.update_bzlmod_progress(event.parent_id(), progress);
         } else if let Some(_start) = event.span_start_event() {
@@ -594,12 +594,12 @@ impl BuckEventSpanTracker {
 
         let mut updated = span.info.event.as_ref().clone();
         let updated_progress = match updated.data_mut() {
-            buck2_data::buck_event::Data::SpanStart(start) => match start.data.as_mut() {
-                Some(buck2_data::span_start_event::Data::BzlmodRepo(repo)) => {
+            bz_data::buck_event::Data::SpanStart(start) => match start.data.as_mut() {
+                Some(bz_data::span_start_event::Data::BzlmodRepo(repo)) => {
                     repo.progress = progress.to_owned();
                     true
                 }
-                Some(buck2_data::span_start_event::Data::BzlmodModuleExtension(extension)) => {
+                Some(bz_data::span_start_event::Data::BzlmodModuleExtension(extension)) => {
                     extension.progress = progress.to_owned();
                     true
                 }
@@ -615,10 +615,10 @@ impl BuckEventSpanTracker {
 }
 
 fn bzlmod_progress_event(event: &BuckEvent) -> Option<&str> {
-    let buck2_data::buck_event::Data::Instant(instant) = event.data() else {
+    let bz_data::buck_event::Data::Instant(instant) = event.data() else {
         return None;
     };
-    let Some(buck2_data::instant_event::Data::BzlmodProgress(progress)) = instant.data.as_ref()
+    let Some(bz_data::instant_event::Data::BzlmodProgress(progress)) = instant.data.as_ref()
     else {
         return None;
     };
@@ -708,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn test_boring_via_self() -> buck2_error::Result<()> {
+    fn test_boring_via_self() -> bz_error::Result<()> {
         let boring = TestSpan::new().boring();
         let not_boring = TestSpan::new();
 
@@ -730,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn test_boring_via_child() -> buck2_error::Result<()> {
+    fn test_boring_via_child() -> bz_error::Result<()> {
         let parent = TestSpan::new();
         let child = TestSpan::new().parent(parent).boring();
 
@@ -789,7 +789,7 @@ mod tests {
     }
 
     #[test]
-    fn test_iter_roots_len() -> buck2_error::Result<()> {
+    fn test_iter_roots_len() -> bz_error::Result<()> {
         let e1 = TestSpan::new();
         let e2 = TestSpan::new().boring();
         let e3 = TestSpan::new();
@@ -820,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dice_counts() -> buck2_error::Result<()> {
+    fn test_dice_counts() -> bz_error::Result<()> {
         let foo = TestSpan::new().dice_key_type("foo");
         let bar = TestSpan::new().dice_key_type("bar");
 

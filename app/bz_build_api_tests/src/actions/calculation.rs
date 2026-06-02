@@ -15,93 +15,93 @@ use std::sync::Mutex;
 
 use assert_matches::assert_matches;
 use async_trait::async_trait;
-use buck2_analysis::analysis::calculation::AnalysisKey;
-use buck2_artifact::actions::key::ActionIndex;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_artifact::artifact::source_artifact::SourceArtifact;
-use buck2_build_api::actions::Action;
-use buck2_build_api::actions::RegisteredAction;
-use buck2_build_api::actions::calculation::ActionCalculation;
-use buck2_build_api::actions::calculation::command_details;
-use buck2_build_api::actions::execute::dice_data::CommandExecutorResponse;
-use buck2_build_api::actions::execute::dice_data::HasCommandExecutor;
-use buck2_build_api::actions::execute::dice_data::SetCommandExecutor;
-use buck2_build_api::actions::execute::dice_data::SetInvalidationTrackingConfig;
-use buck2_build_api::actions::execute::dice_data::SetReClient;
-use buck2_build_api::actions::execute::dice_data::set_fallback_executor_config;
-use buck2_build_api::actions::impls::run_action_knobs::RunActionKnobs;
-use buck2_build_api::actions::registry::RecordedActions;
-use buck2_build_api::analysis::AnalysisResult;
-use buck2_build_api::analysis::registry::RecordedAnalysisValues;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
-use buck2_build_api::build::detailed_aggregated_metrics::dice::SetDetailedAggregatedMetricsEventHandler;
-use buck2_build_api::build::detailed_aggregated_metrics::dice::SetDetailedAggregatedMetricsEventsHolder;
-use buck2_build_api::context::SetBuildContextData;
-use buck2_build_api::keep_going::HasKeepGoing;
-use buck2_build_api::spawner::BuckSpawner;
-use buck2_common::dice::cells::SetCellResolver;
-use buck2_common::dice::data::testing::SetTestingIoProvider;
-use buck2_common::external_symlink::ExternalSymlink;
-use buck2_common::file_ops::metadata::FileMetadata;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_common::file_ops::testing::TestFileOps;
-use buck2_common::http::SetHttpClient;
-use buck2_common::legacy_configs::configs::LegacyBuckConfig;
-use buck2_common::legacy_configs::dice::inject_legacy_config_for_test;
-use buck2_configured::nodes::ConfiguredTargetNodeKey;
-use buck2_core::category::CategoryRef;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::cell_root_path::CellRootPathBuf;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePathBuf;
-use buck2_core::configuration::compatibility::MaybeCompatible;
-use buck2_core::configuration::compatibility::ResultMaybeCompatible;
-use buck2_core::configuration::data::ConfigurationData;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::project::ProjectRootTemp;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::package::source_path::SourcePath;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_events::dispatch::with_dispatcher_async;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::digest_config::SetDigestConfig;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::execute::action_digest::ActionDigest;
-use buck2_execute::execute::blocking::SetBlockingExecutor;
-use buck2_execute::execute::blocking::testing::DummyBlockingExecutor;
-use buck2_execute::execute::cache_uploader::NoOpCacheUploader;
-use buck2_execute::execute::kind::CommandExecutionKind;
-use buck2_execute::execute::output::CommandStdStreams;
-use buck2_execute::execute::prepared::NoOpCommandOptionalExecutor;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::OutputType;
-use buck2_execute::execute::result::CommandExecutionMetadata;
-use buck2_execute::execute::result::CommandExecutionReport;
-use buck2_execute::execute::result::CommandExecutionStatus;
-use buck2_execute::execute::testing_dry_run::DryRunEntry;
-use buck2_execute::execute::testing_dry_run::DryRunExecutor;
-use buck2_execute::materialize::materializer::SetMaterializer;
-use buck2_execute::materialize::nodisk::NoDiskMaterializer;
-use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
-use buck2_file_watcher::mergebase::SetMergebase;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::buck_indexset;
-use buck2_http::HttpClientBuilder;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_util::time_span::TimeSpan;
+use bz_analysis::analysis::calculation::AnalysisKey;
+use bz_artifact::actions::key::ActionIndex;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_artifact::artifact::source_artifact::SourceArtifact;
+use bz_build_api::actions::Action;
+use bz_build_api::actions::RegisteredAction;
+use bz_build_api::actions::calculation::ActionCalculation;
+use bz_build_api::actions::calculation::command_details;
+use bz_build_api::actions::execute::dice_data::CommandExecutorResponse;
+use bz_build_api::actions::execute::dice_data::HasCommandExecutor;
+use bz_build_api::actions::execute::dice_data::SetCommandExecutor;
+use bz_build_api::actions::execute::dice_data::SetInvalidationTrackingConfig;
+use bz_build_api::actions::execute::dice_data::SetReClient;
+use bz_build_api::actions::execute::dice_data::set_fallback_executor_config;
+use bz_build_api::actions::impls::run_action_knobs::RunActionKnobs;
+use bz_build_api::actions::registry::RecordedActions;
+use bz_build_api::analysis::AnalysisResult;
+use bz_build_api::analysis::registry::RecordedAnalysisValues;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
+use bz_build_api::build::detailed_aggregated_metrics::dice::SetDetailedAggregatedMetricsEventHandler;
+use bz_build_api::build::detailed_aggregated_metrics::dice::SetDetailedAggregatedMetricsEventsHolder;
+use bz_build_api::context::SetBuildContextData;
+use bz_build_api::keep_going::HasKeepGoing;
+use bz_build_api::spawner::BuckSpawner;
+use bz_common::dice::cells::SetCellResolver;
+use bz_common::dice::data::testing::SetTestingIoProvider;
+use bz_common::external_symlink::ExternalSymlink;
+use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::file_ops::testing::TestFileOps;
+use bz_common::http::SetHttpClient;
+use bz_common::legacy_configs::configs::LegacyBuckConfig;
+use bz_common::legacy_configs::dice::inject_legacy_config_for_test;
+use bz_configured::nodes::ConfiguredTargetNodeKey;
+use bz_core::category::CategoryRef;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::cell_root_path::CellRootPathBuf;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePathBuf;
+use bz_core::configuration::compatibility::MaybeCompatible;
+use bz_core::configuration::compatibility::ResultMaybeCompatible;
+use bz_core::configuration::data::ConfigurationData;
+use bz_core::deferred::base_deferred_key::BaseDeferredKey;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::project::ProjectRootTemp;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::package::source_path::SourcePath;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_core::target::label::label::TargetLabel;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_events::dispatch::EventDispatcher;
+use bz_events::dispatch::with_dispatcher_async;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::SetDigestConfig;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::execute::action_digest::ActionDigest;
+use bz_execute::execute::blocking::SetBlockingExecutor;
+use bz_execute::execute::blocking::testing::DummyBlockingExecutor;
+use bz_execute::execute::cache_uploader::NoOpCacheUploader;
+use bz_execute::execute::kind::CommandExecutionKind;
+use bz_execute::execute::output::CommandStdStreams;
+use bz_execute::execute::prepared::NoOpCommandOptionalExecutor;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::OutputType;
+use bz_execute::execute::result::CommandExecutionMetadata;
+use bz_execute::execute::result::CommandExecutionReport;
+use bz_execute::execute::result::CommandExecutionStatus;
+use bz_execute::execute::testing_dry_run::DryRunEntry;
+use bz_execute::execute::testing_dry_run::DryRunExecutor;
+use bz_execute::materialize::materializer::SetMaterializer;
+use bz_execute::materialize::nodisk::NoDiskMaterializer;
+use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
+use bz_file_watcher::mergebase::SetMergebase;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::buck_indexset;
+use bz_http::HttpClientBuilder;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_util::time_span::TimeSpan;
 use dice::DiceTransaction;
 use dice::UserComputationData;
 use dice::testing::DiceBuilder;
@@ -156,7 +156,7 @@ fn mock_analysis_for_action_resolution(
 
     dice_builder = dice_builder.mock_and_return(
         AnalysisKey(configured_target_label.dupe()),
-        buck2_error::Ok(MaybeCompatible::Compatible(AnalysisResult::new(
+        bz_error::Ok(MaybeCompatible::Compatible(AnalysisResult::new(
             RecordedAnalysisValues::testing_new(
                 action_key.holder_key().dupe(),
                 Vec::new(),
@@ -186,7 +186,7 @@ async fn make_default_dice_state(
     dry_run_tracker: Arc<Mutex<Vec<DryRunEntry>>>,
     temp_fs: &ProjectRootTemp,
     mocks: Vec<Box<dyn FnOnce(DiceBuilder) -> DiceBuilder>>,
-) -> buck2_error::Result<DiceTransaction> {
+) -> bz_error::Result<DiceTransaction> {
     let fs = temp_fs.path().dupe();
 
     let cell_resolver = CellResolver::testing_with_name_and_path(
@@ -218,7 +218,7 @@ async fn make_default_dice_state(
             &self,
             artifact_fs: &ArtifactFs,
             _config: &CommandExecutorConfig,
-        ) -> buck2_error::Result<CommandExecutorResponse> {
+        ) -> bz_error::Result<CommandExecutorResponse> {
             let executor = Arc::new(DryRunExecutor::new(
                 self.dry_run_tracker.dupe(),
                 artifact_fs.clone(),
@@ -230,7 +230,7 @@ async fn make_default_dice_state(
                 platform: Default::default(),
                 cache_uploader: Arc::new(NoOpCacheUploader {}),
                 output_trees_download_config:
-                    buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig::new(
+                    bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig::new(
                         None, true,
                     ),
             })
@@ -262,8 +262,8 @@ async fn make_default_dice_state(
 }
 
 #[tokio::test]
-async fn test_get_action_for_artifact() -> buck2_error::Result<()> {
-    buck2_certs::certs::maybe_setup_cryptography();
+async fn test_get_action_for_artifact() -> bz_error::Result<()> {
+    bz_certs::certs::maybe_setup_cryptography();
     let build_artifact = create_test_build_artifact();
     let registered_action = registered_action(
         build_artifact.dupe(),
@@ -298,8 +298,8 @@ async fn test_get_action_for_artifact() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_build_action() -> buck2_error::Result<()> {
-    buck2_certs::certs::maybe_setup_cryptography();
+async fn test_build_action() -> bz_error::Result<()> {
+    bz_certs::certs::maybe_setup_cryptography();
     let temp_fs = ProjectRootTemp::new()?;
     let build_artifact = create_test_build_artifact();
     let registered_action = registered_action(
@@ -349,8 +349,8 @@ async fn test_build_action() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_build_artifact() -> buck2_error::Result<()> {
-    buck2_certs::certs::maybe_setup_cryptography();
+async fn test_build_artifact() -> bz_error::Result<()> {
+    bz_certs::certs::maybe_setup_cryptography();
     let temp_fs = ProjectRootTemp::new()?;
     let build_artifact = create_test_build_artifact();
     let registered_action = registered_action(
@@ -398,8 +398,8 @@ async fn test_build_artifact() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_ensure_artifact_build_artifact() -> buck2_error::Result<()> {
-    buck2_certs::certs::maybe_setup_cryptography();
+async fn test_ensure_artifact_build_artifact() -> bz_error::Result<()> {
+    bz_certs::certs::maybe_setup_cryptography();
     let temp_fs = ProjectRootTemp::new()?;
     let build_artifact = create_test_build_artifact();
     let registered_action = registered_action(
@@ -449,8 +449,8 @@ async fn test_ensure_artifact_build_artifact() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_ensure_artifact_source_artifact() -> buck2_error::Result<()> {
-    buck2_certs::certs::maybe_setup_cryptography();
+async fn test_ensure_artifact_source_artifact() -> bz_error::Result<()> {
+    bz_certs::certs::maybe_setup_cryptography();
     let digest_config = DigestConfig::testing_default();
 
     let path = CellPath::new(
@@ -499,8 +499,8 @@ async fn test_ensure_artifact_source_artifact() -> buck2_error::Result<()> {
 }
 
 #[tokio::test]
-async fn test_ensure_artifact_external_symlink() -> buck2_error::Result<()> {
-    buck2_certs::certs::maybe_setup_cryptography();
+async fn test_ensure_artifact_external_symlink() -> bz_error::Result<()> {
+    bz_certs::certs::maybe_setup_cryptography();
     let path = CellPath::new(
         CellName::testing_new("cell"),
         CellRelativePathBuf::unchecked_new("proj/to_gvfs/include".to_owned()),
@@ -551,9 +551,9 @@ async fn test_ensure_artifact_external_symlink() -> buck2_error::Result<()> {
 
 #[tokio::test]
 async fn test_command_details_omission() {
-    use buck2_data::command_execution_kind::Command;
+    use bz_data::command_execution_kind::Command;
 
-    buck2_certs::certs::maybe_setup_cryptography();
+    bz_certs::certs::maybe_setup_cryptography();
     let digest_config = DigestConfig::testing_default();
 
     let mut report = CommandExecutionReport {
@@ -572,7 +572,7 @@ async fn test_command_details_omission() {
         },
         exit_code: Some(1),
         additional_message: None,
-        inline_environment_metadata: buck2_data::InlineCommandExecutionEnvironmentMetadata {
+        inline_environment_metadata: bz_data::InlineCommandExecutionEnvironmentMetadata {
             sandcastle_instance_id: Some(123),
         },
     };

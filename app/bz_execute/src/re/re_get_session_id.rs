@@ -13,5 +13,5 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub trait ReGetSessionId: Allocative + Send + Sync + 'static {
-    async fn get_session_id(&self) -> buck2_error::Result<String>;
+    async fn get_session_id(&self) -> bz_error::Result<String>;
 }

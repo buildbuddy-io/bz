@@ -12,10 +12,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::cells::cell_root_path::CellRootPath;
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::RelativePath;
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use bz_core::cells::cell_root_path::CellRootPath;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::RelativePath;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
 use dupe::Dupe;
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -42,7 +42,7 @@ use crate::legacy_configs::parser::resolver::ConfigResolver;
 
 mod resolver;
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum ConfigError {
     #[error("Expected line of the form `key = value` but key was empty. Line was `{0}`")]
@@ -119,7 +119,7 @@ impl LegacyConfigParser {
         source: Option<Location>,
         follow_includes: bool,
         file_ops: &mut dyn ConfigParserFileOps,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut file_parser = LegacyConfigFileParser::new(self);
         file_parser.start_file(path, source)?;
         file_parser
@@ -135,7 +135,7 @@ impl LegacyConfigParser {
         &mut self,
         config_pair: &ResolvedConfigFlag,
         current_cell: &CellRootPath,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for banned_section in ["repositories", "cells"] {
             if config_pair.section == banned_section {
                 return Err(
@@ -159,7 +159,7 @@ impl LegacyConfigParser {
         Ok(())
     }
 
-    pub(crate) fn finish(self) -> buck2_error::Result<LegacyBuckConfig> {
+    pub(crate) fn finish(self) -> bz_error::Result<LegacyBuckConfig> {
         let LegacyConfigParser { values } = self;
 
         let values = ConfigResolver::resolve(values)?;
@@ -197,11 +197,11 @@ impl LegacyConfigParser {
     pub(crate) fn to_proto_external_config_values(
         &self,
         is_cli: bool,
-    ) -> Vec<buck2_data::ConfigValue> {
+    ) -> Vec<bz_data::ConfigValue> {
         self.values
             .iter()
             .flat_map(|(k, v)| {
-                v.values.iter().map(|(key, value)| buck2_data::ConfigValue {
+                v.values.iter().map(|(key, value)| bz_data::ConfigValue {
                     section: k.to_owned(),
                     key: key.to_owned(),
                     value: value.raw_value().to_owned(),
@@ -234,7 +234,7 @@ impl<'p> LegacyConfigFileParser<'p> {
         ("__unspecified__".to_owned(), BTreeMap::new())
     }
 
-    fn push_file(&mut self, line: usize, path: &ConfigPath) -> buck2_error::Result<()> {
+    fn push_file(&mut self, line: usize, path: &ConfigPath) -> bz_error::Result<()> {
         let include_source = ConfigFileLocationWithLine {
                 source_file: self.current_file.dupe().unwrap_or_else(|| panic!("push_file() called without any files on the include stack. top-level files should use start_file()")),
                 line,
@@ -254,7 +254,7 @@ impl<'p> LegacyConfigFileParser<'p> {
         &mut self,
         path: &ConfigPath,
         source: Option<Location>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let source_file = Arc::new(ConfigFileLocation {
             path: path.to_string(),
             include_source: source,
@@ -291,7 +291,7 @@ impl<'p> LegacyConfigFileParser<'p> {
         config_path: &'a ConfigPath,
         parse_includes: bool,
         file_ops: &'a mut dyn ConfigParserFileOps,
-    ) -> BoxFuture<'a, buck2_error::Result<bool>> {
+    ) -> BoxFuture<'a, bz_error::Result<bool>> {
         async move {
             let Some(file_lines) = file_ops.read_file_lines_if_exists(config_path).await? else {
                 return Ok(false);
@@ -310,7 +310,7 @@ impl<'p> LegacyConfigFileParser<'p> {
         }
     }
 
-    fn parse_section_marker(line: &str) -> buck2_error::Result<Option<&str>> {
+    fn parse_section_marker(line: &str) -> bz_error::Result<Option<&str>> {
         // We allow trailing comment markers at the end of sections, since otherwise
         // using oss-enable/oss-disable is super tricky
         match line.strip_prefix('[') {
@@ -328,7 +328,7 @@ impl<'p> LegacyConfigFileParser<'p> {
         lines: Vec<String>,
         parse_includes: bool,
         file_ops: &mut dyn ConfigParserFileOps,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let lines = lines
             .into_iter()
             // Trim leading/trailing whitespace.

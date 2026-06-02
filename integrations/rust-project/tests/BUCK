@@ -1,8 +1,8 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_e2e_test")
+load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
 
 oncall("rust_devx")
 
-buck2_e2e_test(
+bz_e2e_test(
     name = "test_rust_project",
     srcs = [
         "test_rust_project.py",

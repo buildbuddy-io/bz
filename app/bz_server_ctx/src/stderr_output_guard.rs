@@ -14,8 +14,8 @@ use std::io::Write;
 use std::marker::PhantomData;
 use std::str;
 
-use buck2_core::buck2_env;
-use buck2_events::dispatch::EventDispatcher;
+use bz_core::bz_env;
+use bz_events::dispatch::EventDispatcher;
 use dupe::Dupe;
 
 use crate::ctx::ServerCommandContextTrait;
@@ -62,17 +62,17 @@ impl Drop for StderrOutputGuard<'_> {
 }
 
 impl StderrOutputWriter {
-    pub fn new(context: &dyn ServerCommandContextTrait) -> buck2_error::Result<Self> {
+    pub fn new(context: &dyn ServerCommandContextTrait) -> bz_error::Result<Self> {
         Ok(Self {
             dispatcher: context.events().dupe(),
             chunk_size: StderrOutputWriter::get_chunk_size()?,
         })
     }
 
-    fn get_chunk_size() -> buck2_error::Result<usize> {
+    fn get_chunk_size() -> bz_error::Result<usize> {
         // protobuf recommends each message should be under 1MB
         const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024;
-        buck2_env!("BUCK2_DEBUG_RAWOUTPUT_CHUNK_SIZE", type=usize, default=DEFAULT_CHUNK_SIZE)
+        bz_env!("BUCK2_DEBUG_RAWOUTPUT_CHUNK_SIZE", type=usize, default=DEFAULT_CHUNK_SIZE)
     }
 
     /// Given complete valid UTF-8 string, truncate it to be no longer than given limit.
@@ -116,7 +116,7 @@ impl Write for StderrOutputWriter {
                 ));
             }
 
-            let raw_output = buck2_data::ConsoleMessage {
+            let raw_output = bz_data::ConsoleMessage {
                 message: s.to_owned(),
             };
             self.dispatcher.instant_event(raw_output);

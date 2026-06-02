@@ -11,10 +11,10 @@
 use std::io::Write;
 
 #[cfg(fbcode_build)]
-use buck2_explain::output_format;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_query::query::environment::QueryTarget;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_explain::output_format;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_query::query::environment::QueryTarget;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 
 #[allow(dead_code)]
 pub(crate) struct HtmlTargetGraph {
@@ -29,14 +29,14 @@ impl Html {
         graph: TargetSet<T>,
         mut w: W,
         trace_id: String,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let res;
         #[cfg(fbcode_build)]
         {
             use std::io::Cursor;
 
-            use buck2_common::manifold::Bucket;
-            use buck2_common::manifold::ManifoldClient;
+            use bz_common::manifold::Bucket;
+            use bz_common::manifold::ManifoldClient;
 
             let html_out = output_format(graph)?;
             let mut cursor = &mut Cursor::new(html_out.as_bytes());
@@ -52,7 +52,7 @@ impl Html {
                 )
                 .await?;
             res = format!(
-                "\nView html in your browser: https://interncache-all.fbcdn.net/manifold/buck2_logs/{manifold_path} (requires VPN/lighthouse)\n"
+                "\nView html in your browser: https://interncache-all.fbcdn.net/manifold/bz_logs/{manifold_path} (requires VPN/lighthouse)\n"
             );
         }
         #[cfg(not(fbcode_build))]

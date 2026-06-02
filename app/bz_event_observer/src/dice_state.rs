@@ -10,8 +10,8 @@
 
 use std::collections::BTreeMap;
 
-use buck2_data::DiceKeyState;
-use buck2_data::DiceStateSnapshot;
+use bz_data::DiceKeyState;
+use bz_data::DiceStateSnapshot;
 
 pub struct DiceState {
     key_states: BTreeMap<String, DiceKeyState>,

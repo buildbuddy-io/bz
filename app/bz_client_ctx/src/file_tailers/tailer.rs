@@ -16,8 +16,8 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::time::Duration;
 
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 use dupe::Dupe;
 use futures::FutureExt;
 use tokio::sync::mpsc::UnboundedSender;
@@ -48,7 +48,7 @@ impl FileTailer {
         file: AbsNormPathBuf,
         sender: UnboundedSender<FileTailerEvent>,
         stdout_or_stderr: StdoutOrStderr,
-    ) -> buck2_error::Result<FileTailer> {
+    ) -> bz_error::Result<FileTailer> {
         let mut reader = BufReader::new(File::open(&file).with_buck_error_context(|| {
             format!("Error setting up tailer for {}", file.display())
         })?);
@@ -78,7 +78,7 @@ impl FileTailer {
         mut reader: BufReader<File>,
         stdout_or_stderr: StdoutOrStderr,
         mut sender: UnboundedSender<FileTailerEvent>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let mut interval = tokio::time::interval(Duration::from_millis(200));
         let mut rx = rx.fuse();
 
@@ -111,12 +111,12 @@ impl FileTailer {
                     }
                     line = Vec::new();
                 }
-                buck2_error::Ok((sender, reader))
+                bz_error::Ok((sender, reader))
             })
             .await??;
         }
 
-        buck2_error::Ok(())
+        bz_error::Ok(())
     }
 }
 
@@ -135,7 +135,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_tailer_stdout() -> buck2_error::Result<()> {
+    async fn test_tailer_stdout() -> bz_error::Result<()> {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(b"before\n")?;
 
@@ -177,7 +177,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tailer_stderr() -> buck2_error::Result<()> {
+    async fn test_tailer_stderr() -> bz_error::Result<()> {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(b"before\n")?;
 

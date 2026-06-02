@@ -11,9 +11,9 @@
 use std::time::Duration;
 
 use allocative::Allocative;
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_data::RePlatform;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_data::RePlatform;
 use derive_more::Display;
 use gazebo::prelude::SliceExt;
 use remote_execution as RE;
@@ -79,19 +79,19 @@ pub enum CommandExecutionKind {
 }
 
 impl CommandExecutionKind {
-    pub fn as_enum(&self) -> buck2_data::ActionExecutionKind {
+    pub fn as_enum(&self) -> bz_data::ActionExecutionKind {
         match self {
-            Self::Local { .. } => buck2_data::ActionExecutionKind::Local,
+            Self::Local { .. } => bz_data::ActionExecutionKind::Local,
             Self::LocalWorker { .. } | Self::LocalWorkerInit { .. } => {
-                buck2_data::ActionExecutionKind::LocalWorker
+                bz_data::ActionExecutionKind::LocalWorker
             }
             Self::Remote { details, .. } => match details.persistent_worker {
-                false => buck2_data::ActionExecutionKind::Remote,
-                true => buck2_data::ActionExecutionKind::RemoteWorker,
+                false => bz_data::ActionExecutionKind::Remote,
+                true => bz_data::ActionExecutionKind::RemoteWorker,
             },
-            Self::ActionCache { .. } => buck2_data::ActionExecutionKind::ActionCache,
-            Self::RemoteDepFileCache { .. } => buck2_data::ActionExecutionKind::RemoteDepFileCache,
-            Self::LocalActionCache { .. } => buck2_data::ActionExecutionKind::LocalActionCache,
+            Self::ActionCache { .. } => bz_data::ActionExecutionKind::ActionCache,
+            Self::RemoteDepFileCache { .. } => bz_data::ActionExecutionKind::RemoteDepFileCache,
+            Self::LocalActionCache { .. } => bz_data::ActionExecutionKind::LocalActionCache,
         }
     }
 
@@ -112,8 +112,8 @@ impl CommandExecutionKind {
             .map(|p| p.value.as_str())
     }
 
-    pub fn to_proto(&self, omit_details: bool) -> buck2_data::CommandExecutionKind {
-        use buck2_data::command_execution_kind::Command;
+    pub fn to_proto(&self, omit_details: bool) -> bz_data::CommandExecutionKind {
+        use bz_data::command_execution_kind::Command;
 
         let command = Some(match self {
             Self::Local {
@@ -122,16 +122,16 @@ impl CommandExecutionKind {
                 digest,
             } => {
                 if omit_details {
-                    Command::OmittedLocalCommand(buck2_data::OmittedLocalCommand {
+                    Command::OmittedLocalCommand(bz_data::OmittedLocalCommand {
                         action_digest: digest.to_string(),
                     })
                 } else {
-                    Command::LocalCommand(buck2_data::LocalCommand {
+                    Command::LocalCommand(bz_data::LocalCommand {
                         action_digest: digest.to_string(),
                         argv: command.to_owned(),
                         env: env
                             .iter()
-                            .map(|(key, value)| buck2_data::EnvironmentEntry {
+                            .map(|(key, value)| bz_data::EnvironmentEntry {
                                 key: key.clone(),
                                 value: value.clone(),
                             })
@@ -144,10 +144,10 @@ impl CommandExecutionKind {
                 queue_time,
                 materialized_inputs_for_failed,
                 materialized_outputs_for_failed_actions,
-            } => Command::RemoteCommand(buck2_data::RemoteCommand {
+            } => Command::RemoteCommand(bz_data::RemoteCommand {
                 action_digest: details.action_digest.to_string(),
                 cache_hit: false,
-                cache_hit_type: buck2_data::CacheHitType::Executed.into(),
+                cache_hit_type: bz_data::CacheHitType::Executed.into(),
                 remote_dep_file_key: None,
                 queue_time: (*queue_time).try_into().ok(),
                 details: details.to_proto(omit_details),
@@ -160,10 +160,10 @@ impl CommandExecutionKind {
                     .map(|paths| paths.clone().map(|p| format!("{p}")))
                     .unwrap_or_default(),
             }),
-            Self::ActionCache { details } => Command::RemoteCommand(buck2_data::RemoteCommand {
+            Self::ActionCache { details } => Command::RemoteCommand(bz_data::RemoteCommand {
                 action_digest: details.action_digest.to_string(),
                 cache_hit: true,
-                cache_hit_type: buck2_data::CacheHitType::ActionCache.into(),
+                cache_hit_type: bz_data::CacheHitType::ActionCache.into(),
                 queue_time: None,
                 details: details.to_proto(omit_details),
                 remote_dep_file_key: None,
@@ -172,10 +172,10 @@ impl CommandExecutionKind {
             }),
 
             Self::RemoteDepFileCache { details } => {
-                Command::RemoteCommand(buck2_data::RemoteCommand {
+                Command::RemoteCommand(bz_data::RemoteCommand {
                     action_digest: details.action_digest.to_string(),
                     cache_hit: true,
-                    cache_hit_type: buck2_data::CacheHitType::RemoteDepFileCache.into(),
+                    cache_hit_type: bz_data::CacheHitType::RemoteDepFileCache.into(),
                     queue_time: None,
                     details: details.to_proto(omit_details),
                     remote_dep_file_key: details
@@ -188,17 +188,17 @@ impl CommandExecutionKind {
             }
 
             Self::LocalActionCache { digest } => {
-                Command::OmittedLocalCommand(buck2_data::OmittedLocalCommand {
+                Command::OmittedLocalCommand(bz_data::OmittedLocalCommand {
                     action_digest: digest.to_string(),
                 })
             }
 
             Self::LocalWorkerInit { command, env } => {
-                Command::WorkerInitCommand(buck2_data::WorkerInitCommand {
+                Command::WorkerInitCommand(bz_data::WorkerInitCommand {
                     argv: command.to_owned(),
                     env: env
                         .iter()
-                        .map(|(key, value)| buck2_data::EnvironmentEntry {
+                        .map(|(key, value)| bz_data::EnvironmentEntry {
                             key: key.clone(),
                             value: value.clone(),
                         })
@@ -211,12 +211,12 @@ impl CommandExecutionKind {
                 env,
                 digest,
                 fallback_exe,
-            } => Command::WorkerCommand(buck2_data::WorkerCommand {
+            } => Command::WorkerCommand(bz_data::WorkerCommand {
                 action_digest: digest.to_string(),
                 argv: command.to_owned(),
                 env: env
                     .iter()
-                    .map(|(key, value)| buck2_data::EnvironmentEntry {
+                    .map(|(key, value)| bz_data::EnvironmentEntry {
                         key: key.clone(),
                         value: value.clone(),
                     })
@@ -225,7 +225,7 @@ impl CommandExecutionKind {
             }),
         });
 
-        buck2_data::CommandExecutionKind { command }
+        bz_data::CommandExecutionKind { command }
     }
 }
 
@@ -259,8 +259,8 @@ impl RemoteCommandExecutionDetails {
         }
     }
 
-    fn to_proto(&self, omit_details: bool) -> Option<buck2_data::RemoteCommandDetails> {
-        Some(buck2_data::RemoteCommandDetails {
+    fn to_proto(&self, omit_details: bool) -> Option<bz_data::RemoteCommandDetails> {
+        Some(bz_data::RemoteCommandDetails {
             session_id: if omit_details {
                 None
             } else {

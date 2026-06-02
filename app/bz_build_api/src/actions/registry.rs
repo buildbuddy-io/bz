@@ -13,33 +13,33 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_artifact::actions::key::ActionIndex;
-use buck2_artifact::actions::key::ActionKey;
-use buck2_artifact::artifact::artifact_type::DeclaredArtifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_artifact::artifact::build_artifact::BuildArtifact;
-use buck2_core::category::Category;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::external::external_cell_origin_for_cell;
-use buck2_core::deferred::key::DeferredHolderKey;
-use buck2_core::execution_types::execution::ExecutionPlatformResolution;
-use buck2_core::fs::buck_out_path::BazelOutputPathKind;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::fs::buck_out_path::BuildArtifactPath;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_directory::directory;
-use buck2_directory::directory::builder::DirectoryBuilder;
-use buck2_directory::directory::builder::DirectoryInsertError;
-use buck2_directory::directory::directory::Directory;
-use buck2_directory::directory::directory_hasher::NoDigest;
-use buck2_directory::directory::directory_iterator::DirectoryIterator;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::internal_error;
-use buck2_execute::execute::request::OutputType;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckIndexSet;
+use bz_artifact::actions::key::ActionIndex;
+use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::artifact_type::DeclaredArtifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_artifact::artifact::build_artifact::BuildArtifact;
+use bz_core::category::Category;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::external_cell_origin_for_cell;
+use bz_core::deferred::key::DeferredHolderKey;
+use bz_core::execution_types::execution::ExecutionPlatformResolution;
+use bz_core::fs::buck_out_path::BazelOutputPathKind;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::fs::buck_out_path::BuildArtifactPath;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_directory::directory;
+use bz_directory::directory::builder::DirectoryBuilder;
+use bz_directory::directory::builder::DirectoryInsertError;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_hasher::NoDigest;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::internal_error;
+use bz_execute::execute::request::OutputType;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckIndexSet;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use gazebo::prelude::SliceExt;
@@ -92,7 +92,7 @@ impl<'v> ActionsRegistry<'v> {
         &mut self,
         artifact: &BuildArtifact,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         if !self.pending.is_empty() {
             return Err(internal_error!(
                 "output for dynamic_output/actions declared after actions: {}, {:?}",
@@ -122,7 +122,7 @@ impl<'v> ActionsRegistry<'v> {
         &mut self,
         path: &ForwardRelativePath,
         declaration_location: Option<FileSpan>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         fn display_location_opt(location: Option<&FileSpan>) -> &dyn std::fmt::Display {
             location.map_or(&"<unknown>" as _, |l| l as _)
         }
@@ -180,7 +180,7 @@ impl<'v> ActionsRegistry<'v> {
         bazel_owner: Option<&ConfiguredTargetLabel>,
         bazel_output_root: BazelOutputRoot,
         bazel_output_path_kind: BazelOutputPathKind,
-    ) -> buck2_error::Result<ForwardRelativePathBuf> {
+    ) -> bz_error::Result<ForwardRelativePathBuf> {
         let Some(label) = bazel_owner else {
             return Ok(path.to_buf());
         };
@@ -249,7 +249,7 @@ impl<'v> ActionsRegistry<'v> {
         bazel_owner: Option<&ConfiguredTargetLabel>,
         buck_owner: Option<&ConfiguredTargetLabel>,
         bazel_output_path_kind: BazelOutputPathKind,
-    ) -> buck2_error::Result<(ForwardRelativePathBuf, usize)> {
+    ) -> bz_error::Result<(ForwardRelativePathBuf, usize)> {
         if bazel_output_path_kind != BazelOutputPathKind::PackageRelative {
             return Ok((path, hidden));
         }
@@ -278,7 +278,7 @@ impl<'v> ActionsRegistry<'v> {
         declaration_location: Option<FileSpan>,
         path_resolution_method: BuckOutPathKind,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         self.declare_artifact_with_bazel_owner(
             prefix,
             path,
@@ -299,7 +299,7 @@ impl<'v> ActionsRegistry<'v> {
         path_resolution_method: BuckOutPathKind,
         bazel_owner: Option<ConfiguredTargetLabel>,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         self.declare_artifact_with_bazel_owner_output_root_and_path_kind(
             prefix,
             path,
@@ -323,7 +323,7 @@ impl<'v> ActionsRegistry<'v> {
         bazel_owner: Option<ConfiguredTargetLabel>,
         bazel_output_root: BazelOutputRoot,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         self.declare_artifact_with_bazel_owner_output_root_and_path_kind(
             prefix,
             path,
@@ -348,7 +348,7 @@ impl<'v> ActionsRegistry<'v> {
         bazel_output_root: BazelOutputRoot,
         bazel_output_path_kind: BazelOutputPathKind,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+    ) -> bz_error::Result<DeclaredArtifact<'v>> {
         let (path, hidden) = match prefix {
             None => (path, 0),
             Some(prefix) => (prefix.join(path), prefix.iter().count()),
@@ -390,7 +390,7 @@ impl<'v> ActionsRegistry<'v> {
         self_key: &DeferredHolderKey,
         outputs: BuckIndexSet<OutputArtifact>,
         action: A,
-    ) -> buck2_error::Result<ActionKey> {
+    ) -> bz_error::Result<ActionKey> {
         let key = ActionKey::new(
             self_key.dupe(),
             // If there are declared_dynamic_outputs, then the analysis that created this one has
@@ -415,8 +415,8 @@ impl<'v> ActionsRegistry<'v> {
     /// an 'ActionAnalysisResult' that holds all the registered 'Action's
     pub fn finalize(
         self,
-    ) -> buck2_error::Result<
-        impl FnOnce(&AnalysisValueFetcher) -> buck2_error::Result<RecordedActions> + use<>,
+    ) -> bz_error::Result<
+        impl FnOnce(&AnalysisValueFetcher) -> bz_error::Result<RecordedActions> + use<>,
     > {
         for artifact in self.artifacts {
             artifact.ensure_bound()?;
@@ -551,7 +551,7 @@ impl RecordedActions {
         }
     }
 
-    pub fn lookup(&self, key: &ActionKey) -> buck2_error::Result<ActionLookup> {
+    pub fn lookup(&self, key: &ActionKey) -> bz_error::Result<ActionLookup> {
         self.actions
             .get(key.action_index().0 as usize)
             .duped()

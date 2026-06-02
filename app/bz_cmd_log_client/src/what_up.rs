@@ -14,25 +14,25 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::SystemTimeError;
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_client_ctx::subscribers::superconsole::CUTOFFS;
-use buck2_client_ctx::subscribers::superconsole::StatefulSuperConsole;
-use buck2_client_ctx::subscribers::superconsole::SuperConsoleConfig;
-use buck2_client_ctx::subscribers::superconsole::SuperConsoleState;
-use buck2_client_ctx::subscribers::superconsole::session_info::SessionInfoComponent;
-use buck2_client_ctx::subscribers::superconsole::timed_list::TimedList;
-use buck2_client_ctx::subscribers::superconsole::timekeeper::Clock;
-use buck2_client_ctx::subscribers::superconsole::timekeeper::Timekeeper;
-use buck2_client_ctx::ticker::Tick;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_event_observer::span_tracker::EventTimestamp;
-use buck2_event_observer::verbosity::Verbosity;
-use buck2_events::BuckEvent;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::subscribers::superconsole::CUTOFFS;
+use bz_client_ctx::subscribers::superconsole::StatefulSuperConsole;
+use bz_client_ctx::subscribers::superconsole::SuperConsoleConfig;
+use bz_client_ctx::subscribers::superconsole::SuperConsoleState;
+use bz_client_ctx::subscribers::superconsole::session_info::SessionInfoComponent;
+use bz_client_ctx::subscribers::superconsole::timed_list::TimedList;
+use bz_client_ctx::subscribers::superconsole::timekeeper::Clock;
+use bz_client_ctx::subscribers::superconsole::timekeeper::Timekeeper;
+use bz_client_ctx::ticker::Tick;
+use bz_event_log::stream_value::StreamValue;
+use bz_event_observer::span_tracker::EventTimestamp;
+use bz_event_observer::verbosity::Verbosity;
+use bz_events::BuckEvent;
 use dupe::Dupe;
 use superconsole::Component;
 use superconsole::Dimensions;
@@ -129,7 +129,7 @@ impl BuckSubcommand for WhatUpCommand {
                     let result = StatefulSuperConsole::render_result_errors(&result);
                     super_console.emit(result);
                     super_console.finalize(&Self::component(&super_console_state))?;
-                    buck2_client_ctx::eprintln!("No open spans to render when log ended")?;
+                    bz_client_ctx::eprintln!("No open spans to render when log ended")?;
                     return ExitResult::success();
                 }
             }
@@ -146,19 +146,19 @@ impl BuckSubcommand for WhatUpCommand {
 }
 
 impl WhatUpCommand {
-    fn component(state: &SuperConsoleState) -> impl Component<Error = buck2_error::Error> + '_ {
+    fn component(state: &SuperConsoleState) -> impl Component<Error = bz_error::Error> + '_ {
         struct ComponentImpl<'a> {
             state: &'a SuperConsoleState,
         }
 
         impl Component for ComponentImpl<'_> {
-            type Error = buck2_error::Error;
+            type Error = bz_error::Error;
 
             fn draw_unchecked(
                 &self,
                 dimensions: Dimensions,
                 mode: DrawMode,
-            ) -> buck2_error::Result<Lines> {
+            ) -> bz_error::Result<Lines> {
                 let mut draw = DrawVertical::new(dimensions);
                 draw.draw(
                     &SessionInfoComponent {
@@ -180,7 +180,7 @@ struct WhatupClock(Arc<Mutex<EventTimestamp>>);
 impl Clock for WhatupClock {
     fn event_timestamp_for_tick(
         &mut self,
-        _tick: buck2_client_ctx::ticker::Tick,
+        _tick: bz_client_ctx::ticker::Tick,
     ) -> EventTimestamp {
         // We always report the most recently seen event as the current timestamp. That way, when we
         // finish rendering superconsole, the timestamp we report here will correspond to something

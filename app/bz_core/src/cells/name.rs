@@ -12,8 +12,8 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use allocative::Allocative;
-use buck2_error::BuckErrorSerde;
-use buck2_hash::BuckHasher;
+use bz_error::BuckErrorSerde;
+use bz_hash::BuckHasher;
 use derive_more::Display;
 use dupe::Dupe;
 use equivalent::Equivalent;
@@ -24,7 +24,7 @@ use static_interner::Intern;
 use static_interner::interner;
 use strong_hash::StrongHash;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum CellNameError {
     #[error("Cell name must be non-empty")]
@@ -86,7 +86,7 @@ impl CellName {
     /// This function is unchecked because it does not validate that the cell points
     /// to an existing cell. This function should only be used when creating
     /// repository cells at startup.
-    pub fn unchecked_new(name: &str) -> buck2_error::Result<CellName> {
+    pub fn unchecked_new(name: &str) -> bz_error::Result<CellName> {
         if name.is_empty() {
             return Err(CellNameError::Empty.into());
         }

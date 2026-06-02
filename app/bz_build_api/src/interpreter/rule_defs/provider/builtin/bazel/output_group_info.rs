@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_error::internal_error;
+use bz_build_api_derive::internal_provider;
+use bz_error::internal_error;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::collections::SmallMap;
@@ -24,7 +24,7 @@ use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_transitive;
@@ -86,7 +86,7 @@ fn output_group_info_get_attr<'v, V: ValueLike<'v>>(
     output_group_info_groups(this).get_str(attribute)
 }
 
-fn output_group_info_groups_from_value<'v>(value: Value<'v>) -> buck2_error::Result<DictRef<'v>> {
+fn output_group_info_groups_from_value<'v>(value: Value<'v>) -> bz_error::Result<DictRef<'v>> {
     if let Some(info) = value.downcast_ref::<OutputGroupInfo<'v>>() {
         return Ok(output_group_info_groups(info));
     }
@@ -105,7 +105,7 @@ pub(crate) fn merge_output_group_info_values<'v>(
     heap: Heap<'v>,
     left: Value<'v>,
     right: Value<'v>,
-) -> buck2_error::Result<Value<'v>> {
+) -> bz_error::Result<Value<'v>> {
     let mut groups: SmallMap<String, Vec<Value<'v>>> = SmallMap::new();
     for provider in [left, right] {
         for (name, value) in output_group_info_groups_from_value(provider)?.iter() {
@@ -135,7 +135,7 @@ impl FrozenOutputGroupInfo {
         &self,
         group: &str,
         processor: &mut dyn FnMut(ArtifactGroup),
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let Some(value) = output_group_info_groups(self).get_str(group) else {
             return Ok(());
         };

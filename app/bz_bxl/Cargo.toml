@@ -2,7 +2,7 @@
 description = "Buck V2 extension language"
 edition = "2024"
 license = { workspace = true }
-name = "buck2_bxl"
+name = "bz_bxl"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -11,7 +11,7 @@ allocative = { workspace = true }
 anyhow = { workspace = true }
 async-recursion = { workspace = true }
 async-trait = { workspace = true }
-buck2_events = { workspace = true }
+bz_events = { workspace = true }
 clap = { workspace = true }
 cmp_any = { workspace = true }
 derivative = { workspace = true }
@@ -32,26 +32,26 @@ starlark_map = { workspace = true, features = ["pagable_dep"] }
 strong_hash = { workspace = true }
 tokio = { workspace = true }
 
-buck2_action_impl = { workspace = true }
-buck2_analysis = { workspace = true }
-buck2_artifact = { workspace = true }
-buck2_build_api = { workspace = true }
-buck2_cli_proto = { workspace = true }
-buck2_common = { workspace = true }
-buck2_core = { workspace = true }
-buck2_data = { workspace = true }
-buck2_error = { workspace = true }
-buck2_execute = { workspace = true }
-buck2_fs = { workspace = true }
-buck2_hash = { workspace = true }
-buck2_interpreter = { workspace = true }
-buck2_interpreter_for_build = { workspace = true }
-buck2_node = { workspace = true }
-buck2_profile = { workspace = true }
-buck2_query = { workspace = true }
-buck2_query_parser = { workspace = true }
-buck2_server_ctx = { workspace = true }
-buck2_util = { workspace = true }
+bz_action_impl = { workspace = true }
+bz_analysis = { workspace = true }
+bz_artifact = { workspace = true }
+bz_build_api = { workspace = true }
+bz_cli_proto = { workspace = true }
+bz_common = { workspace = true }
+bz_core = { workspace = true }
+bz_data = { workspace = true }
+bz_error = { workspace = true }
+bz_execute = { workspace = true }
+bz_fs = { workspace = true }
+bz_hash = { workspace = true }
+bz_interpreter = { workspace = true }
+bz_interpreter_for_build = { workspace = true }
+bz_node = { workspace = true }
+bz_profile = { workspace = true }
+bz_query = { workspace = true }
+bz_query_parser = { workspace = true }
+bz_server_ctx = { workspace = true }
+bz_util = { workspace = true }
 dice_futures = { workspace = true }
 once_cell = { workspace = true }
 

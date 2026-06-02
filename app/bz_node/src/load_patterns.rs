@@ -15,26 +15,26 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::bazel::skyframe::BazelSkyframeFunction;
-use buck2_common::bazel::skyframe::mark_bazel_skyframe_key;
-use buck2_common::file_ops::trait_::DiceFileOps;
-use buck2_common::file_ops::trait_::FileOps;
-use buck2_common::pattern::package_roots::collect_package_roots;
-use buck2_common::pattern::resolve::ResolvedPattern;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::PackageLabelWithModifiers;
-use buck2_core::pattern::pattern::Modifiers;
-use buck2_core::pattern::pattern::PackageSpec;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
-use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::ConfiguredTargetPatternExtra;
-use buck2_core::pattern::pattern_type::PatternType;
-use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_core::target::name::TargetName;
-use buck2_events::dispatch::console_message;
+use bz_common::bazel::skyframe::BazelSkyframeFunction;
+use bz_common::bazel::skyframe::mark_bazel_skyframe_key;
+use bz_common::file_ops::trait_::DiceFileOps;
+use bz_common::file_ops::trait_::FileOps;
+use bz_common::pattern::package_roots::collect_package_roots;
+use bz_common::pattern::resolve::ResolvedPattern;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::package::PackageLabel;
+use bz_core::package::PackageLabelWithModifiers;
+use bz_core::pattern::pattern::Modifiers;
+use bz_core::pattern::pattern::PackageSpec;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern::ParsedPatternWithModifiers;
+use bz_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
+use bz_core::pattern::pattern_type::ConfiguredTargetPatternExtra;
+use bz_core::pattern::pattern_type::PatternType;
+use bz_core::pattern::pattern_type::ProvidersPatternExtra;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_core::target::name::TargetName;
+use bz_events::dispatch::console_message;
 use dice::DiceComputations;
 use dice::Key;
 use dice::NoValueSerialize;
@@ -65,7 +65,7 @@ impl fmt::Display for IgnoredSubdirectoriesKey {
 
 #[async_trait]
 impl Key for IgnoredSubdirectoriesKey {
-    type Value = buck2_error::Result<bool>;
+    type Value = bz_error::Result<bool>;
 
     async fn compute(
         &self,
@@ -110,7 +110,7 @@ impl fmt::Display for RecursivePkgKey {
 
 #[async_trait]
 impl Key for RecursivePkgKey {
-    type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
+    type Value = bz_error::Result<Arc<Vec<PackageLabel>>>;
 
     async fn compute(
         &self,
@@ -129,7 +129,7 @@ impl Key for RecursivePkgKey {
             let mut packages = Vec::new();
             collect_package_roots(&DiceFileOps(&ctx), vec![root], |package| {
                 packages.push(package?);
-                buck2_error::Ok(())
+                bz_error::Ok(())
             })
             .await?;
             packages.sort();
@@ -167,7 +167,7 @@ impl fmt::Display for PrepareDepsOfTargetsUnderDirectoryKey {
 
 #[async_trait]
 impl Key for PrepareDepsOfTargetsUnderDirectoryKey {
-    type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
+    type Value = bz_error::Result<Arc<Vec<PackageLabel>>>;
 
     async fn compute(
         &self,
@@ -205,7 +205,7 @@ impl fmt::Display for CollectPackagesUnderDirectoryKey {
 
 #[async_trait]
 impl Key for CollectPackagesUnderDirectoryKey {
-    type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
+    type Value = bz_error::Result<Arc<Vec<PackageLabel>>>;
 
     async fn compute(
         &self,
@@ -254,7 +254,7 @@ impl<T: PatternType> fmt::Display for PrepareDepsOfPatternKey<T> {
 
 #[async_trait]
 impl<T: PatternType> Key for PrepareDepsOfPatternKey<T> {
-    type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
+    type Value = bz_error::Result<Arc<Vec<PackageLabel>>>;
 
     async fn compute(
         &self,
@@ -313,7 +313,7 @@ impl<T: PatternType> fmt::Display for PrepareDepsOfPatternsKey<T> {
 
 #[async_trait]
 impl<T: PatternType> Key for PrepareDepsOfPatternsKey<T> {
-    type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
+    type Value = bz_error::Result<Arc<Vec<PackageLabel>>>;
 
     async fn compute(
         &self,
@@ -374,7 +374,7 @@ impl<T: PatternType> fmt::Display for TargetPatternKey<T> {
 
 #[async_trait]
 impl<T: PatternType> Key for TargetPatternKey<T> {
-    type Value = buck2_error::Result<Arc<ResolvedPattern<T>>>;
+    type Value = bz_error::Result<Arc<ResolvedPattern<T>>>;
 
     async fn compute(
         &self,
@@ -436,15 +436,15 @@ impl fmt::Display for TargetPatternErrorKey {
 
 #[async_trait]
 impl Key for TargetPatternErrorKey {
-    type Value = buck2_error::Result<()>;
+    type Value = bz_error::Result<()>;
 
     async fn compute(
         &self,
         _ctx: &mut DiceComputations,
         _cancellation: &CancellationContext,
     ) -> Self::Value {
-        Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "{}",
             self.message
         ))
@@ -484,7 +484,7 @@ impl<T: PatternType> fmt::Display for CollectTargetsInPackageKey<T> {
 
 #[async_trait]
 impl<T: PatternType> Key for CollectTargetsInPackageKey<T> {
-    type Value = buck2_error::Result<Arc<PackageLoadedPatterns<T>>>;
+    type Value = bz_error::Result<Arc<PackageLoadedPatterns<T>>>;
 
     async fn compute(
         &self,
@@ -579,7 +579,7 @@ impl<T: PatternType> fmt::Display for TargetPatternPhaseKey<T> {
 
 #[async_trait]
 impl<T: PatternType> Key for TargetPatternPhaseKey<T> {
-    type Value = buck2_error::Result<Arc<LoadedPatterns<T>>>;
+    type Value = bz_error::Result<Arc<LoadedPatterns<T>>>;
 
     async fn compute(
         &self,
@@ -620,7 +620,7 @@ impl<T: PatternType> Key for TargetPatternPhaseKey<T> {
                         skip_missing_targets: self.skip_missing_targets,
                     };
                     let result = ctx.compute(&key).await?;
-                    Ok::<_, buck2_error::Error>((package.dupe(), result))
+                    Ok::<_, bz_error::Error>((package.dupe(), result))
                 }
                 .boxed()
             })
@@ -676,7 +676,7 @@ fn merge_resolved_pattern<T: PatternType>(
 
 #[derive(Clone, Allocative)]
 pub struct LoadedPatterns<T: PatternType> {
-    results: BTreeMap<PackageLabelWithModifiers, buck2_error::Result<PackageLoadedPatterns<T>>>,
+    results: BTreeMap<PackageLabelWithModifiers, bz_error::Result<PackageLoadedPatterns<T>>>,
 }
 
 #[derive(Clone, Allocative)]
@@ -722,7 +722,7 @@ impl<T: PatternType> LoadedPatterns<T> {
     ) -> impl Iterator<
         Item = (
             PackageLabelWithModifiers,
-            &buck2_error::Result<PackageLoadedPatterns<T>>,
+            &bz_error::Result<PackageLoadedPatterns<T>>,
         ),
     > {
         self.results.iter().map(|(k, v)| (k.dupe(), v))
@@ -735,7 +735,7 @@ impl<T: PatternType> LoadedPatterns<T> {
     ) -> impl Iterator<
         Item = (
             PackageLabelWithModifiers,
-            buck2_error::Result<PackageLoadedPatterns<T>>,
+            bz_error::Result<PackageLoadedPatterns<T>>,
         ),
     > {
         self.results.into_iter()
@@ -743,7 +743,7 @@ impl<T: PatternType> LoadedPatterns<T> {
 
     pub fn iter_loaded_targets(
         &self,
-    ) -> impl Iterator<Item = buck2_error::Result<TargetNodeRef<'_>>> {
+    ) -> impl Iterator<Item = bz_error::Result<TargetNodeRef<'_>>> {
         self.results
             .values()
             .map(|result| match result {
@@ -758,7 +758,7 @@ impl<T: PatternType> LoadedPatterns<T> {
     ) -> impl Iterator<
         Item = (
             PackageLabelWithModifiers,
-            buck2_error::Result<Vec<TargetNode>>,
+            bz_error::Result<Vec<TargetNode>>,
         ),
     > + '_ {
         self.results.iter().map(|(package, result)| {
@@ -797,7 +797,7 @@ fn collect_targets_in_package<T: PatternType>(
     res: &EvaluationResult,
     pkg_spec: PackageSpec<T>,
     skip_missing_targets: MissingTargetBehavior,
-) -> buck2_error::Result<PackageLoadedPatterns<T>> {
+) -> bz_error::Result<PackageLoadedPatterns<T>> {
     let (label_to_node, missing) = res.apply_spec(pkg_spec);
     if let Some(missing) = missing {
         match skip_missing_targets {
@@ -818,7 +818,7 @@ pub async fn load_patterns<T: PatternType>(
     ctx: &mut DiceComputations<'_>,
     parsed_patterns: Vec<ParsedPattern<T>>,
     skip_missing_targets: MissingTargetBehavior,
-) -> buck2_error::Result<LoadedPatterns<T>> {
+) -> bz_error::Result<LoadedPatterns<T>> {
     let patterns = parsed_patterns
         .into_iter()
         .map(|parsed_pattern| ParsedPatternWithModifiers {
@@ -833,7 +833,7 @@ pub async fn load_patterns_with_modifiers<T: PatternType>(
     ctx: &mut DiceComputations<'_>,
     parsed_patterns: Vec<ParsedPatternWithModifiers<T>>,
     skip_missing_targets: MissingTargetBehavior,
-) -> buck2_error::Result<LoadedPatterns<T>> {
+) -> bz_error::Result<LoadedPatterns<T>> {
     let result = ctx
         .compute(&TargetPatternPhaseKey {
             patterns: parsed_patterns,

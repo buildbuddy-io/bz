@@ -11,12 +11,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::cells::unchecked_cell_rel_path::UncheckedCellRelativePath;
-use buck2_events::dispatch::console_message;
-use buck2_fs::paths::file_name::FileNameBuf;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::cells::unchecked_cell_rel_path::UncheckedCellRelativePath;
+use bz_events::dispatch::console_message;
+use bz_fs::paths::file_name::FileNameBuf;
 use cmp_any::PartialEqAny;
 use dice::DiceComputations;
 use dice::Key;
@@ -51,7 +51,7 @@ use crate::io::NoWatchFsMetadataCache;
 /// in unittests
 mod keys {
     use allocative::Allocative;
-    use buck2_core::cells::name::CellName;
+    use bz_core::cells::name::CellName;
     use derive_more::Display;
     use dupe::Dupe;
     use pagable::Pagable;
@@ -79,20 +79,20 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<ReadFileProxy>;
+    ) -> bz_error::Result<ReadFileProxy>;
 
     /// Return the list of file outputs, sorted.
     async fn read_dir(
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>>;
+    ) -> bz_error::Result<Arc<[RawDirEntry]>>;
 
     async fn read_dir_for_no_watchfs(
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir(ctx, path).await
     }
 
@@ -100,14 +100,14 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
         &self,
         io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>>;
+    ) -> bz_error::Result<Arc<[RawDirEntry]>>;
 
     async fn read_dir_for_no_watchfs_without_dice_with_metadata_cache(
         &self,
         io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
         _metadata_cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_for_no_watchfs_without_dice(io_provider, path)
             .await
     }
@@ -116,13 +116,13 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>>;
+    ) -> bz_error::Result<Option<RawPathMetadata>>;
 
     async fn read_path_metadata_if_exists_for_no_watchfs(
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         self.read_path_metadata_if_exists(ctx, path).await
     }
 
@@ -130,7 +130,7 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         Ok(self
             .read_path_metadata_if_exists_for_no_watchfs(ctx, path)
             .await?
@@ -142,7 +142,7 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
         _cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.read_path_metadata_for_no_watchfs_if_exists(ctx, path)
             .await
     }
@@ -152,7 +152,7 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
         io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>;
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>>;
 
     /// Check if a path exists in the exact case given.
     ///
@@ -162,7 +162,7 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         let metadata = self.read_path_metadata_if_exists(ctx, path).await?;
         Ok(metadata.is_some())
     }
@@ -171,7 +171,7 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         let metadata = self
             .read_path_metadata_if_exists_for_no_watchfs(ctx, path)
             .await?;
@@ -183,7 +183,7 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
 
 #[async_trait]
 impl Key for FileOpsKey {
-    type Value = buck2_error::Result<FileOpsValue>;
+    type Value = bz_error::Result<FileOpsValue>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -237,7 +237,7 @@ pub(crate) async fn get_delegated_file_ops(
     dice: &mut DiceComputations<'_>,
     cell: CellName,
     check_ignores: CheckIgnores,
-) -> buck2_error::Result<FileOpsDelegateWithIgnores> {
+) -> bz_error::Result<FileOpsDelegateWithIgnores> {
     Ok(dice
         .compute(&FileOpsKey {
             cell,
@@ -280,7 +280,7 @@ impl FileOpsDelegateWithIgnores {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<ReadFileProxy> {
+    ) -> bz_error::Result<ReadFileProxy> {
         self.delegate.read_file_if_exists(ctx, path).await
     }
 
@@ -288,7 +288,7 @@ impl FileOpsDelegateWithIgnores {
         &self,
         path: &CellRelativePath,
         entries: Arc<[RawDirEntry]>,
-    ) -> buck2_error::Result<ReadDirOutput> {
+    ) -> bz_error::Result<ReadDirOutput> {
         // TODO(cjhopman): This should also probably verify that the parent chain is not ignored.
         self.check_ignores(UncheckedCellRelativePath::new(path))
             .into_result()?;
@@ -308,7 +308,7 @@ impl FileOpsDelegateWithIgnores {
 
             let cell_relative_path = UncheckedCellRelativePath::unchecked_new(cell_relative_path);
             let is_ignored = self.check_ignores(cell_relative_path).is_ignored();
-            buck2_error::Ok(is_ignored)
+            bz_error::Ok(is_ignored)
         };
 
         // Filter out any entries that are ignored.
@@ -346,7 +346,7 @@ impl FileOpsDelegateWithIgnores {
         &self,
         path: &CellRelativePath,
         entries: Arc<[RawDirEntry]>,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         if self
             .check_ignores(UncheckedCellRelativePath::new(path))
             .is_ignored()
@@ -367,7 +367,7 @@ impl FileOpsDelegateWithIgnores {
         io_provider: Arc<dyn IoProvider>,
         path: &CellRelativePath,
         metadata_cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.delegate
             .read_dir_for_no_watchfs_without_dice_with_metadata_cache(
                 io_provider,
@@ -381,7 +381,7 @@ impl FileOpsDelegateWithIgnores {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.delegate.read_dir_for_no_watchfs(ctx, path).await
     }
 
@@ -389,7 +389,7 @@ impl FileOpsDelegateWithIgnores {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         self.delegate.read_path_metadata_if_exists(ctx, path).await
     }
 
@@ -397,7 +397,7 @@ impl FileOpsDelegateWithIgnores {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         self.delegate
             .read_path_metadata_if_exists_for_no_watchfs(ctx, path)
             .await
@@ -407,7 +407,7 @@ impl FileOpsDelegateWithIgnores {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.delegate
             .read_path_metadata_for_no_watchfs_if_exists(ctx, path)
             .await
@@ -418,7 +418,7 @@ impl FileOpsDelegateWithIgnores {
         ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.delegate
             .read_path_metadata_for_no_watchfs_if_exists_with_cache(ctx, path, cache)
             .await
@@ -429,7 +429,7 @@ impl FileOpsDelegateWithIgnores {
         io_provider: Arc<dyn IoProvider>,
         path: &CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.delegate
             .read_path_metadata_for_no_watchfs_if_exists_without_dice(io_provider, path, cache)
             .await
@@ -438,7 +438,7 @@ impl FileOpsDelegateWithIgnores {
     pub async fn is_ignored(
         &self,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<FileIgnoreResult> {
+    ) -> bz_error::Result<FileIgnoreResult> {
         Ok(self.check_ignores(UncheckedCellRelativePath::new(path)))
     }
 }

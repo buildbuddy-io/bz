@@ -14,20 +14,20 @@ use std::hash::Hash;
 use std::ops::Deref;
 
 use allocative::Allocative;
-use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
-use buck2_core::configuration::compatibility::ResultMaybeCompatible;
-use buck2_core::configuration::config_setting::ConfigSettingData;
-use buck2_core::package::PackageLabel;
-use buck2_core::package::source_path::SourcePathRef;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::soft_error;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_data::error::ErrorTag;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
-use buck2_util::arc_str::ArcSlice;
-use buck2_util::arc_str::ArcStr;
+use bz_core::configuration::compatibility::IncompatiblePlatformReasonCause;
+use bz_core::configuration::compatibility::ResultMaybeCompatible;
+use bz_core::configuration::config_setting::ConfigSettingData;
+use bz_core::package::PackageLabel;
+use bz_core::package::source_path::SourcePathRef;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::soft_error;
+use bz_core::target::label::label::TargetLabel;
+use bz_data::error::ErrorTag;
+use bz_error::bz_error;
+use bz_error::internal_error;
+use bz_util::arc_str::ArcSlice;
+use bz_util::arc_str::ArcStr;
 use display_container::fmt_keyed_container;
 use dupe::Dupe;
 use gazebo::prelude::SliceExt;
@@ -135,17 +135,17 @@ impl CoercedSelector {
     pub fn new(
         entries: ArcSlice<(ConfigurationSettingKey, CoercedAttr)>,
         default: Option<CoercedAttr>,
-    ) -> buck2_error::Result<CoercedSelector> {
+    ) -> bz_error::Result<CoercedSelector> {
         Self::check_all_keys_unique(&entries)?;
         Ok(CoercedSelector { entries, default })
     }
 
     fn check_all_keys_unique(
         entries: &[(ConfigurationSettingKey, CoercedAttr)],
-    ) -> buck2_error::Result<()> {
-        fn duplicate_key(key: &ConfigurationSettingKey) -> buck2_error::Error {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
+    ) -> bz_error::Result<()> {
+        fn duplicate_key(key: &ConfigurationSettingKey) -> bz_error::Error {
+            bz_error!(
+                bz_error::ErrorTag::Input,
                 "duplicate key `{key}` in `select()`"
             )
         }
@@ -201,7 +201,7 @@ impl CoercedSelector {
         self.all_entries().map(|(_, v)| v)
     }
 
-    pub fn to_json(&self, ctx: &AttrFmtContext) -> buck2_error::Result<serde_json::Value> {
+    pub fn to_json(&self, ctx: &AttrFmtContext) -> bz_error::Result<serde_json::Value> {
         let mut map = serde_json::Map::new();
         for (key, value) in self.all_entries() {
             match key {
@@ -224,7 +224,7 @@ impl CoercedSelector {
         ])))
     }
 
-    fn fail_to_json(message: &ArcStr) -> Result<serde_json::Value, buck2_error::Error> {
+    fn fail_to_json(message: &ArcStr) -> Result<serde_json::Value, bz_error::Error> {
         Ok(serde_json::Value::Object(serde_json::Map::from_iter([
             (
                 "__type".to_owned(),
@@ -237,7 +237,7 @@ impl CoercedSelector {
         ])))
     }
 
-    fn incompatible_to_json(message: &ArcStr) -> Result<serde_json::Value, buck2_error::Error> {
+    fn incompatible_to_json(message: &ArcStr) -> Result<serde_json::Value, bz_error::Error> {
         Ok(serde_json::Value::Object(serde_json::Map::from_iter([
             (
                 "__type".to_owned(),
@@ -263,7 +263,7 @@ impl Deref for CoercedConcat {
 }
 
 impl CoercedConcat {
-    pub fn to_json(&self, ctx: &AttrFmtContext) -> buck2_error::Result<serde_json::Value> {
+    pub fn to_json(&self, ctx: &AttrFmtContext) -> bz_error::Result<serde_json::Value> {
         Ok(serde_json::Value::Object(serde_json::Map::from_iter([
             (
                 "__type".to_owned(),
@@ -413,7 +413,7 @@ impl CoercedAttr {
     /// things, a lot of the types will be dropped without special handling. For example, an artifact will just end
     /// up as the stringified version of its coerced value (i.e. while `//a:b` might represent some list of targets,
     /// in to_json it just appears as the string "//a:b").
-    pub fn to_json(&self, ctx: &AttrFmtContext) -> buck2_error::Result<serde_json::Value> {
+    pub fn to_json(&self, ctx: &AttrFmtContext) -> bz_error::Result<serde_json::Value> {
         match self {
             CoercedAttr::Selector(s) => s.to_json(ctx),
             CoercedAttr::SelectFail(string_literal) => {
@@ -467,7 +467,7 @@ impl CoercedAttr {
         t: &AttrType,
         pkg: Option<PackageLabel>,
         traversal: &mut dyn CoercedAttrTraversal<'a>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match CoercedAttrWithType::pack(self, t)? {
             CoercedAttrWithType::Selector(CoercedSelector { entries, default }, t) => {
                 for (condition, value) in entries.iter() {
@@ -566,7 +566,7 @@ impl CoercedAttr {
             CoercedAttrWithType::SourceFile(source, _t) => {
                 let Some(pkg) = pkg else {
                     if traversal.inputs_require_package() {
-                        return Err(buck2_error::internal_error!(
+                        return Err(bz_error::internal_error!(
                             "Expected a package when traversing coerced source attribute: `{}`.",
                             source.path()
                         ));
@@ -592,7 +592,7 @@ impl CoercedAttr {
                 &'a CoercedAttr,
             ),
         >,
-    ) -> buck2_error::Result<Option<&'a CoercedAttr>> {
+    ) -> bz_error::Result<Option<&'a CoercedAttr>> {
         let select_entries_vec = SmallVec::<[_; 17]>::from_iter(select_entries);
 
         let mut select_entries = select_entries_vec.iter().copied();
@@ -642,7 +642,7 @@ impl CoercedAttr {
                 &'a CoercedAttr,
             ); 17],
         >,
-    ) -> buck2_error::Result<Option<&'a CoercedAttr>> {
+    ) -> bz_error::Result<Option<&'a CoercedAttr>> {
         let mut entries =
             SmallVec::<[(&ConfigurationSettingKey, &ConfigSettingData, &CoercedAttr); 17]>::new();
 
@@ -670,8 +670,8 @@ impl CoercedAttr {
                     .find(|(_, _, v)| v != first_value);
                 if let Some((different_key, _, _)) = different_value_entry {
                     // Report the ambiguity error with the specific keys that have different values
-                    Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
+                    Err(bz_error!(
+                        bz_error::ErrorTag::Input,
                         "Both select keys `{first_key}` and `{different_key}` match the configuration, but neither is more specific and they have different values"
                     ))
                 } else {
@@ -686,7 +686,7 @@ impl CoercedAttr {
         ctx: &dyn AttrConfigurationContext,
         select: &'a CoercedSelector,
         attr_name: Option<&str>,
-    ) -> buck2_error::Result<&'a CoercedAttr> {
+    ) -> bz_error::Result<&'a CoercedAttr> {
         let CoercedSelector { entries, default } = select;
         let matched_cfg_keys = ctx.matched_cfg_keys();
         let resolved_entries: Vec<_> = entries
@@ -715,8 +715,8 @@ impl CoercedAttr {
                     let attr_info = attr_name.unwrap_or("<unknown>");
                     let _unused = soft_error!(
                         "select_first_match_differs",
-                        buck2_error!(
-                            buck2_error::ErrorTag::Input,
+                        bz_error!(
+                            bz_error::ErrorTag::Input,
                             "Target `{}` (configuration `{}`), attribute `{}`:\n\
                             First matching select key `{}` has different value than most specific match `{}`.\n\
                             All matched keys:\n{}\n\
@@ -738,8 +738,8 @@ impl CoercedAttr {
             Ok(v)
         } else {
             default.as_ref().ok_or_else(|| {
-                buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                bz_error!(
+                    bz_error::ErrorTag::Input,
                     "None of {} conditions matched configuration `{}` and no default was set:\n{}",
                     entries.len(),
                     ctx.cfg().cfg(),
@@ -796,8 +796,8 @@ impl CoercedAttr {
                 }
             }
             CoercedAttrWithType::SelectFail(message, _) => {
-                return buck2_error!(
-                    buck2_error::ErrorTag::Input,
+                return bz_error!(
+                    bz_error::ErrorTag::Input,
                     "select resolved to select_fail(): {message}"
                 )
                 .into();
@@ -905,8 +905,8 @@ impl CoercedAttr {
     /// contained item matches the filter.
     pub fn any_matches(
         &self,
-        filter: &dyn Fn(&str) -> buck2_error::Result<bool>,
-    ) -> buck2_error::Result<bool> {
+        filter: &dyn Fn(&str) -> bz_error::Result<bool>,
+    ) -> bz_error::Result<bool> {
         match self {
             CoercedAttr::Selector(s) => {
                 for value in s.all_values() {

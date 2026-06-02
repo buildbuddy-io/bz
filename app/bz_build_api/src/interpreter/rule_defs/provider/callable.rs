@@ -18,12 +18,12 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::provider::id::ProviderId;
-use buck2_error::BuckErrorContext;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_interpreter::build_context::starlark_path_from_build_context;
-use buck2_interpreter::types::provider::callable::ProviderCallableLike;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::provider::id::ProviderId;
+use bz_error::BuckErrorContext;
+use bz_error::conversion::from_any_with_tag;
+use bz_interpreter::build_context::starlark_path_from_build_context;
+use bz_interpreter::types::provider::callable::ProviderCallableLike;
 use dupe::Dupe;
 use either::Either;
 use indexmap::IndexMap;
@@ -86,7 +86,7 @@ use crate::interpreter::rule_defs::provider::user::UserProvider;
 use crate::interpreter::rule_defs::provider::user::user_provider_creator;
 use crate::interpreter::rule_defs::provider::user::user_provider_creator_from_kwargs;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum ProviderCallableError {
     #[error(
@@ -262,7 +262,7 @@ fn create_callable_function_signature(
     function_name: &str,
     fields: &UserProviderSchema,
     ret_ty: Ty,
-) -> buck2_error::Result<(ParametersSpec<FrozenValue>, TyCallable)> {
+) -> bz_error::Result<(ParametersSpec<FrozenValue>, TyCallable)> {
     let (parameters_spec, param_spec) = match fields {
         UserProviderSchema::Schema(fields) => param_specs(
             function_name,
@@ -354,7 +354,7 @@ impl UserProviderCallableNamed {
 
 fn init_result_to_kwargs<'v>(
     init_result: Value<'v>,
-) -> buck2_error::Result<SmallMap<String, Value<'v>>> {
+) -> bz_error::Result<SmallMap<String, Value<'v>>> {
     let dict = DictRef::from_value(init_result).ok_or_else(|| {
         ProviderCallableError::InitReturnedNonDict(
             init_result.to_repr(),
@@ -499,7 +499,7 @@ impl UserProviderCallable {
 }
 
 impl ProviderCallableLike for UserProviderCallable {
-    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+    fn id(&self) -> bz_error::Result<&Arc<ProviderId>> {
         self.callable
             .get()
             .map(|x| &x.id)
@@ -586,7 +586,7 @@ impl<'v> StarlarkValue<'v> for UserProviderCallableWithInit<'v> {
     ) -> starlark::Result<Value<'v>> {
         match self.provider.callable.get() {
             Some(callable) => callable.invoke(args, Some(self.init.0), eval),
-            None => Err(buck2_error::Error::from(ProviderCallableError::NotBound).into()),
+            None => Err(bz_error::Error::from(ProviderCallableError::NotBound).into()),
         }
     }
 
@@ -604,7 +604,7 @@ impl<'v> StarlarkValue<'v> for UserProviderCallableWithInit<'v> {
 }
 
 impl<'v> ProviderCallableLike for UserProviderCallableWithInit<'v> {
-    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+    fn id(&self) -> bz_error::Result<&Arc<ProviderId>> {
         self.provider.id()
     }
 }
@@ -668,7 +668,7 @@ impl<'v> StarlarkValue<'v> for UserProviderCallable {
                 ty_provider.clone(),
             )?;
             let ty_callable = ty_provider_callable::<UserProviderCallable>(creator_func)?;
-            buck2_error::Ok(UserProviderCallableNamed {
+            bz_error::Ok(UserProviderCallableNamed {
                 id: provider_id.dupe(),
                 signature,
                 data: eval
@@ -693,7 +693,7 @@ impl<'v> StarlarkValue<'v> for UserProviderCallable {
     ) -> starlark::Result<Value<'v>> {
         match self.callable.get() {
             Some(callable) => callable.invoke(args, self.init.map(|init| init.to_value()), eval),
-            None => Err(buck2_error::Error::from(ProviderCallableError::NotBound).into()),
+            None => Err(bz_error::Error::from(ProviderCallableError::NotBound).into()),
         }
     }
 
@@ -778,7 +778,7 @@ impl FrozenUserProviderCallable {
 }
 
 impl ProviderCallableLike for FrozenUserProviderCallable {
-    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+    fn id(&self) -> bz_error::Result<&Arc<ProviderId>> {
         Ok(&self.callable.id)
     }
 }
@@ -836,10 +836,10 @@ impl<'v> StarlarkValue<'v> for FrozenUserProviderCallable {
 fn provider_field_parse_type<'v>(
     ty: Value<'v>,
     eval: &mut Evaluator<'v, '_, '_>,
-) -> buck2_error::Result<TypeCompiled<FrozenValue>> {
+) -> bz_error::Result<TypeCompiled<FrozenValue>> {
     TypeCompiled::new(ty, eval.heap())
         .map(|ty| ty.to_frozen(eval.frozen_heap()))
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Interpreter))
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Interpreter))
 }
 
 #[starlark_module]
@@ -863,7 +863,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                     Some(eval.frozen_heap().alloc(AllocDict::EMPTY))
                 } else {
                     // Dealing only with frozen values is much easier.
-                    return Err(buck2_error::Error::from(
+                    return Err(bz_error::Error::from(
                         ProviderCallableError::InvalidDefaultValue,
                     )
                     .into());
@@ -872,7 +872,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
         };
         if let Some(default) = default {
             if !ty.matches(default.to_value()) {
-                return Err(buck2_error::Error::from(
+                return Err(bz_error::Error::from(
                     ProviderCallableError::InvalidDefaultValueType(
                         default.to_string(),
                         default.to_value().get_type(),
@@ -924,7 +924,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                     .collect();
                 if new_fields.len() != fields.items.len() {
                     return Err(
-                        buck2_error::Error::from(ProviderCallableError::NonUniqueFields(
+                        bz_error::Error::from(ProviderCallableError::NonUniqueFields(
                             fields.items,
                         ))
                         .into(),

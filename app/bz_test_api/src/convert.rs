@@ -12,6 +12,6 @@
 
 use std::time::Duration;
 
-pub fn to_std_duration(d: prost_types::Duration) -> buck2_error::Result<Duration> {
+pub fn to_std_duration(d: prost_types::Duration) -> bz_error::Result<Duration> {
     Ok(Duration::new(d.seconds.try_into()?, d.nanos.try_into()?))
 }

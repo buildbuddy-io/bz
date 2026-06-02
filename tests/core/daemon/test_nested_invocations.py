@@ -15,17 +15,17 @@ from buck2.tests.e2e_util.asserts import expect_failure
 from buck2.tests.e2e_util.buck_workspace import buck_test
 
 
-def nested_buck2_args(buck: Buck) -> typing.List[str]:
+def nested_bz_args(buck: Buck) -> typing.List[str]:
     return [
         "-c",
-        f"nested.buck2_path={buck.path_to_executable}",
+        f"nested.bz_path={buck.path_to_executable}",
     ]
 
 
 @buck_test(allow_soft_errors=True)
 async def test_same_state(buck: Buck) -> None:
     await buck.build(
-        "root//:nested_normal", *nested_buck2_args(buck), env={"SANDCASTLE_ID": ""}
+        "root//:nested_normal", *nested_bz_args(buck), env={"SANDCASTLE_ID": ""}
     )
 
 
@@ -41,7 +41,7 @@ async def test_different_state_error(buck: Buck, tmp_path: Path) -> None:
             "root//:nested_normal",
             "--event-log",
             str(log),
-            *nested_buck2_args(buck),
+            *nested_bz_args(buck),
             env={"SANDCASTLE_ID": ""},
         ),
         stderr_regex="Failed to build 'root//:nested_normal",
@@ -60,7 +60,7 @@ async def test_different_user_version_and_state(buck: Buck, tmp_path: Path) -> N
             "root//:nested_normal",
             "--event-log",
             str(log),
-            *nested_buck2_args(buck),
+            *nested_bz_args(buck),
             # Set a `SANDCASTLE_ID`; this affects the daemon constraints
             env={"SANDCASTLE_ID": "12345"},
         ),
@@ -78,7 +78,7 @@ async def test_trace_io_mismatch(buck: Buck, tmp_path: Path) -> None:
             "root//:nested_trace",
             "--event-log",
             str(log),
-            *nested_buck2_args(buck),
+            *nested_bz_args(buck),
         ),
         stderr_regex="Failed to build 'root//:nested_trace",
     )

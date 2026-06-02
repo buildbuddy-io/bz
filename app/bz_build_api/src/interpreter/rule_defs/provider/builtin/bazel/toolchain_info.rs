@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
-use buck2_core::provider::id::ProviderId;
-use buck2_interpreter::types::provider::callable::ProviderCallableLike;
+use bz_core::provider::id::ProviderId;
+use bz_interpreter::types::provider::callable::ProviderCallableLike;
 use dupe::Dupe;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
@@ -176,7 +176,7 @@ impl<'v> StarlarkValue<'v> for ToolchainInfoCallable {
 }
 
 impl ProviderCallableLike for ToolchainInfoCallable {
-    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+    fn id(&self) -> bz_error::Result<&Arc<ProviderId>> {
         Ok(self.id)
     }
 }

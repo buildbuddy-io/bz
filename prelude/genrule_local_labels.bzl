@@ -15,7 +15,7 @@ Handle labels used to opt-out genrules from running remotely.
 # Some rules have to be run locally for various reasons listed next to the label.
 _GENRULE_LOCAL_LABELS = set([
     # Used for buck2 tests that want to run locally
-    "buck2_test_local_exec",
+    "bz_test_local_exec",
 
     # Split dwarf merge rules currently don't properly list their inputs.
     "dwp",

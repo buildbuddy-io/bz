@@ -11,13 +11,13 @@
 use std::str::FromStr;
 use std::time::SystemTime;
 
-use buck2_error::BuckErrorContext;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_error::BuckErrorContext;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use itertools::Itertools;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 pub(crate) enum EventLogErrors {
     #[error(
         "Trying to write to logfile that hasn't been opened yet - this is an internal error, please report. Unwritten event: {serialized_event}"
@@ -95,7 +95,7 @@ pub(crate) const KNOWN_ENCODINGS: &[Encoding] = &[
     Encoding::PROTO_ZSTD,
 ];
 
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 pub(crate) enum EventLogInferenceError {
     #[error("Event log at path {} has no filename", .0.display())]
@@ -158,14 +158,14 @@ impl Invocation {
             .expect("Null byte unexpected")
     }
 
-    pub(crate) fn parse_json_line(json: &str) -> buck2_error::Result<Invocation> {
-        let i = serde_json::from_str::<buck2_data::Invocation>(json)
+    pub(crate) fn parse_json_line(json: &str) -> bz_error::Result<Invocation> {
+        let i = serde_json::from_str::<bz_data::Invocation>(json)
             .with_buck_error_context(|| format!("Invalid header: {}", json.trim_end()))?;
         Ok(Invocation::from_proto(i))
     }
 
-    pub fn to_proto(self) -> buck2_data::Invocation {
-        buck2_data::Invocation {
+    pub fn to_proto(self) -> bz_data::Invocation {
+        bz_data::Invocation {
             command_line_args: self.command_line_args.clone(),
             expanded_command_line_args: self.expanded_command_line_args.clone(),
             working_dir: self.working_dir.clone(),
@@ -174,7 +174,7 @@ impl Invocation {
         }
     }
 
-    pub(crate) fn from_proto(proto: buck2_data::Invocation) -> Self {
+    pub(crate) fn from_proto(proto: bz_data::Invocation) -> Self {
         Invocation {
             command_line_args: proto.command_line_args,
             expanded_command_line_args: proto.expanded_command_line_args,
@@ -223,7 +223,7 @@ pub mod timestamp {
         DateTime::from_timestamp(ipart, fpart)
     }
 
-    pub fn parse(time: &str) -> buck2_error::Result<DateTime<Utc>> {
+    pub fn parse(time: &str) -> bz_error::Result<DateTime<Utc>> {
         parse_as_unixtime_float(time)
             .or_else(|| parse_as_unixtime_seconds(time))
             .or_else(|| parse_as_unixtime_nanoseconds(time))
@@ -242,7 +242,7 @@ pub mod timestamp {
 mod tests {
     use std::str::FromStr;
 
-    use buck2_wrapper_common::invocation_id::TraceId;
+    use bz_wrapper_common::invocation_id::TraceId;
 
     use crate::utils::Invocation;
 

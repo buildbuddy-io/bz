@@ -15,19 +15,19 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_common::package_listing::PackageListingStrategy;
-use buck2_common::package_listing::listing::PackageListing;
-use buck2_core::build_file_path::BuildFilePath;
-use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
-use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
-use buck2_interpreter::extra::InterpreterHostArchitecture;
-use buck2_interpreter::extra::InterpreterHostPlatform;
-use buck2_interpreter::extra::xcode::XcodeVersionInfo;
-use buck2_interpreter::file_loader::LoadedModules;
-use buck2_interpreter::package_imports::ImplicitImport;
-use buck2_interpreter::paths::module::StarlarkModulePath;
-use buck2_interpreter::prelude_path::PreludePath;
-use buck2_node::super_package::SuperPackage;
+use bz_common::package_listing::PackageListingStrategy;
+use bz_common::package_listing::listing::PackageListing;
+use bz_core::build_file_path::BuildFilePath;
+use bz_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use bz_core::target::label::interner::ConcurrentTargetLabelInterner;
+use bz_interpreter::extra::InterpreterHostArchitecture;
+use bz_interpreter::extra::InterpreterHostPlatform;
+use bz_interpreter::extra::xcode::XcodeVersionInfo;
+use bz_interpreter::file_loader::LoadedModules;
+use bz_interpreter::package_imports::ImplicitImport;
+use bz_interpreter::paths::module::StarlarkModulePath;
+use bz_interpreter::prelude_path::PreludePath;
+use bz_node::super_package::SuperPackage;
 use dupe::Dupe;
 use pagable::PagablePanic;
 use starlark::environment::GlobalsBuilder;
@@ -100,7 +100,7 @@ impl BuildInterpreterConfiguror {
         skip_targets_with_duplicate_names: bool,
         additional_globals: Option<AdditionalGlobalsFn>,
         global_target_interner: Arc<ConcurrentTargetLabelInterner>,
-    ) -> buck2_error::Result<Arc<Self>> {
+    ) -> bz_error::Result<Arc<Self>> {
         Ok(Arc::new(Self {
             prelude_import,
             host_info: HostInfo::new(host_platform, host_architecture, host_xcode_version),
@@ -133,7 +133,7 @@ impl BuildInterpreterConfiguror {
         loaded_modules: &LoadedModules,
         implicit_import: Option<&Arc<ImplicitImport>>,
         current_dir_with_allowed_relative_dirs: CellPathWithAllowedRelativeDir,
-    ) -> buck2_error::Result<ModuleInternals> {
+    ) -> bz_error::Result<ModuleInternals> {
         let record_target_call_stack = self.record_target_call_stack;
         let skip_targets_with_duplicate_names = self.skip_targets_with_duplicate_names;
         let package_implicits = implicit_import.map(|spec| {

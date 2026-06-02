@@ -15,14 +15,14 @@ use std::mem;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_core::provider::id::ProviderId;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::NonDefaultProvidersName;
-use buck2_core::provider::label::ProviderName;
-use buck2_core::provider::label::ProvidersName;
-use buck2_error::internal_error;
-use buck2_interpreter::starlark_promise::StarlarkPromise;
-use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
+use bz_core::provider::id::ProviderId;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::NonDefaultProvidersName;
+use bz_core::provider::label::ProviderName;
+use bz_core::provider::label::ProvidersName;
+use bz_error::internal_error;
+use bz_interpreter::starlark_promise::StarlarkPromise;
+use bz_interpreter::types::provider::callable::ValueAsProviderCallableLike;
 use display_container::fmt_container;
 use dupe::Dupe;
 use either::Either;
@@ -83,7 +83,7 @@ fn format_provider_keys_for_error(keys: &[String]) -> String {
     )
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 enum ProviderCollectionError {
     #[error("expected a list of Provider objects, got {repr}")]
@@ -227,7 +227,7 @@ enum GetOp {
 }
 
 impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
-    pub fn default_info_value(&self) -> buck2_error::Result<Value<'v>> {
+    pub fn default_info_value(&self) -> bz_error::Result<Value<'v>> {
         self.providers
             .get(DefaultInfoCallable::provider_id())
             .map(|value| value.to_value())
@@ -241,7 +241,7 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
     fn insert_provider_value(
         providers: &mut SmallMap<Arc<ProviderId>, Value<'v>>,
         value: Value<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match ValueAsProviderLike::unpack_value(value)? {
             Some(provider) => {
                 if let Some(existing_value) = providers.insert(provider.0.id().dupe(), value) {
@@ -267,7 +267,7 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
     /// This is an internal detail
     fn try_from_value_impl(
         mut value: Value<'v>,
-    ) -> buck2_error::Result<SmallMap<Arc<ProviderId>, Value<'v>>> {
+    ) -> bz_error::Result<SmallMap<Arc<ProviderId>, Value<'v>>> {
         // Sometimes we might have a resolved promise here, in which case see through that
         value = StarlarkPromise::get_recursive(value);
 
@@ -291,7 +291,7 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
 
     fn try_from_bazel_value_impl(
         mut value: Value<'v>,
-    ) -> buck2_error::Result<SmallMap<Arc<ProviderId>, Value<'v>>> {
+    ) -> bz_error::Result<SmallMap<Arc<ProviderId>, Value<'v>>> {
         value = StarlarkPromise::get_recursive(value);
 
         let mut providers = SmallMap::new();
@@ -330,7 +330,7 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
     ///  - `value` is not a list
     ///  - Two instances of the same provider are provided
     ///  - `DefaultInfo` is not provided
-    pub fn try_from_value(value: Value<'v>) -> buck2_error::Result<ProviderCollection<'v>> {
+    pub fn try_from_value(value: Value<'v>) -> bz_error::Result<ProviderCollection<'v>> {
         let providers = Self::try_from_value_impl(value)?;
         if !providers.contains_key(DefaultInfoCallable::provider_id()) {
             return Err(ProviderCollectionError::CollectionMissingDefaultInfo {
@@ -350,7 +350,7 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
         value: Value<'v>,
         heap: Heap<'v>,
         default_outputs: Vec<Value<'v>>,
-    ) -> buck2_error::Result<ProviderCollection<'v>> {
+    ) -> bz_error::Result<ProviderCollection<'v>> {
         let mut providers = Self::try_from_bazel_value_impl(value)?;
         if !providers.contains_key(DefaultInfoCallable::provider_id()) {
             providers.insert(
@@ -366,7 +366,7 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
     /// collection without requiring or injecting `DefaultInfo`.
     pub fn try_from_value_bazel_aspect(
         value: Value<'v>,
-    ) -> buck2_error::Result<ProviderCollection<'v>> {
+    ) -> bz_error::Result<ProviderCollection<'v>> {
         let providers = Self::try_from_bazel_value_impl(value)?;
         Ok(ProviderCollection::<'v> { providers })
     }
@@ -381,7 +381,7 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
     pub fn try_from_value_subtarget(
         value: Value<'v>,
         heap: Heap<'v>,
-    ) -> buck2_error::Result<ProviderCollection<'v>> {
+    ) -> bz_error::Result<ProviderCollection<'v>> {
         let mut providers = Self::try_from_value_impl(value)?;
 
         if !providers.contains_key(DefaultInfoCallable::provider_id()) {
@@ -400,7 +400,7 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
     ///  - Two instances of the same provider are provided
     pub fn try_from_value_dynamic_output(
         value: Value<'v>,
-    ) -> buck2_error::Result<ProviderCollection<'v>> {
+    ) -> bz_error::Result<ProviderCollection<'v>> {
         let providers = Self::try_from_value_impl(value)?;
 
         Ok(ProviderCollection::<'v> { providers })
@@ -411,7 +411,7 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
         &self,
         index: Value<'v>,
         op: GetOp,
-    ) -> buck2_error::Result<Either<Value<'v>, Arc<ProviderId>>> {
+    ) -> bz_error::Result<Either<Value<'v>, Arc<ProviderId>>> {
         let provider_key = provider_key_from_value(index);
         match provider_key.and_then(|index| index.as_provider_callable()) {
             Some(callable) => {
@@ -434,7 +434,7 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
     pub(crate) fn get(
         &self,
         index: Value<'v>,
-    ) -> buck2_error::Result<NoneOr<ValueOfUnchecked<'v, AbstractProvider>>> {
+    ) -> bz_error::Result<NoneOr<ValueOfUnchecked<'v, AbstractProvider>>> {
         match self.get_impl(index, GetOp::Get)? {
             Either::Left(v) => Ok(NoneOr::Other(ValueOfUnchecked::new(v))),
             Either::Right(_) => Ok(NoneOr::None),
@@ -449,7 +449,7 @@ impl<'v> ProviderCollection<'v> {
         }
     }
 
-    pub fn insert_provider(&mut self, value: Value<'v>) -> buck2_error::Result<()> {
+    pub fn insert_provider(&mut self, value: Value<'v>) -> bz_error::Result<()> {
         ProviderCollectionGen::<Value<'v>>::insert_provider_value(&mut self.providers, value)
     }
 
@@ -457,7 +457,7 @@ impl<'v> ProviderCollection<'v> {
         &mut self,
         heap: Heap<'v>,
         other: ProviderCollection<'v>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         for (_, value) in other.providers {
             let Some(provider) = ValueAsProviderLike::unpack(value) else {
                 return Err(ProviderCollectionError::CollectionElementNotAProvider {
@@ -544,7 +544,7 @@ where
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         match self.get_impl(index, GetOp::At)? {
             Either::Left(v) => Ok(v),
-            Either::Right(provider_id) => Err(buck2_error::Error::from(
+            Either::Right(provider_id) => Err(bz_error::Error::from(
                 ProviderCollectionError::AtNotFound(
                     provider_id.name.clone(),
                     self.providers.keys().map(|k| k.name.clone()).collect(),
@@ -590,7 +590,7 @@ impl<'v> Freeze for ProviderCollection<'v> {
 impl FrozenProviderCollection {
     pub fn default_info<'a>(
         &'a self,
-    ) -> buck2_error::Result<FrozenValueTyped<'a, FrozenDefaultInfo>> {
+    ) -> bz_error::Result<FrozenValueTyped<'a, FrozenDefaultInfo>> {
         self.builtin_provider().ok_or_else(|| {
             internal_error!(
                 "DefaultInfo should always be set for providers returned from rule function"
@@ -661,7 +661,7 @@ impl FrozenProviderCollectionValue {
         Self { value }
     }
 
-    pub fn try_from_value(value: OwnedFrozenValue) -> buck2_error::Result<Self> {
+    pub fn try_from_value(value: OwnedFrozenValue) -> bz_error::Result<Self> {
         Ok(Self {
             value: value.downcast_starlark()?,
         })
@@ -704,7 +704,7 @@ impl FrozenProviderCollectionValue {
     pub fn lookup_inner<'f>(
         &'f self,
         label: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<FrozenProviderCollectionValueRef<'f>> {
+    ) -> bz_error::Result<FrozenProviderCollectionValueRef<'f>> {
         self.as_ref().lookup_inner(label)
     }
 }
@@ -761,9 +761,9 @@ impl<'f> FrozenProviderCollectionValueRef<'f> {
     pub fn lookup_inner(
         self,
         label: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<FrozenProviderCollectionValueRef<'f>> {
+    ) -> bz_error::Result<FrozenProviderCollectionValueRef<'f>> {
         match label.name() {
-            ProvidersName::Default => buck2_error::Ok(self),
+            ProvidersName::Default => bz_error::Ok(self),
             ProvidersName::NonDefault(flavor) => match flavor.as_ref() {
                 NonDefaultProvidersName::Named(provider_names) => {
                     let mut collection_value = self.value;
@@ -811,7 +811,7 @@ impl<'f> FrozenProviderCollectionValueRef<'f> {
 }
 
 pub mod tester {
-    use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
+    use bz_interpreter::types::provider::callable::ValueAsProviderCallableLike;
     use dupe::Dupe;
     use starlark::environment::GlobalsBuilder;
     use starlark::values::Value;
@@ -833,8 +833,8 @@ pub mod tester {
             let collection = frozen
                 .downcast_ref::<FrozenProviderCollection>()
                 .ok_or_else(|| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::StarlarkError,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::StarlarkError,
                         "{:?} was not a FrozenProviderCollection",
                         value
                     )
@@ -851,8 +851,8 @@ pub mod tester {
             let collection = frozen
                 .downcast_ref::<FrozenProviderCollection>()
                 .ok_or_else(|| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::StarlarkError,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::StarlarkError,
                         "{:?} was not a FrozenProviderCollection",
                         value
                     )
@@ -878,8 +878,8 @@ pub mod tester {
                 .expect("a frozen value")
                 .downcast_ref::<FrozenProviderCollection>()
                 .ok_or_else(|| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::StarlarkError,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::StarlarkError,
                         "{:?} was not a FrozenProviderCollection",
                         collection
                     )
@@ -895,8 +895,8 @@ pub mod tester {
                 .expect("a frozen value")
                 .downcast_ref::<FrozenProviderCollection>()
                 .ok_or_else(|| {
-                    buck2_error::buck2_error!(
-                        buck2_error::ErrorTag::StarlarkError,
+                    bz_error::bz_error!(
+                        bz_error::ErrorTag::StarlarkError,
                         "{:?} was not a FrozenProviderCollection",
                         collection
                     )

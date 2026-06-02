@@ -11,8 +11,8 @@
 use std::collections::VecDeque;
 use std::collections::hash_map::Entry;
 
-use buck2_error::internal_error;
-use buck2_hash::BuckHasherBuilder;
+use bz_error::internal_error;
+use bz_hash::BuckHasherBuilder;
 use starlark::values::Value;
 use starlark::values::ValueIdentity;
 use starlark::values::ValueLike;

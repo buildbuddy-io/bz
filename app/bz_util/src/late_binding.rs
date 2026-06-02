@@ -10,7 +10,7 @@
 
 use std::sync::OnceLock;
 
-use buck2_error::internal_error;
+use bz_error::internal_error;
 
 /// Value (typically a function pointer or a trait pointer) that is initialized at program start.
 ///
@@ -24,19 +24,19 @@ use buck2_error::internal_error;
 ///
 /// # Example
 ///
-/// We have a crate `buck2_node` that defines target graph data types
+/// We have a crate `bz_node` that defines target graph data types
 /// and a function to compute a target node.
 ///
 /// To compute a target node, we need dependency on heavy `starlark` crate.
 /// So we use late binding here. Actual implementation lives in downstream crate
-/// `buck2_interpreter_for_build`, but code that needs to compute a target node,
-/// calls the function defined in `buck2_node` crate without compile time dependency
-/// on `buck2_interpreter_for_build` or `starlark` crates.
+/// `bz_interpreter_for_build`, but code that needs to compute a target node,
+/// calls the function defined in `bz_node` crate without compile time dependency
+/// on `bz_interpreter_for_build` or `starlark` crates.
 ///
-/// The best example of this pattern is probably `buck2_bxl` crate:
-/// the only target depending on `buck2_bxl` is the final binary with `buck2.rs` file.
-/// So when `buck2_bxl` changes, we recompile only `buck2_bxl` and `buck2.rs`.
-/// At the moment of writing this comment, `buck2_bxl` had only one public function,
+/// The best example of this pattern is probably `bz_bxl` crate:
+/// the only target depending on `bz_bxl` is the final binary with `buck2.rs` file.
+/// So when `bz_bxl` changes, we recompile only `bz_bxl` and `buck2.rs`.
+/// At the moment of writing this comment, `bz_bxl` had only one public function,
 /// that is `init_late_bindings()`, that initializes all late bindings.
 ///
 /// # Usage
@@ -111,7 +111,7 @@ impl<T> LateBinding<T> {
     }
 
     #[inline]
-    pub fn get(&self) -> buck2_error::Result<&T> {
+    pub fn get(&self) -> bz_error::Result<&T> {
         self.symbol
             .get()
             .ok_or_else(|| internal_error!("{} not set", self.name))

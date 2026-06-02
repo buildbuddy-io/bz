@@ -105,7 +105,7 @@ enum Command {
 
         /// Command used to run `buck2`. Defaults to `"buck2"`.
         #[clap(long)]
-        buck2_command: Option<String>,
+        bz_command: Option<String>,
 
         #[clap(long, default_value = "50", env = "RUST_PROJECT_EXTRA_TARGETS")]
         max_extra_targets: Option<usize>,
@@ -146,7 +146,7 @@ enum Command {
 
         /// Command used to run `buck2`. Defaults to `"buck2"`.
         #[clap(long)]
-        buck2_command: Option<String>,
+        bz_command: Option<String>,
 
         #[clap(long, default_value = "50", env = "RUST_PROJECT_EXTRA_TARGETS")]
         max_extra_targets: Option<usize>,
@@ -168,7 +168,7 @@ enum Command {
 
         /// Command used to run `buck2`. Defaults to `"buck2"`.
         #[clap(long)]
-        buck2_command: Option<String>,
+        bz_command: Option<String>,
 
         /// The file saved by the user. `rust-project` will infer the owning target(s) of the saved file and build them.
         saved_file: PathBuf,
@@ -356,13 +356,13 @@ fn main() -> Result<(), anyhow::Error> {
             mode,
             use_clippy,
             saved_file,
-            buck2_command,
+            bz_command,
             ..
         } => {
             let subscriber = tracing_subscriber::registry().with(fmt.with_filter(filter));
             tracing::subscriber::set_global_default(subscriber)?;
 
-            let buck = Buck::new(buck2_command, mode, project_root);
+            let buck = Buck::new(bz_command, mode, project_root);
 
             cli::Check::new(buck, use_clippy, saved_file.clone())
                 .run()
@@ -448,7 +448,7 @@ fn json_args_pass() {
             args,
             sysroot_mode: SysrootMode::BuckConfig,
             client: None,
-            buck2_command: None,
+            bz_command: None,
             max_extra_targets: Some(50),
             mode: None,
         }),
@@ -468,7 +468,7 @@ fn json_args_pass() {
             args,
             sysroot_mode: SysrootMode::BuckConfig,
             client: None,
-            buck2_command: None,
+            bz_command: None,
             max_extra_targets: Some(50),
             mode: None,
         }),
@@ -488,7 +488,7 @@ fn json_args_pass() {
             args,
             sysroot_mode: SysrootMode::BuckConfig,
             client: None,
-            buck2_command: None,
+            bz_command: None,
             max_extra_targets: Some(50),
             mode: None,
         }),

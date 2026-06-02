@@ -9,22 +9,22 @@
  */
 
 use async_trait::async_trait;
-use buck2_core::package::PackageLabel;
-use buck2_interpreter::paths::package::PackageFilePath;
-use buck2_interpreter::paths::path::OwnedStarlarkPath;
-use buck2_node::super_package::SuperPackage;
+use bz_core::package::PackageLabel;
+use bz_interpreter::paths::package::PackageFilePath;
+use bz_interpreter::paths::path::OwnedStarlarkPath;
+use bz_node::super_package::SuperPackage;
 use dice::DiceComputations;
 
 use crate::interpreter::dice_calculation_delegate::HasCalculationDelegate;
 
 #[async_trait]
 pub trait EvalPackageFile {
-    async fn eval_package_file(&mut self, path: PackageLabel) -> buck2_error::Result<SuperPackage>;
+    async fn eval_package_file(&mut self, path: PackageLabel) -> bz_error::Result<SuperPackage>;
 }
 
 #[async_trait]
 impl EvalPackageFile for DiceComputations<'_> {
-    async fn eval_package_file(&mut self, path: PackageLabel) -> buck2_error::Result<SuperPackage> {
+    async fn eval_package_file(&mut self, path: PackageLabel) -> bz_error::Result<SuperPackage> {
         self.get_interpreter_calculator(OwnedStarlarkPath::PackageFile(
             PackageFilePath::package_file_for_dir(path.as_cell_path()),
         ))

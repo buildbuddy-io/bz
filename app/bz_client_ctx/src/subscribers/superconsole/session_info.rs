@@ -10,7 +10,7 @@
 
 use std::iter;
 
-use buck2_event_observer::session_info::SessionInfo;
+use bz_event_observer::session_info::SessionInfo;
 use superconsole::Component;
 use superconsole::Dimensions;
 use superconsole::DrawMode;
@@ -24,13 +24,13 @@ pub struct SessionInfoComponent<'s> {
 }
 
 impl Component for SessionInfoComponent<'_> {
-    type Error = buck2_error::Error;
+    type Error = bz_error::Error;
 
     fn draw_unchecked(
         &self,
         dimensions: Dimensions,
         _mode: DrawMode,
-    ) -> buck2_error::Result<Lines> {
+    ) -> bz_error::Result<Lines> {
         let mut headers = Lines::new();
         let mut ids = vec![];
         if cfg!(fbcode_build) {
@@ -43,7 +43,7 @@ impl Component for SessionInfoComponent<'_> {
             headers.push(Line::unstyled("Build ID:")?);
             ids.push(Span::new_unstyled(&self.session_info.trace_id)?);
         }
-        if let Some(buck2_data::TestSessionInfo { info, .. }) = &self.session_info.test_session {
+        if let Some(bz_data::TestSessionInfo { info, .. }) = &self.session_info.test_session {
             headers.push(Line::unstyled("Test UI:")?);
             ids.push(Span::new_unstyled(info)?);
         }

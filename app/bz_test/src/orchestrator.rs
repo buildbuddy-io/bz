@@ -11,7 +11,7 @@
 // https://github.com/rust-lang/rust-clippy/issues/12806
 #![allow(clippy::unnecessary_to_owned)]
 
-//! Implementation of the `TestOrchestrator` from `buck2_test_api`.
+//! Implementation of the `TestOrchestrator` from `bz_test_api`.
 
 use std::borrow::Cow;
 use std::ffi::OsStr;
@@ -25,134 +25,134 @@ use std::time::Duration;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use buck2_build_api::actions::execute::dice_data::CommandExecutorResponse;
-use buck2_build_api::actions::execute::dice_data::DiceHasCommandExecutor;
-use buck2_build_api::actions::execute::dice_data::GetReClient;
-use buck2_build_api::actions::impls::run_action_knobs::HasRunActionKnobs;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::artifact_groups::ArtifactGroupValues;
-use buck2_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
-use buck2_build_api::build_signals::HasBuildSignals;
-use buck2_build_api::context::HasBuildContextData;
-use buck2_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapperImpl;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
-use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
-use buck2_build_api::interpreter::rule_defs::cmd_args::space_separated::SpaceSeparatedCommandLineBuilder;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::FrozenExternalRunnerTestInfo;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::TestCommandMember;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::local_resource_info::FrozenLocalResourceInfo;
-use buck2_build_api::keep_going::KeepGoing;
-use buck2_build_signals::env::NodeDuration;
-use buck2_build_signals::env::WaitingData;
-use buck2_common::dice::cells::HasCellResolver;
-use buck2_common::events::HasEvents;
-use buck2_common::liveliness_observer::LivelinessObserver;
-use buck2_common::local_resource_state::LocalResourceState;
-use buck2_core::cells::cell_root_path::CellRootPathBuf;
-use buck2_core::execution_types::executor_config::CommandExecutorConfig;
-use buck2_core::execution_types::executor_config::CommandGenerationOptions;
-use buck2_core::execution_types::executor_config::Executor;
-use buck2_core::execution_types::executor_config::LocalExecutorOptions;
-use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
-use buck2_core::execution_types::executor_config::PathSeparatorKind;
-use buck2_core::execution_types::executor_config::RemoteExecutorCustomImage;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_core::fs::buck_out_path::BuckOutTestPath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
-use buck2_data::EndOfTestResults;
-use buck2_data::SetupLocalResourcesEnd;
-use buck2_data::SetupLocalResourcesStart;
-use buck2_data::TestDiscovery;
-use buck2_data::TestDiscoveryEnd;
-use buck2_data::TestDiscoveryStart;
-use buck2_data::TestRunEnd;
-use buck2_data::TestRunStart;
-use buck2_data::TestSessionInfo;
-use buck2_data::TestSuite;
-use buck2_data::ToProtoMessage;
-use buck2_error::BuckErrorContext;
-use buck2_error::ErrorTag;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_error::internal_error;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_execute::artifact::fs::ExecutorFs;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::digest_config::HasDigestConfig;
-use buck2_execute::execute::blocking::HasBlockingExecutor;
-use buck2_execute::execute::cache_uploader::CacheUploadInfo;
-use buck2_execute::execute::cache_uploader::NoOpCacheUploader;
-use buck2_execute::execute::claim::MutexClaimManager;
-use buck2_execute::execute::command_executor::CommandExecutor;
-use buck2_execute::execute::environment_inheritance::EnvironmentInheritance;
-use buck2_execute::execute::kind::CommandExecutionKind;
-use buck2_execute::execute::manager::CommandExecutionManager;
-use buck2_execute::execute::prepared::NoOpCommandOptionalExecutor;
-use buck2_execute::execute::prepared::PreparedCommand;
-use buck2_execute::execute::request::CommandExecutionInput;
-use buck2_execute::execute::request::CommandExecutionOutput;
-use buck2_execute::execute::request::CommandExecutionPaths;
-use buck2_execute::execute::request::CommandExecutionRequest;
-use buck2_execute::execute::request::ExecutorPreference;
-use buck2_execute::execute::request::NetworkAccess;
-use buck2_execute::execute::request::OutputCreationBehavior;
-use buck2_execute::execute::request::WorkerId;
-use buck2_execute::execute::request::WorkerSpec;
-use buck2_execute::execute::result::CommandCancellationReason;
-use buck2_execute::execute::result::CommandExecutionMetadata;
-use buck2_execute::execute::result::CommandExecutionReport;
-use buck2_execute::execute::result::CommandExecutionResult;
-use buck2_execute::execute::result::CommandExecutionStatus;
-use buck2_execute::execute::target::CommandExecutionTarget;
-use buck2_execute::materialize::materializer::HasMaterializer;
-use buck2_execute::re::action_identity::ReActionIdentity;
-use buck2_execute_impl::executors::local::EnvironmentBuilder;
-use buck2_execute_impl::executors::local::apply_local_execution_environment;
-use buck2_execute_impl::executors::local::create_output_dirs;
-use buck2_execute_impl::executors::local::materialize_input_path_aliases;
-use buck2_execute_impl::executors::local::materialize_inputs;
-use buck2_execute_impl::executors::local::prep_scratch_path;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckDefaultHasher;
-use buck2_hash::BuckHashMap;
-use buck2_hash::BuckIndexMap;
-use buck2_hash::BuckIndexSet;
-use buck2_hash::StdBuckHashMap;
-use buck2_hash::StdBuckHashSet;
-use buck2_hash::buck_indexset;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
-use buck2_resource_control::HasResourceControl;
-use buck2_test_api::data::ArgValue;
-use buck2_test_api::data::ArgValueContent;
-use buck2_test_api::data::CasDigest;
-use buck2_test_api::data::ConfiguredTargetHandle;
-use buck2_test_api::data::DeclaredOutput;
-use buck2_test_api::data::ExecuteResponse;
-use buck2_test_api::data::ExecutionDetails;
-use buck2_test_api::data::ExecutionResult2;
-use buck2_test_api::data::ExecutionStatus;
-use buck2_test_api::data::ExecutionStream;
-use buck2_test_api::data::ExecutorConfigOverride;
-use buck2_test_api::data::ExternalRunnerSpecValue;
-use buck2_test_api::data::LocalExecutionCommand;
-use buck2_test_api::data::Output;
-use buck2_test_api::data::PrepareForLocalExecutionResult;
-use buck2_test_api::data::RequiredLocalResources;
-use buck2_test_api::data::TestResult;
-use buck2_test_api::data::TestStage;
-use buck2_test_api::data::convert::host_sharing_requirements_to_grpc;
-use buck2_test_api::protocol::TestOrchestrator;
+use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::actions::execute::dice_data::CommandExecutorResponse;
+use bz_build_api::actions::execute::dice_data::DiceHasCommandExecutor;
+use bz_build_api::actions::execute::dice_data::GetReClient;
+use bz_build_api::actions::impls::run_action_knobs::HasRunActionKnobs;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::artifact_groups::ArtifactGroupValues;
+use bz_build_api::artifact_groups::calculation::ArtifactGroupCalculation;
+use bz_build_api::build_signals::HasBuildSignals;
+use bz_build_api::context::HasBuildContextData;
+use bz_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapperImpl;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
+use bz_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
+use bz_build_api::interpreter::rule_defs::cmd_args::space_separated::SpaceSeparatedCommandLineBuilder;
+use bz_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::FrozenExternalRunnerTestInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::TestCommandMember;
+use bz_build_api::interpreter::rule_defs::provider::builtin::local_resource_info::FrozenLocalResourceInfo;
+use bz_build_api::keep_going::KeepGoing;
+use bz_build_signals::env::NodeDuration;
+use bz_build_signals::env::WaitingData;
+use bz_common::dice::cells::HasCellResolver;
+use bz_common::events::HasEvents;
+use bz_common::liveliness_observer::LivelinessObserver;
+use bz_common::local_resource_state::LocalResourceState;
+use bz_core::cells::cell_root_path::CellRootPathBuf;
+use bz_core::execution_types::executor_config::CommandExecutorConfig;
+use bz_core::execution_types::executor_config::CommandGenerationOptions;
+use bz_core::execution_types::executor_config::Executor;
+use bz_core::execution_types::executor_config::LocalExecutorOptions;
+use bz_core::execution_types::executor_config::MetaInternalExtraParams;
+use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::execution_types::executor_config::RemoteExecutorCustomImage;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BuckOutTestPath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
+use bz_data::EndOfTestResults;
+use bz_data::SetupLocalResourcesEnd;
+use bz_data::SetupLocalResourcesStart;
+use bz_data::TestDiscovery;
+use bz_data::TestDiscoveryEnd;
+use bz_data::TestDiscoveryStart;
+use bz_data::TestRunEnd;
+use bz_data::TestRunStart;
+use bz_data::TestSessionInfo;
+use bz_data::TestSuite;
+use bz_data::ToProtoMessage;
+use bz_error::BuckErrorContext;
+use bz_error::ErrorTag;
+use bz_error::conversion::from_any_with_tag;
+use bz_error::internal_error;
+use bz_events::dispatch::EventDispatcher;
+use bz_execute::artifact::fs::ExecutorFs;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::execute::blocking::HasBlockingExecutor;
+use bz_execute::execute::cache_uploader::CacheUploadInfo;
+use bz_execute::execute::cache_uploader::NoOpCacheUploader;
+use bz_execute::execute::claim::MutexClaimManager;
+use bz_execute::execute::command_executor::CommandExecutor;
+use bz_execute::execute::environment_inheritance::EnvironmentInheritance;
+use bz_execute::execute::kind::CommandExecutionKind;
+use bz_execute::execute::manager::CommandExecutionManager;
+use bz_execute::execute::prepared::NoOpCommandOptionalExecutor;
+use bz_execute::execute::prepared::PreparedCommand;
+use bz_execute::execute::request::CommandExecutionInput;
+use bz_execute::execute::request::CommandExecutionOutput;
+use bz_execute::execute::request::CommandExecutionPaths;
+use bz_execute::execute::request::CommandExecutionRequest;
+use bz_execute::execute::request::ExecutorPreference;
+use bz_execute::execute::request::NetworkAccess;
+use bz_execute::execute::request::OutputCreationBehavior;
+use bz_execute::execute::request::WorkerId;
+use bz_execute::execute::request::WorkerSpec;
+use bz_execute::execute::result::CommandCancellationReason;
+use bz_execute::execute::result::CommandExecutionMetadata;
+use bz_execute::execute::result::CommandExecutionReport;
+use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::execute::result::CommandExecutionStatus;
+use bz_execute::execute::target::CommandExecutionTarget;
+use bz_execute::materialize::materializer::HasMaterializer;
+use bz_execute::re::action_identity::ReActionIdentity;
+use bz_execute_impl::executors::local::EnvironmentBuilder;
+use bz_execute_impl::executors::local::apply_local_execution_environment;
+use bz_execute_impl::executors::local::create_output_dirs;
+use bz_execute_impl::executors::local::materialize_input_path_aliases;
+use bz_execute_impl::executors::local::materialize_inputs;
+use bz_execute_impl::executors::local::prep_scratch_path;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use bz_hash::BuckDefaultHasher;
+use bz_hash::BuckHashMap;
+use bz_hash::BuckIndexMap;
+use bz_hash::BuckIndexSet;
+use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
+use bz_hash::buck_indexset;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
+use bz_resource_control::HasResourceControl;
+use bz_test_api::data::ArgValue;
+use bz_test_api::data::ArgValueContent;
+use bz_test_api::data::CasDigest;
+use bz_test_api::data::ConfiguredTargetHandle;
+use bz_test_api::data::DeclaredOutput;
+use bz_test_api::data::ExecuteResponse;
+use bz_test_api::data::ExecutionDetails;
+use bz_test_api::data::ExecutionResult2;
+use bz_test_api::data::ExecutionStatus;
+use bz_test_api::data::ExecutionStream;
+use bz_test_api::data::ExecutorConfigOverride;
+use bz_test_api::data::ExternalRunnerSpecValue;
+use bz_test_api::data::LocalExecutionCommand;
+use bz_test_api::data::Output;
+use bz_test_api::data::PrepareForLocalExecutionResult;
+use bz_test_api::data::RequiredLocalResources;
+use bz_test_api::data::TestResult;
+use bz_test_api::data::TestStage;
+use bz_test_api::data::convert::host_sharing_requirements_to_grpc;
+use bz_test_api::protocol::TestOrchestrator;
 use derive_more::From;
 use dice::DiceComputations;
 use dice::DiceTransaction;
@@ -195,7 +195,7 @@ pub enum ExecutorMessage {
 pub struct BuckTestOrchestrator<'a: 'static> {
     dice: DiceTransaction,
     session: Arc<TestSession>,
-    results_channel: UnboundedSender<buck2_error::Result<ExecutorMessage>>,
+    results_channel: UnboundedSender<bz_error::Result<ExecutorMessage>>,
     events: EventDispatcher,
     liveliness_observer: Arc<dyn LivelinessObserver>,
     cancellations: &'a CancellationContext,
@@ -207,9 +207,9 @@ impl<'a> BuckTestOrchestrator<'a> {
         dice: DiceTransaction,
         session: Arc<TestSession>,
         liveliness_observer: Arc<dyn LivelinessObserver>,
-        results_channel: UnboundedSender<buck2_error::Result<ExecutorMessage>>,
+        results_channel: UnboundedSender<bz_error::Result<ExecutorMessage>>,
         cancellations: &'a CancellationContext,
-    ) -> buck2_error::Result<BuckTestOrchestrator<'a>> {
+    ) -> bz_error::Result<BuckTestOrchestrator<'a>> {
         let events = dice.per_transaction_data().get_dispatcher().dupe();
         let re_client = Arc::new(remote_storage::ReClientWithCache::new(
             dice.per_transaction_data().get_re_client(),
@@ -229,7 +229,7 @@ impl<'a> BuckTestOrchestrator<'a> {
         dice: DiceTransaction,
         session: Arc<TestSession>,
         liveliness_observer: Arc<dyn LivelinessObserver>,
-        results_channel: UnboundedSender<buck2_error::Result<ExecutorMessage>>,
+        results_channel: UnboundedSender<bz_error::Result<ExecutorMessage>>,
         events: EventDispatcher,
         cancellations: &'a CancellationContext,
         re_client: Arc<remote_storage::ReClientWithCache>,
@@ -644,7 +644,7 @@ async fn prepare_and_execute_dice(
     ctx: &mut DiceComputations<'_>,
     key: &TestExecutionKey,
 ) -> Result<Arc<ExecuteData>, ExecuteError> {
-    ctx.compute(key).await.map_err(buck2_error::Error::from)?
+    ctx.compute(key).await.map_err(bz_error::Error::from)?
 }
 
 impl Display for TestExecutionKey {
@@ -695,7 +695,7 @@ struct Cancelled {
 // NOTE: This doesn't implement Error so that we can't accidentally lose the Cancelled variant.
 #[derive(From, Clone, Dupe, Allocative)]
 enum ExecuteError {
-    Error(buck2_error::Error),
+    Error(bz_error::Error),
     Cancelled(Cancelled),
 }
 
@@ -713,7 +713,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         executor_override: Option<ExecutorConfigOverride>,
         required_local_resources: RequiredLocalResources,
         disable_test_execution_caching: bool,
-    ) -> buck2_error::Result<ExecuteResponse> {
+    ) -> bz_error::Result<ExecuteResponse> {
         let res = BuckTestOrchestrator::execute2(
             self,
             stage,
@@ -734,10 +734,10 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
             Err(ExecuteError::Cancelled(cancelled)) => {
                 Ok(ExecuteResponse::Cancelled(match cancelled.reason {
                     Some(CancellationReason::NotSpecified) => {
-                        Some(buck2_test_api::data::CancellationReason::NotSpecified)
+                        Some(bz_test_api::data::CancellationReason::NotSpecified)
                     }
                     Some(CancellationReason::ReQueueTimeout) => {
-                        Some(buck2_test_api::data::CancellationReason::ReQueueTimeout)
+                        Some(bz_test_api::data::CancellationReason::ReQueueTimeout)
                     }
                     None => None,
                 }))
@@ -746,8 +746,8 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         }
     }
 
-    async fn report_test_result(&self, r: TestResult) -> buck2_error::Result<()> {
-        let event = buck2_data::instant_event::Data::TestResult(translations::convert_test_result(
+    async fn report_test_result(&self, r: TestResult) -> bz_error::Result<()> {
+        let event = bz_data::instant_event::Data::TestResult(translations::convert_test_result(
             r.clone(),
             &self.session,
         )?);
@@ -755,7 +755,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         self.results_channel
             .unbounded_send(Ok(ExecutorMessage::TestResult(r)))
             .map_err(|_| {
-                buck2_error::internal_error!("Test result was received after end-of-tests")
+                bz_error::internal_error!("Test result was received after end-of-tests")
             })?;
         Ok(())
     }
@@ -765,11 +765,11 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         test_target: ConfiguredTargetHandle,
         suite: String,
         names: Vec<String>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let test_target = self.session.get(test_target)?;
 
         self.events.instant_event(TestDiscovery {
-            data: Some(buck2_data::test_discovery::Data::Tests(TestSuite {
+            data: Some(bz_data::test_discovery::Data::Tests(TestSuite {
                 suite_name: suite,
                 test_names: names,
                 target_label: Some(test_target.target().as_proto()),
@@ -783,9 +783,9 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         &self,
         session_info: String,
         test_session_id: Option<String>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.events.instant_event(TestDiscovery {
-            data: Some(buck2_data::test_discovery::Data::Session(TestSessionInfo {
+            data: Some(bz_data::test_discovery::Data::Session(TestSessionInfo {
                 info: session_info,
                 test_session_id,
             })),
@@ -794,11 +794,11 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         Ok(())
     }
 
-    async fn end_of_test_results(&self, exit_code: i32) -> buck2_error::Result<()> {
+    async fn end_of_test_results(&self, exit_code: i32) -> bz_error::Result<()> {
         self.events.instant_event(EndOfTestResults { exit_code });
         self.results_channel
             .unbounded_send(Ok(ExecutorMessage::ExitCode(exit_code)))
-            .map_err(|_| buck2_error::internal_error!("end_of_tests was received twice"))?;
+            .map_err(|_| bz_error::internal_error!("end_of_tests was received twice"))?;
         self.results_channel.close_channel();
         Ok(())
     }
@@ -811,7 +811,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         env: SortedVectorMap<String, ArgValue>,
         pre_create_dirs: Vec<DeclaredOutput>,
         required_local_resources: RequiredLocalResources,
-    ) -> buck2_error::Result<PrepareForLocalExecutionResult> {
+    ) -> bz_error::Result<PrepareForLocalExecutionResult> {
         let test_target = self.session.get(test_target)?;
 
         let fs = self.dice.clone().get_artifact_fs().await?;
@@ -959,10 +959,10 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         ))
     }
 
-    async fn attach_info_message(&self, message: String) -> buck2_error::Result<()> {
+    async fn attach_info_message(&self, message: String) -> bz_error::Result<()> {
         self.results_channel
             .unbounded_send(Ok(ExecutorMessage::InfoMessage(message)))
-            .map_err(|_| buck2_error::internal_error!("Message received after end-of-tests"))?;
+            .map_err(|_| bz_error::internal_error!("Message received after end-of-tests"))?;
         Ok(())
     }
 
@@ -971,7 +971,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         local_path: String,
         ttl_seconds: i64,
         use_case: String,
-    ) -> buck2_error::Result<CasDigest> {
+    ) -> bz_error::Result<CasDigest> {
         let digest_config = self.dice.global_data().get_digest_config();
         let re_digest = self
             .re_client
@@ -997,7 +997,7 @@ impl BuckTestOrchestrator<'_> {
     fn executor_preference(
         opts: TestSessionOptions,
         test_supports_re: bool,
-    ) -> buck2_error::Result<ExecutorPreference> {
+    ) -> bz_error::Result<ExecutorPreference> {
         let mut executor_preference = ExecutorPreference::Default;
 
         if !opts.allow_re {
@@ -1269,7 +1269,7 @@ impl BuckTestOrchestrator<'_> {
         executor_override: Option<&'a CommandExecutorConfig>,
         stage: &TestStage,
         supports_test_execution_caching: bool,
-    ) -> buck2_error::Result<Cow<'a, CommandExecutorConfig>> {
+    ) -> bz_error::Result<Cow<'a, CommandExecutorConfig>> {
         let executor_config = match executor_override {
             Some(o) => o,
             None => test_target_node
@@ -1308,7 +1308,7 @@ impl BuckTestOrchestrator<'_> {
         executor_config: &CommandExecutorConfig,
         stage: &TestStage,
         supports_test_execution_caching: bool,
-    ) -> buck2_error::Result<CommandExecutor> {
+    ) -> bz_error::Result<CommandExecutor> {
         let CommandExecutorResponse {
             executor,
             platform,
@@ -1348,7 +1348,7 @@ impl BuckTestOrchestrator<'_> {
     async fn get_local_executor(
         dice: &mut DiceComputations<'_>,
         fs: &ArtifactFs,
-    ) -> buck2_error::Result<CommandExecutor> {
+    ) -> bz_error::Result<CommandExecutor> {
         let executor_config = CommandExecutorConfig {
             executor: Executor::Local(LocalExecutorOptions::default()),
             options: CommandGenerationOptions {
@@ -1382,7 +1382,7 @@ impl BuckTestOrchestrator<'_> {
     async fn get_test_info(
         dice: &mut DiceComputations<'_>,
         test_target: &ConfiguredProvidersLabel,
-    ) -> buck2_error::Result<OwnedFrozenValueTyped<FrozenExternalRunnerTestInfo>> {
+    ) -> bz_error::Result<OwnedFrozenValueTyped<FrozenExternalRunnerTestInfo>> {
         dice.get_providers(test_target)
             .await?
             .require_compatible()?
@@ -1404,7 +1404,7 @@ impl BuckTestOrchestrator<'_> {
         fs: &ArtifactFs,
         stage: &TestStage,
         supports_test_execution_caching: bool,
-    ) -> buck2_error::Result<TestExecutor> {
+    ) -> bz_error::Result<TestExecutor> {
         // NOTE: get_providers() implicitly calls this already but it's not the end of the world
         // since this will get cached in DICE.
         let node = dice
@@ -1469,7 +1469,7 @@ impl BuckTestOrchestrator<'_> {
         executor_fs: &ExecutorFs<'_>,
         stage: &TestStage,
         opts: TestSessionOptions,
-    ) -> buck2_error::Result<ExpandedTestExecutable> {
+    ) -> bz_error::Result<ExpandedTestExecutable> {
         let output_root = resolve_output_root(dice, test_target, stage).await?;
 
         let mut declared_outputs = BuckIndexMap::<BuckOutTestPath, OutputCreationBehavior>::new();
@@ -1503,7 +1503,7 @@ impl BuckTestOrchestrator<'_> {
             let ensured_inputs = KeepGoing::try_compute_join_all(dice, inputs, |dice, input| {
                 async move {
                     let artifact_group_value = dice.ensure_artifact_group(&input).await?;
-                    buck2_error::Ok((input, artifact_group_value))
+                    bz_error::Ok((input, artifact_group_value))
                 }
                 .boxed()
             })
@@ -1553,7 +1553,7 @@ impl BuckTestOrchestrator<'_> {
         re_dynamic_image: Option<RemoteExecutorCustomImage>,
         meta_internal_extra_params: Arc<MetaInternalExtraParams>,
         network_access: Option<NetworkAccess>,
-    ) -> buck2_error::Result<CommandExecutionRequest> {
+    ) -> bz_error::Result<CommandExecutionRequest> {
         let inputs = ensured_inputs
             .into_iter()
             .map(|(_, v)| CommandExecutionInput::Artifact(Box::new(v)))
@@ -1678,7 +1678,7 @@ impl BuckTestOrchestrator<'_> {
             lock.insert(target, result);
         }
 
-        let result: buck2_error::Result<Vec<_>> = required_targets
+        let result: bz_error::Result<Vec<_>> = required_targets
             .iter()
             .map(|t| lock.get(t).unwrap().clone())
             .collect();
@@ -1694,7 +1694,7 @@ impl BuckTestOrchestrator<'_> {
         fs: &ArtifactFs,
         executor_fs: &ExecutorFs<'_>,
         default_timeout: Duration,
-    ) -> buck2_error::Result<PreparedLocalResourceSetupContext> {
+    ) -> bz_error::Result<PreparedLocalResourceSetupContext> {
         let digest_config = dice.global_data().get_digest_config();
 
         let (target, provider) = provider;
@@ -1758,7 +1758,7 @@ impl BuckTestOrchestrator<'_> {
         executor: CommandExecutor,
         context: PreparedLocalResourceSetupContext,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<LocalResourceState> {
+    ) -> bz_error::Result<LocalResourceState> {
         let manager = CommandExecutionManager::new(
             Box::new(MutexClaimManager::new()),
             events.dupe(),
@@ -1809,7 +1809,7 @@ impl BuckTestOrchestrator<'_> {
             CommandExecutionStatus::Success { .. } => {}
             CommandExecutionStatus::Failure { .. }
             | CommandExecutionStatus::WorkerFailure { .. } => {
-                return Err(buck2_error::buck2_error!(
+                return Err(bz_error::bz_error!(
                     ErrorTag::LocalResourceSetup,
                     "Local resource setup command failed with `{}` exit code, stdout:\n{}\nstderr:\n{}\n",
                     exit_code.unwrap_or(1),
@@ -1818,7 +1818,7 @@ impl BuckTestOrchestrator<'_> {
                 ));
             }
             CommandExecutionStatus::TimedOut { duration, .. } => {
-                return Err(buck2_error::buck2_error!(
+                return Err(bz_error::bz_error!(
                     ErrorTag::LocalResourceSetup,
                     "Local resource setup command timed out after `{}s`, stdout:\n{}\nstderr:\n{}\n",
                     duration.as_secs(),
@@ -1830,7 +1830,7 @@ impl BuckTestOrchestrator<'_> {
                 return Err(error);
             }
             CommandExecutionStatus::Cancelled { .. } => {
-                return Err(buck2_error::buck2_error!(
+                return Err(bz_error::bz_error!(
                     ErrorTag::LocalResourceSetup,
                     "Local resource setup command cancelled"
                 ));
@@ -1853,7 +1853,7 @@ impl Drop for BuckTestOrchestrator<'_> {
         // incomplete.
         let _ignored = self
             .results_channel
-            .unbounded_send(Err(buck2_error::internal_error!(
+            .unbounded_send(Err(bz_error::internal_error!(
                 "BuckTestOrchestrator exited before end-of-tests was received",
             )));
     }
@@ -1872,7 +1872,7 @@ struct Execute2RequestExpander<'a> {
 fn make_visit_arg_artifacts<'v>(
     cli_args_for_interpolation: Vec<&'v dyn CommandLineArgLike<'v>>,
     env_for_interpolation: StdBuckHashMap<&'v str, &'v dyn CommandLineArgLike<'v>>,
-) -> impl for<'a> Fn(&'a mut dyn CommandLineArtifactVisitor<'v>, &'a ArgValue) -> buck2_error::Result<()>
+) -> impl for<'a> Fn(&'a mut dyn CommandLineArtifactVisitor<'v>, &'a ArgValue) -> bz_error::Result<()>
 {
     move |artifact_visitor: &mut dyn CommandLineArtifactVisitor<'_>, value: &ArgValue| {
         match &value.content {
@@ -1891,12 +1891,12 @@ fn make_visit_arg_artifacts<'v>(
             ArgValueContent::DeclaredOutput(_) | ArgValueContent::ExternalRunnerSpecValue(_) => {}
         };
 
-        buck2_error::Ok(())
+        bz_error::Ok(())
     }
 }
 
 impl<'a> Execute2RequestExpander<'a> {
-    fn get_inputs(&self) -> buck2_error::Result<BuckIndexSet<ArtifactGroup>> {
+    fn get_inputs(&self) -> bz_error::Result<BuckIndexSet<ArtifactGroup>> {
         let Execute2RequestExpander {
             test_info,
             cmd,
@@ -1935,7 +1935,7 @@ impl<'a> Execute2RequestExpander<'a> {
     fn expand<B>(
         self,
         ensured_inputs: &Vec<(ArtifactGroup, ArtifactGroupValues)>,
-    ) -> buck2_error::Result<(
+    ) -> bz_error::Result<(
         Vec<String>,
         SortedVectorMap<String, String>,
         Option<WorkerSpec>,
@@ -2000,7 +2000,7 @@ impl<'a> Execute2RequestExpander<'a> {
                 }
             };
 
-            buck2_error::Ok(())
+            bz_error::Ok(())
         };
 
         let mut expanded_cmd = Vec::<String>::new();
@@ -2021,7 +2021,7 @@ impl<'a> Execute2RequestExpander<'a> {
                     declared_outputs,
                     v,
                 )?;
-                buck2_error::Ok((k, curr_env))
+                bz_error::Ok((k, curr_env))
             })
             .collect::<Result<SortedVectorMap<_, _>, _>>()?;
 
@@ -2034,7 +2034,7 @@ impl<'a> Execute2RequestExpander<'a> {
                     &mut ctx,
                     &artifact_path_mapping,
                 )?;
-                let worker_env: buck2_error::Result<SortedVectorMap<_, _>> = worker
+                let worker_env: bz_error::Result<SortedVectorMap<_, _>> = worker
                     .env()
                     .into_iter()
                     .map(|(k, v)| {
@@ -2052,7 +2052,7 @@ impl<'a> Execute2RequestExpander<'a> {
                 Some(WorkerSpec {
                     exe: worker_rendered,
                     id: WorkerId(worker.id),
-                    protocol: buck2_execute::execute::request::WorkerProtocol::Buck2,
+                    protocol: bz_execute::execute::request::WorkerProtocol::Buck2,
                     env: worker_env?,
                     concurrency: worker.concurrency(),
                     streaming: worker.streaming(),
@@ -2079,7 +2079,7 @@ async fn resolve_output_root(
     dice: &mut DiceComputations<'_>,
     test_target: &ConfiguredProvidersLabel,
     stage: &TestStage,
-) -> Result<ForwardRelativePathBuf, buck2_error::Error> {
+) -> Result<ForwardRelativePathBuf, bz_error::Error> {
     let resolver = dice.get_buck_out_path().await?;
 
     let output_root = match stage {
@@ -2264,18 +2264,18 @@ impl CommandExecutionTarget for TestTarget<'_> {
         self.target.to_string()
     }
 
-    fn as_proto_action_key(&self) -> buck2_data::ActionKey {
-        buck2_data::ActionKey {
+    fn as_proto_action_key(&self) -> bz_data::ActionKey {
+        bz_data::ActionKey {
             id: Default::default(),
-            owner: Some(buck2_data::action_key::Owner::TestTargetLabel(
+            owner: Some(bz_data::action_key::Owner::TestTargetLabel(
                 self.target.as_proto(),
             )),
             key: Default::default(),
         }
     }
 
-    fn as_proto_action_name(&self) -> buck2_data::ActionName {
-        buck2_data::ActionName {
+    fn as_proto_action_name(&self) -> bz_data::ActionName {
+        bz_data::ActionName {
             category: "test".to_owned(),
             identifier: "".to_owned(),
         }
@@ -2317,18 +2317,18 @@ impl CommandExecutionTarget for LocalResourceTarget<'_> {
         String::new()
     }
 
-    fn as_proto_action_key(&self) -> buck2_data::ActionKey {
-        buck2_data::ActionKey {
+    fn as_proto_action_key(&self) -> bz_data::ActionKey {
+        bz_data::ActionKey {
             id: Default::default(),
-            owner: Some(buck2_data::action_key::Owner::LocalResourceSetup(
+            owner: Some(bz_data::action_key::Owner::LocalResourceSetup(
                 self.target.as_proto(),
             )),
             key: Default::default(),
         }
     }
 
-    fn as_proto_action_name(&self) -> buck2_data::ActionName {
-        buck2_data::ActionName {
+    fn as_proto_action_name(&self) -> bz_data::ActionName {
+        bz_data::ActionName {
             category: "setup_local_resource".to_owned(),
             identifier: "".to_owned(),
         }
@@ -2368,17 +2368,17 @@ impl TestExecutor {
 
 #[cfg(test)]
 mod tests {
-    use buck2_build_api::context::SetBuildContextData;
-    use buck2_common::dice::cells::SetCellResolver;
-    use buck2_common::dice::data::testing::SetTestingIoProvider;
-    use buck2_common::liveliness_observer::NoopLivelinessObserver;
-    use buck2_core::cells::CellResolver;
-    use buck2_core::cells::name::CellName;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::fs::project::ProjectRootTemp;
-    use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
-    use buck2_test_api::data::TestStage;
-    use buck2_test_api::data::TestStatus;
+    use bz_build_api::context::SetBuildContextData;
+    use bz_common::dice::cells::SetCellResolver;
+    use bz_common::dice::data::testing::SetTestingIoProvider;
+    use bz_common::liveliness_observer::NoopLivelinessObserver;
+    use bz_core::cells::CellResolver;
+    use bz_core::cells::name::CellName;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
+    use bz_test_api::data::TestStage;
+    use bz_test_api::data::TestStatus;
     use dice::UserComputationData;
     use dice::testing::DiceBuilder;
     use futures::channel::mpsc;
@@ -2388,9 +2388,9 @@ mod tests {
 
     use super::*;
 
-    async fn make() -> buck2_error::Result<(
+    async fn make() -> bz_error::Result<(
         BuckTestOrchestrator<'static>,
-        UnboundedReceiver<buck2_error::Result<ExecutorMessage>>,
+        UnboundedReceiver<bz_error::Result<ExecutorMessage>>,
     )> {
         let fs = ProjectRootTemp::new().unwrap();
 
@@ -2429,7 +2429,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn orchestrator_results() -> buck2_error::Result<()> {
+    async fn orchestrator_results() -> bz_error::Result<()> {
         let (orchestrator, channel) = make().await?;
 
         let target =
@@ -2465,7 +2465,7 @@ mod tests {
 
             orchestrator.end_of_test_results(0).await?;
 
-            buck2_error::Ok(())
+            bz_error::Ok(())
         };
 
         let ((), results) = future::try_join(jobs, channel.try_collect::<Vec<_>>()).await?;
@@ -2501,7 +2501,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn orchestrator_attach_info_messages() -> buck2_error::Result<()> {
+    async fn orchestrator_attach_info_messages() -> bz_error::Result<()> {
         let (orchestrator, channel) = make().await?;
 
         let jobs = async {
@@ -2509,7 +2509,7 @@ mod tests {
 
             orchestrator.end_of_test_results(0).await?;
 
-            buck2_error::Ok(())
+            bz_error::Ok(())
         };
 
         let ((), results) = future::try_join(jobs, channel.try_collect::<Vec<_>>()).await?;
@@ -2526,7 +2526,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_orchestrator_channel_drop() -> buck2_error::Result<()> {
+    async fn test_orchestrator_channel_drop() -> bz_error::Result<()> {
         let (orchestrator, channel) = make().await?;
         drop(orchestrator);
 
@@ -2537,7 +2537,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_orchestrator_closes_channel() -> buck2_error::Result<()> {
+    async fn test_orchestrator_closes_channel() -> bz_error::Result<()> {
         let (orchestrator, channel) = make().await?;
         let sender = orchestrator.results_channel.clone();
         orchestrator.end_of_test_results(1).await?;

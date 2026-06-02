@@ -9,10 +9,10 @@
  */
 
 use allocative::Allocative;
-use buck2_node::configured_universe::CqueryUniverse;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_query::query::syntax::simple::eval::set::TargetSet;
+use bz_node::configured_universe::CqueryUniverse;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_query::query::syntax::simple::eval::set::TargetSet;
 use derivative::Derivative;
 use derive_more::Display;
 use dupe::Dupe;
@@ -77,7 +77,7 @@ impl<'v> StarlarkTargetUniverse<'v> {
     pub(crate) async fn new(
         ctx: ValueTyped<'v, BxlContext<'v>>,
         target_set: TargetSet<ConfiguredTargetNode>,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let target_universe = CqueryUniverse::build(&target_set)?;
         let target_set = target_universe
             .get_from_targets(target_set.iter().map(|i| i.label().unconfigured().dupe()));

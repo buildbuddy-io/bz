@@ -13,25 +13,25 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use allocative::Allocative;
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_common::file_ops::metadata::TrackedFileDigest;
-use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
-use buck2_execute::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
-use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionSharedDirectory;
-use buck2_execute::directory::ExternalSymlinkUploadPath;
-use buck2_execute::directory::INTERNER;
-use buck2_execute::directory::LazyActionDirectoryBuilder;
-use buck2_execute::directory::ResolvedSymlinkUploadPath;
-use buck2_execute::directory::insert_artifact_lazy;
-use buck2_execute::directory::insert_artifact_lazy_for_execution;
-use buck2_execute::directory::merge_artifact_directory_for_execution;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_directory::directory::entry::DirectoryEntry;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use bz_execute::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
+use bz_execute::artifact_value::ArtifactValue;
+use bz_execute::digest_config::DigestConfig;
+use bz_execute::directory::ActionDirectoryMember;
+use bz_execute::directory::ActionSharedDirectory;
+use bz_execute::directory::ExternalSymlinkUploadPath;
+use bz_execute::directory::INTERNER;
+use bz_execute::directory::LazyActionDirectoryBuilder;
+use bz_execute::directory::ResolvedSymlinkUploadPath;
+use bz_execute::directory::insert_artifact_lazy;
+use bz_execute::directory::insert_artifact_lazy_for_execution;
+use bz_execute::directory::merge_artifact_directory_for_execution;
 use dupe::Dupe;
 use pagable::PagablePanic;
 use smallvec::SmallVec;
@@ -49,7 +49,7 @@ impl ArtifactGroupValues {
         children: Vec<Self>,
         artifact_fs: &ArtifactFs,
         digest_config: DigestConfig,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let should_defer_directory = values.iter().any(|(_, value)| {
             value.has_source_file_proxy()
                 || (value.deps().is_some()
@@ -138,7 +138,7 @@ impl ArtifactGroupValues {
         artifact: Artifact,
         value: ArtifactValue,
         artifact_fs: &ArtifactFs,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let values = smallvec![(artifact, value)];
         Ok(Self(Arc::new(ArtifactGroupValuesData {
             action_cache_fingerprint: Some(compute_action_cache_fingerprint(
@@ -157,7 +157,7 @@ impl ArtifactGroupValues {
         &self,
         builder: &mut LazyActionDirectoryBuilder,
         artifact_fs: &ArtifactFs,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(d) = self.0.directory.as_ref() {
             builder.merge(d.dupe())?;
             return Ok(());
@@ -186,7 +186,7 @@ impl ArtifactGroupValues {
         digest_config: DigestConfig,
         external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
         resolved_symlink_upload_paths: &mut Vec<ResolvedSymlinkUploadPath>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         if let Some(d) = self.0.directory.as_ref() {
             merge_artifact_directory_for_execution(
                 builder,
@@ -302,7 +302,7 @@ fn compute_action_cache_fingerprint(
     children: &[ArtifactGroupValues],
     directory: Option<&ActionSharedDirectory>,
     artifact_fs: &ArtifactFs,
-) -> buck2_error::Result<Box<[u8]>> {
+) -> bz_error::Result<Box<[u8]>> {
     let mut bytes = Vec::new();
     action_cache_write_str(&mut bytes, "artifact_group");
     if let Some(directory) = directory {
@@ -337,7 +337,7 @@ fn write_action_cache_values(
     bytes: &mut Vec<u8>,
     artifact_fs: &ArtifactFs,
     values: &[(Artifact, ArtifactValue)],
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     for (artifact, value) in values {
         let path = artifact.resolve_path(
             artifact_fs,
@@ -459,7 +459,7 @@ impl ArtifactGroupValuesDyn for ArtifactGroupValues {
 
     fn directory_fingerprint_for_action_cache(
         &self,
-    ) -> Option<(&buck2_common::file_ops::metadata::TrackedFileDigest, u64)> {
+    ) -> Option<(&bz_common::file_ops::metadata::TrackedFileDigest, u64)> {
         self.0
             .directory
             .as_ref()
@@ -470,7 +470,7 @@ impl ArtifactGroupValuesDyn for ArtifactGroupValues {
         &self,
         builder: &mut LazyActionDirectoryBuilder,
         artifact_fs: &ArtifactFs,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.add_to_directory(builder, artifact_fs)
     }
 
@@ -481,7 +481,7 @@ impl ArtifactGroupValuesDyn for ArtifactGroupValues {
         digest_config: DigestConfig,
         external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
         resolved_symlink_upload_paths: &mut Vec<ResolvedSymlinkUploadPath>,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.add_to_directory_for_execution(
             builder,
             artifact_fs,
@@ -494,11 +494,11 @@ impl ArtifactGroupValuesDyn for ArtifactGroupValues {
 
 #[cfg(test)]
 mod tests {
-    use buck2_artifact::actions::key::ActionIndex;
-    use buck2_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
-    use buck2_artifact::artifact::build_artifact::BuildArtifact;
-    use buck2_core::configuration::data::ConfigurationData;
-    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+    use bz_artifact::actions::key::ActionIndex;
+    use bz_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
+    use bz_artifact::artifact::build_artifact::BuildArtifact;
+    use bz_core::configuration::data::ConfigurationData;
+    use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 
     use super::*;
 

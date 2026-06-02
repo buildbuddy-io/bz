@@ -1,7 +1,7 @@
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::target::label::label::TargetLabel;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
 
 fn bazel_repo_prefix_for_cell(cell_name: &str) -> Option<String> {
     if cell_name == "root" {

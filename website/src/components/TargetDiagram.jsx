@@ -14,7 +14,7 @@ import React from 'react';
  * Column: Renders a single “colored box + caption” column.
  *
  * Props:
- *   - label:     Text to show inside the colored box (e.g., "root", "buck2_lab/greeter_bin", "main")
+ *   - label:     Text to show inside the colored box (e.g., "root", "bz_lab/greeter_bin", "main")
  *   - caption:   Text to show below the box (e.g., "cell name", "target package", "target name")
  *   - background: Background color for the box (CSS color string)
  */
@@ -106,7 +106,7 @@ function Separator({ symbol }) {
  * TargetDiagram: Assembles three Column components and two Separator components
  * in a single horizontal flex container to illustrate, e.g.:
  *
- *   [root]   //   [buck2_lab/greeter_bin]   :   [main]
+ *   [root]   //   [bz_lab/greeter_bin]   :   [main]
  *     cell name           target package           target name
  */
 export default function TargetDiagram({ cell_name, pkg_name, target_name, cell_href, pkg_href, target_href }) {

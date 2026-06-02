@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::provider::label::ConfiguredProvidersLabel;
 use starlark_map::small_set::SmallSet;
 
 use crate::attrs::configured_traversal::ConfiguredAttrTraversal;
@@ -28,17 +28,17 @@ impl ConfiguredAttrInfoForTests {
 }
 
 impl ConfiguredAttrTraversal for ConfiguredAttrInfoForTests {
-    fn dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+    fn dep(&mut self, dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
         self.deps.insert(dep.clone());
         Ok(())
     }
 
-    fn exec_dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+    fn exec_dep(&mut self, dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
         self.execution_deps.insert(dep.clone());
         Ok(())
     }
 
-    fn toolchain_dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
+    fn toolchain_dep(&mut self, dep: &ConfiguredProvidersLabel) -> bz_error::Result<()> {
         self.toolchain_deps.insert(dep.clone());
         Ok(())
     }

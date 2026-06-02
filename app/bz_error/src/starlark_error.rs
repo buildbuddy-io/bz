@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-//! Starlark::Error <-> buck2_error::Error conversion implementation.
+//! Starlark::Error <-> bz_error::Error conversion implementation.
 
 use std::fmt;
 
@@ -61,10 +61,10 @@ fn error_with_starlark_context(
     starlark_context: StarlarkContext,
 ) -> crate::Error {
     let mut context_stack: Vec<ContextValue> = Vec::new();
-    let mut buck2_error = e.clone();
+    let mut bz_error = e.clone();
 
     loop {
-        match buck2_error.0.as_ref() {
+        match bz_error.0.as_ref() {
             ErrorKind::Root(root) => {
                 let source_location = root.source_location().clone();
                 let action_error = root.action_error().cloned();
@@ -96,16 +96,16 @@ fn error_with_starlark_context(
                             .context_for_starlark_backtrace(starlark_context);
                     }
                     ContextValue::StarlarkError(_) => {
-                        return buck2_error.context_for_starlark_backtrace(starlark_context);
+                        return bz_error.context_for_starlark_backtrace(starlark_context);
                     }
                     ContextValue::Tags(_) | ContextValue::StringTag(_) => {
                         context_stack.push(context_value.clone())
                     }
                 }
 
-                buck2_error = inner.clone();
+                bz_error = inner.clone();
             }
-            _ => return buck2_error,
+            _ => return bz_error,
         }
     }
 }
@@ -226,12 +226,12 @@ mod tests {
 
     use allocative::Allocative;
 
-    use crate as buck2_error;
-    use crate::buck2_error;
+    use crate as bz_error;
+    use crate::bz_error;
     use crate::context_value::StarlarkContext;
     use crate::starlark_error::error_with_starlark_context;
 
-    #[derive(buck2_error::Error, Debug, Allocative)]
+    #[derive(bz_error::Error, Debug, Allocative)]
     #[error("FullMetadataError")]
     #[buck2(tag = crate::ErrorTag::Tier0)]
     struct FullMetadataError;
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_starlark() {
-        // Tests buck2_error->starlark->buck2_error
+        // Tests bz_error->starlark->bz_error
         let e = crate::Error::from(FullMetadataError).context("context 1");
         let e2: crate::Error = starlark_syntax::Error::from(e.clone()).into();
         crate::Error::check_equal(&e, &e2);
@@ -288,7 +288,7 @@ mod tests {
             span: None,
         };
 
-        let e = buck2_error!(crate::ErrorTag::StarlarkError, "{}", base_error);
+        let e = bz_error!(crate::ErrorTag::StarlarkError, "{}", base_error);
 
         let base_replaced = error_with_starlark_context(&e, starlark_context);
 
@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn test_conversion_with_typed_context() {
         let base_error = "Some base error";
-        let e = buck2_error!(crate::ErrorTag::StarlarkError, "{}", base_error);
+        let e = bz_error!(crate::ErrorTag::StarlarkError, "{}", base_error);
         let e = e.compute_context(
             |_: Arc<FullMetadataError>| FullMetadataError,
             || FullMetadataError,

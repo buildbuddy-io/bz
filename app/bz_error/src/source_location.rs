@@ -19,10 +19,10 @@ pub struct SourceLocation {
     source_line: u32,
 }
 
-impl From<buck2_data::error_report::SourceLocation> for SourceLocation {
+impl From<bz_data::error_report::SourceLocation> for SourceLocation {
     #[cold]
     #[track_caller]
-    fn from(value: buck2_data::error_report::SourceLocation) -> Self {
+    fn from(value: bz_data::error_report::SourceLocation) -> Self {
         SourceLocation {
             path: value.path,
             type_name: value.type_name,
@@ -31,11 +31,11 @@ impl From<buck2_data::error_report::SourceLocation> for SourceLocation {
     }
 }
 
-impl From<SourceLocation> for buck2_data::error_report::SourceLocation {
+impl From<SourceLocation> for bz_data::error_report::SourceLocation {
     #[cold]
     #[track_caller]
     fn from(value: SourceLocation) -> Self {
-        buck2_data::error_report::SourceLocation {
+        bz_data::error_report::SourceLocation {
             path: value.path,
             type_name: value.type_name,
             source_line: value.source_line,
@@ -53,7 +53,7 @@ impl SourceLocation {
             .chars()
             .map(|c| if c == '\\' { '/' } else { c })
             .collect();
-        // `buck2_error` should only be used within `buck2/app`, giving us a nice way to make sure we
+        // `bz_error` should only be used within `buck2/app`, giving us a nice way to make sure we
         // strip any leading parts of the path we don't want.
         // Splitting on app/ instead of buck2/app/ to avoid breaking OSS tests where root path is not buck2.
         let path = if let Some((_, path)) = path.split_once("app/") {
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn test_via_error_macro() {
         let err_msg = "some error message";
-        let err: crate::Error = crate::buck2_error!(crate::ErrorTag::Input, "some error message");
+        let err: crate::Error = crate::bz_error!(crate::ErrorTag::Input, "some error message");
         assert_eq!(err.to_string(), err_msg);
         assert!(
             err.source_location()

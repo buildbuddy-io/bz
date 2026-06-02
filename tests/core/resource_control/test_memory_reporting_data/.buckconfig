@@ -4,5 +4,5 @@
 [buildfile]
   name = TARGETS.fixture
 
-[buck2_resource_control]
+[bz_resource_control]
   status = required

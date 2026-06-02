@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_data::ActionSubError;
+use bz_data::ActionSubError;
 
 pub trait ActionSubErrorDisplay {
     fn display(&self) -> Option<String>;

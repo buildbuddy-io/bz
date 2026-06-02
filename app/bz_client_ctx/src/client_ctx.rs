@@ -11,27 +11,27 @@
 use std::future::Future;
 use std::time::SystemTime;
 
-use buck2_cli_proto::ClientContext;
-use buck2_cli_proto::ClientEnvironmentVariable;
-use buck2_cli_proto::client_context::ExitWhen as GrpcExitWhen;
-use buck2_cli_proto::client_context::HostArchOverride as GrpcHostArchOverride;
-use buck2_cli_proto::client_context::HostPlatformOverride as GrpcHostPlatformOverride;
-use buck2_cli_proto::client_context::PreemptibleWhen as GrpcPreemptibleWhen;
-use buck2_common::argv::Argv;
-use buck2_common::bazel::bzlmod::BZLMOD_ALLOWED_YANKED_VERSIONS_ENV;
-use buck2_common::init::DaemonStartupConfig;
-use buck2_common::init::LogDownloadMethod;
-use buck2_common::init::RemoteDownloadOutputsMode;
-use buck2_common::init::RemoteExecutionStartupConfig;
-use buck2_common::invocation_paths::InvocationPaths;
-use buck2_common::invocation_paths_result::InvocationPathsResult;
-use buck2_core::error::buck2_hard_error_env;
-use buck2_core::error::buck2_show_soft_errors_env;
-use buck2_error::BuckErrorContext;
-use buck2_event_observer::verbosity::Verbosity;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_fs::working_dir::AbsWorkingDir;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_cli_proto::ClientContext;
+use bz_cli_proto::ClientEnvironmentVariable;
+use bz_cli_proto::client_context::ExitWhen as GrpcExitWhen;
+use bz_cli_proto::client_context::HostArchOverride as GrpcHostArchOverride;
+use bz_cli_proto::client_context::HostPlatformOverride as GrpcHostPlatformOverride;
+use bz_cli_proto::client_context::PreemptibleWhen as GrpcPreemptibleWhen;
+use bz_common::argv::Argv;
+use bz_common::bazel::bzlmod::BZLMOD_ALLOWED_YANKED_VERSIONS_ENV;
+use bz_common::init::DaemonStartupConfig;
+use bz_common::init::LogDownloadMethod;
+use bz_common::init::RemoteDownloadOutputsMode;
+use bz_common::init::RemoteExecutionStartupConfig;
+use bz_common::invocation_paths::InvocationPaths;
+use bz_common::invocation_paths_result::InvocationPathsResult;
+use bz_core::error::bz_hard_error_env;
+use bz_core::error::bz_show_soft_errors_env;
+use bz_error::BuckErrorContext;
+use bz_event_observer::verbosity::Verbosity;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_fs::working_dir::AbsWorkingDir;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use superconsole::Stdin;
 use tokio::runtime::Runtime;
@@ -64,7 +64,7 @@ pub struct ClientCommandContext<'a> {
     /// The function returns `Ok` when daemon successfully started
     /// and ready to accept connections.
     pub(crate) start_in_process_daemon:
-        Option<Box<dyn FnOnce() -> buck2_error::Result<()> + Send + Sync>>,
+        Option<Box<dyn FnOnce() -> bz_error::Result<()> + Send + Sync>>,
     pub(crate) argv: Argv,
     pub trace_id: TraceId,
     stdin: &'a mut Stdin,
@@ -89,7 +89,7 @@ impl<'a> ClientCommandContext<'a> {
         working_dir: AbsWorkingDir,
         verbosity: Verbosity,
         start_time: SystemTime,
-        start_in_process_daemon: Option<Box<dyn FnOnce() -> buck2_error::Result<()> + Send + Sync>>,
+        start_in_process_daemon: Option<Box<dyn FnOnce() -> bz_error::Result<()> + Send + Sync>>,
         argv: Argv,
         trace_id: TraceId,
         stdin: &'a mut Stdin,
@@ -143,7 +143,7 @@ impl<'a> ClientCommandContext<'a> {
         self.init
     }
 
-    pub fn paths(&self) -> buck2_error::Result<&InvocationPaths> {
+    pub fn paths(&self) -> bz_error::Result<&InvocationPaths> {
         match &self.paths {
             InvocationPathsResult::Paths(p) => Ok(p),
             InvocationPathsResult::OutsideOfRepo(e) | InvocationPathsResult::OtherError(e) => {
@@ -152,7 +152,7 @@ impl<'a> ClientCommandContext<'a> {
         }
     }
 
-    pub fn maybe_paths(&self) -> buck2_error::Result<Option<&InvocationPaths>> {
+    pub fn maybe_paths(&self) -> bz_error::Result<Option<&InvocationPaths>> {
         match &self.paths {
             InvocationPathsResult::Paths(p) => Ok(Some(p)),
             InvocationPathsResult::OutsideOfRepo(_) => Ok(None), // commands like log don't need a root but still need to create an invocation record
@@ -216,7 +216,7 @@ impl<'a> ClientCommandContext<'a> {
         &self,
         arg_matches: BuckArgMatches<'_>,
         cmd: &T,
-    ) -> buck2_error::Result<ClientContext> {
+    ) -> bz_error::Result<ClientContext> {
         // TODO(cjhopman): Support non unicode paths?
         let config_opts = cmd.build_config_opts();
         let starlark_opts = cmd.starlark_opts();
@@ -277,8 +277,8 @@ impl<'a> ClientCommandContext<'a> {
     }
 
     /// A client context for commands where CommonConfigOptions are not provided.
-    pub fn empty_client_context(&self, command_name: &str) -> buck2_error::Result<ClientContext> {
-        #[derive(Debug, buck2_error::Error)]
+    pub fn empty_client_context(&self, command_name: &str) -> bz_error::Result<ClientContext> {
+        #[derive(Debug, bz_error::Error)]
         #[error("Current directory is not UTF-8")]
         #[buck2(tag = Input)]
         struct CurrentDirIsNotUtf8;
@@ -304,8 +304,8 @@ impl<'a> ClientCommandContext<'a> {
             daemon_uuid: get_possibly_nested_invocation_daemon_uuid(),
             sanitized_argv: Vec::new(),
             argfiles: Vec::new(),
-            buck2_hard_error: buck2_hard_error_env()?.unwrap_or_default().to_owned(),
-            buck2_show_soft_errors: buck2_show_soft_errors_env()?.unwrap_or_default().to_owned(),
+            bz_hard_error: bz_hard_error_env()?.unwrap_or_default().to_owned(),
+            bz_show_soft_errors: bz_show_soft_errors_env()?.unwrap_or_default().to_owned(),
             command_name: command_name.to_owned(),
             client_metadata: self
                 .client_metadata
@@ -319,7 +319,7 @@ impl<'a> ClientCommandContext<'a> {
             agent_context: self
                 .agent_context
                 .iter()
-                .map(|e| buck2_data::AgentContextEntry {
+                .map(|e| bz_data::AgentContextEntry {
                     key: e.key.clone(),
                     value: e.value.clone(),
                 })
@@ -339,7 +339,7 @@ impl<'a> ClientCommandContext<'a> {
             .map(|m| m.value.as_str())
     }
 
-    pub fn log_download_method(&self) -> buck2_error::Result<LogDownloadMethod> {
+    pub fn log_download_method(&self) -> bz_error::Result<LogDownloadMethod> {
         Ok(self.daemon_startup_config()?.log_download_method)
     }
 
@@ -347,7 +347,7 @@ impl<'a> ClientCommandContext<'a> {
         self.buildbuddy_bes
     }
 
-    pub fn daemon_startup_config(&self) -> buck2_error::Result<DaemonStartupConfig> {
+    pub fn daemon_startup_config(&self) -> bz_error::Result<DaemonStartupConfig> {
         let mut daemon_startup_config = self.immediate_config.daemon_startup_config()?.clone();
         if let Some(watchfs) = self.watchfs_override {
             daemon_startup_config.watchfs = watchfs;
@@ -403,7 +403,7 @@ pub trait BuckSubcommand {
         _matches: BuckArgMatches<'_>,
         ctx: &ClientCommandContext,
         events_ctx: &mut EventsCtx,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         let paths = ctx.paths().ok();
         if let Some(recorder) = events_ctx.recorder.as_mut() {
             recorder.update_for_command(

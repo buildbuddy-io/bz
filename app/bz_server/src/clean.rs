@@ -1,18 +1,18 @@
-use buck2_cli_proto::CleanRequest;
-use buck2_cli_proto::CleanStaleResponse;
-use buck2_common::file_ops::metadata::clear_computed_file_digest_cache;
-use buck2_core::fs::buck_out_path::BazelOutputRoot;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_events::dispatch::span_async;
-use buck2_execute::execute::clean_output_paths::BackgroundCleanOutputPaths;
-use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_server_ctx::commands::command_end;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_cli_proto::CleanRequest;
+use bz_cli_proto::CleanStaleResponse;
+use bz_common::file_ops::metadata::clear_computed_file_digest_cache;
+use bz_core::fs::buck_out_path::BazelOutputRoot;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_events::dispatch::span_async;
+use bz_execute::execute::clean_output_paths::BackgroundCleanOutputPaths;
+use bz_execute::execute::clean_output_paths::CleanOutputPaths;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_server_ctx::commands::command_end;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use dupe::Dupe;
 
 use crate::ctx::ServerCommandContext;
@@ -21,14 +21,14 @@ pub(crate) async fn clean_command(
     context: &ServerCommandContext<'_>,
     _partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
     req: CleanRequest,
-) -> buck2_error::Result<CleanStaleResponse> {
+) -> bz_error::Result<CleanStaleResponse> {
     let start_event = context
-        .command_start_event(buck2_data::CleanCommandStart {}.into())
+        .command_start_event(bz_data::CleanCommandStart {}.into())
         .await?;
     span_async(start_event, async {
         let result = clean_impl(context, req).await;
         let clean_stale_stats = result.as_ref().ok().and_then(|res| res.stats.clone());
-        let end_event = command_end(&result, buck2_data::CleanCommandEnd { clean_stale_stats });
+        let end_event = command_end(&result, bz_data::CleanCommandEnd { clean_stale_stats });
         (result, end_event)
     })
     .await
@@ -37,7 +37,7 @@ pub(crate) async fn clean_command(
 async fn clean_impl(
     context: &ServerCommandContext<'_>,
     req: CleanRequest,
-) -> buck2_error::Result<CleanStaleResponse> {
+) -> bz_error::Result<CleanStaleResponse> {
     let output_roots = normal_clean_output_roots(context);
     if req.dry_run {
         return Ok(CleanStaleResponse {
@@ -124,8 +124,8 @@ async fn clean_output_roots(
     context: &ServerCommandContext<'_>,
     paths: Vec<ProjectRelativePathBuf>,
     background: bool,
-) -> buck2_error::Result<()> {
-    let cleaner: Box<dyn buck2_execute::execute::blocking::IoRequest> = if background {
+) -> bz_error::Result<()> {
+    let cleaner: Box<dyn bz_execute::execute::blocking::IoRequest> = if background {
         Box::new(BackgroundCleanOutputPaths { paths })
     } else {
         Box::new(CleanOutputPaths { paths })

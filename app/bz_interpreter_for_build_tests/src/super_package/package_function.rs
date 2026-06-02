@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
-use buck2_core::fs::project::ProjectRootTemp;
-use buck2_core::target::label::label::TargetLabel;
-use buck2_node::nodes::frontend::TargetGraphCalculation;
-use buck2_node::visibility::VisibilitySpecification;
+use bz_core::fs::project::ProjectRootTemp;
+use bz_core::target::label::label::TargetLabel;
+use bz_node::nodes::frontend::TargetGraphCalculation;
+use bz_node::visibility::VisibilitySpecification;
 
 use crate::tests::calculation;
 

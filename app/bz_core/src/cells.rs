@@ -95,9 +95,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use allocative::Allocative;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_fs::paths::file_name::FileNameBuf;
-use buck2_hash::StdBuckHashMap;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_fs::paths::file_name::FileNameBuf;
+use bz_hash::StdBuckHashMap;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use gazebo::prelude::*;
@@ -127,7 +127,7 @@ use crate::fs::project_rel_path::ProjectRelativePath;
 use crate::fs::project_rel_path::ProjectRelativePathBuf;
 
 /// Errors from cell creation
-#[derive(buck2_error::Error, Debug)]
+#[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum CellError {
     #[error("Cell paths `{1}` and `{2}` had the same cell name `{0}`.")]
@@ -164,7 +164,7 @@ impl CellAliasResolver {
     pub fn new(
         current: CellName,
         mut aliases: StdBuckHashMap<NonEmptyCellAlias, CellName>,
-    ) -> buck2_error::Result<CellAliasResolver> {
+    ) -> bz_error::Result<CellAliasResolver> {
         let current_as_alias = NonEmptyCellAlias::new(current.as_str().to_owned())?;
         if let Some(alias_target) = aliases.insert(current_as_alias, current) {
             if alias_target != current {
@@ -181,7 +181,7 @@ impl CellAliasResolver {
         current: CellName,
         root_aliases: &CellAliasResolver,
         alias_list: impl IntoIterator<Item = (NonEmptyCellAlias, NonEmptyCellAlias)>,
-    ) -> buck2_error::Result<CellAliasResolver> {
+    ) -> bz_error::Result<CellAliasResolver> {
         let mut aliases: StdBuckHashMap<_, _> = root_aliases
             .mappings()
             .map(|(x, y)| (x.to_owned(), y))
@@ -196,7 +196,7 @@ impl CellAliasResolver {
     }
 
     /// resolves a 'CellAlias' into its corresponding 'CellName'
-    pub fn resolve(&self, alias: &str) -> buck2_error::Result<CellName> {
+    pub fn resolve(&self, alias: &str) -> bz_error::Result<CellName> {
         if alias.is_empty() {
             return Ok(self.current);
         }
@@ -204,7 +204,7 @@ impl CellAliasResolver {
             return CellName::unchecked_new(alias);
         }
         self.aliases.get(alias).duped().ok_or_else(|| {
-            buck2_error::Error::from(CellError::UnknownCellAlias(
+            bz_error::Error::from(CellError::UnknownCellAlias(
                 CellAlias::new(alias.to_owned()),
                 self.current,
                 self.aliases.keys().cloned().collect(),
@@ -297,7 +297,7 @@ impl CellResolver {
     pub fn new(
         cells: Vec<CellInstance>,
         root_cell_alias_resolver: CellAliasResolver,
-    ) -> buck2_error::Result<CellResolver> {
+    ) -> bz_error::Result<CellResolver> {
         let mut path_mappings: SequenceTrie<FileNameBuf, CellName> = SequenceTrie::new();
         let mut root_cell = None;
         for cell in &cells {
@@ -340,7 +340,7 @@ impl CellResolver {
     }
 
     /// Get a `Cell` from the `CellMap`
-    pub fn get(&self, cell: CellName) -> buck2_error::Result<&CellInstance> {
+    pub fn get(&self, cell: CellName) -> bz_error::Result<&CellInstance> {
         let cell = if cell.as_str() == "root"
             && !self.0.cells.contains_key(&cell)
             && matches!(
@@ -356,7 +356,7 @@ impl CellResolver {
             .get(&cell)
             .or_else(|| dynamic_external_cell_instance(cell))
             .ok_or_else(|| {
-                buck2_error::Error::from(CellError::UnknownCellName(
+                bz_error::Error::from(CellError::UnknownCellName(
                     cell,
                     self.0.cells.keys().copied().collect(),
                 ))
@@ -414,7 +414,7 @@ impl CellResolver {
         &self,
         path: &AbsPath,
         fs: &ProjectRoot,
-    ) -> buck2_error::Result<CellPath> {
+    ) -> bz_error::Result<CellPath> {
         Ok(self.get_cell_path(&fs.relativize_any(path)?))
     }
 
@@ -431,13 +431,13 @@ impl CellResolver {
     /// ```
     /// use std::convert::TryFrom;
     ///
-    /// use buck2_core::cells::CellResolver;
-    /// use buck2_core::cells::cell_path::CellPath;
-    /// use buck2_core::cells::cell_root_path::CellRootPathBuf;
-    /// use buck2_core::cells::name::CellName;
-    /// use buck2_core::cells::paths::CellRelativePathBuf;
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePath;
-    /// use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+    /// use bz_core::cells::CellResolver;
+    /// use bz_core::cells::cell_path::CellPath;
+    /// use bz_core::cells::cell_root_path::CellRootPathBuf;
+    /// use bz_core::cells::name::CellName;
+    /// use bz_core::cells::paths::CellRelativePathBuf;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePath;
+    /// use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
     ///
     /// let cell_path = ProjectRelativePath::new("my/cell")?;
     /// let cells = CellResolver::testing_with_name_and_path(
@@ -455,12 +455,12 @@ impl CellResolver {
     ///     ProjectRelativePathBuf::unchecked_new("my/cell/some/path".into()),
     /// );
     ///
-    /// # buck2_error::Ok(())
+    /// # bz_error::Ok(())
     /// ```
     pub fn resolve_path(
         &self,
         cell_path: CellPathRef,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+    ) -> bz_error::Result<ProjectRelativePathBuf> {
         Ok(self.get(cell_path.cell())?.path().join(cell_path.path()))
     }
 
@@ -553,14 +553,14 @@ impl CellResolver {
 
 #[cfg(test)]
 mod tests {
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePath;
+    use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 
     use super::*;
     use crate::cells::cell_root_path::CellRootPath;
 
     #[test]
-    fn test_of_names_and_paths() -> buck2_error::Result<()> {
+    fn test_of_names_and_paths() -> bz_error::Result<()> {
         use crate::fs::project_rel_path::ProjectRelativePathBuf;
 
         let cell_resolver = CellResolver::testing_with_name_and_path(
@@ -576,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cells() -> buck2_error::Result<()> {
+    fn test_cells() -> bz_error::Result<()> {
         let cell1_path = CellRootPath::new(ProjectRelativePath::new("my/cell1")?);
         let cell2_path = CellRootPath::new(ProjectRelativePath::new("cell2")?);
         let cell3_path = CellRootPath::new(ProjectRelativePath::new("my/cell3")?);
@@ -643,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn test_root_cell_name_falls_back_to_root_alias() -> buck2_error::Result<()> {
+    fn test_root_cell_name_falls_back_to_root_alias() -> bz_error::Result<()> {
         let cell_resolver = CellResolver::testing_with_names_and_paths_with_alias(
             &[(
                 CellName::testing_new("actual_root"),

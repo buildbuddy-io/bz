@@ -47,15 +47,15 @@ def _add_labels(**kwargs):
     kwargs["labels"] += ["wrapped_with_buck_java_rules", "pfh:Infra"]
     return kwargs
 
-def _set_buck2_java_toolchain(**kwargs):
+def _set_bz_java_toolchain(**kwargs):
     kwargs["_java_toolchain"] = "toolchains//:java_bootstrap"
     return kwargs
 
-def _set_buck2_kotlin_toolchain(**kwargs):
+def _set_bz_kotlin_toolchain(**kwargs):
     kwargs["_kotlin_toolchain"] = "toolchains//:kotlin_bootstrap"
     return kwargs
 
-def _set_buck2_dex_toolchain(**kwargs):
+def _set_bz_dex_toolchain(**kwargs):
     # Override dex toolchain to avoid dependency cycles in unconfigured graph
     dex_toolchain = kwargs.pop("_dex_toolchain", None)
     kwargs["_dex_toolchain"] = dex_toolchain or select({
@@ -68,7 +68,7 @@ def _set_versioned_java_srcs(**kwargs):
     if not kwargs.pop("versioned_java_srcs", False):
         return kwargs
     java_version = select({
-        "DEFAULT": native.read_config("java", "buck2_java_version", "21"),
+        "DEFAULT": native.read_config("java", "bz_java_version", "21"),
         # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-11": "11",
         # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-17": "17",
         # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-21": "21",
@@ -89,9 +89,9 @@ def _add_kotlin_deps(**kwargs):
 
 def buck_kotlin_library(name, **kwargs):
     kwargs = _maybe_add_java_version(**kwargs)
-    kwargs = _set_buck2_java_toolchain(**kwargs)
-    kwargs = _set_buck2_kotlin_toolchain(**kwargs)
-    kwargs = _set_buck2_dex_toolchain(**kwargs)
+    kwargs = _set_bz_java_toolchain(**kwargs)
+    kwargs = _set_bz_kotlin_toolchain(**kwargs)
+    kwargs = _set_bz_dex_toolchain(**kwargs)
     kwargs = _add_kotlin_deps(**kwargs)
     return fb_native.kotlin_library(
         name = name,
@@ -101,8 +101,8 @@ def buck_kotlin_library(name, **kwargs):
 def buck_java_library(name, **kwargs):
     kwargs = _add_labels(**kwargs)
     kwargs = _maybe_add_java_version(**kwargs)
-    kwargs = _set_buck2_java_toolchain(**kwargs)
-    kwargs = _set_buck2_dex_toolchain(**kwargs)
+    kwargs = _set_bz_java_toolchain(**kwargs)
+    kwargs = _set_bz_dex_toolchain(**kwargs)
     kwargs = _set_versioned_java_srcs(**kwargs)
     return fb_native.java_library(
         name = name,
@@ -111,7 +111,7 @@ def buck_java_library(name, **kwargs):
 
 def buck_java_binary(name, **kwargs):
     kwargs = _add_labels(**kwargs)
-    kwargs = _set_buck2_java_toolchain(**kwargs)
+    kwargs = _set_bz_java_toolchain(**kwargs)
     java_args = kwargs["java_args_for_run_info"] if "java_args_for_run_info" in kwargs else []
 
     # Directs the VM to refrain from setting the file descriptor limit to the default maximum.
@@ -125,7 +125,7 @@ def buck_java_binary(name, **kwargs):
 
 def _toolchain_prebuilt_jar(name, **kwargs):
     kwargs = _add_labels(**kwargs)
-    kwargs = _set_buck2_dex_toolchain(**kwargs)
+    kwargs = _set_bz_dex_toolchain(**kwargs)
     if kwargs.pop("should_generate_snapshot", True) == False:
         kwargs["_prebuilt_jar_toolchain"] = "toolchains//:prebuilt_jar_bootstrap_no_snapshot"
     else:
@@ -344,7 +344,7 @@ def standard_java_test(
             resources = native.glob(["testdata/**"]) if with_test_data else [],
             vm_args = vm_args,
             run_test_separately = run_test_separately,
-            labels = (labels or []) + ["buck2_run_from_cell_root"],
+            labels = (labels or []) + ["bz_run_from_cell_root"],
             **kwargs
         )
 

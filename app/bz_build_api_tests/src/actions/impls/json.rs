@@ -8,19 +8,19 @@
  * above-listed licenses.
  */
 
-use buck2_artifact::artifact::artifact_type::Artifact;
-use buck2_artifact::artifact::artifact_type::OutputArtifact;
-use buck2_build_api::actions::impls::json::JsonUnpack;
-use buck2_build_api::actions::impls::json::SerializeValue;
-use buck2_build_api::actions::impls::json::visit_json_artifacts;
-use buck2_build_api::artifact_groups::ArtifactGroup;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
-use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_hash::BuckHashMap;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::OutputArtifact;
+use bz_build_api::actions::impls::json::JsonUnpack;
+use bz_build_api::actions::impls::json::SerializeValue;
+use bz_build_api::actions::impls::json::visit_json_artifacts;
+use bz_build_api::artifact_groups::ArtifactGroup;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_hash::BuckHashMap;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 use dupe::Dupe;
 use indoc::indoc;
 use starlark::environment::GlobalsBuilder;
@@ -32,7 +32,7 @@ use crate::interpreter::rule_defs::artifact::testing::artifactory;
 use crate::interpreter::rule_defs::artifact_tagging::testing::artifact_tag_factory;
 
 #[test]
-fn test_tagging() -> buck2_error::Result<()> {
+fn test_tagging() -> bz_error::Result<()> {
     struct AssertVisitor {
         tag: ArtifactTag,
         artifact: Artifact,
@@ -85,7 +85,7 @@ fn test_tagging() -> buck2_error::Result<()> {
                 absolute: false,
                 artifact_path_mapping: &BuckHashMap::default(),
             })
-            .map_err(buck2_error::Error::from)?;
+            .map_err(bz_error::Error::from)?;
 
             let json2 = serde_json::to_string(&SerializeValue {
                 value: JsonUnpack::unpack_value_err(value)?,
@@ -93,7 +93,7 @@ fn test_tagging() -> buck2_error::Result<()> {
                 absolute: false,
                 artifact_path_mapping: &BuckHashMap::default(),
             })
-            .map_err(buck2_error::Error::from)?;
+            .map_err(bz_error::Error::from)?;
 
             assert_eq!(json1, json2);
 

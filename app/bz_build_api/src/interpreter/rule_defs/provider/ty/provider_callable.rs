@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_interpreter::types::provider::callable::ProviderCallableLike;
+use bz_interpreter::types::provider::callable::ProviderCallableLike;
 use starlark::typing::Ty;
 use starlark::typing::TyCallable;
 use starlark::typing::TyStarlarkValue;
@@ -19,7 +19,7 @@ use starlark::values::typing::TypeInstanceId;
 
 pub(crate) fn ty_provider_callable<'v, C: StarlarkValue<'v> + ProviderCallableLike>(
     creator_func: TyCallable,
-) -> buck2_error::Result<Ty> {
+) -> bz_error::Result<Ty> {
     Ok(Ty::custom(TyUser::new(
         C::TYPE.to_owned(),
         TyStarlarkValue::new::<C>(),

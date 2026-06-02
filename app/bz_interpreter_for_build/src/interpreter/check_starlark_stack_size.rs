@@ -10,12 +10,12 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_error::BuckErrorContext;
-use buck2_error::starlark_error::from_starlark_with_options;
-use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
-use buck2_interpreter::factory::BuckStarlarkModule;
-use buck2_interpreter::factory::StarlarkEvaluatorProvider;
-use buck2_interpreter::file_type::StarlarkFileType;
+use bz_error::BuckErrorContext;
+use bz_error::starlark_error::from_starlark_with_options;
+use bz_interpreter::dice::starlark_provider::StarlarkEvalKind;
+use bz_interpreter::factory::BuckStarlarkModule;
+use bz_interpreter::factory::StarlarkEvaluatorProvider;
+use bz_interpreter::file_type::StarlarkFileType;
 use dice::DiceComputations;
 use dice::Key;
 use dice::OkPagableValueSerialize;
@@ -27,7 +27,7 @@ use pagable::pagable_typetag;
 use starlark::environment::Globals;
 use starlark::syntax::AstModule;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum CheckStarlarkStackSizeError {
     #[error("Error checking starlark stack size")]
@@ -40,7 +40,7 @@ enum CheckStarlarkStackSizeError {
 // before the native stack overflows
 pub(crate) async fn check_starlark_stack_size(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     #[derive(
         Debug,
         derive_more::Display,
@@ -56,7 +56,7 @@ pub(crate) async fn check_starlark_stack_size(
 
     #[async_trait]
     impl Key for StarlarkStackSizeChecker {
-        type Value = buck2_error::Result<()>;
+        type Value = bz_error::Result<()>;
 
         async fn compute(
             &self,
@@ -84,7 +84,7 @@ pub(crate) async fn check_starlark_stack_size(
                         .map_err(|e| {
                             from_starlark_with_options(
                                 e,
-                                buck2_error::starlark_error::NativeErrorHandling::Unknown,
+                                bz_error::starlark_error::NativeErrorHandling::Unknown,
                                 false,
                             )
                         })
@@ -95,7 +95,7 @@ pub(crate) async fn check_starlark_stack_size(
                             }
                             Err(p) => Err(from_starlark_with_options(
                                 p,
-                                buck2_error::starlark_error::NativeErrorHandling::Unknown,
+                                bz_error::starlark_error::NativeErrorHandling::Unknown,
                                 false,
                             )),
                             Ok(_) => {

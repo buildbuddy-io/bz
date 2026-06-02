@@ -22,7 +22,7 @@ pub fn background_command<S: AsRef<OsStr>>(program: S) -> std::process::Command 
     }
     // Prevent sub buck commands (persist-event-log, internal-test-runner, forkserver, etc.) from
     // reusing the UUID of the original command.
-    cmd.env_remove(buck2_wrapper_common::BUCK_WRAPPER_UUID_ENV_VAR);
+    cmd.env_remove(bz_wrapper_common::BUCK_WRAPPER_UUID_ENV_VAR);
     cmd
 }
 

@@ -14,23 +14,23 @@
 use std::io::Write;
 use std::path::Path;
 
-use buck2_cli_proto::TargetsResponse;
-use buck2_cli_proto::targets_request;
-use buck2_cli_proto::targets_request::TargetHashFileMode;
-use buck2_cli_proto::targets_request::TargetHashGraphType;
-use buck2_core::cells::CellResolver;
-use buck2_core::fs::project::ProjectRoot;
-use buck2_core::global_cfg_options::GlobalCfgOptions;
-use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_fs::paths::abs_path::AbsPath;
-use buck2_node::load_patterns::MissingTargetBehavior;
-use buck2_node::load_patterns::load_patterns;
-use buck2_node::nodes::configured::ConfiguredTargetNode;
-use buck2_node::nodes::lookup::ConfiguredTargetNodeLookup;
-use buck2_node::nodes::lookup::TargetNodeLookup;
-use buck2_node::nodes::unconfigured::TargetNode;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
+use bz_cli_proto::TargetsResponse;
+use bz_cli_proto::targets_request;
+use bz_cli_proto::targets_request::TargetHashFileMode;
+use bz_cli_proto::targets_request::TargetHashGraphType;
+use bz_core::cells::CellResolver;
+use bz_core::fs::project::ProjectRoot;
+use bz_core::global_cfg_options::GlobalCfgOptions;
+use bz_core::pattern::pattern::ParsedPattern;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_fs::paths::abs_path::AbsPath;
+use bz_node::load_patterns::MissingTargetBehavior;
+use bz_node::load_patterns::load_patterns;
+use bz_node::nodes::configured::ConfiguredTargetNode;
+use bz_node::nodes::lookup::ConfiguredTargetNodeLookup;
+use bz_node::nodes::lookup::TargetNodeLookup;
+use bz_node::nodes::unconfigured::TargetNode;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
 use dice::DiceTransaction;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
@@ -53,7 +53,7 @@ impl TargetHashOptions {
         request: &targets_request::Other,
         cell_resolver: &CellResolver,
         fs: &ProjectRoot,
-    ) -> buck2_error::Result<Self> {
+    ) -> bz_error::Result<Self> {
         let file_mode = TargetHashFileMode::try_from(request.target_hash_file_mode)
             .expect("buck cli should send valid target hash file mode");
         let file_mode = match file_mode {
@@ -65,7 +65,7 @@ impl TargetHashOptions {
                         let path = AbsPath::new(Path::new(&path))?;
                         cell_resolver.get_cell_path_from_abs_path(path, fs)
                     })
-                    .collect::<buck2_error::Result<_>>()?;
+                    .collect::<bz_error::Result<_>>()?;
                 TargetHashesFileMode::PathsOnly(modified_paths)
             }
             TargetHashFileMode::PathsAndContents => TargetHashesFileMode::PathsAndContents,
@@ -90,14 +90,14 @@ pub(crate) async fn targets_batch(
     global_cfg_options: &GlobalCfgOptions,
     hash_options: TargetHashOptions,
     keep_going: bool,
-) -> buck2_error::Result<TargetsResponse> {
+) -> bz_error::Result<TargetsResponse> {
     let results = &load_patterns(&mut dice, parsed_patterns, MissingTargetBehavior::Fail).await?;
 
     let target_hashes = dice
         .dupe()
         .with_linear_recompute(|linear_ctx| async move {
             match hash_options.graph_type {
-                TargetHashGraphType::Configured => buck2_error::Ok(Some(
+                TargetHashGraphType::Configured => bz_error::Ok(Some(
                     TargetHashes::compute::<ConfiguredTargetNode, _>(
                         dice.dupe(),
                         ConfiguredTargetNodeLookup(&linear_ctx),

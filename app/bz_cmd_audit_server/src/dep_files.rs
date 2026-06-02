@@ -9,18 +9,18 @@
  */
 
 use async_trait::async_trait;
-use buck2_build_api::audit_dep_files::AUDIT_DEP_FILES;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::dep_files::AuditDepFilesCommand;
-use buck2_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
-use buck2_core::category::CategoryRef;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
-use buck2_error::internal_error;
-use buck2_node::target_calculation::ConfiguredTargetCalculation;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_build_api::audit_dep_files::AUDIT_DEP_FILES;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::dep_files::AuditDepFilesCommand;
+use bz_common::pattern::parse_from_cli::parse_patterns_from_cli_args;
+use bz_core::category::CategoryRef;
+use bz_core::pattern::pattern_type::TargetPatternExtra;
+use bz_error::internal_error;
+use bz_node::target_calculation::ConfiguredTargetCalculation;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::global_cfg_options::global_cfg_options_from_client_context;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 
 use crate::ServerAuditSubcommand;
 
@@ -29,9 +29,9 @@ impl ServerAuditSubcommand for AuditDepFilesCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         Ok(server_ctx
             .with_dice_ctx(|server_ctx, mut ctx| async move {
                 let global_cfg_options = global_cfg_options_from_client_context(

@@ -36,7 +36,7 @@ pub trait HealthCheck: Send + Sync {
     fn run_check(
         &mut self,
         snapshot: HealthCheckSnapshotData,
-    ) -> buck2_error::Result<Option<Report>>;
+    ) -> bz_error::Result<Option<Report>>;
 
     /// Trigger when the health check context updates.
     /// The `run_check` method is executed repeatedly at every snapshot and should be optimized.
@@ -48,13 +48,13 @@ pub trait HealthCheck: Send + Sync {
 #[async_trait::async_trait]
 pub trait HealthCheckService: Sync + Send {
     /// Update the context for the health check service.
-    async fn update_context(&mut self, event: HealthCheckContextEvent) -> buck2_error::Result<()>;
+    async fn update_context(&mut self, event: HealthCheckContextEvent) -> bz_error::Result<()>;
 
     /// Run all registered health checks.
     async fn run_checks(
         &mut self,
         snapshot: HealthCheckSnapshotData,
-    ) -> buck2_error::Result<Vec<Report>>;
+    ) -> bz_error::Result<Vec<Report>>;
 }
 
 /// A subset of the client data that is relevant for health checks.
@@ -63,7 +63,7 @@ pub trait HealthCheckService: Sync + Send {
 pub struct HealthCheckContext {
     /// Data from the command start.
     /// Example use: Run a check only on a subset of commands.
-    pub command_data: Option<buck2_data::command_start::Data>,
+    pub command_data: Option<bz_data::command_start::Data>,
 
     pub trace_id: Option<String>,
 
@@ -71,7 +71,7 @@ pub struct HealthCheckContext {
 
     /// Target patterns.
     /// Example use: Project/target specific checks, target specific configs e.g. warm revision.
-    pub parsed_target_patterns: Option<buck2_data::ParsedTargetPatterns>,
+    pub parsed_target_patterns: Option<bz_data::ParsedTargetPatterns>,
 
     /// Revision hash of the mergebase.
     /// Example use: Warm revision check.
@@ -81,7 +81,7 @@ pub struct HealthCheckContext {
     pub has_excess_cache_misses: bool,
 
     /// Configurations for health check experiments.
-    pub experiment_configurations: Option<buck2_data::SystemInfo>,
+    pub experiment_configurations: Option<bz_data::SystemInfo>,
 
     /// Test override for slow build threshold (seconds). When set, bypasses
     /// the normal p99 Scuba lookup and uses this value instead.
@@ -89,7 +89,7 @@ pub struct HealthCheckContext {
 }
 
 /// A subset of the Snapshot data specifically for health check use.
-/// This struct contains timing metrics extracted from buck2_data::Snapshot.
+/// This struct contains timing metrics extracted from bz_data::Snapshot.
 #[derive(Dupe, Clone)]
 pub struct HealthCheckSnapshotData {
     /// Timestamp when the snapshot was created
@@ -100,7 +100,7 @@ pub struct HealthCheckSnapshotData {
 #[allow(clippy::large_enum_variant)]
 pub enum HealthCheckEvent {
     HealthCheckContextEvent(HealthCheckContextEvent),
-    // This snapshot passes a subset of the buck2_data::Snapshot data to health checks.
+    // This snapshot passes a subset of the bz_data::Snapshot data to health checks.
     // Contains timing metrics and other relevant data for health check analysis.
     Snapshot(HealthCheckSnapshotData),
 }
@@ -108,13 +108,13 @@ pub enum HealthCheckEvent {
 /// An event to trigger update of context in the health check server.
 /// This may result in side effects like precomputing data, etc. in health checks.
 pub enum HealthCheckContextEvent {
-    CommandStart(buck2_data::CommandStartWithTraceId),
-    ParsedTargetPatterns(buck2_data::ParsedTargetPatterns),
+    CommandStart(bz_data::CommandStartWithTraceId),
+    ParsedTargetPatterns(bz_data::ParsedTargetPatterns),
     BranchedFromRevision(String),
     /// Sent only once and communicates if buck2 is experiencing excess cache misses.
     HasExcessCacheMisses(),
     /// Configuration about the health checks.
-    ExperimentConfigurations(buck2_data::SystemInfo),
+    ExperimentConfigurations(bz_data::SystemInfo),
     /// Test override for slow build threshold (in seconds).
     /// Set via BUCK2_TEST_SLOW_BUILD_CHECK env var on the client.
     TestSlowBuildThreshold(u64),

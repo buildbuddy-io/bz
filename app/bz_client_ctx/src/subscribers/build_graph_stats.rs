@@ -12,10 +12,10 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use buck2_cli_proto::command_result;
-use buck2_events::sink::remote::ScribeConfig;
-use buck2_events::sink::remote::new_remote_event_sink_if_enabled;
-use buck2_wrapper_common::invocation_id::TraceId;
+use bz_cli_proto::command_result;
+use bz_events::sink::remote::ScribeConfig;
+use bz_events::sink::remote::new_remote_event_sink_if_enabled;
+use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use fbinit::FacebookInit;
 
@@ -33,8 +33,8 @@ impl BuildGraphStats {
 
     async fn handle_build_response(
         &self,
-        res: &buck2_cli_proto::BuildResponse,
-    ) -> buck2_error::Result<()> {
+        res: &bz_cli_proto::BuildResponse,
+    ) -> bz_error::Result<()> {
         let events = self.build_graph_stats_from_build_response(res);
         self.send_events(events).await;
 
@@ -43,24 +43,24 @@ impl BuildGraphStats {
 
     fn build_graph_stats_from_build_response(
         &self,
-        res: &buck2_cli_proto::BuildResponse,
-    ) -> Vec<buck2_events::BuckEvent> {
+        res: &bz_cli_proto::BuildResponse,
+    ) -> Vec<bz_events::BuckEvent> {
         const MAX_BUILD_TARGETS_LEN: usize = 3000;
 
         res.build_targets
             .chunks(MAX_BUILD_TARGETS_LEN)
             .map(|ts| {
-                buck2_events::BuckEvent::new(
+                bz_events::BuckEvent::new(
                     SystemTime::now(),
                     self.trace_id.dupe(),
                     None,
                     None,
-                    buck2_data::RecordEvent {
+                    bz_data::RecordEvent {
                         data: Some(
-                            buck2_data::BuildGraphStats {
+                            bz_data::BuildGraphStats {
                                 build_targets: ts
                                     .iter()
-                                    .map(|t| buck2_data::BuildTarget {
+                                    .map(|t| bz_data::BuildTarget {
                                         target: t.target.clone(),
                                         configuration: t.configuration.clone(),
                                         configured_graph_size: t.configured_graph_size,
@@ -76,7 +76,7 @@ impl BuildGraphStats {
             .collect()
     }
 
-    async fn send_events(&self, events: Vec<buck2_events::BuckEvent>) {
+    async fn send_events(&self, events: Vec<bz_events::BuckEvent>) {
         #[allow(unreachable_patterns)]
         if let Ok(Some(sink)) = new_remote_event_sink_if_enabled(
             self.fb,
@@ -100,8 +100,8 @@ impl BuildGraphStats {
 impl EventSubscriber for BuildGraphStats {
     async fn handle_command_result(
         &mut self,
-        result: &buck2_cli_proto::CommandResult,
-    ) -> buck2_error::Result<()> {
+        result: &bz_cli_proto::CommandResult,
+    ) -> bz_error::Result<()> {
         match &result.result {
             Some(command_result::Result::BuildResponse(res)) => {
                 self.handle_build_response(res).await
@@ -117,15 +117,15 @@ mod tests {
 
     #[fbinit::test]
     fn build_graph_stats_normal(fb: FacebookInit) {
-        let res = buck2_cli_proto::BuildResponse {
+        let res = bz_cli_proto::BuildResponse {
             build_targets: vec![
-                buck2_cli_proto::BuildTarget {
+                bz_cli_proto::BuildTarget {
                     target: "//some/target:A".to_owned(),
                     configuration: "//some/conf:A".to_owned(),
                     configured_graph_size: Some(123),
                     ..Default::default()
                 },
-                buck2_cli_proto::BuildTarget {
+                bz_cli_proto::BuildTarget {
                     target: "//some/target:B".to_owned(),
                     configuration: "//some/conf:B".to_owned(),
                     configured_graph_size: None,
@@ -139,18 +139,18 @@ mod tests {
         let handler = BuildGraphStats::new(fb, uuid.dupe());
         let events = handler.build_graph_stats_from_build_response(&res);
 
-        let event_expected = buck2_data::BuckEvent {
-            data: Some(buck2_data::buck_event::Data::Record(
-                buck2_data::RecordEvent {
-                    data: Some(buck2_data::record_event::Data::BuildGraphStats(
-                        buck2_data::BuildGraphStats {
+        let event_expected = bz_data::BuckEvent {
+            data: Some(bz_data::buck_event::Data::Record(
+                bz_data::RecordEvent {
+                    data: Some(bz_data::record_event::Data::BuildGraphStats(
+                        bz_data::BuildGraphStats {
                             build_targets: vec![
-                                buck2_data::BuildTarget {
+                                bz_data::BuildTarget {
                                     target: "//some/target:A".to_owned(),
                                     configuration: "//some/conf:A".to_owned(),
                                     configured_graph_size: Some(123),
                                 },
-                                buck2_data::BuildTarget {
+                                bz_data::BuildTarget {
                                     target: "//some/target:B".to_owned(),
                                     configuration: "//some/conf:B".to_owned(),
                                     configured_graph_size: None,
@@ -170,7 +170,7 @@ mod tests {
 
     #[fbinit::test]
     fn build_graph_stats_empty_target(fb: FacebookInit) {
-        let res = buck2_cli_proto::BuildResponse {
+        let res = bz_cli_proto::BuildResponse {
             build_targets: vec![],
             ..Default::default()
         };
@@ -184,7 +184,7 @@ mod tests {
 
     #[fbinit::test]
     fn build_graph_stats_too_long_targets(fb: FacebookInit) {
-        let build_target = buck2_cli_proto::BuildTarget {
+        let build_target = bz_cli_proto::BuildTarget {
             target: "T".to_owned(),
             configuration: "C".to_owned(),
             configured_graph_size: Some(1),
@@ -197,7 +197,7 @@ mod tests {
             input_build_targets.push(build_target.clone());
         }
 
-        let res = buck2_cli_proto::BuildResponse {
+        let res = bz_cli_proto::BuildResponse {
             build_targets: input_build_targets,
             ..Default::default()
         };
@@ -206,7 +206,7 @@ mod tests {
         let handler = BuildGraphStats::new(fb, uuid.dupe());
         let events = handler.build_graph_stats_from_build_response(&res);
 
-        let build_target = buck2_data::BuildTarget {
+        let build_target = bz_data::BuildTarget {
             target: "T".to_owned(),
             configuration: "C".to_owned(),
             configured_graph_size: Some(1),
@@ -218,11 +218,11 @@ mod tests {
         }
         let output_build_targets_2 = vec![build_target.clone(), build_target.clone()];
 
-        let event_expected_3000 = buck2_data::BuckEvent {
-            data: Some(buck2_data::buck_event::Data::Record(
-                buck2_data::RecordEvent {
-                    data: Some(buck2_data::record_event::Data::BuildGraphStats(
-                        buck2_data::BuildGraphStats {
+        let event_expected_3000 = bz_data::BuckEvent {
+            data: Some(bz_data::buck_event::Data::Record(
+                bz_data::RecordEvent {
+                    data: Some(bz_data::record_event::Data::BuildGraphStats(
+                        bz_data::BuildGraphStats {
                             build_targets: output_build_targets_3000,
                         },
                     )),
@@ -230,11 +230,11 @@ mod tests {
             )),
             ..Default::default()
         };
-        let event_expected_2 = buck2_data::BuckEvent {
-            data: Some(buck2_data::buck_event::Data::Record(
-                buck2_data::RecordEvent {
-                    data: Some(buck2_data::record_event::Data::BuildGraphStats(
-                        buck2_data::BuildGraphStats {
+        let event_expected_2 = bz_data::BuckEvent {
+            data: Some(bz_data::buck_event::Data::Record(
+                bz_data::RecordEvent {
+                    data: Some(bz_data::record_event::Data::BuildGraphStats(
+                        bz_data::BuildGraphStats {
                             build_targets: output_build_targets_2,
                         },
                     )),

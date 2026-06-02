@@ -13,18 +13,18 @@ use std::fmt::Display;
 use std::io::Write;
 
 use async_trait::async_trait;
-use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
-use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
-use buck2_cli_proto::ClientContext;
-use buck2_cmd_audit_client::subtargets::AuditSubtargetsCommand;
-use buck2_core::provider::label::ConfiguredProvidersLabel;
-use buck2_error::buck2_error;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::ctx::ServerCommandDiceContext;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::pattern_parse_and_resolve::parse_and_resolve_provider_labels_with_modifiers_from_cli_args;
-use buck2_server_ctx::stdout_partial_output::StdoutPartialOutput;
-use buck2_util::indent::indent;
+use bz_build_api::analysis::calculation::RuleAnalysisCalculation;
+use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+use bz_cli_proto::ClientContext;
+use bz_cmd_audit_client::subtargets::AuditSubtargetsCommand;
+use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_error::bz_error;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::ctx::ServerCommandDiceContext;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::pattern_parse_and_resolve::parse_and_resolve_provider_labels_with_modifiers_from_cli_args;
+use bz_server_ctx::stdout_partial_output::StdoutPartialOutput;
+use bz_util::indent::indent;
 use dice::DiceTransaction;
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
@@ -37,9 +37,9 @@ impl ServerAuditSubcommand for AuditSubtargetsCommand {
     async fn server_execute(
         &self,
         server_ctx: &dyn ServerCommandContextTrait,
-        stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+        stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
         _client_ctx: ClientContext,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         server_ctx
             .with_dice_ctx(move |server_ctx, ctx| {
                 server_execute_with_dice(self, server_ctx, stdout, ctx)
@@ -51,9 +51,9 @@ impl ServerAuditSubcommand for AuditSubtargetsCommand {
 async fn server_execute_with_dice(
     command: &AuditSubtargetsCommand,
     server_ctx: &dyn ServerCommandContextTrait,
-    mut stdout: PartialResultDispatcher<buck2_cli_proto::StdoutBytes>,
+    mut stdout: PartialResultDispatcher<bz_cli_proto::StdoutBytes>,
     mut ctx: DiceTransaction,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     // TODO(raulgarcia4): Extract function where possible, shares a lot of code with audit providers.
     let target_resolution_config =
         audit_command_target_resolution_config(&mut ctx, &command.target_cfg, server_ctx).await?;
@@ -97,7 +97,7 @@ async fn server_execute_with_dice(
                     if json_format {
                         fn serialize_nested_subtargets(
                             providers: &FrozenProviderCollection,
-                        ) -> buck2_error::Result<serde_json::Value> {
+                        ) -> bz_error::Result<serde_json::Value> {
                             let mut entries = serde_json::Map::new();
                             for (subtarget, providers) in
                                 providers.default_info()?.sub_targets().iter()
@@ -120,7 +120,7 @@ async fn server_execute_with_dice(
                             providers: &FrozenProviderCollection,
                             stdout: &mut StdoutPartialOutput,
                             label: &mut Subtarget,
-                        ) -> buck2_error::Result<()> {
+                        ) -> bz_error::Result<()> {
                             for (subtarget, providers) in
                                 providers.default_info()?.sub_targets().iter()
                             {
@@ -176,8 +176,8 @@ async fn server_execute_with_dice(
     stderr.flush()?;
 
     if at_least_one_evaluation_error {
-        Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
+        Err(bz_error!(
+            bz_error::ErrorTag::Input,
             "Evaluation of at least one target provider failed"
         ))
     } else {

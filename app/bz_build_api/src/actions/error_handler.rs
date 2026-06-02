@@ -11,8 +11,8 @@
 use std::cell::RefCell;
 
 use allocative::Allocative;
-use buck2_data::ActionSubError;
-use buck2_data::CommandExecution;
+use bz_data::ActionSubError;
+use bz_data::CommandExecution;
 use console::strip_ansi_codes;
 use derive_more::Display;
 use starlark::environment::GlobalsBuilder;
@@ -42,7 +42,7 @@ use crate::starlark::values::ValueLike;
 
 pub(crate) type ActionSubErrorResult<'a> = UnpackList<&'a StarlarkActionSubError>;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 pub(crate) enum ActionErrorHandlerError {
     #[error("Error handler failed. Expected return type `{0}`, got value with type `{1}`")]
@@ -265,9 +265,9 @@ fn action_error_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named)] errorformats: UnpackListOrTuple<String>,
         _heap: Heap<'v>,
     ) -> starlark::Result<Vec<StarlarkActionSubError>> {
-        let error_lines = buck2_errorformat::split_lines(&error);
-        let error_entries = buck2_errorformat::parse_error_format(errorformats.items, error_lines)
-            .map_err(buck2_error::Error::from)?;
+        let error_lines = bz_errorformat::split_lines(&error);
+        let error_entries = bz_errorformat::parse_error_format(errorformats.items, error_lines)
+            .map_err(bz_error::Error::from)?;
         let res = error_entries
             .into_iter()
             .map(|e| StarlarkActionSubError::from_errorformat_entry(e, category.clone()))
@@ -374,7 +374,7 @@ impl Eq for StarlarkActionSubError {}
 
 impl StarlarkActionSubError {
     pub(crate) fn from_errorformat_entry(
-        entry: buck2_errorformat::Entry,
+        entry: bz_errorformat::Entry,
         category: String,
     ) -> Self {
         StarlarkActionSubError {

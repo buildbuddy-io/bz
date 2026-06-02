@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_error::buck2_error;
+use bz_error::bz_error;
 use http::HeaderMap;
 use http::HeaderValue;
 use http::Uri;
@@ -16,7 +16,7 @@ use hyper_http_proxy::Proxy;
 
 #[cfg(fbcode_build)]
 mod imp {
-    use buck2_error::BuckErrorContext;
+    use bz_error::BuckErrorContext;
     use http::Uri;
     use hyper_http_proxy::Intercept;
 
@@ -37,7 +37,7 @@ mod imp {
         }
     }
 
-    pub(super) fn find_http_proxy() -> buck2_error::Result<Option<Proxy>> {
+    pub(super) fn find_http_proxy() -> bz_error::Result<Option<Proxy>> {
         if let Some(port) = cpe::x2p::http1_proxy_port() {
             tracing::debug!("Using x2pagent http proxy client on port: {}", port);
             let uri: Uri = format!("http://localhost:{port}")
@@ -51,7 +51,7 @@ mod imp {
 }
 
 #[cfg(fbcode_build)]
-pub fn find_proxy() -> buck2_error::Result<Option<Proxy>> {
+pub fn find_proxy() -> bz_error::Result<Option<Proxy>> {
     #[cfg(unix)]
     if let Some(proxy) = imp::find_unix_socket_proxy() {
         return Ok(Some(proxy));
@@ -61,9 +61,9 @@ pub fn find_proxy() -> buck2_error::Result<Option<Proxy>> {
 }
 
 #[cfg(not(fbcode_build))]
-pub fn find_proxy() -> buck2_error::Result<Option<Proxy>> {
-    Err(buck2_error!(
-        buck2_error::ErrorTag::Input,
+pub fn find_proxy() -> bz_error::Result<Option<Proxy>> {
+    Err(bz_error!(
+        bz_error::ErrorTag::Input,
         "VPNless development not supported for non-internal fbcode builds"
     ))
 }
@@ -71,7 +71,7 @@ pub fn find_proxy() -> buck2_error::Result<Option<Proxy>> {
 /// Collection of different kinds of errors we can see from x2pagent. Typically
 /// denotes a URL is not authorized for vpnless access and/or using the wrong,
 /// non-vpnless url.
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Environment)]
 pub enum X2PAgentError {
     #[error("Host `{host}` is not authorized for vpnless access: {message}")]
@@ -81,11 +81,11 @@ pub enum X2PAgentError {
     #[error("Host `{host}` and path `{path}` is not authorized on vpnless")]
     AccessDenied { host: String, path: String },
     #[error(transparent)]
-    Error(buck2_error::Error),
+    Error(bz_error::Error),
 }
 
-impl From<buck2_error::Error> for X2PAgentError {
-    fn from(e: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for X2PAgentError {
+    fn from(e: bz_error::Error) -> Self {
         Self::Error(e)
     }
 }
@@ -114,8 +114,8 @@ impl X2PAgentError {
                 host,
                 message: to_str(msg),
             }),
-            (_, _, Some(message)) => Some(Self::Error(buck2_error!(
-                buck2_error::ErrorTag::Environment,
+            (_, _, Some(message)) => Some(Self::Error(bz_error!(
+                bz_error::ErrorTag::Environment,
                 "{}",
                 to_str(message)
             ))),

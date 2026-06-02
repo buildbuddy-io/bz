@@ -10,9 +10,9 @@
 
 use std::env;
 
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::exit_result::ExitResult;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::exit_result::ExitResult;
 
 /// Path to current executable.
 #[derive(Debug, clap::Parser)]
@@ -20,7 +20,7 @@ pub struct ExeCommand {}
 
 impl ExeCommand {
     pub fn exec(self, _matches: BuckArgMatches<'_>, _ctx: ClientCommandContext<'_>) -> ExitResult {
-        buck2_client_ctx::println!("{}", env::current_exe()?.display())?;
+        bz_client_ctx::println!("{}", env::current_exe()?.display())?;
         ExitResult::success()
     }
 }

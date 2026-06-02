@@ -11,9 +11,9 @@
 use std::borrow::Borrow;
 use std::ops::Deref;
 
-use buck2_fs::paths::abs_norm_path::AbsNormPath;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 
 /// A path identifying a cgroup.
 ///
@@ -107,7 +107,7 @@ impl Borrow<CgroupPath> for CgroupPathBuf {
 
 #[cfg(test)]
 mod tests {
-    use buck2_fs::paths::abs_norm_path::AbsNormPath;
+    use bz_fs::paths::abs_norm_path::AbsNormPath;
 
     use crate::path::CgroupPath;
 

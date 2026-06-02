@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use derivative::Derivative;
 use dupe::Dupe;
 use futures::future;
@@ -67,7 +67,7 @@ impl RemoteCommandStdStreams {
         self.stderr.to_lossy(&self.client, self.digest_config).await
     }
 
-    pub(crate) async fn into_stdout_stderr_bytes(self) -> buck2_error::Result<(Vec<u8>, Vec<u8>)> {
+    pub(crate) async fn into_stdout_stderr_bytes(self) -> bz_error::Result<(Vec<u8>, Vec<u8>)> {
         future::try_join(
             self.stdout.into_bytes(&self.client, self.digest_config),
             self.stderr.into_bytes(&self.client, self.digest_config),

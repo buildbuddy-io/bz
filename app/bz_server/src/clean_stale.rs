@@ -9,13 +9,13 @@
  */
 
 use async_trait::async_trait;
-use buck2_error::BuckErrorContext;
-use buck2_error::internal_error;
-use buck2_server_ctx::ctx::ServerCommandContextTrait;
-use buck2_server_ctx::partial_result_dispatcher::NoPartialResult;
-use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
-use buck2_server_ctx::template::ServerCommandTemplate;
-use buck2_server_ctx::template::run_server_command;
+use bz_error::BuckErrorContext;
+use bz_error::internal_error;
+use bz_server_ctx::ctx::ServerCommandContextTrait;
+use bz_server_ctx::partial_result_dispatcher::NoPartialResult;
+use bz_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
+use bz_server_ctx::template::ServerCommandTemplate;
+use bz_server_ctx::template::run_server_command;
 use chrono::TimeZone;
 use chrono::Utc;
 use dice::DiceTransaction;
@@ -25,8 +25,8 @@ use crate::ctx::ServerCommandContext;
 pub(crate) async fn clean_stale_command(
     ctx: &ServerCommandContext<'_>,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
-    req: buck2_cli_proto::CleanStaleRequest,
-) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse> {
+    req: bz_cli_proto::CleanStaleRequest,
+) -> bz_error::Result<bz_cli_proto::CleanStaleResponse> {
     run_server_command(
         CleanStaleServerCommand { req },
         ctx,
@@ -36,14 +36,14 @@ pub(crate) async fn clean_stale_command(
 }
 
 struct CleanStaleServerCommand {
-    req: buck2_cli_proto::CleanStaleRequest,
+    req: bz_cli_proto::CleanStaleRequest,
 }
 
 #[async_trait]
 impl ServerCommandTemplate for CleanStaleServerCommand {
-    type StartEvent = buck2_data::CleanCommandStart;
-    type EndEvent = buck2_data::CleanCommandEnd;
-    type Response = buck2_cli_proto::CleanStaleResponse;
+    type StartEvent = bz_data::CleanCommandStart;
+    type EndEvent = bz_data::CleanCommandEnd;
+    type Response = bz_cli_proto::CleanStaleResponse;
     type PartialResult = NoPartialResult;
 
     async fn command(
@@ -51,7 +51,7 @@ impl ServerCommandTemplate for CleanStaleServerCommand {
         server_ctx: &dyn ServerCommandContextTrait,
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         _ctx: DiceTransaction,
-    ) -> buck2_error::Result<Self::Response> {
+    ) -> bz_error::Result<Self::Response> {
         server_ctx
             .cancellation_context()
             .critical_section(|| async move {
@@ -74,12 +74,12 @@ impl ServerCommandTemplate for CleanStaleServerCommand {
             .await
     }
 
-    fn end_event(&self, response: &buck2_error::Result<Self::Response>) -> Self::EndEvent {
+    fn end_event(&self, response: &bz_error::Result<Self::Response>) -> Self::EndEvent {
         let clean_stale_stats = if let Ok(res) = response {
             res.stats
         } else {
             None
         };
-        buck2_data::CleanCommandEnd { clean_stale_stats }
+        bz_data::CleanCommandEnd { clean_stale_stats }
     }
 }

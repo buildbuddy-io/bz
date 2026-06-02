@@ -13,18 +13,18 @@ use std::fs::create_dir_all;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use buck2_cli_proto::daemon_api_client::*;
-use buck2_cli_proto::new_generic::NewGenericRequest;
-use buck2_cli_proto::new_generic::NewGenericResponse;
-use buck2_cli_proto::*;
-use buck2_common::daemon_dir::DaemonDir;
-use buck2_data::error::ErrorTag;
-use buck2_error::BuckErrorContext;
-use buck2_event_log::stream_value::StreamValue;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-use buck2_fs::paths::file_name::FileName;
+use bz_cli_proto::daemon_api_client::*;
+use bz_cli_proto::new_generic::NewGenericRequest;
+use bz_cli_proto::new_generic::NewGenericResponse;
+use bz_cli_proto::*;
+use bz_common::daemon_dir::DaemonDir;
+use bz_data::error::ErrorTag;
+use bz_error::BuckErrorContext;
+use bz_event_log::stream_value::StreamValue;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
+use bz_fs::paths::file_name::FileName;
 use futures::Stream;
 use futures::StreamExt;
 use futures::TryStreamExt;
@@ -49,7 +49,7 @@ pub mod kill;
 
 use crate::startup_deadline::StartupDeadline;
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Environment)]
 enum LifecycleError {
     #[error("Missing `{}` file in `{}` directory", BuckdLifecycleLock::BUCKD_LIFECYCLE, _0.display())]
@@ -60,7 +60,7 @@ enum LifecycleError {
 /// The connector wraps all buckd calls with flushing.
 pub struct BuckdClientConnector {
     client: BuckdClient,
-    pub cgroup_path_of_buck2_daemon: Option<String>,
+    pub cgroup_path_of_bz_daemon: Option<String>,
 }
 
 impl BuckdClientConnector {
@@ -70,7 +70,7 @@ impl BuckdClientConnector {
         }
     }
 
-    pub fn daemon_constraints(&self) -> &buck2_cli_proto::DaemonConstraints {
+    pub fn daemon_constraints(&self) -> &bz_cli_proto::DaemonConstraints {
         &self.client.constraints
     }
 }
@@ -80,12 +80,12 @@ pub struct BuckdLifecycleLock {
     lock_file: File,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = BuckdLifecycleLock)]
 #[error("Error locking buckd.lifecycle: {error:#}")]
 pub struct LifecycleLockError {
     #[source]
-    error: buck2_error::Error,
+    error: bz_error::Error,
 }
 
 impl BuckdLifecycleLock {
@@ -99,7 +99,7 @@ impl BuckdLifecycleLock {
         async fn lock_inner(
             daemon_dir: DaemonDir,
             deadline: StartupDeadline,
-        ) -> buck2_error::Result<BuckdLifecycleLock> {
+        ) -> bz_error::Result<BuckdLifecycleLock> {
             create_dir_all(&daemon_dir.path)?;
             let lifecycle_path = daemon_dir
                 .path
@@ -129,7 +129,7 @@ impl BuckdLifecycleLock {
 
     /// Remove everything except `buckd.lifecycle` file which is the lock file.
     /// If `keep_prev` is true, backup previous daemon logs to `prev` dir for debugging.
-    pub fn clean_daemon_dir(&self, keep_prev: bool) -> buck2_error::Result<()> {
+    pub fn clean_daemon_dir(&self, keep_prev: bool) -> bz_error::Result<()> {
         let prev_daemon_dir = self
             .daemon_dir
             .path
@@ -184,11 +184,11 @@ impl Drop for BuckdLifecycleLock {
 /// that take more primitive types than the protobuf structure itself.
 pub struct BuckdClient {
     client: DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
-    constraints: buck2_cli_proto::DaemonConstraints,
+    constraints: bz_cli_proto::DaemonConstraints,
     pub(crate) daemon_dir: DaemonDir,
 }
 
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
 enum GrpcToStreamError {
     #[error("buck daemon returned an empty CommandProgress")]
@@ -198,7 +198,7 @@ enum GrpcToStreamError {
 /// Convert tonic error to our error.
 ///
 /// This function **must** be used explicitly to convert the error, because we want a tag.
-pub(crate) fn tonic_status_to_error(status: tonic::Status) -> buck2_error::Error {
+pub(crate) fn tonic_status_to_error(status: tonic::Status) -> bz_error::Error {
     let mut tags = vec![ErrorTag::ClientGrpc];
     if status.code() == tonic::Code::ResourceExhausted {
         // The error looks like this:
@@ -214,14 +214,14 @@ pub(crate) fn tonic_status_to_error(status: tonic::Status) -> buck2_error::Error
             tags.push(ErrorTag::GrpcResponseMessageTooLarge);
         }
     }
-    buck2_error::Error::from(status).tag(tags)
+    bz_error::Error::from(status).tag(tags)
 }
 
 /// Translates a tonic streaming response into a stream of StreamValues, the set of things that can flow across the gRPC
 /// event stream.
 fn grpc_to_stream(
-    response: buck2_error::Result<tonic::Response<tonic::Streaming<MultiCommandProgress>>>,
-) -> impl Stream<Item = buck2_error::Result<StreamValue>> {
+    response: bz_error::Result<tonic::Response<tonic::Streaming<MultiCommandProgress>>>,
+) -> impl Stream<Item = bz_error::Result<StreamValue>> {
     let stream = match response {
         Ok(response) => response.into_inner(),
         Err(e) => return futures::stream::once(futures::future::ready(Err(e))).left_stream(),
@@ -229,7 +229,7 @@ fn grpc_to_stream(
 
     let stream = stream
         .map_err(tonic_status_to_error)
-        .map_ok(|e| stream::iter(e.messages.into_iter().map(buck2_error::Ok)))
+        .map_ok(|e| stream::iter(e.messages.into_iter().map(bz_error::Ok)))
         .try_flatten();
 
     stream::unfold(stream, |mut stream| async {
@@ -262,7 +262,7 @@ impl BuckdClient {
         events_ctx: &mut DaemonEventsCtx<'j>,
         partial_result_handler: &mut Handler,
         console_interaction: Option<ConsoleInteractionStream<'i>>,
-    ) -> buck2_error::Result<CommandOutcome<Res>>
+    ) -> bz_error::Result<CommandOutcome<Res>>
     where
         Command: for<'b> FnOnce(
             &'b mut DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
@@ -292,7 +292,7 @@ impl BuckdClient {
         events_ctx: &mut DaemonEventsCtx<'a>,
         snapshot: bool,
         include_tokio_runtime_metrics: bool,
-    ) -> buck2_error::Result<StatusResponse> {
+    ) -> bz_error::Result<StatusResponse> {
         let outcome = events_ctx
             // Safe to unwrap tailers here because they are instantiated prior to a command being called.
             .unpack_oneshot(self.client.status(Request::new(StatusRequest {
@@ -300,13 +300,13 @@ impl BuckdClient {
                 include_tokio_runtime_metrics,
             })))
             .await;
-        // TODO(nmj): We have a number of things that wish to use status() and return an buck2_error::Result,
+        // TODO(nmj): We have a number of things that wish to use status() and return an bz_error::Result,
         // for now we'll just turn a "CommandMessage" into a error, but that's really not what we
         // want long term.
         match outcome? {
             CommandOutcome::Success(r) => Ok(r),
-            CommandOutcome::Failure(_) => Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::DaemonStatus,
+            CommandOutcome::Failure(_) => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::DaemonStatus,
                 "Unexpected failure message in status()"
             )),
         }
@@ -316,7 +316,7 @@ impl BuckdClient {
         &mut self,
         _events_ctx: &mut DaemonEventsCtx<'a>,
         req: SetLogFilterRequest,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         self.client.set_log_filter(Request::new(req)).await?;
 
         Ok(())
@@ -329,10 +329,10 @@ pub struct FlushingBuckdClient<'a> {
 
 pub enum NoPartialResult {}
 
-impl TryFrom<buck2_cli_proto::partial_result::PartialResult> for NoPartialResult {
-    type Error = buck2_cli_proto::partial_result::PartialResult;
+impl TryFrom<bz_cli_proto::partial_result::PartialResult> for NoPartialResult {
+    type Error = bz_cli_proto::partial_result::PartialResult;
 
-    fn try_from(v: buck2_cli_proto::partial_result::PartialResult) -> Result<Self, Self::Error> {
+    fn try_from(v: bz_cli_proto::partial_result::PartialResult) -> Result<Self, Self::Error> {
         Err(v)
     }
 }
@@ -347,7 +347,7 @@ impl PartialResultHandler for NoPartialResultHandler {
         &mut self,
         _ctx: PartialResultCtx<'_>,
         partial_res: Self::PartialResult,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         match partial_res {}
     }
 }
@@ -357,13 +357,13 @@ pub struct StdoutPartialResultHandler;
 
 #[async_trait]
 impl PartialResultHandler for StdoutPartialResultHandler {
-    type PartialResult = buck2_cli_proto::StdoutBytes;
+    type PartialResult = bz_cli_proto::StdoutBytes;
 
     async fn handle_partial_result(
         &mut self,
         mut ctx: PartialResultCtx<'_>,
         partial_res: Self::PartialResult,
-    ) -> buck2_error::Result<()> {
+    ) -> bz_error::Result<()> {
         ctx.stdout(&partial_res.data).await
     }
 }
@@ -381,7 +381,7 @@ macro_rules! stream_method {
             events_ctx: &mut EventsCtx,
             console_interaction: Option<ConsoleInteractionStream<'j>>,
             handler: &mut impl PartialResultHandler<PartialResult = $message>,
-        ) -> buck2_error::Result<CommandOutcome<$res>> {
+        ) -> bz_error::Result<CommandOutcome<$res>> {
             let mut events_ctx = DaemonEventsCtx::new(self.inner, events_ctx)?;
             let res = self
                 .inner
@@ -415,7 +415,7 @@ macro_rules! bidirectional_stream_method {
             requests: impl Stream<Item = $req> + Send + Sync + 'static,
             events_ctx: &mut EventsCtx,
             handler: &mut impl PartialResultHandler<PartialResult = $message>,
-        ) -> buck2_error::Result<CommandOutcome<$res>> {
+        ) -> bz_error::Result<CommandOutcome<$res>> {
             let mut events_ctx = DaemonEventsCtx::new(self.inner, events_ctx)?;
             let req = create_client_stream(context, requests);
             let res = self
@@ -445,7 +445,7 @@ macro_rules! oneshot_method {
             &mut self,
             req: $req,
             events_ctx: &mut EventsCtx,
-        ) -> buck2_error::Result<CommandOutcome<$res>> {
+        ) -> bz_error::Result<CommandOutcome<$res>> {
             let mut events_ctx = DaemonEventsCtx::new(self.inner, events_ctx)?;
             let res = events_ctx
                 .unpack_oneshot({ self.inner.client.$method(Request::new(req)) })
@@ -467,7 +467,7 @@ macro_rules! debug_method {
             &mut self,
             req: $req,
             events_ctx: &mut EventsCtx,
-        ) -> buck2_error::Result<$res> {
+        ) -> bz_error::Result<$res> {
             let mut events_ctx = DaemonEventsCtx::new(self.inner, events_ctx)?;
             let out = self.inner.client.$method(Request::new(req)).await;
             events_ctx.flush().await?;
@@ -479,7 +479,7 @@ macro_rules! debug_method {
 /// Wrap a method that exists on the BuckdClient, with flushing.
 macro_rules! wrap_method {
     ($method: ident ($($param: ident : $param_type: ty),*), $res: ty) => {
-        pub async fn $method(&mut self, events_ctx: &mut EventsCtx, $($param: $param_type)*) -> buck2_error::Result<$res> {
+        pub async fn $method(&mut self, events_ctx: &mut EventsCtx, $($param: $param_type)*) -> bz_error::Result<$res> {
             let mut events_ctx = DaemonEventsCtx::new(self.inner, events_ctx)?;
             let out = self
                 .inner
@@ -496,25 +496,25 @@ impl FlushingBuckdClient<'_> {
         aquery,
         AqueryRequest,
         AqueryResponse,
-        buck2_cli_proto::StdoutBytes
+        bz_cli_proto::StdoutBytes
     );
     stream_method!(
         cquery,
         CqueryRequest,
         CqueryResponse,
-        buck2_cli_proto::StdoutBytes
+        bz_cli_proto::StdoutBytes
     );
     stream_method!(
         uquery,
         UqueryRequest,
         UqueryResponse,
-        buck2_cli_proto::StdoutBytes
+        bz_cli_proto::StdoutBytes
     );
     stream_method!(
         targets,
         TargetsRequest,
         TargetsResponse,
-        buck2_cli_proto::StdoutBytes
+        bz_cli_proto::StdoutBytes
     );
     stream_method!(
         targets_show_outputs,
@@ -529,20 +529,20 @@ impl FlushingBuckdClient<'_> {
         NoPartialResult
     );
     stream_method!(build, BuildRequest, BuildResponse, NoPartialResult);
-    stream_method!(bxl, BxlRequest, BxlResponse, buck2_cli_proto::StdoutBytes);
+    stream_method!(bxl, BxlRequest, BxlResponse, bz_cli_proto::StdoutBytes);
     stream_method!(test, TestRequest, TestResponse, NoPartialResult);
     stream_method!(install, InstallRequest, InstallResponse, NoPartialResult);
     stream_method!(
         audit,
         GenericRequest,
         GenericResponse,
-        buck2_cli_proto::StdoutBytes
+        bz_cli_proto::StdoutBytes
     );
     stream_method!(
         starlark,
         GenericRequest,
         GenericResponse,
-        buck2_cli_proto::StdoutBytes
+        bz_cli_proto::StdoutBytes
     );
     stream_method!(
         new_generic_impl,
@@ -561,7 +561,7 @@ impl FlushingBuckdClient<'_> {
         file_status,
         FileStatusRequest,
         GenericResponse,
-        buck2_cli_proto::StdoutBytes
+        bz_cli_proto::StdoutBytes
     );
     stream_method!(
         profile,
@@ -616,7 +616,7 @@ impl FlushingBuckdClient<'_> {
         events_ctx: &mut EventsCtx,
         snapshot: bool,
         include_tokio_runtime_metrics: bool,
-    ) -> buck2_error::Result<StatusResponse> {
+    ) -> bz_error::Result<StatusResponse> {
         let mut events_ctx = DaemonEventsCtx::new(self.inner, events_ctx)?;
         let out = self
             .inner
@@ -631,18 +631,18 @@ impl FlushingBuckdClient<'_> {
 
     pub async fn new_generic(
         &mut self,
-        context: buck2_cli_proto::ClientContext,
+        context: bz_cli_proto::ClientContext,
         req: NewGenericRequest,
         events_ctx: &mut EventsCtx,
         stdin: Option<ConsoleInteractionStream<'_>>,
-    ) -> buck2_error::Result<CommandOutcome<NewGenericResponse>> {
+    ) -> bz_error::Result<CommandOutcome<NewGenericResponse>> {
         let req = serde_json::to_string(&req)
             .buck_error_context("Could not serialize `NewGenericRequest`")?;
-        let req = buck2_cli_proto::NewGenericRequestMessage {
+        let req = bz_cli_proto::NewGenericRequestMessage {
             context: Some(context),
             new_generic_request: req,
         };
-        let command_outcome: CommandOutcome<buck2_cli_proto::NewGenericResponseMessage> = self
+        let command_outcome: CommandOutcome<bz_cli_proto::NewGenericResponseMessage> = self
             .new_generic_impl(req, events_ctx, stdin, &mut NoPartialResultHandler)
             .await?;
         match command_outcome {

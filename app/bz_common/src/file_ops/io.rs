@@ -12,14 +12,14 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_core::cells::CellResolver;
-use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::name::CellName;
-use buck2_core::cells::paths::CellRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePath;
-use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
-use buck2_error::BuckErrorContext;
-use buck2_hash::BuckDashMap;
+use bz_core::cells::CellResolver;
+use bz_core::cells::cell_path::CellPath;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_error::BuckErrorContext;
+use bz_hash::BuckDashMap;
 use cmp_any::PartialEqAny;
 use derivative::Derivative;
 use dice::DiceComputations;
@@ -48,7 +48,7 @@ pub(super) struct IoFileOpsDelegate {
 }
 
 impl IoFileOpsDelegate {
-    fn resolve(&self, path: &CellRelativePath) -> buck2_error::Result<ProjectRelativePathBuf> {
+    fn resolve(&self, path: &CellRelativePath) -> bz_error::Result<ProjectRelativePathBuf> {
         let cell_root = self.cells.get(self.cell)?.path();
         Ok(cell_root.as_project_relative_path().join(path))
     }
@@ -61,7 +61,7 @@ impl IoFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_uncached_with_io_provider(ctx.global_data().get_io_provider(), path)
             .await
     }
@@ -70,7 +70,7 @@ impl IoFileOpsDelegate {
         &self,
         io_provider: Arc<dyn IoProvider>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_uncached_with_io_provider_and_metadata_cache(io_provider, path, None)
             .await
     }
@@ -80,7 +80,7 @@ impl IoFileOpsDelegate {
         io_provider: Arc<dyn IoProvider>,
         path: &CellRelativePath,
         metadata_cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         let project_path = self.resolve(path)?;
         let forward_project_path = metadata_cache
             .as_ref()
@@ -108,7 +108,7 @@ impl IoFileOpsDelegate {
         io_provider: Arc<dyn IoProvider>,
         path: &CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         let project_path = self.resolve(path)?;
 
         let res = io_provider
@@ -126,7 +126,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<ReadFileProxy> {
+    ) -> bz_error::Result<ReadFileProxy> {
         Ok(ReadFileProxy::new_with_captures(
             (self.resolve(path)?, ctx.global_data().get_io_provider()),
             |(project_path, io)| async move { io.read_file_if_exists(project_path).await },
@@ -137,7 +137,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         let project_path = self.resolve(path)?;
         {
             let read_dir_cache = ctx
@@ -164,7 +164,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_uncached(ctx, path).await
     }
 
@@ -172,7 +172,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         &self,
         io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_uncached_with_io_provider(io_provider, path)
             .await
     }
@@ -182,7 +182,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
         metadata_cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    ) -> bz_error::Result<Arc<[RawDirEntry]>> {
         self.read_dir_uncached_with_io_provider_and_metadata_cache(
             io_provider,
             path,
@@ -195,7 +195,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+    ) -> bz_error::Result<Option<RawPathMetadata>> {
         let project_path = self.resolve(path)?;
 
         let res = ctx
@@ -211,7 +211,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         let cache = ctx
             .per_transaction_data()
             .data
@@ -232,7 +232,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.read_path_metadata_for_no_watchfs_if_exists_impl(io_provider, path, cache)
             .await
     }
@@ -242,7 +242,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
-    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    ) -> bz_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.read_path_metadata_for_no_watchfs_if_exists_impl(
             ctx.global_data().get_io_provider(),
             path,
@@ -255,7 +255,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         let Some(dir) = path.parent() else {
             // FIXME(JakobDegen): Blindly assuming that cell roots exist isn't quite right, I'll fix
             // this later in the stack
@@ -272,7 +272,7 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         &self,
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-    ) -> buck2_error::Result<bool> {
+    ) -> bz_error::Result<bool> {
         let Some(dir) = path.parent() else {
             // FIXME(JakobDegen): Blindly assuming that cell roots exist isn't quite right, I'll fix
             // this later in the stack

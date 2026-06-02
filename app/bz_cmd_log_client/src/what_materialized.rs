@@ -15,14 +15,14 @@ use std::fmt::Formatter;
 use std::io::Write;
 use std::path::Path;
 
-use buck2_client_ctx::client_ctx::BuckSubcommand;
-use buck2_client_ctx::client_ctx::ClientCommandContext;
-use buck2_client_ctx::common::BuckArgMatches;
-use buck2_client_ctx::event_log_options::EventLogOptions;
-use buck2_client_ctx::events_ctx::EventsCtx;
-use buck2_client_ctx::exit_result::ClientIoError;
-use buck2_client_ctx::exit_result::ExitResult;
-use buck2_event_log::stream_value::StreamValue;
+use bz_client_ctx::client_ctx::BuckSubcommand;
+use bz_client_ctx::client_ctx::ClientCommandContext;
+use bz_client_ctx::common::BuckArgMatches;
+use bz_client_ctx::event_log_options::EventLogOptions;
+use bz_client_ctx::events_ctx::EventsCtx;
+use bz_client_ctx::exit_result::ClientIoError;
+use bz_client_ctx::exit_result::ExitResult;
+use bz_event_log::stream_value::StreamValue;
 use serde::Serialize;
 use tokio_stream::StreamExt;
 
@@ -146,15 +146,15 @@ fn write_output<T: Display + Serialize>(
     }
 }
 
-fn get_record(materialization: &buck2_data::MaterializationEnd) -> Record {
+fn get_record(materialization: &bz_data::MaterializationEnd) -> Record {
     let method = match materialization
         .method
-        .and_then(|v| buck2_data::MaterializationMethod::try_from(v).ok())
+        .and_then(|v| bz_data::MaterializationMethod::try_from(v).ok())
     {
-        Some(buck2_data::MaterializationMethod::CasDownload) => "cas",
-        Some(buck2_data::MaterializationMethod::LocalCopy) => "copy",
-        Some(buck2_data::MaterializationMethod::HttpDownload) => "http",
-        Some(buck2_data::MaterializationMethod::Write) => "write",
+        Some(bz_data::MaterializationMethod::CasDownload) => "cas",
+        Some(bz_data::MaterializationMethod::LocalCopy) => "copy",
+        Some(bz_data::MaterializationMethod::HttpDownload) => "http",
+        Some(bz_data::MaterializationMethod::Write) => "write",
         _ => "<unknown>",
     };
     Record {
@@ -181,13 +181,13 @@ impl BuckSubcommand for WhatMaterializedCommand {
             sort_by_total_bytes,
             aggregate_by_ext,
         } = self;
-        buck2_client_ctx::stdio::print_with_writer::<buck2_error::Error, _>(async move |w| {
+        bz_client_ctx::stdio::print_with_writer::<bz_error::Error, _>(async move |w| {
             let mut output = transform_format(output, w);
             let log_path = event_log.get(&ctx).await?;
 
             let (invocation, mut events) = log_path.unpack_stream().await?;
 
-            buck2_client_ctx::eprintln!(
+            bz_client_ctx::eprintln!(
                 "Showing materializations from: {}",
                 invocation.display_command_line()
             )?;
@@ -196,8 +196,8 @@ impl BuckSubcommand for WhatMaterializedCommand {
             while let Some(event) = events.try_next().await? {
                 match event {
                     StreamValue::Event(event) => match &event.data {
-                        Some(buck2_data::buck_event::Data::SpanEnd(buck2_data::SpanEndEvent {
-                            data: Some(buck2_data::span_end_event::Data::Materialization(m)),
+                        Some(bz_data::buck_event::Data::SpanEnd(bz_data::SpanEndEvent {
+                            data: Some(bz_data::span_end_event::Data::Materialization(m)),
                             ..
                         })) if m.success =>
                         // Only log what has been materialized.
@@ -231,7 +231,7 @@ impl BuckSubcommand for WhatMaterializedCommand {
                     .try_for_each(|r| write_output(&mut output, r))?;
             }
 
-            buck2_error::Ok(())
+            bz_error::Ok(())
         })
         .await?;
         ExitResult::success()

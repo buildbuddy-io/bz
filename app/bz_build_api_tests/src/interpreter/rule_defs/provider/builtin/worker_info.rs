@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
+use bz_build_api::interpreter::rule_defs::provider::registration::register_builtin_providers;
+use bz_interpreter_for_build::interpreter::testing::Tester;
 
 fn run_info_tester() -> Tester {
     let mut tester = Tester::new().unwrap();

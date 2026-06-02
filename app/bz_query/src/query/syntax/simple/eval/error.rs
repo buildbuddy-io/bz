@@ -10,12 +10,12 @@
 
 //! Implementation of the cli and query_* attr query language.
 
-use buck2_core::fs::project::ProjectRoot;
-use buck2_query_parser::spanned::Spanned;
+use bz_core::fs::project::ProjectRoot;
+use bz_query_parser::spanned::Spanned;
 
 /// While this is a std Error type, we generally don't use it directly. It's instead wrapped in a Spanned and can be converted to a normal error
 /// with QueryError::convert_error (which will resolve the spans to context messages).
-#[derive(Debug, buck2_error::Error)]
+#[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 pub enum QueryError {
     #[error("unknown function `{0}`")]
@@ -77,11 +77,11 @@ pub enum QueryError {
     /// (ex. target parsing). That inner error won't have span information and so the innermost span information will be the one
     /// attached to this error.
     #[error("{0}")]
-    Error(buck2_error::Error),
+    Error(bz_error::Error),
 }
 
-impl From<buck2_error::Error> for QueryError {
-    fn from(err: buck2_error::Error) -> Self {
+impl From<bz_error::Error> for QueryError {
+    fn from(err: bz_error::Error) -> Self {
         QueryError::Error(err)
     }
 }
@@ -93,7 +93,7 @@ impl From<Spanned<QueryError>> for QueryError {
 }
 
 impl QueryError {
-    pub fn drop_spans(err: Spanned<Self>) -> buck2_error::Error {
+    pub fn drop_spans(err: Spanned<Self>) -> bz_error::Error {
         match err.value {
             Self::Error(inner) => inner,
             Self::Inner(inner) => Self::drop_spans(*inner),
@@ -104,7 +104,7 @@ impl QueryError {
             }
         }
     }
-    pub fn convert_error(err: Spanned<Self>, input: &str) -> buck2_error::Error {
+    pub fn convert_error(err: Spanned<Self>, input: &str) -> bz_error::Error {
         let context = err.get_err_context(input);
 
         match err.value {
@@ -114,7 +114,7 @@ impl QueryError {
             e => {
                 // TODO(cjhopman): This is going to drop the backtrace attached to the error, we should figure
                 // out how to keep that.
-                buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "{}:{}", e, context)
+                bz_error::bz_error!(bz_error::ErrorTag::Input, "{}:{}", e, context)
             }
         }
     }

@@ -59,8 +59,8 @@ use std::convert::Infallible;
 // `FrozenProviderCollectionValue` itself so you could do `collection.get::<MyProvider>()`.
 use std::sync::Arc;
 
-use buck2_core::provider::id::ProviderId;
-pub use buck2_interpreter::types::provider::callable::ProviderLike;
+use bz_core::provider::id::ProviderId;
+pub use bz_interpreter::types::provider::callable::ProviderLike;
 use starlark::typing::Ty;
 use starlark::values::StarlarkValue;
 use starlark::values::UnpackValue;

@@ -15,10 +15,10 @@ use std::sync::atomic;
 use std::sync::atomic::AtomicU64;
 
 use allocative::Allocative;
-use buck2_build_api_derive::internal_provider;
-use buck2_error::BuckErrorContext;
-use buck2_error::buck2_error;
-use buck2_error::internal_error;
+use bz_build_api_derive::internal_provider;
+use bz_error::BuckErrorContext;
+use bz_error::bz_error;
+use bz_error::internal_error;
 use either::Either;
 use itertools::Itertools;
 use starlark::any::ProvidesStaticType;
@@ -41,7 +41,7 @@ use starlark::values::list::AllocList;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 
-use crate as buck2_build_api;
+use crate as bz_build_api;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
@@ -118,7 +118,7 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
 
 fn iter_env<'v>(
     env: Value<'v>,
-) -> impl Iterator<Item = buck2_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> {
+) -> impl Iterator<Item = bz_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> {
     if env.is_none() {
         return Either::Left(Either::Left(empty()));
     }
@@ -126,8 +126,8 @@ fn iter_env<'v>(
     let env = match DictRef::from_value(env) {
         Some(env) => env,
         None => {
-            return Either::Left(Either::Right(once(Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
+            return Either::Left(Either::Right(once(Err(bz_error!(
+                bz_error::ErrorTag::Input,
                 "Invalid `env`: Expected a dict, got: `{}`",
                 env
             )))));
@@ -222,7 +222,7 @@ pub fn synthetic_bazel_local_worker_info<'v>(
     }
 }
 
-fn validate_worker_info<'v, V>(info: &WorkerInfoGen<V>) -> buck2_error::Result<()>
+fn validate_worker_info<'v, V>(info: &WorkerInfoGen<V>) -> bz_error::Result<()>
 where
     V: ValueLike<'v>,
 {
@@ -235,8 +235,8 @@ where
         },
     )?;
     if exe.is_empty() {
-        return Err(buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
             "Value for `exe` field is an empty command line: `{}`",
             info.exe
         ));

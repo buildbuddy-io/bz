@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
-use buck2_build_api::interpreter::rule_defs::validation_spec;
-use buck2_interpreter_for_build::interpreter::testing::Tester;
-use buck2_interpreter_for_build::interpreter::testing::expect_error;
+use bz_build_api::interpreter::rule_defs::validation_spec;
+use bz_interpreter_for_build::interpreter::testing::Tester;
+use bz_interpreter_for_build::interpreter::testing::expect_error;
 use indoc::indoc;
 
 use crate::interpreter::rule_defs::artifact::testing::artifactory;
@@ -23,7 +23,7 @@ fn new_tester() -> Tester {
 }
 
 #[test]
-fn test_construction() -> buck2_error::Result<()> {
+fn test_construction() -> bz_error::Result<()> {
     let mut tester = new_tester();
     {
         let test = indoc!(
@@ -49,7 +49,7 @@ fn test_construction() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_missing_fields_validation() -> buck2_error::Result<()> {
+fn test_missing_fields_validation() -> bz_error::Result<()> {
     let mut tester = new_tester();
     {
         let test = indoc!(
@@ -82,7 +82,7 @@ fn test_missing_fields_validation() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_validation_failure() -> buck2_error::Result<()> {
+fn test_validation_failure() -> bz_error::Result<()> {
     let mut tester = new_tester();
     {
         let test = indoc!(
@@ -171,7 +171,7 @@ fn test_validation_failure() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn test_attributes() -> buck2_error::Result<()> {
+fn test_attributes() -> bz_error::Result<()> {
     let mut tester = new_tester();
     {
         let test = indoc!(

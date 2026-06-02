@@ -12,12 +12,12 @@ use std::sync::Arc;
 
 use allocative::FlameGraph;
 use allocative::FlameGraphBuilder;
-use buck2_error::conversion::from_any_with_tag;
-use buck2_events::dispatch::EventDispatcher;
-use buck2_fs::error::IoResultExt;
-use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPathBuf;
-use buck2_util::process_stats::process_stats;
+use bz_error::conversion::from_any_with_tag;
+use bz_events::dispatch::EventDispatcher;
+use bz_fs::error::IoResultExt;
+use bz_fs::fs_util;
+use bz_fs::paths::abs_path::AbsPathBuf;
+use bz_util::process_stats::process_stats;
 
 use crate::daemon::server::BuckdServerData;
 use crate::jemalloc_stats::get_allocator_stats;
@@ -80,7 +80,7 @@ pub(crate) async fn spawn_allocative(
     buckd_server_data: Arc<BuckdServerData>,
     path: AbsPathBuf,
     dispatcher: EventDispatcher,
-) -> buck2_error::Result<()> {
+) -> bz_error::Result<()> {
     tokio::task::spawn_blocking(move || {
         let mut graph = FlameGraphBuilder::default();
         dispatcher.console_message(
@@ -101,7 +101,7 @@ pub(crate) async fn spawn_allocative(
         let mut options = inferno::flamegraph::Options::default();
         options.title = "Flame Graph - Allocative".to_owned();
         inferno::flamegraph::from_reader(&mut options, final_fg.write().as_bytes(), &mut fg_svg)
-            .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
+            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))?;
 
         fs_util::write(path.join("flame.src"), final_fg.write().as_bytes())
             .categorize_internal()?;
@@ -110,7 +110,7 @@ pub(crate) async fn spawn_allocative(
 
         dispatcher.console_message(format!("Allocative profile written to {}", path.display()));
 
-        buck2_error::Ok(())
+        bz_error::Ok(())
     })
     .await?
 }
