@@ -9,7 +9,6 @@
  */
 
 use std::collections::BTreeSet;
-use std::future::Future;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -48,6 +47,7 @@ use crate::bazel::bzlmod::BazelModuleCellAliases;
 use crate::bazel::bzlmod::parse_bzlmod_external_cell_origin;
 use crate::dice::cells::HasCellResolver;
 use crate::dice::data::HasIoProvider;
+use crate::dice::progress::dice_state_update_stage;
 use crate::external_cells::EXTERNAL_CELLS_IMPL;
 use crate::legacy_configs::aggregator::CellsAggregator;
 use crate::legacy_configs::args::ResolvedLegacyConfigArg;
@@ -72,22 +72,6 @@ use crate::legacy_configs::path::ProjectConfigSource;
 
 const PRIMARY_BUCKCONFIG: &str = ".buckconfig";
 const BAZEL_PROJECT_ROOT_MARKERS: &[&str] = &["WORKSPACE.bazel", "WORKSPACE"];
-
-pub(crate) async fn buckconfig_load_stage<T, Fut>(
-    stage: impl Into<String>,
-    fut: Fut,
-) -> buck2_error::Result<T>
-where
-    Fut: Future<Output = buck2_error::Result<T>>,
-{
-    buck2_events::dispatch::span_async(
-        buck2_data::DiceStateUpdateStageStart {
-            stage: stage.into(),
-        },
-        async { (fut.await, buck2_data::DiceStateUpdateStageEnd {}) },
-    )
-    .await
-}
 
 /// Buckconfigs can partially be loaded from within dice. However, some parts of what makes up the
 /// buckconfig comes from outside the buildgraph, and this type represents those parts.
@@ -456,12 +440,12 @@ impl BuckConfigBasedCells {
         };
 
         // NOTE: This will _not_ perform IO unless it needs to.
-        let processed_config_args = buckconfig_load_stage("resolving buckconfig args", async {
+        let processed_config_args = dice_state_update_stage("resolving buckconfig args", async {
             resolve_config_args(config_args, &mut file_ops).await
         })
         .await?;
 
-        let started_parse = buckconfig_load_stage("reading external buckconfigs", async {
+        let started_parse = dice_state_update_stage("reading external buckconfigs", async {
             let external_paths = get_external_buckconfig_paths(&mut file_ops).await?;
             LegacyBuckConfig::start_parse_for_external_files(
                 &external_paths,
@@ -474,7 +458,7 @@ impl BuckConfigBasedCells {
 
         let root_path = CellRootPathBuf::new(ProjectRelativePath::empty().to_owned());
 
-        let root_config = buckconfig_load_stage("reading project buckconfigs", async {
+        let root_config = dice_state_update_stage("reading project buckconfigs", async {
             let buckconfig_paths = get_project_buckconfig_paths(&root_path, &mut file_ops).await?;
             LegacyBuckConfig::finish_parse(
                 started_parse.clone(),
@@ -489,12 +473,12 @@ impl BuckConfigBasedCells {
         .await?;
         let bzlmod_module_aliases = None;
         let bazel_compat_project_root =
-            buckconfig_load_stage("detecting bazel compatibility", async {
+            dice_state_update_stage("detecting bazel compatibility", async {
                 should_apply_bazel_compat_defaults(&root_path, &mut file_ops).await
             })
             .await?;
         let root_config = if apply_bazel_compat_defaults && bazel_compat_project_root {
-            let bazelrc_options = buckconfig_load_stage("reading bazelrc options", async {
+            let bazelrc_options = dice_state_update_stage("reading bazelrc options", async {
                 get_bazelrc_options(&root_path, &mut file_ops, &processed_config_args).await
             })
             .await?;
