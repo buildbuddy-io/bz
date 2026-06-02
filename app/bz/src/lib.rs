@@ -400,7 +400,7 @@ fn help() -> &'static str {
     concat!(
         "A build system\n",
         "\n",
-        "Documentation: https://buck2.build/docs/\n", // @oss-enable
+        "Documentation: https://bzcli.com/docs/\n", // @oss-enable
         // @oss-disable: "Documentation: https://internalfb.com/intern/staticdocs/buck2/docs/\n",
     )
 }
