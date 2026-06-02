@@ -18,7 +18,7 @@ use bz_client_ctx::exit_result::ExitResult;
 /// Show buck command line arguments from selected invocation.
 ///
 /// This command output is not machine readable.
-/// Robots, please use `buck2 log show`.
+/// Robots, please use `bz log show`.
 #[derive(Debug, clap::Parser)]
 pub struct WhatCmdCommand {
     #[clap(flatten)]

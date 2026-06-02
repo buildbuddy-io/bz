@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-//! Server-side implementation of `buck2 targets --streaming` command.
+//! Server-side implementation of `bz targets --streaming` command.
 
 use std::io::Write;
 use std::mem;

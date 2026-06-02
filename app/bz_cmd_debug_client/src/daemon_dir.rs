@@ -12,7 +12,7 @@ use bz_client_ctx::client_ctx::ClientCommandContext;
 use bz_client_ctx::common::BuckArgMatches;
 use bz_client_ctx::exit_result::ExitResult;
 
-/// Print buck2 daemon directory (`~/.buckd/xxx`).
+/// Print bz daemon directory (`~/.buckd/xxx`).
 #[derive(Debug, clap::Parser)]
 pub struct DaemonDirCommand {}
 

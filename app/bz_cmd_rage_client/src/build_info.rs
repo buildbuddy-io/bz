@@ -52,7 +52,7 @@ impl fmt::Display for BuildInfo {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "buck2 UI: https://www.internalfb.com/buck2/{}
+            "bz UI: https://www.internalfb.com/buck2/{}
 timestamp: {}
 command: {}
 working dir: {}

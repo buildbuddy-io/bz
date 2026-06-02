@@ -585,7 +585,7 @@ impl Uploader {
                                         "Your build requires an artifact that has expired in the RE CAS \
                                         and Buck does not have it. This likely happened because your Buck daemon \
                                         has been online for a long time. This error is currently unrecoverable. \
-                                        To proceed, you should restart Buck using `buck2 killall`. \
+                                        To proceed, you should restart Buck using `bz killall`. \
                                         Debug information: {:#}",
                                         err
                                     ));
@@ -755,7 +755,7 @@ fn error_for_missing_file(
         bz_error::ErrorTag::ReInvalidGetCasResponse,
         "Action execution requires artifact `{}` but the materializer did not return a matching \
         file for this path. This error is unrecoverable and you should restart Buck using \
-        `buck2 killall`. We would appreciate a bug report. Debug information: {:#}",
+        `bz killall`. We would appreciate a bug report. Debug information: {:#}",
         digest,
         cause,
     )

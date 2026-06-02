@@ -87,7 +87,7 @@ enum ErrorTag {
   DAEMON_STATE_INIT_FAILED = 503;
   DAEMON_STATUS = 504;
   DAEMON_REDIRECT = 505;
-  // The buck2 daemon's executable has been deleted from disk.
+  // The bz daemon's executable has been deleted from disk.
   BUCKD_EXE_DELETED = 506;
   DAEMON_STARTUP_FAILED = 507;
   EXIT_STATUS = 517;
@@ -167,7 +167,7 @@ enum ErrorTag {
   ACTION_COMMAND_FAILURE = 604;
   ACTION_COMMAND_INFRA_FAILURE = 605;
 
-  // Errors during buck2 install.
+  // Errors during bz install.
   INSTALL = 200;
   INSTALL_ID_MISMATCH = 2110;
   INSTALLER_UNKNOWN = 2101;
@@ -437,7 +437,7 @@ enum ErrorTag {
   E_PERM = 9101;
   E_AGAIN = 9111;
 
-  // From `buck2 debug crash`
+  // From `bz debug crash`
   CRASH_REQUESTED = 8022;
 
   // From ExitResult::bail

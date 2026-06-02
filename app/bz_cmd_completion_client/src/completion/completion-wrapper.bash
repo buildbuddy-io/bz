@@ -12,9 +12,9 @@
 # %INSERT_OPTION_COMPLETION%
 # clap_complete generated content ENDS
 
-complete -r buck2
+complete -r bz
 
-_BUCK_COMPLETE_BIN="${_BUCK_COMPLETE_BIN:-buck2}"
+_BUCK_COMPLETE_BIN="${_BUCK_COMPLETE_BIN:-bz}"
 
 __bz_takes_target()
 {
@@ -97,28 +97,26 @@ __bz_fix()
 
     if __bz_takes_target "$(__bz_subcommand)"; then
         if [[ $cur =~ ^- ]]; then
-            _buck2 "$@"
+            _bz "$@"
         else
             # The auto-generated completions have what is arguably a bug resulting where they don't
             # correctly fix up `$cur` in the way we do above to deal with colons. As a result, skip
             # flag completions if there's a colon in the current word - that wasn't going to be
             # useful anyway.
             if [[ ! $cur == *:* ]]; then
-                _buck2 "$@"
+                _bz "$@"
             fi
             if ! __bz_completions_queued; then
                 __bz_add_target_completions "$cur"
             fi
         fi
     else
-        _buck2 "$@"
+        _bz "$@"
     fi
 }
 
 if [[ "${BASH_VERSINFO[0]}" -eq 4 && "${BASH_VERSINFO[1]}" -ge 4 || "${BASH_VERSINFO[0]}" -gt 4 ]]; then
-    complete -F __bz_fix -o nosort -o bashdefault -o default -o nospace buck
-    complete -F __bz_fix -o nosort -o bashdefault -o default -o nospace buck2
+    complete -F __bz_fix -o nosort -o bashdefault -o default -o nospace bz
 else
-    complete -F __bz_fix -o bashdefault -o default -o nospace buck
-    complete -F __bz_fix -o bashdefault -o default -o nospace buck2
+    complete -F __bz_fix -o bashdefault -o default -o nospace bz
 fi

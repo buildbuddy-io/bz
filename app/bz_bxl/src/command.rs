@@ -461,7 +461,7 @@ impl BxlServerCommand {
         let serialized_build_report = if bxl_opts.unstable_print_build_report {
             let artifact_fs = dice_ctx.get_artifact_fs().await?;
             let build_report_opts = BuildReportOpts {
-                // These are all deprecated for `buck2 build`, so don't need to support them
+                // These are all deprecated for `bz build`, so don't need to support them
                 print_unconfigured_section: false,
                 unstable_include_failures_build_report: false,
                 unstable_include_package_project_relative_paths: false,

@@ -25,7 +25,7 @@ use bz_client_ctx::streaming::StreamingCommand;
 
 /// Generate documentation for starlark builtins.
 ///
-/// This command is designed to support buck2's doc generation and does not have stable output.
+/// This command is designed to support bz's doc generation and does not have stable output.
 #[derive(Debug, clap::Parser)]
 #[clap(name = "docs starlark-builtins")]
 pub(crate) struct StarlarkBuiltinsCommand {

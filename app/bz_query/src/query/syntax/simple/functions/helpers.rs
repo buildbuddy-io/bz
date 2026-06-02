@@ -108,7 +108,7 @@ impl QueryArgType {
             QueryArgType::TargetSet => Some(
                 "This could be a literal build target (`\"cell//some:target\"`) or a pattern \
                 (`\"cell//package:\"` or `\"cell//recursive/...\"`) or the result of another function that returns a target expression. For \
-                queries in CLI commands (like `buck2 query`), literals can be relative to the current working dir (like `some:target` \
+                queries in CLI commands (like `bz query`), literals can be relative to the current working dir (like `some:target` \
                 or `...`).",
             ),
             QueryArgType::FileSet => Some(

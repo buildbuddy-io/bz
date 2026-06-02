@@ -57,7 +57,7 @@ fn parse_procfs_cgroup_output(out: &str) -> bz_error::Result<CgroupPathBuf> {
     Ok(CgroupPathBuf::new_in_cgroup_fs(AbsNormPath::new(cgroup)?))
 }
 
-/// Read the cgroup path of the buck2 daemon process based on its pid from the client side
+/// Read the cgroup path of the bz daemon process based on its pid from the client side
 pub fn read_cgroup_path_of_bz_daemon(daemon_pid: i64) -> bz_error::Result<Option<String>> {
     let path = format!("/proc/{}/cgroup", daemon_pid);
     let procfs_out = match std::fs::read_to_string(&path) {

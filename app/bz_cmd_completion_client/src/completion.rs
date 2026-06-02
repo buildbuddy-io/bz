@@ -15,7 +15,7 @@ use clap::Command;
 use clap::ValueEnum;
 use clap_complete::generate;
 
-// This file is the entry point for the target-completing delegate for buck2
+// This file is the entry point for the target-completing delegate for bz
 // command line completions. Its completion commands are called from shell
 // scripts which perform the actual completion logic. These shell scripts
 // ignore non-zero return values and allow stderr to pass through to the
@@ -36,9 +36,9 @@ enum Shell {
 ///
 /// For a one-time setup, run the one of the following commands appropriate for the shell you're
 /// using:
-/// - `source <(buck2 completion bash)`
-/// - `source <(buck2 completion zsh)`
-/// - `source (buck2 completion fish | psub)`
+/// - `source <(bz completion bash)`
+/// - `source <(bz completion zsh)`
+/// - `source (bz completion fish | psub)`
 pub struct CompletionCommand {
     #[clap(
         value_enum,

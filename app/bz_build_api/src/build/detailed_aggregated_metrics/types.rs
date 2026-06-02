@@ -127,7 +127,7 @@ pub struct TopLevelTargetAggregatedData {
     /// Wall-clock time in milliseconds from the start of the build at which
     /// this top-level target succeeded, failed, or timed out.
     /// The exact point at which the build is deemed to have start is set in the
-    /// Buck2 daemon, so use this to compare durations but don't add it to a
+    /// bz daemon, so use this to compare durations but don't add it to a
     /// start timestamp to produce an end timestamp.
     pub wall_clock_completion_ms: Option<u64>,
 }

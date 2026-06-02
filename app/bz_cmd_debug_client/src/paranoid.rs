@@ -20,8 +20,8 @@ use prost::Message;
 
 /// Configure paranoid mode.
 ///
-/// In paranoid mode, Buck2 makes minimal assumptions about the reliability of the RE Backend it
-/// interacts with. In particular, Buck2 will always race local and remote execution (including
+/// In paranoid mode, bz makes minimal assumptions about the reliability of the RE Backend it
+/// interacts with. In particular, bz will always race local and remote execution (including
 /// cache queries), eagerly download outputs, and not cancel local executions until it successfully
 /// downloads outputs from RE.
 #[derive(Debug, clap::Parser)]

@@ -291,7 +291,7 @@ impl BxlContextCoreData {
     }
 
     /// Working dir for resolving literals.
-    /// Note, unlike buck2 command line UI, we resolve targets and literals
+    /// Note, unlike bz command line UI, we resolve targets and literals
     /// against the cell root instead of user working dir.
     pub(crate) fn working_dir(&self) -> bz_error::Result<ProjectRelativePathBuf> {
         let cell = self.cell_resolver().get(self.cell_name())?;
@@ -304,9 +304,9 @@ impl BxlContextCoreData {
             self.cell_alias_resolver(),
             self.cell_resolver(),
             // NOTE(nga): we pass cell root as working directory here,
-            //   which is inconsistent with the rest of buck2:
+            //   which is inconsistent with the rest of bz:
             //   The same query `owner(foo.h)` is resolved using
-            //   current directory in `buck2 query`, but relative to cell root in BXL.
+            //   current directory in `bz query`, but relative to cell root in BXL.
             self.cell_root_abs(),
             self.project_root(),
         )

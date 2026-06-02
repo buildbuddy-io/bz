@@ -21,7 +21,7 @@
 //! and the debugger server/state)
 //!
 //! [BuckStarlarkDebuggerHandle] is a "handle" the to the debugger server. One of these
-//! will be created for each buck2 command and put in the dice per-transaction data. Code
+//! will be created for each bz command and put in the dice per-transaction data. Code
 //! that needs to do starlark evaluation can then use this to setup their Evaluator
 //! appropriately (though this is really just an implementation detail hidden in the
 //! helper [bz_interpreter::factory::StarlarkEvaluatorProvider]).

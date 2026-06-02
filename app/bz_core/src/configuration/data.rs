@@ -58,7 +58,7 @@ enum ConfigurationError {
 enum ConfigurationLookupError {
     #[error("
     Could not find configuration `{0}`. Configuration lookup by string requires
-    that buck has already loaded the configuration through some other mechanism. You can run `buck2 cquery <some_target>`
+    that buck has already loaded the configuration through some other mechanism. You can run `bz cquery <some_target>`
     with a target that uses the configuration (somewhere in its graph) to make buck aware of the configuration first.
     ")]
     ConfigNotFound(BoundConfigurationId),

@@ -87,7 +87,7 @@ fn get_all_tgids_linux() -> Option<StdBuckHashSet<sysinfo::Pid>> {
     Some(all_tgids)
 }
 
-/// Find all buck2 processes in the system.
+/// Find all bz processes in the system.
 fn find_bz_processes(who_is_asking: WhoIsAsking) -> Vec<ProcessInfo> {
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
@@ -135,13 +135,13 @@ fn find_bz_processes(who_is_asking: WhoIsAsking) -> Vec<ProcessInfo> {
     bz_processes
 }
 
-/// Kills all running Buck2 processes, except this process's hierarchy. Returns whether it
+/// Kills all running bz processes, except this process's hierarchy. Returns whether it
 /// succeeded without errors.
 pub fn killall(who_is_asking: WhoIsAsking, write: impl Fn(String)) -> bool {
     let bz_processes = find_bz_processes(who_is_asking);
 
     if bz_processes.is_empty() {
-        write("No buck2 processes found".to_owned());
+        write("No bz processes found".to_owned());
         return true;
     }
 

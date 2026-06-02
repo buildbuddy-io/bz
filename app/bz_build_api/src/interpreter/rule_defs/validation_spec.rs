@@ -49,7 +49,7 @@ enum ValidationSpecError {
 /// A single, identifiable validation attached to a target.
 ///
 /// A `ValidationSpec` pairs a stable name with a build artifact that, once
-/// produced, is parsed by Buck2 to decide pass/fail. Group one or more
+/// produced, is parsed by bz to decide pass/fail. Group one or more
 /// specs into a `ValidationInfo` provider to attach them to a target.
 ///
 /// The `validation_result` artifact must be a build artifact (declared via
@@ -76,7 +76,7 @@ pub struct StarlarkValidationSpecGen<V: ValueLifetimeless> {
     /// handle used by `--enable-optional-validations <name>`.
     name: ValueOfUncheckedGeneric<V, String>,
     /// Build artifact produced by the validator. After the action that
-    /// produces it runs, Buck2 reads the file as UTF-8 JSON and expects
+    /// produces it runs, bz reads the file as UTF-8 JSON and expects
     /// the following shape:
     ///
     /// ```json
@@ -94,7 +94,7 @@ pub struct StarlarkValidationSpecGen<V: ValueLifetimeless> {
     /// - `data.message` (string, optional): shown to the user; supply on
     ///   failure so the diagnostic is actionable.
     ///
-    /// Buck2 surfaces three distinct errors if the file does not conform:
+    /// bz surfaces three distinct errors if the file does not conform:
     /// invalid JSON, incompatible schema version, or schema mismatch.
     /// Source artifacts are rejected — the result must come from an action.
     ///
@@ -193,7 +193,7 @@ fn validation_spec_methods(builder: &mut MethodsBuilder) {
 
     #[starlark(attribute)]
     /// Build artifact produced by the validator. After the producing action
-    /// runs, Buck2 reads the file as UTF-8 JSON and uses its contents to
+    /// runs, bz reads the file as UTF-8 JSON and uses its contents to
     /// decide pass/fail.
     ///
     /// Expected shape:
@@ -214,13 +214,13 @@ fn validation_spec_methods(builder: &mut MethodsBuilder) {
     ///   failure so the diagnostic is actionable.
     ///
     /// Additional fields outside the required ones are tolerated and ignored
-    /// by Buck2 — both at the top level (alongside `version` / `data`) and
+    /// by bz — both at the top level (alongside `version` / `data`) and
     /// inside `data` (alongside `status` / `message`). This is a deliberate
     /// extension point: attach debug or diagnostic info (e.g.
     /// `data.duration_ms`, `data.tool_version`, links to a build dashboard)
     /// that you want carried with the verdict.
     ///
-    /// Buck2 surfaces three distinct errors if the file does not conform:
+    /// bz surfaces three distinct errors if the file does not conform:
     /// invalid JSON, incompatible schema version, or schema mismatch. Source
     /// artifacts are rejected — the result must come from an action.
     ///

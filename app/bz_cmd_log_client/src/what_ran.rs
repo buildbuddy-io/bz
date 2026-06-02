@@ -63,7 +63,7 @@ use crate::transform_format;
 /// $ frecli cas download-action DIGEST
 ///
 /// To reproduce an action that ran locally, make sure your working directory is the project root
-/// (if unsure, use `buck2 root --kind project` to find it), then run the command. The command is
+/// (if unsure, use `bz root --kind project` to find it), then run the command. The command is
 /// already shell-quoted.
 #[derive(Debug, clap::Parser)]
 pub struct WhatRanCommand {
@@ -75,8 +75,8 @@ pub struct WhatRanCommand {
     pub failed: bool,
 
     /// Show only commands that were not completed.
-    /// That is command were running if buck2 process was killed,
-    /// or command currently running if buck2 is running build now.
+    /// That is command were running if bz process was killed,
+    /// or command currently running if bz is running build now.
     #[clap(long)]
     pub incomplete: bool,
 

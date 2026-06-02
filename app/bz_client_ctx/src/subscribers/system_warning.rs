@@ -30,7 +30,7 @@ pub const DISK_REMEDIATION_LINK: &str = ": https://fburl.com/bz_disk_remediation
 
 pub(crate) fn system_memory_exceeded_msg(memory_pressure: &MemoryPressureHigh) -> String {
     format!(
-        "High memory pressure: buck2 is using {} out of {}{}",
+        "High memory pressure: bz is using {} out of {}{}",
         HumanizedBytes::new(memory_pressure.process_memory),
         HumanizedBytes::new(memory_pressure.system_total_memory),
         if is_open_source() {

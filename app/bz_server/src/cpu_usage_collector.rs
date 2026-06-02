@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use bz_util::os::host_cpu_usage::HostCpuUsage;
 use dupe::Dupe;
 
-/// Host CPU usage since a buck2 command was started.
+/// Host CPU usage since a bz command was started.
 pub(crate) struct HostCpuUsageSinceCmdStart {
     pub(crate) user_millis: u64,
     pub(crate) system_millis: u64,

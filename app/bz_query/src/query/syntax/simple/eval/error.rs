@@ -55,7 +55,7 @@ pub enum QueryError {
     },
     #[error("function `{0}` is not implemented yet")]
     FunctionUnimplemented(&'static str),
-    #[error("Argument `{1}` to `{0}` is not yet supported in buck2")]
+    #[error("Argument `{1}` to `{0}` is not yet supported in bz")]
     ArgNotYetSupported(String, String),
     #[error("Invalid traversal depth `{0}`")]
     InvalidDepth(u32),

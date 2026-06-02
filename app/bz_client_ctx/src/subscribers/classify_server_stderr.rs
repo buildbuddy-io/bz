@@ -23,7 +23,7 @@ pub(crate) fn classify_server_stderr(
         // P1181704561
         Some(ErrorTag::ServerJemallocAssert)
     } else if stderr.contains("panicked at") {
-        // Sample output of `buck2 debug crash`: P1159041719
+        // Sample output of `bz debug crash`: P1159041719
         Some(ErrorTag::ServerPanicked)
     } else if stderr.contains("has overflowed its stack") {
         // Stderr looks like this:
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_rust_stack_trace_hash() {
-        // from `buck2 debug crash panic`
+        // from `bz debug crash panic`
         let panic_trace = "
 stack backtrace:
    0: rust_begin_unwind
@@ -270,7 +270,7 @@ stack backtrace:
 
     #[test]
     fn test_folly_stack_trace() {
-        // from `buck2 debug crash abort`
+        // from `bz debug crash abort`
         let linux_folly_trace = "
 *** Aborted at 1724968759 (Unix time, try 'date -d @1724968759') ***
 *** Signal 6 (SIGABRT) (0x261c500150b2c) received by PID 1379116 (pthread TID 0x7f211b600640) (linux TID 1379195) (maybe from PID 1379116, UID 156101) (code: -6), stack trace: ***

@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-//! Server-side implementation of `buck2 targets` command
+//! Server-side implementation of `bz targets` command
 //! without `--streaming` or `--resolve-alias` arguments.
 
 use std::io::Write;

@@ -1580,27 +1580,27 @@ fn post_process_test_executor(s: &str) -> bz_error::Result<PathBuf> {
     match s.split_once("$BUCK2_BINARY_DIR/") {
         Some(("", rest)) => {
             let exe = AbsPathBuf::new(
-                std::env::current_exe().buck_error_context("Cannot get Buck2 executable")?,
+                std::env::current_exe().buck_error_context("Cannot get bz executable")?,
             )?;
             // On Linux, /proc/self/exe appends " (deleted)" to the path when the
-            // binary has been removed from disk (e.g. after a buck2 upgrade).
+            // binary has been removed from disk (e.g. after a bz upgrade).
             if exe.as_path().to_string_lossy().ends_with(" (deleted)") {
                 return Err(bz_error::bz_error!(
                     ErrorTag::BuckdExeDeleted,
-                    "The buck2 daemon's binary has been deleted from disk. \
-                     Run `buck2 kill` to restart the daemon with the current binary."
+                    "The bz daemon's binary has been deleted from disk. \
+                     Run `bz kill` to restart the daemon with the current binary."
                 ));
             }
             let exe = fs_util::canonicalize(&exe)
                 .categorize_internal()
                 .buck_error_context(
-                    "Failed to canonicalize path to Buck2 executable. Try running `buck2 kill`.",
+                    "Failed to canonicalize path to bz executable. Try running `bz kill`.",
                 )?;
 
             let exe = exe.as_abs_path();
             let exe_dir = exe
                 .parent()
-                .ok_or_else(|| internal_error!("Buck2 executable directory has no parent"))?;
+                .ok_or_else(|| internal_error!("bz executable directory has no parent"))?;
 
             Ok(exe_dir.join(rest).to_path_buf())
         }

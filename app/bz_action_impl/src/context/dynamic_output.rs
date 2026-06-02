@@ -259,7 +259,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
     /// ```
     ///
     /// See [Dynamic Dependencies](../../../rule_authors/dynamic_dependencies) for an overall
-    /// overview of dynamic dependencies in buck2.
+    /// overview of dynamic dependencies in bz.
     ///
     /// For a guide on using this with BXL, see [How to run actions based on the content of artifacts](../../../bxl/how_tos/how_to_run_actions_based_on_the_content_of_artifact).
     fn dynamic_output_new<'v>(

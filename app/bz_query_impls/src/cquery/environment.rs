@@ -68,7 +68,7 @@ pub(crate) struct CqueryEnvironment<'c> {
     // TODO(nga): do not compute the universe when we don't need it, because it is not free.
     //   For example, when evaluating
     //   ```
-    //   buck2 cquery 'deps(//foo:bar)'
+    //   bz cquery 'deps(//foo:bar)'
     //   ```
     universe: Option<Arc<CqueryUniverse>>,
 }

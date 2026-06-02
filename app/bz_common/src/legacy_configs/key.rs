@@ -10,7 +10,7 @@
 
 use dupe::Dupe;
 
-// TODO(nga): implement `buck2 help-buckconfig`
+// TODO(nga): implement `bz help-buckconfig`
 //   https://www.internalfb.com/tasks/?t=183528129
 #[derive(derive_more::Display, Debug, Copy, Clone, Dupe, Eq, PartialEq)]
 #[display("{}.{}", section, property)]

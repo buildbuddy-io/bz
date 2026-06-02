@@ -7,7 +7,7 @@ directories, CLI flags). Each of these is logged in the given order, with later 
 overriding earlier ones. For config files originating from the repo (i.e. project-relative paths),
 except .buckconfig.local, we log the path, not the actual values.
 
-Usage: buck2 log external-configs [OPTIONS] [PATH]
+Usage: bz log external-configs [OPTIONS] [PATH]
 
 Arguments:
   [PATH]
@@ -42,12 +42,12 @@ Options:
 
 Universal Options:
       --isolation-dir <ISOLATION_DIR>
-          The name of the directory that Buck2 creates within buck-out for writing outputs and
-          daemon information. If one is not provided, Buck2 creates a directory with the default
+          The name of the directory that bz creates within buck-out for writing outputs and
+          daemon information. If one is not provided, bz creates a directory with the default
           name.
 
-          Instances of Buck2 share a daemon if and only if their isolation directory is identical.
-          The isolation directory also influences the output paths provided by Buck2, and as a
+          Instances of bz share a daemon if and only if their isolation directory is identical.
+          The isolation directory also influences the output paths provided by bz, and as a
           result using a non-default isolation dir will cause cache misses (and slower builds).
 
           [env: BUCK_ISOLATION_DIR=]
@@ -70,7 +70,7 @@ Universal Options:
           The oncall executing this command
 
       --client-metadata <CLIENT_METADATA>
-          Metadata key-value pairs to inject into Buck2's logging. Client metadata must be of the
+          Metadata key-value pairs to inject into bz's logging. Client metadata must be of the
           form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
           datasets
 

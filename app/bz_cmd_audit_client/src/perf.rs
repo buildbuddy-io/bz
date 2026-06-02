@@ -19,7 +19,7 @@ use crate::AuditSubcommand;
 use crate::perf::configured_graph_size::ConfiguredGraphSizeCommand;
 
 #[derive(Debug, clap::Subcommand, serde::Serialize, serde::Deserialize)]
-#[clap(name = "perf", about = "Commands for checking buck2 performance")]
+#[clap(name = "perf", about = "Commands for checking bz performance")]
 pub enum AuditPerfCommand {
     ConfiguredGraphSize(ConfiguredGraphSizeCommand),
 }

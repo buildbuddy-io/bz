@@ -174,7 +174,7 @@ enum DaemonCommunicationError {
 fn parse_concurrency(requested: u32) -> Option<usize> {
     let ret: usize = requested
         .try_into()
-        .expect("Buck2 isn't built for 16 bit systems");
+        .expect("bz isn't built for 16 bit systems");
 
     if ret == 0 { None } else { Some(ret) }
 }
@@ -311,7 +311,7 @@ pub struct ServerCommandContext<'a> {
     _re_connection_handle: ReConnectionHandle,
 
     /// Starlark profiler instrumentation requested throughout the duration of this command. Usually associated with
-    /// the `buck2 profile` command.
+    /// the `bz profile` command.
     pub starlark_profiling_manager: StarlarkProfilingManager,
 
     debugger_handle: Option<BuckStarlarkDebuggerHandle>,
@@ -1504,7 +1504,7 @@ fn collect_config_metadata_into(config: &LegacyBuckConfig, data: &mut UserComput
                 "Setting `client.id` via config (`-c|--config client.id={}`) is deprecated \
                  because it invalidates the DICE graph which causes performance loss. \
                  Please migrate to `--client-metadata=id={}` instead. \
-                 This will become a hard error in a future Buck2 release. \
+                 This will become a hard error in a future bz release. \
                  For more information, see: https://internalfb.com/intern/staticdocs/buck2/docs/rule_authors/client_metadata/",
                 client_id,
                 client_id

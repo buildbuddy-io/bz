@@ -77,7 +77,7 @@ enum BuckdCommunicationError {
     #[buck2(tag = Tier0)]
     MissingCommandResult,
     #[error(
-        "The Buck2 daemon was shut down while executing your command. This happened because: {0}"
+        "The bz daemon was shut down while executing your command. This happened because: {0}"
     )]
     #[buck2(tag = InterruptedByDaemonShutdown)]
     InterruptedByDaemonShutdown(bz_data::DaemonShutdown),
@@ -131,7 +131,7 @@ pub enum FileTailerEvent {
     Stderr(Vec<u8>),
 }
 
-/// Manages incoming event streams from the daemon for the buck2 client and
+/// Manages incoming event streams from the daemon for the bz client and
 /// forwards them to the appropriate subscribers in EventsCtx
 pub struct DaemonEventsCtx<'a> {
     pub(crate) inner: &'a mut EventsCtx,
@@ -192,9 +192,9 @@ impl<'a> DaemonEventsCtx<'a> {
                     return if is_oom {
                         Err(e)
                             .buck_error_context(
-                                "Buck2 daemon was killed by an OOM killer due to high memory pressure. \
+                                "bz daemon was killed by an OOM killer due to high memory pressure. \
                                 Common causes are large or numerous build or test targets or \
-                                too many Buck2 daemons running simultaneously.")
+                                too many bz daemons running simultaneously.")
                             .tag(ErrorTag::ClientGrpcStream)
                             .tag(ErrorTag::DaemonOomKilled)
                     } else {
@@ -243,7 +243,7 @@ impl<'a> DaemonEventsCtx<'a> {
             FileTailerEvent::Stdout(out) | FileTailerEvent::Stderr(out) => {
                 // Sending daemon stdout to stderr.
                 // Daemon is not supposed to write anything to stdout.
-                // But if daemon does, it should not be used as standard output of buck2.
+                // But if daemon does, it should not be used as standard output of bz.
                 self.inner.handle_tailer_stderr(&out).await
             }
         }

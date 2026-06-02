@@ -186,7 +186,7 @@ fn resolve_path(
     //
     // Note if the path is already absolute, this operation is a no-op.
     let path = current_cell_abs_path.as_abs_path().join(path);
-    // input path from `buck2 audit includes [BUILD_FILES]`
+    // input path from `bz audit includes [BUILD_FILES]`
     let abs_path = fs_util::canonicalize(path).categorize_input()?;
 
     let project_path = fs.relativize(&abs_path)?;

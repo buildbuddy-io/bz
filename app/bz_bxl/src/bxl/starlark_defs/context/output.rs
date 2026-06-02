@@ -587,7 +587,7 @@ enum EnsureMultipleArtifactsArg<'v> {
 #[starlark_module]
 fn output_stream_methods(builder: &mut MethodsBuilder) {
     /// Outputs results to the console via stdout. These outputs are considered to be the results
-    /// of a bxl script, which will be displayed to stdout by buck2 even when the script is cached.
+    /// of a bxl script, which will be displayed to stdout by bz even when the script is cached.
     /// Accepts an optional separator that defaults to " ".
     ///
     /// Prints that are not result of the bxl should be printed via stderr via the stdlib `print`
@@ -622,7 +622,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     /// Outputs results to the console via stdout as pretty-printed json. Pretty
     /// printing can be turned off by the `pretty` keyword-only parameter.
     /// These outputs are considered to be the results of a bxl script, which will be displayed to
-    /// stdout by buck2 even when the script is cached.
+    /// stdout by bz even when the script is cached.
     ///
     /// Prints that are not result of the bxl should be printed via stderr via the stdlib `print`
     /// and `pprint`.
@@ -654,7 +654,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
     }
 
     /// Streaming outputs results to the console via stdout **immediately** when it is ready.
-    /// It will be displayed to stdout by buck2 even when the script is cached.
+    /// It will be displayed to stdout by bz even when the script is cached.
     /// Accepts an optional separator that defaults to " ".
     ///
     /// The streaming behavior is controlled by the `wait_on` parameter:
@@ -709,7 +709,7 @@ fn output_stream_methods(builder: &mut MethodsBuilder) {
 
     /// Streaming outputs results to the console via stdout as pretty-printed json **immediately** when it is ready.
     /// Pretty printing can be turned off by the `pretty` keyword-only parameter.
-    /// It will be displayed to stdout by buck2 even when the script is cached.
+    /// It will be displayed to stdout by bz even when the script is cached.
     ///
     /// The streaming behavior is controlled by the `wait_on` parameter:
     /// - If 'wait_on' is not specified or empty, output is displayed **immediately** during evaluation

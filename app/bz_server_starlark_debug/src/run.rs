@@ -22,7 +22,7 @@ use tracing::debug;
 use crate::ServerConnection;
 use crate::error::StarlarkDebuggerInternalError;
 
-/// Messages from the debugger server to its client (the cli `buck2 starlark debug-attach` which
+/// Messages from the debugger server to its client (the cli `bz starlark debug-attach` which
 /// then forwards them along through its stdout).
 #[derive(Debug)]
 pub(crate) enum ToClientMessage {

@@ -186,7 +186,7 @@ impl<Node: NodeLike> StarlarkTargetSet<Node> {
     }
 }
 
-/// A set-like object for managing buck2 target nodes.
+/// A set-like object for managing bz target nodes.
 ///
 /// It can be obtained from several functions in [`bxl.Context`](../Context) and
 /// [`bxl.UqueryContext`](../UqueryContext)/[`bxl.CqueryContext`](../CqueryContext)/[`bxl.AqueryContext`](../AqueryContext),

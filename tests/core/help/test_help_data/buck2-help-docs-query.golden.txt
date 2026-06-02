@@ -2,7 +2,7 @@
 
 Print documentation for uquery
 
-Usage: buck2 docs query [OPTIONS]
+Usage: bz docs query [OPTIONS]
 
 Options:
       --format <FORMAT>
@@ -31,6 +31,6 @@ Universal Options:
           The oncall executing this command
 
       --client-metadata <CLIENT_METADATA>
-          Metadata key-value pairs to inject into Buck2's logging. Client metadata must be of the
+          Metadata key-value pairs to inject into bz's logging. Client metadata must be of the
           form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
           datasets

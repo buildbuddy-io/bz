@@ -146,7 +146,7 @@ impl Drop for DiceDump {
             .categorize_internal()
             .with_buck_error_context(|| {
                 format!(
-                    "Failed to remove Buck2 DICE dump folder at `{}`. Please remove this manually as it could be quite large.",
+                    "Failed to remove bz DICE dump folder at `{}`. Please remove this manually as it could be quite large.",
                     self.dump_folder.display()
                 )
             })

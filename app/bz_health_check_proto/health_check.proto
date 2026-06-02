@@ -19,7 +19,7 @@ package buck.health_check;
 message Empty {};
 
 // Event to update the HealthCheckContext in the server.
-// This is a subset of the data from buck2 daemon events to avoid gRPC
+// This is a subset of the data from bz daemon events to avoid gRPC
 // overheads.
 message HealthCheckContextEvent {
   oneof data {

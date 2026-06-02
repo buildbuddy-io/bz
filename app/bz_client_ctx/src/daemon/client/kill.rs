@@ -73,7 +73,7 @@ pub async fn kill_command_impl(
                 crate::eprintln!("no buckd server running")?;
             } else {
                 crate::eprintln!(
-                    "unexpected error connecting to Buck2: {:#} \
+                    "unexpected error connecting to bz: {:#} \
                             (no buckd server running?)",
                     e
                 )?;
@@ -98,7 +98,7 @@ pub async fn kill_command_impl(
     };
 
     if let Some(pid) = pid {
-        crate::eprintln!("Buck2 daemon pid {} has exited", pid)?;
+        crate::eprintln!("bz daemon pid {} has exited", pid)?;
     }
 
     Ok(())
@@ -157,7 +157,7 @@ async fn kill_with_timeouts(
                             let elapsed = Instant::now() - time_req_sent;
                             if elapsed >= graceful_shutdown_timeout {
                                 crate::eprintln!(
-                                    "Timed out waiting for graceful shutdown of buck2 daemon pid {}",
+                                    "Timed out waiting for graceful shutdown of bz daemon pid {}",
                                     pid
                                 )?;
                                 break;
@@ -174,7 +174,7 @@ async fn kill_with_timeouts(
                     // The kill request can fail if the server is in a bad state and we cannot
                     // authenticate to it.
                     crate::eprintln!(
-                        "Error requesting graceful shutdown of buck2 daemon pid {}: {}",
+                        "Error requesting graceful shutdown of bz daemon pid {}: {}",
                         pid,
                         e
                     )?;
@@ -184,7 +184,7 @@ async fn kill_with_timeouts(
         Err(e) => {
             let _assert_type: tokio::time::error::Elapsed = e;
             crate::eprintln!(
-                "Timed out requesting graceful shutdown of buck2 daemon pid {}",
+                "Timed out requesting graceful shutdown of bz daemon pid {}",
                 pid
             )?;
         }

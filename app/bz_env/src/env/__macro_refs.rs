@@ -118,7 +118,7 @@ pub macro bz_env {
     }},
 }
 
-/// Register env name to be shown in `buck2 help-env`.
+/// Register env name to be shown in `bz help-env`.
 pub macro bz_env_name($var:expr) {{
     $crate::env::__macro_refs::register!(
         $var,

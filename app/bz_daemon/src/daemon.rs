@@ -180,13 +180,13 @@ fn verify_buck_out_dir(paths: &InvocationPaths) -> bz_error::Result<()> {
              The path or a parent directory may be on a stale mount, \
              be a broken symlink, a file, or the project root may no longer be \
              accessible. \
-             Try running `buck2 kill` and re-run your command.",
+             Try running `bz kill` and re-run your command.",
             path,
         ))
     })?;
 
     const CACHEDIR_TAG_CONTENTS: &str = r#"Signature: 8a477f597d28d172789f06886806bc55
-# This file is a cache directory tag created by Buck2.
+# This file is a cache directory tag created by bz.
 # For information about cache directory tags, see:
 #    http://www.brynosaurus.com/cachedir/
 "#;
@@ -312,7 +312,7 @@ impl DaemonCommand {
         let daemon_id = DaemonId::parse_from_str(&self.daemon_id)?;
         set_daemon_id_for_panics(daemon_id.dupe());
 
-        tracing::info!("Starting Buck2 daemon");
+        tracing::info!("Starting bz daemon");
         tracing::info!("Version: {}", BuckVersion::get_version()?);
         tracing::info!("PID: {}", process::id());
         tracing::info!("ID: {}", daemon_id);

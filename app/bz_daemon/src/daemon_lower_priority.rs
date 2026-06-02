@@ -11,7 +11,7 @@
 #[cfg(target_os = "macos")]
 use bz_error::conversion::from_any_with_tag;
 
-/// macOS QoS (Quality of Service) class for the Buck2 daemon process.
+/// macOS QoS (Quality of Service) class for the bz daemon process.
 ///
 /// Configurable via `[buck2] macos_qos_class` in buckconfig.
 /// Defaults to `Utility` if unset.
@@ -94,7 +94,7 @@ pub(crate) fn daemon_lower_priority(
 ///
 /// When a program is launched from command line, at least from iTerm2,
 /// macOS seems to think it is interactive, so it gives it high priority.
-/// buck2 daemon spawns processes like compilers which do not really need high priority.
+/// bz daemon spawns processes like compilers which do not really need high priority.
 /// When compilers run with high priority, they starve other processes.
 /// Practically it results in very large ping and VPN disconnects on my machine.
 ///

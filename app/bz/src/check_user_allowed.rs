@@ -55,12 +55,12 @@ pub(crate) fn check_user_allowed() -> bz_error::Result<()> {
 
     let elevation_struct: TOKEN_ELEVATION = unsafe { elevation.assume_init() };
     if elevation_struct.TokenIsElevated == 1 {
-        // In CI, if buck2 got run from an admin shell, we need not worry that a
+        // In CI, if bz got run from an admin shell, we need not worry that a
         // subsequent invocation might come from a non-admin shell. It almost
         // certainly will not.
         if !is_ci()? {
             tracing::warn!(
-                "You're running buck2 from an admin shell. Invocations from non-admin shells will likely fail going forward. To remediate, run `buck2 clean` in this admin shell, then switch to a non-admin shell."
+                "You're running bz from an admin shell. Invocations from non-admin shells will likely fail going forward. To remediate, run `bz clean` in this admin shell, then switch to a non-admin shell."
             );
         }
     }
@@ -78,7 +78,7 @@ pub(crate) fn check_user_allowed() -> bz_error::Result<()> {
     use bz_fs::paths::abs_path::AbsPath;
 
     #[derive(Debug, bz_error::Error)]
-    #[error("buck2 is not allowed to run as root (unless home dir is owned by root)")]
+    #[error("bz is not allowed to run as root (unless home dir is owned by root)")]
     #[buck2(tag = Input)]
     struct RootError;
 

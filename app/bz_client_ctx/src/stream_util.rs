@@ -15,7 +15,7 @@ use futures::stream::StreamExt;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-/// We need to provide a 'static stream for Tonic to send to the Buck2 daemon, but we don't want to
+/// We need to provide a 'static stream for Tonic to send to the bz daemon, but we don't want to
 /// borrow stdin statically (though in practice that doesn't really matter because the way the
 /// command ends is when stdin is empty). So, what we do instead is that we forward stdin only
 /// while the command is ongoing.

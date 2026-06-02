@@ -27,9 +27,9 @@ use bz_fs::fs_util;
 use bz_fs::paths::abs_path::AbsPath;
 use bz_util::process::background_command;
 
-/// Initializes a buck2 project at the provided path.
+/// Initializes a bz project at the provided path.
 #[derive(Debug, clap::Parser)]
-#[clap(name = "init", about = "Initialize a buck2 project")]
+#[clap(name = "init", about = "Initialize a bz project")]
 pub struct InitCommand {
     /// The path to initialize the project in. The folder does not need to exist.
     #[clap(default_value = ".")]
@@ -143,7 +143,7 @@ fn initialize_buckconfig(repo_root: &AbsPath, prelude: bool, git: bool) -> bz_er
         writeln!(buckconfig)?;
         writeln!(
             buckconfig,
-            "# Uses a copy of the prelude bundled with the buck2 binary. You can alternatively delete this"
+            "# Uses a copy of the prelude bundled with the bz binary. You can alternatively delete this"
         )?;
         writeln!(
             buckconfig,
@@ -345,7 +345,7 @@ mod tests {
   fbcode_macros = none
   buck = none
 
-# Uses a copy of the prelude bundled with the buck2 binary. You can alternatively delete this
+# Uses a copy of the prelude bundled with the bz binary. You can alternatively delete this
 # section and vendor a copy of the prelude to the `prelude` directory of your project.
 [external_cells]
   prelude = bundled

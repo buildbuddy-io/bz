@@ -43,7 +43,7 @@ pub enum StarlarkCommand {
     DebugAttach(StarlarkDebugAttachCommand),
 }
 
-// Used for subcommands that follow `buck2 audit`'s "opaque" pattern where the command object is serialized
+// Used for subcommands that follow `bz audit`'s "opaque" pattern where the command object is serialized
 // to the daemon and deserialized there and has a `server_execute()` on the Command object itself (as opposed
 // to using structured endpoints in the daemon protocol).
 #[derive(Debug, clap::Subcommand, serde::Serialize, serde::Deserialize)]

@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-//! Server-side implementation of `buck2 targets --resolve-alias` command.
+//! Server-side implementation of `bz targets --resolve-alias` command.
 
 #[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
@@ -69,7 +69,7 @@ impl ResolveAliasFormatter for JsonWriter {
         let mut first = true;
         self.entry_start(buffer);
         self.entry_item(buffer, &mut first, "alias", QuotedJson::quote_str(alias));
-        // Using a format consistent wit hthe output of `buck2 targets`
+        // Using a format consistent wit hthe output of `bz targets`
         self.entry_item(
             buffer,
             &mut first,

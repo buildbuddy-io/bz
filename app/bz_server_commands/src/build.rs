@@ -148,8 +148,8 @@ fn expect_build_opts(req: &bz_cli_proto::BuildRequest) -> &CommonBuildOptions {
 #[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 #[error(
-    "`buck2 run` will require a `--` separator before target arguments in the future. \
-     Please use `buck2 run <target> -- <args>` instead of `buck2 run <target> <args>`"
+    "`bz run` will require a `--` separator before target arguments in the future. \
+     Please use `bz run <target> -- <args>` instead of `bz run <target> <args>`"
 )]
 struct RunArgsMissingSeparator;
 

@@ -18,7 +18,7 @@ mod diff_options;
 mod external_config_diff;
 
 #[derive(Debug, clap::Subcommand)]
-#[clap(about = "Subcommands for diff'ing two buck2 commands")]
+#[clap(about = "Subcommands for diff'ing two bz commands")]
 pub enum DiffCommand {
     ActionDivergence(action_divergence::ActionDivergenceCommand),
     ExternalConfigs(external_config_diff::ExternalConfigDiffCommand),

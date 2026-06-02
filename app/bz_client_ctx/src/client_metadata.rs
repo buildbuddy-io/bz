@@ -12,7 +12,7 @@ use bz_core::bz_env;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-/// A key / value metadata pair provided by the client. This will be injected into Buck2's logging.
+/// A key / value metadata pair provided by the client. This will be injected into bz's logging.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientMetadata {
     pub key: String,

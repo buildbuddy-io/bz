@@ -185,7 +185,7 @@ fn make_game(idx: usize) -> (Box<dyn games::games::Game>, &'static str) {
 
 /// State machine for parsing multi-byte escape sequences from raw chars.
 ///
-/// Because the buck2 integration receives characters one at a time via
+/// Because the bz integration receives characters one at a time via
 /// `SuperConsoleToggle::key()`, we can't do async timeouts like `control_reader`.
 /// Instead we track how many ticks have elapsed since we entered `SawEscape` and
 /// let the tick loop call `flush()` to emit a bare Escape after a short delay.
@@ -434,7 +434,7 @@ struct BuckRootComponent<'s> {
 
 /// Adapter that wraps a `Component<Error = anyhow::Error>` to produce
 /// `bz_error::Error`, allowing games components to be used in the
-/// buck2 render tree.
+/// bz render tree.
 struct AnyhowComponentAdapter<'a, C: ?Sized>(&'a C);
 
 impl<C: superconsole::Component<Error = anyhow::Error> + ?Sized> Component
@@ -669,7 +669,7 @@ impl StatefulSuperConsole {
         }))
     }
 
-    /// Construct a console suitable for use by the Buck2 CLI. We use non-blocking output here
+    /// Construct a console suitable for use by the bz CLI. We use non-blocking output here
     /// because we do all our event processing on a single thread, so that if stderr is blocked
     /// (e.g.  because the client is using a resumable remote terminal and they've temporarily
     /// disconnected), we don't delay ingesting new events.
@@ -1200,7 +1200,7 @@ impl StatefulSuperConsoleImpl {
                     if !self.shown_interactive_console_message {
                         self.shown_interactive_console_message = true;
                         self.handle_stderr(&format!(
-                            "Buck2 has an interactive console; input is consumed. \
+                            "bz has an interactive console; input is consumed. \
                              Press `h` for help or set {}=true to disable.",
                             BUCK_NO_INTERACTIVE_CONSOLE
                         ))
@@ -1511,7 +1511,7 @@ fn lines_for_command_details(
                     match truncate(command) {
                         None => Cow::Borrowed(command),
                         Some(short) => Cow::Owned(format!(
-                            "{short} (run `buck2 log what-failed` to get the full command)"
+                            "{short} (run `bz log what-failed` to get the full command)"
                         )),
                     }
                 };
@@ -1546,7 +1546,7 @@ fn lines_for_command_details(
                     match truncate(command) {
                         None => Cow::Borrowed(command),
                         Some(short) => Cow::Owned(format!(
-                            "{short} (run `buck2 log what-failed` to get the full command)"
+                            "{short} (run `bz log what-failed` to get the full command)"
                         )),
                     }
                 };
@@ -1564,7 +1564,7 @@ fn lines_for_command_details(
                     match truncate(command) {
                         None => Cow::Borrowed(command),
                         Some(short) => Cow::Owned(format!(
-                            "{short} (run `buck2 log what-failed` to get the full command)"
+                            "{short} (run `bz log what-failed` to get the full command)"
                         )),
                     }
                 };

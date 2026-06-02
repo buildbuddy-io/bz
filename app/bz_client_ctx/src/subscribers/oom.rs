@@ -133,7 +133,7 @@ fn hash_component(s: &str) -> u64 {
     hasher.finish()
 }
 
-/// Pre-computed view of a buck2 daemon cgroup path used to test dmesg lines
+/// Pre-computed view of a bz daemon cgroup path used to test dmesg lines
 /// against many candidate killed cgroups without re-splitting or re-hashing
 /// `bz_cgroup` each time.
 struct Buck2CgroupMatcher<'a> {
@@ -180,7 +180,7 @@ impl<'a> Buck2CgroupMatcher<'a> {
     /// Check whether some non-empty proper suffix of `killed`'s path
     /// components equals a prefix of this buck2 cgroup's path components.
     /// This is the case when oomd from the physical host kills `killed`
-    /// while the buck2 daemon (or one of its ancestors) is observed inside a
+    /// while the bz daemon (or one of its ancestors) is observed inside a
     /// (possibly nested) cgroup namespace mounted under `killed`.
     ///
     /// Uses pre-computed prefix hashes of `self.components` to skip the

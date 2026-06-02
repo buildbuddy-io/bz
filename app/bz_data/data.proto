@@ -249,7 +249,7 @@ message InstantEvent {
     // Notify the client that the daemon is shutting down.
     DaemonShutdown daemon_shutdown = 19;
 
-    // Information collected by buck2 rage command
+    // Information collected by bz rage command
     RageResult rage_result = 20;
 
     // Notify the client that the daemon would like to update the rendering.
@@ -281,7 +281,7 @@ message InstantEvent {
     // Concurrent active commands.
     ConcurrentCommands concurrent_commands = 32;
 
-    // Info coming from the `buck2 debug persist-event-log` subprocess
+    // Info coming from the `bz debug persist-event-log` subprocess
     PersistEventLogSubprocess persist_event_log_subprocess = 33;
 
     // An action error encountered during the build
@@ -712,7 +712,7 @@ message TopLevelTargetMetrics {
   // Wall-clock time in milliseconds from the start of the build at which this
   // top-level target succeeded, failed, or timed out.
   // The exact point in time at which the build is deemed to have started is set
-  // in the Buck2 daemon, so use this to compare durations but don't add it to a
+  // in the bz daemon, so use this to compare durations but don't add it to a
   // start timestamp to produce an end timestamp.
   optional uint64 wall_clock_completion_ms = 10;
 }
@@ -798,7 +798,7 @@ message ResourceControlEvent {
   uint64 allprocs_memory_pressure = 7;
   uint64 allprocs_memory_swap_current = 12;
 
-  // Memory information regarding the buck2 daemon cgroup
+  // Memory information regarding the bz daemon cgroup
   uint64 daemon_memory_current = 17;
   uint64 daemon_swap_current = 18;
 
@@ -846,7 +846,7 @@ enum ResourceControlEventKind {
   SCHEDULED = 10;
 }
 
-// Result of invoking buck2 rage
+// Result of invoking bz rage
 message RageResult {
   reserved 1 to 8;
   // TODO iguridi: remove string_data and int_data
@@ -897,15 +897,15 @@ message TargetCfg {
 
 // A snapshot of current system state, with useful info.
 message Snapshot {
-  // Resident set size in bytes of the buck2 daemon.
+  // Resident set size in bytes of the bz daemon.
   // Does not include subprocesses (e.g. local actions).
   optional uint64 bz_rss = 11;
-  // Maximum resident set size in bytes of the buck2 daemon.
+  // Maximum resident set size in bytes of the bz daemon.
   // Does not include subprocesses (e.g. local actions).
   uint64 bz_max_rss = 1;
-  // User CPU time of buck2 daemon, not including subprocesses.
+  // User CPU time of bz daemon, not including subprocesses.
   uint64 bz_user_cpu_us = 2;
-  // System CPU time of buck2 daemon, not including subprocesses.
+  // System CPU time of bz daemon, not including subprocesses.
   uint64 bz_system_cpu_us = 3;
   // Queue size of the blocking executor.
   uint64 blocking_executor_io_queue_size = 4;
@@ -981,7 +981,7 @@ message Snapshot {
   optional uint32 io_canonicalize_count = 1135;
   optional uint32 io_eden_settle_count = 1136;
 
-  // Time passed since buck2 daemon was started
+  // Time passed since bz daemon was started
   uint64 daemon_uptime_s = 7;
 
   // https://jemalloc.net/jemalloc.3.html
@@ -1075,7 +1075,7 @@ message Snapshot {
   // Client average user + system CPU time since last snapshot processed.
   optional uint32 client_cpu_percents = 2002;
 
-  // Memory usage of the buck2 daemon's slice from cgroup (if available)
+  // Memory usage of the bz daemon's slice from cgroup (if available)
   optional UnixCgroupMemoryStats allprocs_cgroup = 2003;
   // Memory usage of the forkserver daemon's slice from cgroup (if available)
   optional UnixCgroupMemoryStats forkserver_actions_cgroup = 2004;
@@ -2488,7 +2488,7 @@ message TagEvent {
 
 // Unambiguous provider patterns that this command is requesting be brought
 // up-to-date. These patterns are not exactly the same as the patterns
-// directly provided to the buck2 command-line; rather, these patterns have
+// directly provided to the bz command-line; rather, these patterns have
 // been disambiguated using the client's working directory and cell
 // configuration.
 message ParsedTargetPatterns {

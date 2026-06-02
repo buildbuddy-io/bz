@@ -367,7 +367,7 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
     ///
     /// 1. **First build**: The action runs with all potential inputs available
     /// 2. **Tool generates depfile**: The compiler writes a file listing only the inputs it actually read
-    /// 3. **Subsequent builds**: Buck2 only triggers rebuilds when files listed in the depfile change
+    /// 3. **Subsequent builds**: bz only triggers rebuilds when files listed in the depfile change
     ///
     /// ### Usage Pattern
     ///
@@ -422,14 +422,14 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
     /// output.o: main.cpp foo.h bar.h internal.h
     /// ```
     ///
-    /// This tells Buck2 that `output.o` depends on these specific files. Buck2 reads this file
+    /// This tells bz that `output.o` depends on these specific files. bz reads this file
     /// after the action completes and uses it to determine which tagged inputs to track for
     /// future incremental builds.
     ///
     /// ### Return Value
     ///
     /// Returns a new `ArtifactTag` instance. Each call creates a unique tag that can be compared
-    /// for equality, allowing Buck2 to match tagged inputs with their corresponding depfiles.
+    /// for equality, allowing bz to match tagged inputs with their corresponding depfiles.
     ///
     /// ### See Also
     ///

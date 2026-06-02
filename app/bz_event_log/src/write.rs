@@ -399,7 +399,7 @@ impl SerializeForLog for Invocation {
         Ok(())
     }
 
-    // Always log invocation record to user event log for `buck2 log show` compatibility
+    // Always log invocation record to user event log for `bz log show` compatibility
     fn maybe_serialize_user_event(&self, buf: &mut Vec<u8>) -> bz_error::Result<bool> {
         serde_json::to_writer(buf, &self.clone().to_proto())
             .buck_error_context("Failed to serialize event")?;

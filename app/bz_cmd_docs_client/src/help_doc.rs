@@ -15,7 +15,7 @@ use clap::Command;
 use clap::builder::PossibleValue;
 use regex::Regex;
 
-/// Common option headings that appear across multiple buck2 commands
+/// Common option headings that appear across multiple bz commands
 const COMMON_OPTION_HEADINGS: &[&str] = &[
     "Universal Options",
     "Event Log Options",
@@ -26,12 +26,12 @@ const COMMON_OPTION_HEADINGS: &[&str] = &[
 #[derive(Debug, clap::Parser)]
 #[clap(
     name = "markdown-help-doc",
-    about = "Print out the buck2 subcommand markdown docs"
+    about = "Print out the bz subcommand markdown docs"
 )]
 pub(crate) struct MarkdownHelpDocCommand {
     #[clap(
         name = "SUB_COMMAND",
-        help = "The buck2 sub command we want to generate the markdown doc"
+        help = "The bz sub command we want to generate the markdown doc"
     )]
     sub_cmd: String,
 }
@@ -63,7 +63,7 @@ impl MarkdownHelpDocCommand {
 
 fn cmd_markdown_help(cmd: &Command) -> String {
     let header = cmd_header_markdown(cmd);
-    let content = cmd_content_markdown(cmd, vec!["buck2".to_owned()]).unwrap();
+    let content = cmd_content_markdown(cmd, vec!["bz".to_owned()]).unwrap();
     format!("{header}\n{content}")
 }
 
@@ -82,7 +82,7 @@ fn generate_common_options_doc(cmd: &Command) -> String {
 
     // Add a header
     writeln!(markdown, "# Common Options").unwrap();
-    writeln!(markdown, "\nThis document provides an overview of common options that are available across multiple buck2 commands.\n").unwrap();
+    writeln!(markdown, "\nThis document provides an overview of common options that are available across multiple bz commands.\n").unwrap();
 
     // Collect options from the top-level command
     for section_name in COMMON_OPTION_HEADINGS {
@@ -143,11 +143,11 @@ fn cmd_header_markdown(cmd: &clap::Command) -> String {
 
     let contents = if name == "install" {
         "\
-The `buck2 install` command builds an installable target, typically a mobile app (.apk or .app bundle), and installs it using an installer server to some location, typically an emulator/simulator or external device.
+The `bz install` command builds an installable target, typically a mobile app (.apk or .app bundle), and installs it using an installer server to some location, typically an emulator/simulator or external device.
 
-## How buck2 install works
+## How bz install works
 
-The `InstallInfo` provider is used to make targets installable, it specifies an installer implementation (e.g. Android or Apple installer) and a set of files to install. For example (from `buck2 audit providers`):
+The `InstallInfo` provider is used to make targets installable, it specifies an installer implementation (e.g. Android or Apple installer) and a set of files to install. For example (from `bz audit providers`):
 ```python
 InstallInfo(
     installer = buck//src/com/facebook/buck/installer/apple:apple_installer,
@@ -166,7 +166,7 @@ For Android apks, buck install supports a feature to speed up iterative developm
 ".to_owned()
     } else {
         format!(
-            "This document provides an overview of the commands and options available under `buck2 {name}`."
+            "This document provides an overview of the commands and options available under `bz {name}`."
         )
     };
 

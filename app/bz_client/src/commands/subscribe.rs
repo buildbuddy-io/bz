@@ -33,7 +33,7 @@ use once_cell::sync::Lazy;
 use prost::Message;
 use tokio_util::codec::FramedRead;
 
-/// Open a subscription channel to the Buck2 daemon. This allows you to interact with the Buck2
+/// Open a subscription channel to the bz daemon. This allows you to interact with the bz
 /// daemon via the `stdin` and `stdout` of this command: you send requests to the daemon by writing
 /// to `stdin`, and you get responses via `stdout`.
 ///
@@ -47,7 +47,7 @@ use tokio_util::codec::FramedRead;
 ///
 /// This API does not (currently) allow invalid requests and will error out when one is sent.
 #[derive(Debug, clap::Parser)]
-#[clap(about = "Subscribe to updates from the Buck2 daemon")]
+#[clap(about = "Subscribe to updates from the bz daemon")]
 pub struct SubscribeCommand {
     /// Whether to request command snapshots.
     #[clap(long)]

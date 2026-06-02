@@ -60,7 +60,7 @@ use crate::commands::clean_stale::parse_clean_stale_args;
 
 /// Delete generated files and caches.
 ///
-/// By default this keeps the buck2 daemon running, like Bazel clean. Use
+/// By default this keeps the bz daemon running, like Bazel clean. Use
 /// --expunge to remove daemon state and stop the daemon.
 #[derive(Debug, clap::Parser)]
 pub struct CleanCommand {
@@ -99,7 +99,7 @@ the specified duration, without killing the daemon",
 
     #[clap(
         long = "expunge",
-        help = "Remove daemon state and stop the buck2 daemon, like Bazel clean --expunge"
+        help = "Remove daemon state and stop the bz daemon, like Bazel clean --expunge"
     )]
     expunge: bool,
 
@@ -329,7 +329,7 @@ impl BuckSubcommand for InnerCleanCommand {
             )
             .await?;
 
-            kill_command_impl(&lifecycle_lock, "`buck2 clean --expunge` was invoked").await?;
+            kill_command_impl(&lifecycle_lock, "`bz clean --expunge` was invoked").await?;
             Some(lifecycle_lock)
         } else {
             None
@@ -410,7 +410,7 @@ async fn clean(
         if let Some(trash_target_normalized) = trash_target_normalized {
             console
                 .print_stderr("Buck-out moved to trash. Deletion continues in the background.")?;
-            console.print_stderr("You can run other buck2 commands while this completes.")?;
+            console.print_stderr("You can run other bz commands while this completes.")?;
             paths_to_clean.push(trash_target_normalized.display().to_string());
             spawn_background_cleaner(&trash_target_normalized)?;
         }
@@ -636,7 +636,7 @@ fn clean_buck_out(path: &AbsNormPathBuf, console_type: ConsoleType) -> bz_error:
     let counter = state.counter();
 
     // Show progress using superconsole, respecting the --console option.
-    // Use the same console_builder() as other buck2 commands to ensure consistent behavior.
+    // Use the same console_builder() as other bz commands to ensure consistent behavior.
     let _progress_handle = match console_type {
         ConsoleType::None
         | ConsoleType::Simple

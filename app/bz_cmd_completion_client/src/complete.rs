@@ -60,10 +60,10 @@ pub struct CompleteCommand {
 /// ```
 ///
 /// Note that this code must, by design, take in a number of malformed strings
-/// and cannot rely on buck2's own parsing logic which (generally) requires
+/// and cannot rely on bz's own parsing logic which (generally) requires
 /// its targets to be well-formed.
 ///
-/// Its goal is to create a label that buck2 commands will accept. These may,
+/// Its goal is to create a label that bz commands will accept. These may,
 /// but are not required to, be fully-qualified targets. It does this
 /// following these principles:
 ///
@@ -73,7 +73,7 @@ pub struct CompleteCommand {
 ///    decision branch.
 /// 2. Completions extend the input while retain the specific partial label
 ///    to as large a degree as possible.
-/// 3. When corrections are necessary to create a label that buck2 will accept,
+/// 3. When corrections are necessary to create a label that bz will accept,
 ///    make the corrections first, then next-step completions in a second
 ///    stage.
 impl CompleteCommand {

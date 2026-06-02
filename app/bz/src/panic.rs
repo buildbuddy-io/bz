@@ -10,7 +10,7 @@
 
 //! The panic hook, shared by the buck2 CLI and daemon.
 //!
-//! The Buck2 CLI unwinds the stack on a panic, while the Buck2 daemon terminates without unwinding.
+//! The bz CLI unwinds the stack on a panic, while the bz daemon terminates without unwinding.
 //! This module sets up a shared panic hook to run before unwinding/termination for crash reporting.
 
 use std::panic;

@@ -27,8 +27,8 @@ pub fn check_working_dir() -> bz_error::Result<()> {
     };
 
     if err.kind() == io::ErrorKind::NotConnected {
-        let err = "Buck2 is running in an Eden mount but Eden restarted uncleanly. \
-            This error is unrecoverable and you should restart Buck using `buck2 killall`.";
+        let err = "bz is running in an Eden mount but Eden restarted uncleanly. \
+            This error is unrecoverable and you should restart Buck using `bz killall`.";
         return Err(bz_error::bz_error!(
             bz_error::ErrorTag::Environment,
             "{}",
@@ -38,7 +38,7 @@ pub fn check_working_dir() -> bz_error::Result<()> {
 
     if err.kind() != io::ErrorKind::NotFound {
         tracing::warn!(
-            "Buck2 is unable to read its current working directory: {}. Consider restarting",
+            "bz is unable to read its current working directory: {}. Consider restarting",
             err
         );
     }

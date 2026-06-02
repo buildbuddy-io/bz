@@ -10,5 +10,3 @@
 # clap_complete generated content BEGINS
 # %INSERT_OPTION_COMPLETION%
 # clap_complete generated content ENDS
-
-complete -c buck -w buck2

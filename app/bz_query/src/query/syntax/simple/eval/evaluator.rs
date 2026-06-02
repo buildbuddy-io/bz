@@ -139,7 +139,7 @@ impl<'e, Env: QueryEnvironment> QueryEvaluator<'e, Env> {
             .async_into_map_res(|value| async move {
                 match value {
                     // A top-level string we treat as a target pattern and resolve it. This allows something like
-                    // `buck2 query //lib/...` to resolve to the corresponding targets.
+                    // `bz query //lib/...` to resolve to the corresponding targets.
                     QueryValue::String(word) => Ok(QueryEvaluationValue::TargetSet(
                         self.resolve_literal(&word).await?,
                     )),

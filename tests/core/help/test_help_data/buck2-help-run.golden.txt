@@ -2,14 +2,14 @@
 
 Build and run the selected target.
 
-Use `--` to separate arguments to the target from arguments to buck2:
+Use `--` to separate arguments to the target from arguments to bz:
 
-buck2 run //my/target -- --arg1 --arg2
+bz run //my/target -- --arg1 --arg2
 
 The Build ID for the underlying build execution is made available to the target in the
 `BUCK_RUN_BUILD_ID` environment variable.
 
-Usage: buck2 run [OPTIONS] <TARGET> [-- <TARGET_ARGS>...]
+Usage: bz run [OPTIONS] <TARGET> [-- <TARGET_ARGS>...]
 
 Arguments:
   <TARGET>
@@ -27,7 +27,7 @@ Options:
 
       --emit-shell
           Instead of running the command, print out the command formatted for shell interpolation,
-          use as: $(buck2 run --emit-shell ...)
+          use as: $(bz run --emit-shell ...)
 
       --build-report <PATH>
           Print a build report
@@ -160,7 +160,7 @@ Target Configuration Options:
           universe targets, not the command targets.
 
           This argument is particularly recommended on most non-trivial cqueries. In the absence of
-          this argument, buck2 will use the target literals in your cquery expression as the value
+          this argument, bz will use the target literals in your cquery expression as the value
           for this argument, which may not be what you want.
 
       --target-platforms <PLATFORM>
@@ -200,9 +200,9 @@ Buckconfig Options:
           Used to configure when this command could be preempted by another command for the same
           isolation dir.
 
-          Normally, when you run two commands - from different terminals, say - buck2 will attempt
+          Normally, when you run two commands - from different terminals, say - bz will attempt
           to run them in parallel. However, if the two commands are based on different state, that
-          is they either have different configs or different filesystem states, buck2 cannot run
+          is they either have different configs or different filesystem states, bz cannot run
           them in parallel. The default behavior in this case is to block the second command until
           the first completes.
 
@@ -336,12 +336,12 @@ Event Log Options:
 
 Universal Options:
       --isolation-dir <ISOLATION_DIR>
-          The name of the directory that Buck2 creates within buck-out for writing outputs and
-          daemon information. If one is not provided, Buck2 creates a directory with the default
+          The name of the directory that bz creates within buck-out for writing outputs and
+          daemon information. If one is not provided, bz creates a directory with the default
           name.
 
-          Instances of Buck2 share a daemon if and only if their isolation directory is identical.
-          The isolation directory also influences the output paths provided by Buck2, and as a
+          Instances of bz share a daemon if and only if their isolation directory is identical.
+          The isolation directory also influences the output paths provided by bz, and as a
           result using a non-default isolation dir will cause cache misses (and slower builds).
 
           [env: BUCK_ISOLATION_DIR=]
@@ -364,7 +364,7 @@ Universal Options:
           The oncall executing this command
 
       --client-metadata <CLIENT_METADATA>
-          Metadata key-value pairs to inject into Buck2's logging. Client metadata must be of the
+          Metadata key-value pairs to inject into bz's logging. Client metadata must be of the
           form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
           datasets
 

@@ -223,7 +223,7 @@ fn lazy_ctx_methods(builder: &mut MethodsBuilder) {
 
     /// Gets the unconfigured target nodes for the given target pattern with keep-going behavior.
     /// This method will continue processing even when errors are encountered, similar to
-    /// `buck2 targets --keep-going`.
+    /// `bz targets --keep-going`.
     ///
     /// Unlike `ctx.lazy.unconfigured_target_node`, this method accepts only a single string target pattern
     /// and returns a lazy operation that resolves to a tuple containing both successful results and errors,

@@ -166,15 +166,15 @@ pub trait Action: Allocative + Debug + Send + Sync + 'static {
         Ok(None)
     }
 
-    /// A machine-readable category for this action, intended to be used when analyzing actions outside of buck2 itself.
+    /// A machine-readable category for this action, intended to be used when analyzing actions outside of bz itself.
     ///
     /// A category provides a namespace for identifiers within the rule that produced this action. Examples of
     /// categories would be things such as `cxx_compile`, `cxx_link`, and so on. Categories are user-specified in the
-    /// rule implementation; however, buck2 enforces some restrictions on category names.
+    /// rule implementation; however, bz enforces some restrictions on category names.
     fn category(&self) -> CategoryRef<'_>;
 
     /// A machine-readable identifier for this action. Required (but as of now, not yet enforced) to be unique within
-    /// a category within a single invocation of a rule. Like categories, identifiers are also user-specified and buck2
+    /// a category within a single invocation of a rule. Like categories, identifiers are also user-specified and bz
     /// ascribes no semantics to them. Examples of category-identifier pairs would be `cxx_compile` + `MyCppFile.cpp`,
     /// reflecting a C++ compiler invocation for a file `MyCppFile.cpp`.
     ///

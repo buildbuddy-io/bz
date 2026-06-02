@@ -137,7 +137,7 @@ pub struct OutOfProcessTestExecutor {
 #[async_trait]
 impl ExecutorLauncher for OutOfProcessTestExecutor {
     async fn launch(&self, tpx_args: Vec<String>) -> bz_error::Result<ExecutorLaunch> {
-        // Declare outside of `cfg(unix)` so `buck2 help-env` would include it on Windows
+        // Declare outside of `cfg(unix)` so `bz help-env` would include it on Windows
         // even if it is no-op on Windows.
         let use_tcp = bz_env!("BUCK2_TEST_TPX_USE_TCP", bool)?;
 

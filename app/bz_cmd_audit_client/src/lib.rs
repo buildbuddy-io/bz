@@ -91,7 +91,7 @@ pub enum AuditCommand {
     Perf(AuditPerfCommand),
 }
 
-/// `buck2 audit` subcommands have a somewhat unique approach to make it really easy to
+/// `bz audit` subcommands have a somewhat unique approach to make it really easy to
 /// add them without the boilerplate necessary for normal commands. The main difference
 /// is that there is not a custom endpoint added in the daemon for each subcommand, instead
 /// there is a single endpoint where we send the entire serialized AuditCommand and

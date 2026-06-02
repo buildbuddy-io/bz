@@ -18,7 +18,7 @@ pub struct InternalVersionCommand {}
 
 impl InternalVersionCommand {
     pub fn exec(self, _matches: BuckArgMatches<'_>, _ctx: ClientCommandContext<'_>) -> ExitResult {
-        bz_client_ctx::println!("buck2 internal-version {}", BuckVersion::get_unique_id()?)?;
+        bz_client_ctx::println!("bz internal-version {}", BuckVersion::get_unique_id()?)?;
         ExitResult::success()
     }
 }

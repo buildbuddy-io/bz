@@ -10,9 +10,9 @@
 
 //! Handles command concurrency.
 //!
-//! `buck2` supports limited concurrency for commands.
+//! `bz` supports limited concurrency for commands.
 //! If there are no buckconfig changes, nor file changes, then commands can be allowed to execute
-//! concurrently. Otherwise, `buck2` will block waiting for other commands to finish.
+//! concurrently. Otherwise, `bz` will block waiting for other commands to finish.
 
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -162,10 +162,10 @@ struct CommandData {
 impl CommandData {
     fn format_argv(&self) -> String {
         let mut iter = self.argv.iter();
-        // Skip the "/path/to/buck2" part so we can just emit "buck2" for the start of the cmd
+        // Skip the "/path/to/bz" part so we can just emit "bz" for the start of the cmd
         iter.next();
 
-        let cmd = format!("buck2 {}", iter.join(" "));
+        let cmd = format!("bz {}", iter.join(" "));
         truncate(&cmd, 500)
     }
 

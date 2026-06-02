@@ -21,7 +21,7 @@ pub struct Buck2BuildInfo {
 pub static BUCK2_BUILD_INFO: LateBinding<Buck2BuildInfo> = LateBinding::new("BUCK2_BUILD_INFO");
 
 /// Get the source control revision for this binary, if available. We provide this externally when
-/// building Buck2 for release.
+/// building bz for release.
 pub fn revision() -> Option<&'static str> {
     BUCK2_BUILD_INFO
         .get()

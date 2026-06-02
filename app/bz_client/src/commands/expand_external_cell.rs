@@ -36,7 +36,7 @@ use bz_error::bz_error;
 #[derive(Debug, clap::Parser)]
 #[clap(name = "expand-external-cell")]
 pub struct ExpandExternalCellsCommand {
-    /// Expand all cells that Buck2 knows about
+    /// Expand all cells that bz knows about
     #[clap(long, conflicts_with = "cells")]
     all_cells: bool,
 

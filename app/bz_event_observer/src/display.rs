@@ -374,7 +374,7 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> bz_error:
                 "Waiting for command [{}] to finish",
                 truncate(&cmd.cmd_args, 200),
             )),
-            Data::DiceSynchronizeSection(..) => Ok("Synchronizing buck2 internal state".to_owned()),
+            Data::DiceSynchronizeSection(..) => Ok("Synchronizing bz internal state".to_owned()),
             Data::DiceCleanup(..) => Ok("Cleaning up graph state".to_owned()),
             Data::ExclusiveCommandWait(bz_data::ExclusiveCommandWaitStart { command_name }) => {
                 if let Some(name) = command_name {

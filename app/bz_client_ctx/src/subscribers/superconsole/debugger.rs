@@ -33,7 +33,7 @@ impl Component for StarlarkDebuggerComponent<'_> {
         }
 
         let mut lines: Vec<String> = Vec::new();
-        lines.push("     ******** Buck2 Starlark Debugger is attached **********".to_owned());
+        lines.push("     ******** bz Starlark Debugger is attached *************".to_owned());
 
         let total = state.this_stopped_evals.len() + state.other_stopped_evals.len();
         for stopped in &state.this_stopped_evals {

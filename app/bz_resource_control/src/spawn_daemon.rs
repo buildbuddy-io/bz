@@ -86,7 +86,7 @@ async fn get_daemon_spawner(init: &ResourceControlInit) -> bz_error::Result<Daem
 
 /// Generates the command to spawn a daemon process, wrapped as appropriate for the resource control setup.
 ///
-/// Returns the command, followed by a list of additional flags to pass to `buck2 daemon`.
+/// Returns the command, followed by a list of additional flags to pass to `bz daemon`.
 pub async fn create_daemon_spawn_command(
     config: &ResourceControlConfig,
     program: impl AsRef<OsStr>,

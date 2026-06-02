@@ -674,7 +674,7 @@ mod tests {
         )?;
 
         let output = output.fmt_for_test().to_string();
-        assert!(output.contains("Synchronizing buck2 internal state"));
+        assert!(output.contains("Synchronizing bz internal state"));
         assert!(output.contains("Syncing changes to graph"));
         assert!(output.contains("evaluating bzlmod module extension `foo.bzl`%`deps`"));
         assert!(!output.contains(" > "));
@@ -712,7 +712,7 @@ mod tests {
         )?;
 
         let output = output.fmt_for_test().to_string();
-        assert!(output.contains("Buck2 graph work -- computing BuildKey"));
+        assert!(output.contains("bz graph work -- computing BuildKey"));
         assert!(output.contains("2 of 2 active DICE keys"));
 
         Ok(())

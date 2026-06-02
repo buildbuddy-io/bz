@@ -1,4 +1,4 @@
-#compdef buck2 buck
+#compdef bz
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under both the MIT license found in the
@@ -12,9 +12,9 @@
 # %INSERT_OPTION_COMPLETION%
 # clap_complete generated content ENDS
 
-compdef -d buck2
+compdef -d bz
 
-_BUCK_COMPLETE_BIN="${_BUCK_COMPLETE_BIN:-buck2}"
+_BUCK_COMPLETE_BIN="${_BUCK_COMPLETE_BIN:-bz}"
 
 __bz_takes_target()
 {
@@ -98,18 +98,18 @@ __bz_fix()
 
     if __bz_takes_target "$(__bz_subcommand)"; then
         if [[ $cur =~ ^- ]]; then
-            _buck2 "$@"
+            _bz "$@"
         else
-            _buck2 "$@"
+            _bz "$@"
             if ! __bz_completions_queued; then
                 __bz_add_target_completions "$cur"
             fi
         fi
     else
-        _buck2 "$@"
+        _bz "$@"
     fi
 
     compstate[insert]="automenu-unambiguous"
 }
 
-compdef __bz_fix buck buck2
+compdef __bz_fix bz

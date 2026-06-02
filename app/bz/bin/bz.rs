@@ -38,7 +38,7 @@ use dupe::Dupe;
 use superconsole::Stdin;
 
 // fbcode likes to set its own allocator in fbcode.default_allocator
-// So when we set our own allocator, buck build buck2 or buck2 build buck2 often breaks.
+// So when we set our own allocator, buck build buck2 or bz build buck2 often breaks.
 // Making jemalloc the default only when we do a cargo build.
 #[global_allocator]
 #[cfg(all(any(target_os = "linux", target_os = "macos"), not(buck_build)))]
@@ -93,7 +93,7 @@ fn check_cargo() {
 fn check_unoptimized() {
     if cfg!(debug_assertions) {
         eprintln!("=====================================================================");
-        eprintln!("WARNING: You are running an unoptimized Buck2 binary.");
+        eprintln!("WARNING: You are running an unoptimized bz binary.");
         eprintln!("         Build and benchmark timings may be significantly slower.");
         eprintln!("         For performance-sensitive runs, rebuild with:");
         eprintln!("             bazel build -c opt //app/bz:bz");
@@ -104,7 +104,7 @@ fn check_unoptimized() {
 
 fn print_retry() -> bz_error::Result<()> {
     bz_client_ctx::eprintln!("============================================================")?;
-    bz_client_ctx::eprintln!("|| Buck2 has detected that it needs to restart to proceed ||")?;
+    bz_client_ctx::eprintln!("|| bz has detected that it needs to restart to proceed    ||")?;
     bz_client_ctx::eprintln!("|| Your command will now restart.                         ||")?;
     bz_client_ctx::eprintln!("============================================================")?;
     bz_client_ctx::eprintln!()?;

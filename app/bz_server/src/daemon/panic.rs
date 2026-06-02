@@ -94,7 +94,7 @@ fn maybe_dice_dump(
     if is_dice_panic {
         let dice_dump_folder = get_panic_dump_dir().join(format!("dice-dump-{panic_id}"));
         eprintln!(
-            "Buck2 panicked and DICE may be responsible. Please be patient as we try to dump DICE graph to `{dice_dump_folder:?}` and create an archive file"
+            "bz panicked and DICE may be responsible. Please be patient as we try to dump DICE graph to `{dice_dump_folder:?}` and create an archive file"
         );
         if let Err(e) = daemon_state.dice_dump(&dice_dump_folder, DiceDumpFormat::Tsv) {
             eprintln!("Failed to dump DICE graph: {e:#}");

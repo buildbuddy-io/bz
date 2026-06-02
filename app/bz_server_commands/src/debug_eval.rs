@@ -43,7 +43,7 @@ pub(crate) async fn debug_eval_command(
             let ctx = &ctx;
             for path in req.paths {
                 let path = AbsPathBuf::new(path)?;
-                // input path from `buck2 debug eval <PATH>`
+                // input path from `bz debug eval <PATH>`
                 let path = fs_util::canonicalize(&path).categorize_input()?;
                 let path = context.project_root().relativize(&path)?;
                 let path = cell_resolver.get_cell_path(&path);

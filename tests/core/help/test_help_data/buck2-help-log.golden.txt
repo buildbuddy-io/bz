@@ -1,8 +1,8 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
-Commands for interacting with buck2 logs
+Commands for interacting with bz logs
 
-Usage: buck2 log [OPTIONS] <COMMAND>
+Usage: bz log [OPTIONS] <COMMAND>
 
 Commands:
   what-ran           Output everything that buck ran from the selected invocation. If no invocation
@@ -20,7 +20,7 @@ Commands:
   show-user          Converts the event log from a selected invocation into a user event log, in
                      JSONL format
   summary            Outputs high level statistics about the build
-  diff               Subcommands for diff'ing two buck2 commands
+  diff               Subcommands for diff'ing two bz commands
   external-configs   Display the values and origins of external configs for a selected command
   help               Print this message or the help of the given subcommand(s)
 
@@ -30,12 +30,12 @@ Options:
 
 Universal Options:
       --isolation-dir <ISOLATION_DIR>
-          The name of the directory that Buck2 creates within buck-out for writing outputs and
-          daemon information. If one is not provided, Buck2 creates a directory with the default
+          The name of the directory that bz creates within buck-out for writing outputs and
+          daemon information. If one is not provided, bz creates a directory with the default
           name.
 
-          Instances of Buck2 share a daemon if and only if their isolation directory is identical.
-          The isolation directory also influences the output paths provided by Buck2, and as a
+          Instances of bz share a daemon if and only if their isolation directory is identical.
+          The isolation directory also influences the output paths provided by bz, and as a
           result using a non-default isolation dir will cause cache misses (and slower builds).
 
           [env: BUCK_ISOLATION_DIR=]
@@ -58,7 +58,7 @@ Universal Options:
           The oncall executing this command
 
       --client-metadata <CLIENT_METADATA>
-          Metadata key-value pairs to inject into Buck2's logging. Client metadata must be of the
+          Metadata key-value pairs to inject into bz's logging. Client metadata must be of the
           form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
           datasets
 

@@ -284,7 +284,7 @@ message TargetsShowOutputsResponse {
   repeated TargetPaths targets_paths = 1;
 }
 
-// `buck2 ctargets` command
+// `bz ctargets` command
 message ConfiguredTargetsRequest {
   reserved 2, 10;
 
@@ -519,12 +519,12 @@ message BuildRequest {
   // Upload final artifacts?
   Uploads final_artifact_uploads = 11;
 
-  // How long to build for? If the timeout is exceeded, Buck2 will exit as
+  // How long to build for? If the timeout is exceeded, bz will exit as
   // quickly as possible and drop in-flight builds. The exit code will be a
   // user failure.
   optional google.protobuf.Duration timeout = 12;
 
-  // Set by `buck2 run` when extra args are passed without `--` separator.
+  // Set by `bz run` when extra args are passed without `--` separator.
   bool run_args_missing_separator = 13;
 }
 
@@ -565,7 +565,7 @@ message TestRequest {
 
   TestSessionOptions session_options = 11;
 
-  // How long to execute tests for? If the timeout is exceeded, Buck2 will exit
+  // How long to execute tests for? If the timeout is exceeded, bz will exit
   // as quickly as possible and not run further tests. In-flight tests will be
   // cancelled. The test orchestrator will be allowed to shut down gracefully.
   // The exit code will be a user failure.
@@ -1043,7 +1043,7 @@ service DaemonApi {
   rpc NewGenericImpl(NewGenericRequestMessage)
       returns (stream MultiCommandProgress);
 
-  // Crashes the Buck daemon. Unless you are writing tests or checking Buck2's
+  // Crashes the Buck daemon. Unless you are writing tests or checking bz's
   // behavior when it crashes, you probably don't want this.
   rpc Unstable_Crash(UnstableCrashRequest) returns (CommandResult);
 
@@ -1078,9 +1078,9 @@ service DaemonApi {
   rpc TraceIo(TraceIoRequest) returns (stream MultiCommandProgress);
 }
 
-// This struct is written to `~/.buck/paranoid.info` by `buck2 paranoid
+// This struct is written to `~/.buck/paranoid.info` by `bz paranoid
 // enabled`, it's used to control whether we are currently enabling paranoid
-// mode on this machine. Read `buck2 help debug paranoid` for more details.
+// mode on this machine. Read `bz help debug paranoid` for more details.
 message ParanoidInfo {
   // Paranoid is enabled until this time.
   google.protobuf.Timestamp expires_at = 1;

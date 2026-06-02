@@ -1,4 +1,4 @@
-#compdef buck2 buck
+#compdef bz
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under both the MIT license found in the
@@ -12,4 +12,4 @@
 # %INSERT_OPTION_COMPLETION%
 # clap_complete generated content ENDS
 
-compdef _buck2 buck
+compdef _bz bz

@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-/// When calling a command like `buck2 build dramatic`,
+/// When calling a command like `bz build dramatic`,
 /// this trait is used to resolve the string `dramatic` to a fully qualified target name.
 pub trait TargetAliasResolver {
     fn get<'a>(&'a self, name: &str) -> bz_error::Result<Option<&'a str>>;

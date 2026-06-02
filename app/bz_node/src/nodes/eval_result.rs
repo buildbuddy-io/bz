@@ -168,7 +168,7 @@ impl Display for AllTargetsDisplay {
         if self.total_count > self.targets.len() {
             writeln!(
                 f,
-                "\n\nTo see all {} targets, run:\n  buck2 uquery --reuse-current-config {}:\n",
+                "\n\nTo see all {} targets, run:\n  bz uquery --reuse-current-config {}:\n",
                 self.total_count, self.package
             )?;
         }

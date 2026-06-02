@@ -264,11 +264,11 @@ pub struct InvocationRecorder {
     max_in_progress_remote_uploads: u64,
     // Track executor stage types by span ID to know which counter to decrement on end
     executor_stages_by_span: StdBuckHashMap<u64, ExecutorStageType>,
-    // Track maximum buck2 daemon anon memory usage
+    // Track maximum bz daemon anon memory usage
     memory_max_anon_allprocs: Option<u64>,
     // Track maximum buck2 forkserver anon memory usage
     memory_max_anon_forkserver_actions: Option<u64>,
-    // Track maximum total buck2 daemon memory usage (anon+file+kernel)
+    // Track maximum total bz daemon memory usage (anon+file+kernel)
     memory_max_total_allprocs: Option<u64>,
     // Track maximum total buck2 forkserver memory usage (anon+file+kernel)
     memory_max_total_forkserver_actions: Option<u64>,
@@ -2025,7 +2025,7 @@ impl InvocationRecorder {
             );
         }
 
-        // Track maximum buck2 daemon memory usage from cgroup
+        // Track maximum bz daemon memory usage from cgroup
         if let Some(allprocs_cgroup) = &update.allprocs_cgroup {
             self.memory_max_anon_allprocs =
                 max(self.memory_max_anon_allprocs, Some(allprocs_cgroup.anon));

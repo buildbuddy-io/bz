@@ -40,7 +40,7 @@ impl fmt::Display for TestSessionOptions {
     }
 }
 
-/// The state of a buck2 test command.
+/// The state of a bz test command.
 pub struct TestSession {
     /// The next ConfiguredTargetHandle that will be assigned.
     next_id: AtomicU64,

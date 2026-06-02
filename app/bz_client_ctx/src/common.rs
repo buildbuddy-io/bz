@@ -484,9 +484,9 @@ pub struct CommonBuildConfigurationOptions {
 
     /// Used to configure when this command could be preempted by another command for the same isolation dir.
     ///
-    /// Normally, when you run two commands - from different terminals, say - buck2 will attempt
+    /// Normally, when you run two commands - from different terminals, say - bz will attempt
     /// to run them in parallel. However, if the two commands are based on different state, that
-    /// is they either have different configs or different filesystem states, buck2 cannot run them
+    /// is they either have different configs or different filesystem states, bz cannot run them
     /// in parallel. The default behavior in this case is to block the second command until the
     /// first completes.
     #[clap(long, ignore_case = true, value_enum)]

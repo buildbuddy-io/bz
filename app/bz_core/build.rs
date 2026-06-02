@@ -43,7 +43,7 @@ fn check_rustc_version() {
     let actual = rustc_version();
     if actual != expected {
         panic!(
-            "buck2 only works with version `{expected}` of rustc, but you are \
+            "bz only works with version `{expected}` of rustc, but you are \
             using `{actual}`. Correct version is installed automatically when \
             `rustup` is used",
         );

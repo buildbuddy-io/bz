@@ -64,7 +64,7 @@ enum ExitResultVariant {
     Status(ExitCode),
     /// Instead of terminating normally, `exec` (or spawn on Windows)
     /// a new process with the given name and argv.
-    /// This is used to implement `buck2 run`.
+    /// This is used to implement `bz run`.
     Exec(ExecArgs),
     /// We failed (i.e. due to a Buck internal error).
     /// At this time, when execution does fail, we print out the error message to stderr.
@@ -200,7 +200,7 @@ impl ExitResult {
         status_with_error_report(exit_code, errors)
     }
 
-    /// Buck2 supports being built as both a "full" binary as well as a "client-only" binary.
+    /// bz supports being built as both a "full" binary as well as a "client-only" binary.
     ///
     /// However, some commands (eg `--no-buckd`) are not supported in the client-only binary, and so
     /// when these commands are run, we have to retry them with the full build.
@@ -347,7 +347,7 @@ impl ExitResultVariant {
         let mut exit_code = match self {
             Self::Status(v) => v,
             Self::Exec(args) => {
-                // Terminate by exec-ing a new process - usually because of `buck2 run`.
+                // Terminate by exec-ing a new process - usually because of `bz run`.
                 //
                 // execv does not return.
                 execv(args)
@@ -370,7 +370,7 @@ impl ExitResultVariant {
 
         // Global destructors in C++ dependencies destroy global state,
         // while running background threads rely on this state.
-        // So the result is non-reproducible crash of the buck2 client.
+        // So the result is non-reproducible crash of the bz client.
         // https://fburl.com/7u7kizm7
         // So let's disable global destructors.
         // Global destructors are hard (if even possible) to do safely anyway.
@@ -396,7 +396,7 @@ impl ExitResultVariant {
 #[error(transparent)]
 pub enum ClientIoError {
     /// A broken pipe when writing to stdout is expected if stdout is closed before the command finishes.
-    /// An easy way to trigger this is `buck2 audit config | head`
+    /// An easy way to trigger this is `bz audit config | head`
     #[buck2(tag = IoClientBrokenPipe)]
     #[buck2(environment)]
     BrokenPipe(io::Error),

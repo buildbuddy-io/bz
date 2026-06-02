@@ -90,7 +90,7 @@ impl StreamingCommand for ExplainCommand {
         // Check things are the same as last build
         let (invocation, _) = build_log.unpack_stream().await?;
         bz_client_ctx::eprintln!(
-            "\nUsing last build invocation `buck2 {}`\n",
+            "\nUsing last build invocation `bz {}`\n",
             invocation.command_line_args[1..].join(" ")
         )?;
 

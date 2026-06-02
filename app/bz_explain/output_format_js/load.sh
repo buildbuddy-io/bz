@@ -13,4 +13,4 @@ set -e
 BUCK2_DUMP_FBS=/tmp/fbs $1 cquery 'deps(fbcode//bz:bz)' --output-format=html > /dev/null && \
 cd "$(dirname "$0")" && \
 echo "export const DATA = '$(cat /tmp/fbs)';" > src/data.ts && \
-cp -rfX "$(buck2 build //bz/app/bz_explain/output_format_js:schema_ts --show-full-simple-output)" src
+cp -rfX "$(bz build //bz/app/bz_explain/output_format_js:schema_ts --show-full-simple-output)" src

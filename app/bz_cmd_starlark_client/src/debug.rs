@@ -221,7 +221,7 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
                 error: &bz_error::Error,
             ) -> bz_error::Result<()> {
                 Ok(self
-                    .write_console(&format!("buck2 starlark-attach debugserver error: {error}"))?)
+                    .write_console(&format!("bz starlark-attach debugserver error: {error}"))?)
             }
         }
 

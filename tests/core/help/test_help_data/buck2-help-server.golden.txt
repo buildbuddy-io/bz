@@ -1,13 +1,13 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
-Start, query, and control the buck2 server, a long-lived process, spanning buck2 command line
+Start, query, and control the bz server, a long-lived process, spanning bz command line
 invocations.
 Using this command can ensure the daemon is running.
 
-To stop a specific server, use `buck2 kill` and add `--isolation-dir` for a specific instance.
-To stop all instances, use `buck2 killall`.
+To stop a specific server, use `bz kill` and add `--isolation-dir` for a specific instance.
+To stop all instances, use `bz killall`.
 
-Usage: buck2 server [OPTIONS]
+Usage: bz server [OPTIONS]
 
 Options:
   -h, --help
@@ -15,12 +15,12 @@ Options:
 
 Universal Options:
       --isolation-dir <ISOLATION_DIR>
-          The name of the directory that Buck2 creates within buck-out for writing outputs and
-          daemon information. If one is not provided, Buck2 creates a directory with the default
+          The name of the directory that bz creates within buck-out for writing outputs and
+          daemon information. If one is not provided, bz creates a directory with the default
           name.
 
-          Instances of Buck2 share a daemon if and only if their isolation directory is identical.
-          The isolation directory also influences the output paths provided by Buck2, and as a
+          Instances of bz share a daemon if and only if their isolation directory is identical.
+          The isolation directory also influences the output paths provided by bz, and as a
           result using a non-default isolation dir will cause cache misses (and slower builds).
 
           [env: BUCK_ISOLATION_DIR=]
@@ -43,7 +43,7 @@ Universal Options:
           The oncall executing this command
 
       --client-metadata <CLIENT_METADATA>
-          Metadata key-value pairs to inject into Buck2's logging. Client metadata must be of the
+          Metadata key-value pairs to inject into bz's logging. Client metadata must be of the
           form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
           datasets
 

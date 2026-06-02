@@ -226,7 +226,7 @@ pub struct DaemonStateData {
     /// it needs to be downloaded again).
     pub use_network_action_output_cache: bool,
 
-    /// What buck2 state to store on disk, ex. materializer state on sqlite
+    /// What bz state to store on disk, ex. materializer state on sqlite
     pub disk_state_options: DiskStateOptions,
 
     pub start_time: Instant,
@@ -990,7 +990,7 @@ impl DaemonState {
                     bz_error::ErrorTag::Environment,
                     "Buck appears to be running in a stale working directory. \
                      This will likely lead to failed or slow builds. \
-                     To remediate, restart Buck2."
+                     To remediate, restart bz."
                 ))
             } else {
                 Ok(())

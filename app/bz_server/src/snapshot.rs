@@ -354,7 +354,7 @@ impl SnapshotCollector {
                 }
             }
 
-            // Try to read Buck2 daemon memory information from cgroup
+            // Try to read bz daemon memory information from cgroup
 
             if let Some(memory_tracker) = self.daemon.memory_tracker.as_ref() {
                 let cgroup_tree = &memory_tracker.cgroup_tree;

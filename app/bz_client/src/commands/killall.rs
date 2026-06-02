@@ -17,7 +17,7 @@ use bz_client_ctx::exit_result::ExitResult;
 use bz_wrapper_common::is_buck2::WhoIsAsking;
 
 #[derive(Debug, clap::Parser)]
-#[clap(about = "Kill all buck2 processes on the machine")]
+#[clap(about = "Kill all bz processes on the machine")]
 pub struct KillallCommand {
     #[clap(flatten)]
     pub(crate) event_log_opts: CommonEventLogOptions,

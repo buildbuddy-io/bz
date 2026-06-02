@@ -66,10 +66,10 @@ use crate::data::TestResult;
 use crate::data::TestStage;
 use crate::protocol::TestOrchestrator;
 
-/// Test runner client to buck2 test orchestrator.
+/// Test runner client to bz test orchestrator.
 ///
-/// When running `buck2 test`, buck2 starts a gRPC server
-/// and spawns a test runner which connects to buck2 process using this client.
+/// When running `bz test`, bz starts a gRPC server
+/// and spawns a test runner which connects to bz process using this client.
 pub struct TestOrchestratorClient {
     test_orchestrator_client: test_orchestrator_client::TestOrchestratorClient<Channel>,
     downward_api_client: downward_api_client::DownwardApiClient<Channel>,

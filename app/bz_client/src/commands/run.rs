@@ -51,9 +51,9 @@ use crate::commands::build::print_build_succeeded;
 
 /// Build and run the selected target.
 ///
-/// Use `--` to separate arguments to the target from arguments to buck2:
+/// Use `--` to separate arguments to the target from arguments to bz:
 ///
-/// buck2 run //my/target -- --arg1 --arg2
+/// bz run //my/target -- --arg1 --arg2
 ///
 /// The Build ID for the underlying build execution is made available to the target in
 /// the `BUCK_RUN_BUILD_ID` environment variable.
@@ -62,7 +62,7 @@ use crate::commands::build::print_build_succeeded;
 #[clap(
     name = "run",
     trailing_var_arg = true,
-    override_usage = "buck2 run [OPTIONS] <TARGET> [-- <TARGET_ARGS>...]"
+    override_usage = "bz run [OPTIONS] <TARGET> [-- <TARGET_ARGS>...]"
 )]
 pub struct RunCommand {
     #[clap(
@@ -80,7 +80,7 @@ pub struct RunCommand {
     chdir: Option<PathArg>,
 
     /// Instead of running the command, print out the command
-    /// formatted for shell interpolation, use as: $(buck2 run --emit-shell ...)
+    /// formatted for shell interpolation, use as: $(bz run --emit-shell ...)
     #[clap(long, group = "exec_options")]
     emit_shell: bool,
 
@@ -293,13 +293,13 @@ pub enum RunCommandError {
     NonBinaryRule(String),
     #[error("`--emit-shell` is not supported on Windows")]
     EmitShellNotSupportedOnWindows,
-    #[error("`buck2 run` only supports a single target, but multiple targets were requested.")]
+    #[error("`bz run` only supports a single target, but multiple targets were requested.")]
     MultipleTargets,
     #[error("Target `{0}` is not found in the specified target universe")]
     TargetNotFoundInTargetUniverse(String),
     #[error(
-        "`buck2 run` will require a `--` separator before target arguments in the future. \
-         Please use `buck2 run <target> -- <args>` instead of `buck2 run <target> <args>`"
+        "`bz run` will require a `--` separator before target arguments in the future. \
+         Please use `bz run <target> -- <args>` instead of `bz run <target> <args>`"
     )]
     MissingSeparator,
 }

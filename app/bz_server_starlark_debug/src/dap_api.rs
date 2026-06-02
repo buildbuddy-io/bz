@@ -194,7 +194,7 @@ pub(crate) fn dispatch(
         "stepOut" => ret_none(r, server.step_out(arg(r)?)),
         _ => Err(bz_error::bz_error!(
             bz_error::ErrorTag::Input,
-            "Buck2 debugserver didn't recognize command: {}",
+            "bz debugserver didn't recognize command: {}",
             r.command
         )),
     }

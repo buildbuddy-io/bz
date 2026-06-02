@@ -45,8 +45,7 @@ function __bz_add_target_completions
 
     string match --quiet -- '-*' $cur && return
 
-    buck2 complete --target="$cur" 2>/dev/null
+    bz complete --target="$cur" 2>/dev/null
 end
 
-complete -c buck2 -n '__bz_takes_target' -f -a '(__bz_add_target_completions)'
-complete -c buck -w buck2
+complete -c bz -n '__bz_takes_target' -f -a '(__bz_add_target_completions)'

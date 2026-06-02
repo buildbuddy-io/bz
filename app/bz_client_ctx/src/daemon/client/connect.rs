@@ -73,7 +73,7 @@ use crate::subscribers::stdout_stderr_forwarder::StdoutStderrForwarder;
 /// The client side matcher for DaemonConstraints.
 #[derive(Clone, Debug)]
 pub struct DaemonConstraintsRequest {
-    /// The version of buck2.
+    /// The version of bz.
     version: String,
     /// Sandcastle id.
     user_version: Option<String>,
@@ -337,7 +337,7 @@ impl<'a> BuckdLifecycle<'a> {
         // TODO(nga): We create too many backtraces during `attrs.source()` coercion. Can be
         //   reproduced with this command:
         //   ```
-        //   buck2 --isolation-dir=xx audit providers fbcode//bz:bz --quiet
+        //   bz --isolation-dir=xx audit providers fbcode//bz:bz --quiet
         //   ```
         //   Which regresses from 15s to 80s when `RUST_LIB_BACKTRACE` is set. So we disable
         //   backtraces in the daemon unless the user has explicitly asked for them. We
@@ -403,7 +403,7 @@ impl<'a> BuckdLifecycle<'a> {
 
         let daemon_exe = get_daemon_exe()?;
 
-        // Create a unique name that we know won't overlap with other buck2 daemons and has enough
+        // Create a unique name that we know won't overlap with other bz daemons and has enough
         // information to understand at least a little bit about which daemon it is
         let repo_name = project_dir
             .root()
@@ -474,7 +474,7 @@ impl<'a> BuckdLifecycle<'a> {
                 Err(_elapsed) => {
                     // The command has timed out, kill the process and wait
                     child.kill().await.buck_error_context(
-                        "Error killing process after buck2 daemon launch timing out",
+                        "Error killing process after bz daemon launch timing out",
                     )?;
                     // This should return immediately as kill() waits for the process to end. We wait here again to fetch the ExitStatus
                     // Signal termination is not considered a success, so wait() results in an appropriate ExitStatus
@@ -500,7 +500,7 @@ impl<'a> BuckdLifecycle<'a> {
             Ok(buf)
         };
 
-        // `buck2 daemon` will either:
+        // `bz daemon` will either:
         // * fork and kill parent (daemonize) on Unix
         // * or spawn another process and exit on Windows
         // so we wait for termination of the child process.
@@ -710,7 +710,7 @@ fn explain_failed_to_connect_reason(reason: bz_data::DaemonWasStartedReason) -> 
         DaemonWasStartedReason::TimeoutCalculationError => "Timeout calculation error",
         DaemonWasStartedReason::NoBuckdInfo => "No buckd.info",
         DaemonWasStartedReason::CouldNotLoadBuckdInfo => "Could not load buckd.info",
-        DaemonWasStartedReason::NoDaemonProcess => "buck2 daemon is not running",
+        DaemonWasStartedReason::NoDaemonProcess => "bz daemon is not running",
     }
 }
 
@@ -736,7 +736,7 @@ async fn establish_connection_inner(
             ConnectBeforeRestart::ConstraintMismatch(reason) => {
                 events_ctx
                     .eprintln(&format!(
-                        "buck2 daemon constraint mismatch: {reason}; waiting for daemon lifecycle lock..."
+                        "bz daemon constraint mismatch: {reason}; waiting for daemon lifecycle lock..."
                     ))
                     .await?;
             }
@@ -783,7 +783,7 @@ async fn establish_connection_inner(
 
                         events_ctx
                             .eprintln(&format!(
-                                "buck2 daemon constraint mismatch: {reason}; killing daemon..."
+                                "bz daemon constraint mismatch: {reason}; killing daemon..."
                             ))
                             .await?;
 
@@ -794,14 +794,14 @@ async fn establish_connection_inner(
                             )
                             .await?;
 
-                        events_ctx.eprintln("Starting new buck2 daemon...").await?;
+                        events_ctx.eprintln("Starting new bz daemon...").await?;
 
                         reason.to_daemon_was_started_reason()
                     }
                     Err(reason) => {
                         events_ctx
                             .eprintln(&format!(
-                                "Could not connect to buck2 daemon ({}), killing daemon..",
+                                "Could not connect to bz daemon ({}), killing daemon..",
                                 explain_failed_to_connect_reason(reason)
                             ))
                             .await?;
@@ -815,14 +815,14 @@ async fn establish_connection_inner(
                 }
             }
             Ok(None) => {
-                events_ctx.eprintln("Starting new buck2 daemon...").await?;
+                events_ctx.eprintln("Starting new bz daemon...").await?;
 
                 bz_data::DaemonWasStartedReason::NoBuckdInfo
             }
             Err(e) => {
                 events_ctx
                     .eprintln(&format!(
-                        "Could not load buckd.info: {e}, starting new buck2 daemon..."
+                        "Could not load buckd.info: {e}, starting new bz daemon..."
                     ))
                     .await?;
 
@@ -834,7 +834,7 @@ async fn establish_connection_inner(
     deadline
         .down(
             &format!(
-                "starting new buck2 daemon for reason: {}",
+                "starting new bz daemon for reason: {}",
                 explain_failed_to_connect_reason(daemon_was_started_reason)
             ),
             |deadline| {
@@ -866,7 +866,7 @@ async fn start_new_buckd_and_connect(
     lifecycle_lock
         .start_server()
         .await
-        .buck_error_context("Error starting buck2 daemon")?;
+        .buck_error_context("Error starting bz daemon")?;
     // It might take a little bit for the daemon server to start up. We could wait for the buckd.info
     // file to appear, but it's just as easy to just retry the connection itself.
 
@@ -893,7 +893,7 @@ async fn start_new_buckd_and_connect(
     events_ctx.handle_daemon_started(daemon_was_started_reason);
 
     events_ctx
-        .eprintln("Connected to new buck2 daemon.")
+        .eprintln("Connected to new bz daemon.")
         .await?;
 
     Ok(client)
@@ -1085,7 +1085,7 @@ enum BuckdConnectError {
         #[source]
         exit_status_error: bz_error::Error,
     },
-    #[error("Failed to launch Buck2 daemon: {error:#}")]
+    #[error("Failed to launch bz daemon: {error:#}")]
     #[buck2(tag = DaemonLaunchFailed)]
     BuckDaemonLaunchFailed {
         #[source]
@@ -1100,14 +1100,14 @@ enum BuckdConnectError {
         expected: DaemonConstraintsRequest,
         actual: bz_cli_proto::DaemonConstraints,
     },
-    #[error("buck2 daemon constraint mismatch during nested invocation: {reason}")]
+    #[error("bz daemon constraint mismatch during nested invocation: {reason}")]
     #[buck2(tag = DaemonNestedConstraintsMismatch)]
     NestedConstraintMismatch { reason: ConstraintUnsatisfiedReason },
     #[error("buckd info {path} does not exist")]
     #[buck2(tag = BuckdInfoMissing)]
     BuckdInfoMissing { path: AbsNormPathBuf },
     #[error("Error parsing daemon info in `{}`. \
-                Try deleting that file and running `buck2 killall` before running your command again",
+                Try deleting that file and running `bz killall` before running your command again",
                 location.display())]
     #[buck2(tag = BuckdInfoParseError)]
     BuckdInfoParseError {
@@ -1176,10 +1176,10 @@ async fn daemon_connect_error(
     } else {
         "rm -rf ~/.buck/buckd"
     };
-    // FIXME(ctolliday) we should check if the pid at daemon_dir.buckd_pid is still running before suggesting buck2 kill.
+    // FIXME(ctolliday) we should check if the pid at daemon_dir.buckd_pid is still running before suggesting bz kill.
     let error_message = format!(
         "Failed to connect to buck daemon.
-    Try running `buck2 kill` and your command afterwards.
+    Try running `bz kill` and your command afterwards.
     Alternatively, try running `{delete_commad}` and your command afterwards"
     );
     error.context(error_message)

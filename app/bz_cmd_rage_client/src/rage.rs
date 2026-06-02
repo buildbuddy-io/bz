@@ -71,7 +71,7 @@ enum RageError {
 #[derive(Debug, clap::Parser)]
 #[clap(
     name = "rage",
-    about = "Record information about the previous failed buck2 command",
+    about = "Record information about the previous failed bz command",
     group = clap::ArgGroup::new("invocation").multiple(false)
 )]
 pub struct RageCommand {
@@ -84,7 +84,7 @@ pub struct RageCommand {
     /// Select invocation directly using the invocation's UUID
     #[clap(long, group = "invocation")]
     invocation_id: Option<TraceId>,
-    /// Collect rage report about buck2 in general, not about specific invocation
+    /// Collect rage report about bz in general, not about specific invocation
     #[clap(long, group = "invocation")]
     no_invocation: bool,
     /// We may want to omit paste if this is not a user
@@ -684,7 +684,7 @@ async fn output_rage(no_paste: bool, output: &str) -> bz_error::Result<()> {
     if no_paste {
         bz_client_ctx::println!("{}", output)?;
     } else {
-        match generate_paste("Buck2 Rage", output).await {
+        match generate_paste("bz Rage", output).await {
             Err(e) => {
                 bz_client_ctx::eprintln!(
                     "Failed to generate paste automatically with error \"{:?}\".

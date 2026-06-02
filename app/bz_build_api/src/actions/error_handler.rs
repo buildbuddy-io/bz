@@ -195,7 +195,7 @@ fn action_error_context_methods(builder: &mut MethodsBuilder) {
     /// The category should be finer grain error categorizations provided by the rule authors,
     /// and tend to be language specific. These should not be any kind of shared concepts
     /// among all errors for all languages/rules. For example, timeouts and infra errors
-    /// should not go here - buck2 tries to categorize these types of errors automatically.
+    /// should not go here - bz tries to categorize these types of errors automatically.
     /// An example of a finer grain error category may be the error code for rustc outputs.
     ///
     /// 'category': Required, useful for providing a more granular error category for action errors.

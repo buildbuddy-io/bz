@@ -103,7 +103,7 @@ enum ProviderCollectionError {
     )]
     RequestedInvalidSubTarget(ProviderName, ConfiguredProvidersLabel, Vec<String>),
     #[error(
-        "Cannot handle flavor `{flavor}` on target `{target}`. Most flavors are unsupported in Buck2."
+        "Cannot handle flavor `{flavor}` on target `{target}`. Most flavors are unsupported in bz."
     )]
     UnknownFlavors { target: String, flavor: String },
     #[error(

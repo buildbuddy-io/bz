@@ -95,7 +95,7 @@ use crate::actions::impls::run::RunActionKey;
 static DEP_FILES: Lazy<BuckDashMap<RunActionKey, Arc<DepFileState>>> = Lazy::new(BuckDashMap::new);
 
 /// When this is set, we retain directories after fingerprinting, so that we can output them later
-/// for debugging via `buck2 audit dep-files`.
+/// for debugging via `bz audit dep-files`.
 fn keep_directories() -> bz_error::Result<bool> {
     bz_env!("BUCK2_KEEP_DEP_FILE_DIRECTORIES", bool)
 }
@@ -927,7 +927,7 @@ async fn dep_files_match(
     .buck_error_context(
         "Error reading persisted dep files. \
             Fix the command that produced an invalid dep file. \
-            You may also use `buck2 debug flush-dep-files` to drop all dep file state.",
+            You may also use `bz debug flush-dep-files` to drop all dep file state.",
     )?;
 
     let dep_files = match dep_files {

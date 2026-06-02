@@ -56,7 +56,7 @@ use crate::subscribers::system_warning::low_disk_space_msg;
 use crate::subscribers::system_warning::system_memory_exceeded_msg;
 use crate::ticker::Tick;
 
-/// buck2 daemon info is printed to stderr if there are no other updates available
+/// bz daemon info is printed to stderr if there are no other updates available
 /// within this duration.
 const KEEPALIVE_TIME_LIMIT: Duration = Duration::from_secs(7);
 
@@ -765,7 +765,7 @@ where
                             echo!("{}", summary)?;
                         } else {
                             echo!(
-                                "Waiting on buck2 daemon {}...",
+                                "Waiting on bz daemon {}...",
                                 self.observer.session_info().trace_id
                             )?;
                         }

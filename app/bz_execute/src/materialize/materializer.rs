@@ -97,7 +97,7 @@ fn format_directory_entry_leaves(
     RE CAS and Buck does not have it. \
     This likely happened because your Buck daemon \
     has been online for a long time. This error is currently unrecoverable. \
-    To proceed, you should restart Buck using `buck2 killall`.
+    To proceed, you should restart Buck using `bz killall`.
 
 Debug information:
   Path: {}

@@ -60,7 +60,7 @@ mod trace_io;
 mod upload_re_logs;
 
 #[derive(Debug, clap::Parser)]
-#[clap(about = "Hidden debug commands useful for testing buck2")]
+#[clap(about = "Hidden debug commands useful for testing bz")]
 pub enum DebugCommand {
     /// Deliberately crashes the Buck daemon, for testing purposes.
     Crash(CrashCommand),
@@ -69,21 +69,21 @@ pub enum DebugCommand {
     AllocatorStats(AllocatorStatsCommand),
     /// Dump the DICE graph to a file and saves it to disk.
     DiceDump(DiceDumpCommand),
-    /// Prints the hash of the buck2 binary
+    /// Prints the hash of the bz binary
     InternalVersion(InternalVersionCommand),
     /// Renders an event-log to a Chrome trace file for inspection with a browser.
     ChromeTrace(ChromeTraceCommand),
-    /// Flushes all dep files known to Buck2.
+    /// Flushes all dep files known to bz.
     FlushDepFiles(FlushDepFilesCommand),
     /// Forces materialization of a path, even on the deferred materializer
     Materialize(MaterializeCommand),
     // Upload RE logs given an RE session ID
     UploadReLogs(UploadReLogsCommand),
-    /// Validates that Buck2 and disk agree on the state of files.
+    /// Validates that bz and disk agree on the state of files.
     FileStatus(FileStatusCommand),
-    /// Prints buck2 daemon directory (`~/.buckd/xxx`).
+    /// Prints bz daemon directory (`~/.buckd/xxx`).
     DaemonDir(DaemonDirCommand),
-    /// Prints buck2 executable (this executable) path.
+    /// Prints bz executable (this executable) path.
     Exe(ExeCommand),
     Allocative(AllocativeCommand),
     SetLogFilter(SetLogFilterCommand),

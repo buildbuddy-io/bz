@@ -88,7 +88,7 @@ use crate::bxl::value_as_starlark_target_label::ValueAsStarlarkTargetLabel;
 pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     /// Gets the output stream to the console via stdout. Items written to the output stream
     /// are considered to be the results of a bxl script, which will be displayed to stdout by
-    /// buck2 even when the script is cached.
+    /// bz even when the script is cached.
     ///
     /// Prints that are not result of the bxl should be printed via stderr via the stdlib `print`
     /// and `pprint`.

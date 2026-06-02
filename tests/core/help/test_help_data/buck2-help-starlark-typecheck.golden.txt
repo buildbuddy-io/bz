@@ -2,7 +2,7 @@
 
 Run the Starlark typechecker.
 
-Usage: buck2 starlark typecheck [OPTIONS] <PATH>...
+Usage: bz starlark typecheck [OPTIONS] <PATH>...
 
 Options:
   -h, --help
@@ -38,9 +38,9 @@ Buckconfig Options:
           Used to configure when this command could be preempted by another command for the same
           isolation dir.
 
-          Normally, when you run two commands - from different terminals, say - buck2 will attempt
+          Normally, when you run two commands - from different terminals, say - bz will attempt
           to run them in parallel. However, if the two commands are based on different state, that
-          is they either have different configs or different filesystem states, buck2 cannot run
+          is they either have different configs or different filesystem states, bz cannot run
           them in parallel. The default behavior in this case is to block the second command until
           the first completes.
 
@@ -177,12 +177,12 @@ Event Log Options:
 
 Universal Options:
       --isolation-dir <ISOLATION_DIR>
-          The name of the directory that Buck2 creates within buck-out for writing outputs and
-          daemon information. If one is not provided, Buck2 creates a directory with the default
+          The name of the directory that bz creates within buck-out for writing outputs and
+          daemon information. If one is not provided, bz creates a directory with the default
           name.
 
-          Instances of Buck2 share a daemon if and only if their isolation directory is identical.
-          The isolation directory also influences the output paths provided by Buck2, and as a
+          Instances of bz share a daemon if and only if their isolation directory is identical.
+          The isolation directory also influences the output paths provided by bz, and as a
           result using a non-default isolation dir will cause cache misses (and slower builds).
 
           [env: BUCK_ISOLATION_DIR=]
@@ -205,7 +205,7 @@ Universal Options:
           The oncall executing this command
 
       --client-metadata <CLIENT_METADATA>
-          Metadata key-value pairs to inject into Buck2's logging. Client metadata must be of the
+          Metadata key-value pairs to inject into bz's logging. Client metadata must be of the
           form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
           datasets
 

@@ -22,7 +22,7 @@ use bz_client_ctx::events_ctx::EventsCtx;
 use bz_client_ctx::exit_result::ExitResult;
 use bz_client_ctx::streaming::StreamingCommand;
 
-/// Subcommands for `buck2 debug hydration`. Controls DICE node value page-out / page-in.
+/// Subcommands for `bz debug hydration`. Controls DICE node value page-out / page-in.
 ///
 /// Pagable storage is opt-in: set the `BUCK2_DICE_DB_PATH` environment variable when
 /// starting the daemon to choose a sled database location. Without it, `page-out` is

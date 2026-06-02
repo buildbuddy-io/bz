@@ -468,7 +468,7 @@ pub struct CommandExecutionRequest {
     prefetch_lossy_stderr: bool,
     /// Whether to cleanup outputs
     pub outputs_cleanup: bool,
-    /// What environment variables to inherit from the Buck2 daemon.
+    /// What environment variables to inherit from the bz daemon.
     local_environment_inheritance: Option<EnvironmentInheritance>,
     /// Whether this command should override the fallback-only behavior on an hybrid executor and
     /// thus always run as if the executor was full-hybrid, assuming it is capable.

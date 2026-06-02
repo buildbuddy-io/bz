@@ -65,7 +65,7 @@ fn parse_bazel_remote_endpoint(
     } else if value.starts_with("unix:") {
         return Err(bz_error::bz_error!(
             bz_error::ErrorTag::Input,
-            "Buck2 does not currently support Bazel remote endpoint `{}`: unix socket endpoints are unsupported",
+            "bz does not currently support Bazel remote endpoint `{}`: unix socket endpoints are unsupported",
             value
         ));
     } else {
@@ -111,7 +111,7 @@ fn resolve_bazel_remote_execution_startup_config(
                 Some(existing) if existing != endpoint_tls => {
                     return Err(bz_error::bz_error!(
                         bz_error::ErrorTag::Input,
-                        "Buck2 remote execution currently requires --remote_cache and --remote_executor to use the same TLS mode"
+                        "bz remote execution currently requires --remote_cache and --remote_executor to use the same TLS mode"
                     ));
                 }
                 Some(_) => {}

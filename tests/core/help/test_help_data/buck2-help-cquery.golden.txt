@@ -15,7 +15,7 @@ passed as the universe and all transitive deps of them).  When not
 provided, we implicitly set the universe to be rooted at every
 target literal in the `cquery`.
 
-Run `buck2 docs cquery` or
+Run `bz docs cquery` or
 https://www.internalfb.com/intern/staticdocs/buck2/docs/users/query/cquery/
 for more documentation about the functions available in cquery
 expressions.
@@ -24,14 +24,14 @@ Examples:
 
 Print all the attributes of a target
 
-`buck2 cquery //java/com/example/app:amazing --output-all-attributes`
+`bz cquery //java/com/example/app:amazing --output-all-attributes`
 
 List the deps of a target (special characters in a target will
 require quotes):
 
-`buck2 cquery 'deps("//java/com/example/app:amazing+more")'`
+`bz cquery 'deps("//java/com/example/app:amazing+more")'`
 
-Usage: buck2 cquery [OPTIONS] <QUERY> [QUERY_ARGS]...
+Usage: bz cquery [OPTIONS] <QUERY> [QUERY_ARGS]...
 
 Arguments:
   <QUERY>
@@ -101,7 +101,7 @@ Target Configuration Options:
           universe targets, not the command targets.
 
           This argument is particularly recommended on most non-trivial cqueries. In the absence of
-          this argument, buck2 will use the target literals in your cquery expression as the value
+          this argument, bz will use the target literals in your cquery expression as the value
           for this argument, which may not be what you want.
 
       --target-platforms <PLATFORM>
@@ -141,9 +141,9 @@ Buckconfig Options:
           Used to configure when this command could be preempted by another command for the same
           isolation dir.
 
-          Normally, when you run two commands - from different terminals, say - buck2 will attempt
+          Normally, when you run two commands - from different terminals, say - bz will attempt
           to run them in parallel. However, if the two commands are based on different state, that
-          is they either have different configs or different filesystem states, buck2 cannot run
+          is they either have different configs or different filesystem states, bz cannot run
           them in parallel. The default behavior in this case is to block the second command until
           the first completes.
 
@@ -292,12 +292,12 @@ Starlark Profiling Options:
 
 Universal Options:
       --isolation-dir <ISOLATION_DIR>
-          The name of the directory that Buck2 creates within buck-out for writing outputs and
-          daemon information. If one is not provided, Buck2 creates a directory with the default
+          The name of the directory that bz creates within buck-out for writing outputs and
+          daemon information. If one is not provided, bz creates a directory with the default
           name.
 
-          Instances of Buck2 share a daemon if and only if their isolation directory is identical.
-          The isolation directory also influences the output paths provided by Buck2, and as a
+          Instances of bz share a daemon if and only if their isolation directory is identical.
+          The isolation directory also influences the output paths provided by bz, and as a
           result using a non-default isolation dir will cause cache misses (and slower builds).
 
           [env: BUCK_ISOLATION_DIR=]
@@ -320,7 +320,7 @@ Universal Options:
           The oncall executing this command
 
       --client-metadata <CLIENT_METADATA>
-          Metadata key-value pairs to inject into Buck2's logging. Client metadata must be of the
+          Metadata key-value pairs to inject into bz's logging. Client metadata must be of the
           form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
           datasets
 

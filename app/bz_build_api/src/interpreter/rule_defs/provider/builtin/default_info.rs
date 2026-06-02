@@ -686,10 +686,10 @@ fn bazel_runfiles_methods(builder: &mut MethodsBuilder) {
 pub struct DefaultInfoGen<V: ValueLifetimeless> {
     /// A mapping of names to `ProviderCollection`s. The keys are used when resolving the
     /// `ProviderName` portion of a `ProvidersLabel` in order to access the providers for a
-    /// subtarget, such as when doing `buck2 build cell//foo:bar[baz]`. Just like any
+    /// subtarget, such as when doing `bz build cell//foo:bar[baz]`. Just like any
     /// `ProviderCollection`, this collection must include at least a `DefaultInfo` provider. The
     /// subtargets can have their own subtargets as well, which can be accessed by chaining them,
-    /// e.g.: `buck2 build cell//foo:bar[baz][qux]`.
+    /// e.g.: `bz build cell//foo:bar[baz][qux]`.
     sub_targets: ValueOfUncheckedGeneric<V, DictType<String, FrozenProviderCollection>>,
     /// A list of `Artifact`s that are built by default if this rule is requested
     /// explicitly (via CLI or `$(location)` etc), or depended on as as a "source"

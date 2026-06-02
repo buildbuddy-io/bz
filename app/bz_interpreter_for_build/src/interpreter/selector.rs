@@ -760,7 +760,7 @@ pub fn register_select_internal(globals: &mut GlobalsBuilder) {
 ///
 /// Example:
 /// ```bash
-/// buck2 build //app:main --target-platforms //platforms:linux-x86_64
+/// bz build //app:main --target-platforms //platforms:linux-x86_64
 /// ```
 ///
 /// # Target Compatibility

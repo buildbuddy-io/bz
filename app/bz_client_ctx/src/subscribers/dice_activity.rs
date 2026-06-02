@@ -52,7 +52,7 @@ impl<'a> DiceActivity<'a> {
     fn summary(&self, verb: &str) -> Option<String> {
         let top_key = self.top_key?;
         Some(format!(
-            "Buck2 graph work -- {verb} {top_key} ({} of {} active DICE keys)",
+            "bz graph work -- {verb} {top_key} ({} of {} active DICE keys)",
             self.top_count, self.total
         ))
     }

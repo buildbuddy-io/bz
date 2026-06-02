@@ -170,7 +170,7 @@ fn update_events_ctx<T: StreamingCommand>(
     Ok(())
 }
 
-/// Trait to generalize the behavior of executable buck2 commands that rely on a server.
+/// Trait to generalize the behavior of executable bz commands that rely on a server.
 /// This trait is most helpful when the command wants a superconsole, to stream events, etc.
 /// However, this is the most robustly tested of our code paths, and there is little cost to defaulting to it.
 /// As a result, prefer to default to streaming mode unless there is a compelling reason not to

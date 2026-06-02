@@ -15,7 +15,7 @@ use bz_error::BuckErrorContext as _;
 pub struct CommonTimeoutOptions {
     // NOTE: the field below is given a different name from the test runner's
     // `timeout` to avoid confusion between the two parameters.
-    /// How long to run the command for. If the timeout is exceeded, Buck2 will
+    /// How long to run the command for. If the timeout is exceeded, bz will
     /// exit as quickly as possible and not run further builds or tests.
     ///
     /// In-flight builds and tests will be cancelled. The test orchestrator, if

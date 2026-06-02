@@ -115,15 +115,15 @@ fn parse_isolation_dir(s: &str) -> bz_error::Result<FileNameBuf> {
     FileNameBuf::try_from(s.to_owned()).buck_error_context("isolation dir must be a directory name")
 }
 
-/// Options of `buck2` command, before subcommand.
+/// Options of `bz` command, before subcommand.
 #[derive(Clone, Debug, clap::Parser)]
 #[clap(next_help_heading = "Universal Options")]
 struct BeforeSubcommandOptions {
-    /// The name of the directory that Buck2 creates within buck-out for writing outputs and daemon
-    /// information. If one is not provided, Buck2 creates a directory with the default name.
+    /// The name of the directory that bz creates within buck-out for writing outputs and daemon
+    /// information. If one is not provided, bz creates a directory with the default name.
     ///
-    /// Instances of Buck2 share a daemon if and only if their isolation directory is identical.
-    /// The isolation directory also influences the output paths provided by Buck2,
+    /// Instances of bz share a daemon if and only if their isolation directory is identical.
+    /// The isolation directory also influences the output paths provided by bz,
     /// and as a result using a non-default isolation dir will cause cache misses (and slower builds).
     #[clap(
         value_parser = buck_error_clap_parser(parse_isolation_dir),
@@ -159,7 +159,7 @@ struct BeforeSubcommandOptions {
     #[clap(long, global = true)]
     oncall: Option<String>,
 
-    /// Metadata key-value pairs to inject into Buck2's logging. Client metadata must be of the
+    /// Metadata key-value pairs to inject into bz's logging. Client metadata must be of the
     /// form `key=value`, where `key` is a snake_case identifier, and will be sent to backend
     /// datasets.
     #[clap(long, global = true, value_parser = buck_error_clap_parser(parse_client_metadata))]
@@ -582,7 +582,7 @@ pub(crate) enum CommandKind {
     Aquery(AqueryCommand),
     Build(BuildCommand),
     Bxl(BxlCommand),
-    // TODO(nga): implement `buck2 help-buckconfig` too
+    // TODO(nga): implement `bz help-buckconfig` too
     //   https://www.internalfb.com/tasks/?t=183528129
     HelpEnv(HelpEnvCommand),
     Test(TestCommand),
@@ -778,7 +778,7 @@ impl CommandKind {
             CommandKind::Root(cmd) => cmd.exec(matches, command_ctx).into(),
             CommandKind::Query(cmd) => {
                 bz_client_ctx::eprintln!(
-                    "WARNING: \"buck2 query\" is an alias for \"buck2 uquery\". Consider using \"buck2 cquery\" or \"buck2 uquery\" explicitly."
+                    "WARNING: \"bz query\" is an alias for \"bz uquery\". Consider using \"bz cquery\" or \"bz uquery\" explicitly."
                 )?;
                 command_ctx.exec(cmd, matches, events_ctx)
             }

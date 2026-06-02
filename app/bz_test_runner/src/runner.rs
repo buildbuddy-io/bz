@@ -40,7 +40,7 @@ pub type SpecReceiver = UnboundedReceiver<ExternalRunnerSpec>;
 /// Internal test runner implementation for Buck2.
 ///
 /// This is a basic test runner intended to be used by the open-source Buck2 build
-/// if no external test runner is provided. This ensures that `buck2 test` works
+/// if no external test runner is provided. This ensures that `bz test` works
 /// out-of-the-box for open-source users.
 ///
 /// **This is intended for open-source use only.**

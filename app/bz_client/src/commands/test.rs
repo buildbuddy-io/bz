@@ -153,11 +153,11 @@ If include patterns are present, regardless of whether exclude patterns are pres
     /// Test executor is expected to have `--env` flag to pass environment variables.
     /// Can be used like this:
     ///
-    /// buck2 test //foo:bar -- --env PRIVATE_KEY=123
+    /// bz test //foo:bar -- --env PRIVATE_KEY=123
     #[clap(name = "TEST_EXECUTOR_ARGS", raw = true)]
     test_executor_args: Vec<String>,
 
-    /// Also build DefaultInfo provider, which is what `buck2 build` command builds (this is not the default)
+    /// Also build DefaultInfo provider, which is what `bz build` command builds (this is not the default)
     #[clap(long, group = "default-info")]
     build_default_info: bool,
 
@@ -166,7 +166,7 @@ If include patterns are present, regardless of whether exclude patterns are pres
     #[clap(long, group = "default-info")]
     skip_default_info: bool,
 
-    /// Also build RunInfo provider, which builds artifacts needed for `buck2 run` (this is not the default)
+    /// Also build RunInfo provider, which builds artifacts needed for `bz run` (this is not the default)
     #[clap(long, group = "run-info")]
     build_run_info: bool,
 

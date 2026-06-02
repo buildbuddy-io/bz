@@ -122,18 +122,18 @@ impl HealthCheckRpcClient {
         }
 
         let exe = AbsPathBuf::new(
-            std::env::current_exe().buck_error_context("Cannot get Buck2 executable")?,
+            std::env::current_exe().buck_error_context("Cannot get bz executable")?,
         )?;
         let exe = fs_util::canonicalize(&exe)
             .categorize_internal()
             .buck_error_context(
-                "Failed to canonicalize path to Buck2 executable. Try running `buck2 kill`.",
+                "Failed to canonicalize path to bz executable. Try running `bz kill`.",
             )?;
 
         let exe = exe.as_abs_path();
         let exe_dir = exe
             .parent()
-            .ok_or_else(|| internal_error!("Buck2 executable directory has no parent"))?;
+            .ok_or_else(|| internal_error!("bz executable directory has no parent"))?;
 
         let ext = if cfg!(windows) { ".exe" } else { "" };
         let cli_name = format!("{CLI_NAME}{ext}");
