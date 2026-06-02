@@ -1,4 +1,4 @@
-use buck2_node::attrs::attr_type::bazel_label::BazelLabelAttrType;
+use buck2_node::attrs::attr_type::bazel::label::BazelLabelAttrType;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;

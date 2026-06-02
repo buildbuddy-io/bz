@@ -55,8 +55,8 @@ use starlark::environment::FrozenModule;
 use starlark::values::OwnedFrozenValue;
 
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
-use crate::interpreter::bazel_glob::BazelGlobRequest;
-use crate::interpreter::bazel_glob::BazelPackageDataRequest;
+use crate::bazel::glob::BazelGlobRequest;
+use crate::bazel::glob::BazelPackageDataRequest;
 use crate::interpreter::globspec::GlobSpec;
 use crate::nodes::unconfigured::bazel_input_file_target;
 

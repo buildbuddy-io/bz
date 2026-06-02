@@ -14,10 +14,10 @@ use crate::interpreter::rule_defs::provider::registration::register_builtin_prov
 
 pub mod artifact;
 pub mod artifact_tagging;
+pub mod bazel;
 pub mod cmd_args;
 pub mod command_executor_config;
 pub mod context;
-pub mod depset;
 pub mod digest_config;
 pub mod label_relative_path;
 pub mod plugins;

@@ -3,9 +3,9 @@ use std::fmt;
 
 use allocative::Allocative;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_is_singleton;
+use buck2_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 use buck2_build_api::interpreter::rule_defs::context::bazel_analysis_context_declare_file;
-use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_is_singleton;
-use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_to_list;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_with_generated_inits_empty_files_supplier;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;

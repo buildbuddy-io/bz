@@ -22,6 +22,7 @@ use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::Out
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use buck2_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
@@ -31,7 +32,6 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueU
 use buck2_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_to_list;
 use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
 use buck2_core::fs::buck_out_path::BazelOutputPathKind;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;

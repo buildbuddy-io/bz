@@ -1263,8 +1263,9 @@ fn module_ctx_download_to_path_uncached_blocking(
     })?
 }
 
-pub(super) static MODULE_CTX_DOWNLOAD_CACHE_LOCKS: OnceLock<Mutex<BTreeMap<String, Arc<Mutex<()>>>>> =
-    OnceLock::new();
+pub(super) static MODULE_CTX_DOWNLOAD_CACHE_LOCKS: OnceLock<
+    Mutex<BTreeMap<String, Arc<Mutex<()>>>>,
+> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ModuleCtxVerifiedDownloadCacheMetadata {
@@ -1810,7 +1811,9 @@ fn module_ctx_checksum_hex_file(
     }
 }
 
-pub(super) fn module_ctx_integrity_from_checksum(checksum: &ModuleCtxChecksum) -> buck2_error::Result<String> {
+pub(super) fn module_ctx_integrity_from_checksum(
+    checksum: &ModuleCtxChecksum,
+) -> buck2_error::Result<String> {
     let bytes = hex::decode(&checksum.hex).map_err(|_| {
         BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(checksum.hex.clone())
     })?;

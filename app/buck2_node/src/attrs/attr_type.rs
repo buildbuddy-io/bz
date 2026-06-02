@@ -22,7 +22,7 @@ use pagable::Pagable;
 
 use crate::attrs::attr_type::any::AnyAttrType;
 use crate::attrs::attr_type::arg::ArgAttrType;
-use crate::attrs::attr_type::bazel_label::BazelLabelAttrType;
+use crate::attrs::attr_type::bazel::label::BazelLabelAttrType;
 use crate::attrs::attr_type::bool::BoolAttrType;
 use crate::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
 use crate::attrs::attr_type::configuration_dep::ConfigurationDepKind;
@@ -54,7 +54,7 @@ pub mod any_matches;
 pub mod arg;
 pub mod attr_config;
 pub mod attr_like;
-pub mod bazel_label;
+pub mod bazel;
 pub mod bool;
 pub mod configuration_dep;
 pub mod configured_dep;

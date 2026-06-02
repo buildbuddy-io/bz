@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::dice::skyframe::BazelSkyframeFunction;
-use buck2_common::dice::skyframe::mark_bazel_skyframe_key;
+use buck2_common::bazel::skyframe::BazelSkyframeFunction;
+use buck2_common::bazel::skyframe::mark_bazel_skyframe_key;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::package_listing::dice::DicePackageListingResolver;

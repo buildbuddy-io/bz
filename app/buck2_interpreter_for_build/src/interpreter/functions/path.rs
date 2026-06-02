@@ -16,7 +16,7 @@ use starlark::values::list::AllocList;
 use starlark::values::list::UnpackList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 
-use crate::interpreter::bazel_glob::BazelGlobRequest;
+use crate::bazel::glob::BazelGlobRequest;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::globspec::GlobSpec;
 use crate::interpreter::interpreter_for_dir::package_listing_strategy_from_glob_patterns;

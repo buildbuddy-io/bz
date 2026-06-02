@@ -10,7 +10,7 @@
 
 #![feature(error_generic_member_access)]
 
-mod bazel_command_line_options;
+mod bazel;
 pub mod configuration;
 pub mod cycle;
 pub mod execution;

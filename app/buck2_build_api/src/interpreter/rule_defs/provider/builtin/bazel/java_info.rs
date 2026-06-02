@@ -39,6 +39,10 @@ use starlark::values::tuple::TupleRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark_map::StarlarkHasher;
 
+use crate::interpreter::rule_defs::bazel::depset::BazelDepset;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_values;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_is_empty;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
@@ -51,10 +55,6 @@ use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::context::AnalysisActions;
 use crate::interpreter::rule_defs::context::bazel_shell_tokenize;
-use crate::interpreter::rule_defs::depset::BazelDepset;
-use crate::interpreter::rule_defs::depset::bazel_depset_from_values;
-use crate::interpreter::rule_defs::depset::bazel_depset_is_empty;
-use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::provider::ProviderLike;
 use crate::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use crate::interpreter::rule_defs::provider::builtin::worker_info::synthetic_bazel_local_worker_info;
@@ -800,8 +800,7 @@ fn java_compile_worker_executable<'v>(
             java_toolchain,
             "_javac_supports_worker_multiplex_sandboxing",
             heap,
-        )?
-    {
+        )? {
         Some(8)
     } else {
         Some(1)

@@ -1000,7 +1000,10 @@ fn remote_path_in_exec_root(path: &str) -> String {
     }
 }
 
-pub(super) fn repository_ctx_embedded_project_paths(value: &str, project_root: &Path) -> Vec<PathBuf> {
+pub(super) fn repository_ctx_embedded_project_paths(
+    value: &str,
+    project_root: &Path,
+) -> Vec<PathBuf> {
     let project_root = project_root.to_string_lossy();
     if project_root.is_empty() {
         return Vec::new();
@@ -1090,7 +1093,10 @@ fn repository_ctx_remote_input_entry_path(path: AbsNormPathBuf) -> Result<AbsNor
 }
 
 #[cfg(test)]
-pub(super) fn remote_path_relative_to_working_dir(remote_working_dir: &str, target: &str) -> String {
+pub(super) fn remote_path_relative_to_working_dir(
+    remote_working_dir: &str,
+    target: &str,
+) -> String {
     let from = remote_path_components(remote_working_dir);
     let to = remote_path_components(target);
     let common = from

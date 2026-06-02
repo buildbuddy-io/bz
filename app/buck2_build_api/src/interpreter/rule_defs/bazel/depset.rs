@@ -1,9 +1,9 @@
 use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::sync::OnceLock;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
-use std::sync::OnceLock;
 
 use allocative::Allocative;
 use starlark::any::ProvidesStaticType;
@@ -985,7 +985,7 @@ pub fn register_bazel_depset(builder: &mut GlobalsBuilder) {
 mod tests {
     use starlark::assert::Assert;
 
-    use crate::interpreter::rule_defs::depset::register_bazel_depset;
+    use crate::interpreter::rule_defs::bazel::depset::register_bazel_depset;
 
     fn depset_assert() -> Assert<'static> {
         let mut a = Assert::new();

@@ -17,8 +17,8 @@ use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 
 use crate as buck2_build_api;
-use crate::interpreter::rule_defs::provider::builtin::run_environment_info::RunEnvironmentInfo;
-use crate::interpreter::rule_defs::provider::builtin::run_environment_info::make_run_environment_info;
+use crate::interpreter::rule_defs::provider::builtin::bazel::run_environment_info::RunEnvironmentInfo;
+use crate::interpreter::rule_defs::provider::builtin::bazel::run_environment_info::make_run_environment_info;
 
 /// Bazel provider for special execution requirements on tests.
 #[internal_provider(execution_info_creator)]

@@ -39,7 +39,7 @@ use dupe::Dupe;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
-use crate::bazel_command_line_options::apply_bazel_command_line_build_settings;
+use crate::bazel::command_line_options::apply_bazel_command_line_build_settings;
 use crate::configuration::get_platform_configuration;
 use crate::execution::get_execution_platform_toolchain_dep;
 

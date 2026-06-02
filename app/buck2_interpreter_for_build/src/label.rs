@@ -30,9 +30,9 @@ use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::name::TargetName;
 use buck2_core::target::name::TargetNameRef;
 use buck2_hash::StdBuckHashMap;
+use buck2_interpreter::types::bazel::label_context::StarlarkLabelResolutionContext;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
-use buck2_interpreter::types::label_context::StarlarkLabelResolutionContext;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
 use starlark::environment::GlobalsBuilder;
@@ -40,8 +40,8 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Value;
 
-use crate::bazel_label::bazel_absolute_label_parts;
-use crate::bazel_label::parse_bazel_canonical_providers_label;
+use crate::bazel::label::bazel_absolute_label_parts;
+use crate::bazel::label::parse_bazel_canonical_providers_label;
 use crate::interpreter::build_context::BazelRepositoryRecordedInput;
 use crate::interpreter::build_context::BuildContext;
 

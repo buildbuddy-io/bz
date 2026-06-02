@@ -32,7 +32,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInpu
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
-use crate::interpreter::rule_defs::depset::bazel_depset_from_direct;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_direct;
 
 fn bazel_root_path(path: &str, short_path: &str) -> String {
     if short_path.is_empty() {

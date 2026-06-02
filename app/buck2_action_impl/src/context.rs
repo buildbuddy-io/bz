@@ -9,8 +9,8 @@
  */
 
 use buck2_build_api::interpreter::rule_defs::context::ANALYSIS_ACTIONS_METHODS_ACTIONS;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BAZEL_CC_CREATE_COMPILE_ACTION;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::java_info::BAZEL_JAVA_RUN_ACTION;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BAZEL_CC_CREATE_COMPILE_ACTION;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::java_info::BAZEL_JAVA_RUN_ACTION;
 
 use crate::context::copy::analysis_actions_methods_copy;
 use crate::context::download::analysis_actions_methods_download;

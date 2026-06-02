@@ -56,8 +56,7 @@ fn bazel_external_repo_name<'a>(cell: &'a str, origin: &'a ExternalCellOrigin) -
 }
 
 fn bazel_cell_is_main(cell: &str) -> bool {
-    cell == "root"
-        || bzlmod_canonical_repo_name_for_cell(cell).is_some_and(|repo| repo.is_empty())
+    cell == "root" || bzlmod_canonical_repo_name_for_cell(cell).is_some_and(|repo| repo.is_empty())
 }
 
 fn push_bazel_path_component(path: &mut String, component: &str) {

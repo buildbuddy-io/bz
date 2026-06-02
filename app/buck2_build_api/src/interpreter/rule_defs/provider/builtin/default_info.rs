@@ -71,18 +71,18 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueIsInputArtifactAnnotation;
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use crate::interpreter::rule_defs::bazel::depset::BazelDepset;
+use crate::interpreter::rule_defs::bazel::depset::FrozenBazelDepset;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_empty;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_empty_frozen;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_direct_and_transitive;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_frozen_values;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_transitive;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_values;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::context::bazel_runfiles_prefix;
-use crate::interpreter::rule_defs::depset::BazelDepset;
-use crate::interpreter::rule_defs::depset::FrozenBazelDepset;
-use crate::interpreter::rule_defs::depset::bazel_depset_empty;
-use crate::interpreter::rule_defs::depset::bazel_depset_empty_frozen;
-use crate::interpreter::rule_defs::depset::bazel_depset_from_direct_and_transitive;
-use crate::interpreter::rule_defs::depset::bazel_depset_from_frozen_values;
-use crate::interpreter::rule_defs::depset::bazel_depset_from_transitive;
-use crate::interpreter::rule_defs::depset::bazel_depset_from_values;
-use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::provider::ProviderCollection;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
 

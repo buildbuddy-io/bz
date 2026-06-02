@@ -13,8 +13,8 @@ use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 
 use crate as buck2_build_api;
-use crate::interpreter::rule_defs::depset::BazelDepset;
-use crate::interpreter::rule_defs::depset::FrozenBazelDepset;
+use crate::interpreter::rule_defs::bazel::depset::BazelDepset;
+use crate::interpreter::rule_defs::bazel::depset::FrozenBazelDepset;
 
 /// Provider propagated by Bazel when analysis failures are represented as provider data.
 #[internal_provider(analysis_failure_info_creator)]

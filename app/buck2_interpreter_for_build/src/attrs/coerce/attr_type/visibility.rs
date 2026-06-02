@@ -22,7 +22,7 @@ use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::attr_type::list::coerce_list;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
-use crate::bazel_visibility::add_visibility_pattern;
+use crate::bazel::visibility::add_visibility_pattern;
 use crate::interpreter::selector::StarlarkSelector;
 
 #[derive(Debug, buck2_error::Error)]

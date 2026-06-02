@@ -21,6 +21,8 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::V
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use buck2_build_api::interpreter::rule_defs::bazel::depset::BazelDepset;
+use buck2_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
@@ -30,15 +32,13 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandL
 use buck2_build_api::interpreter::rule_defs::command_executor_config::parse_custom_re_image;
 use buck2_build_api::interpreter::rule_defs::command_executor_config::parse_meta_internal_extra_params;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
-use buck2_build_api::interpreter::rule_defs::depset::BazelDepset;
-use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_to_list;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BazelCcCompileAction;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BazelCcCompileCommandLine;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileAction;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileCommandLine;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::java_info::BazelJavaRunAction;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_executable;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_runfiles;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_artifact_entries;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::java_info::BazelJavaRunAction;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_run_info::WorkerRunInfo;

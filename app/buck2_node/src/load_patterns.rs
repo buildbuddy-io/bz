@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use buck2_common::dice::skyframe::BazelSkyframeFunction;
-use buck2_common::dice::skyframe::mark_bazel_skyframe_key;
+use buck2_common::bazel::skyframe::BazelSkyframeFunction;
+use buck2_common::bazel::skyframe::mark_bazel_skyframe_key;
 use buck2_common::file_ops::trait_::DiceFileOps;
 use buck2_common::file_ops::trait_::FileOps;
 use buck2_common::pattern::package_roots::collect_package_roots;

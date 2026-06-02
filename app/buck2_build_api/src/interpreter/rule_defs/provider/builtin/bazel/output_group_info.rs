@@ -27,8 +27,8 @@ use starlark::values::dict::DictType;
 use crate as buck2_build_api;
 use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
-use crate::interpreter::rule_defs::depset::bazel_depset_from_transitive;
-use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_transitive;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 
 /// Bazel's default top-level output groups are `default`,
 /// `temp_files_INTERNAL_`, and `_hidden_top_level_INTERNAL_`.

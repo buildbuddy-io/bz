@@ -77,8 +77,8 @@ use starlark::syntax::ast::Expr;
 use starlark::values::ValueLike;
 use starlark::values::any_complex::StarlarkAnyComplex;
 
-use crate::interpreter::bazel_glob::BazelGlobRequest;
-use crate::interpreter::bazel_glob::BazelPackageDataRequest;
+use crate::bazel::glob::BazelGlobRequest;
+use crate::bazel::glob::BazelPackageDataRequest;
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
 use crate::interpreter::build_context::BazelRepositoryContextForStarlark;
 use crate::interpreter::build_context::BazelRepositoryRecordedInput;
@@ -981,25 +981,25 @@ impl InterpreterForDir {
         extension_usages_json: &str,
         module_ctx_working_dir: &str,
         repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
-        command_executor: crate::bazel_repository::BazelRepositoryCommandExecutor,
-        remote_downloader: Option<crate::bazel_repository::BazelRepositoryRemoteDownloaderConfig>,
+        command_executor: crate::bazel::repository::BazelRepositoryCommandExecutor,
+        remote_downloader: Option<crate::bazel::repository::BazelRepositoryRemoteDownloaderConfig>,
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<crate::bazel_repository::BazelModuleExtensionEvaluation> {
+    ) -> buck2_error::Result<crate::bazel::repository::BazelModuleExtensionEvaluation> {
         BuckStarlarkModule::with_profiling(|env| {
             let extension_value = extension_module
                 .get_option(extension_name)
                 .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))?
                 .ok_or_else(|| {
                     buck2_error::Error::from(
-                        crate::bazel_repository::BazelRepositoryError::ModuleExtensionSymbolMissing {
+                        crate::bazel::repository::BazelRepositoryError::ModuleExtensionSymbolMissing {
                             path: extension_path.to_string(),
                             extension: extension_name.to_owned(),
                         },
                     )
                 })?;
-            let extension = crate::bazel_repository::module_extension_from_loaded_module(
+            let extension = crate::bazel::repository::module_extension_from_loaded_module(
                 extension_path,
                 extension_name,
                 extension_value,
@@ -1032,7 +1032,7 @@ impl InterpreterForDir {
                     eval.extra = Some(&extra);
 
                     let module_ctx =
-                        crate::bazel_repository::alloc_bzlmod_module_extension_context(
+                        crate::bazel::repository::alloc_bzlmod_module_extension_context(
                             &extension,
                             extension_usages_json,
                             module_ctx_working_dir,
@@ -1045,30 +1045,30 @@ impl InterpreterForDir {
                         Ok(value) => {
                             let mut result = recorder.take_result();
                             result.recorded_inputs =
-                                crate::bazel_repository::take_module_ctx_recorded_inputs(
+                                crate::bazel::repository::take_module_ctx_recorded_inputs(
                                     module_ctx,
                                 )?;
                             result.path_label_deps =
-                                crate::bazel_repository::take_module_ctx_path_label_deps(
+                                crate::bazel::repository::take_module_ctx_path_label_deps(
                                     module_ctx,
                                 )?;
                             result.reproducible = value
-                                .downcast_ref::<crate::bazel_repository::StarlarkModuleExtensionMetadata>(
+                                .downcast_ref::<crate::bazel::repository::StarlarkModuleExtensionMetadata>(
                                 )
                                 .is_some_and(|metadata| metadata.reproducible());
-                            Ok(crate::bazel_repository::BazelModuleExtensionEvaluation::Success(
+                            Ok(crate::bazel::repository::BazelModuleExtensionEvaluation::Success(
                                 result,
                             ))
                         }
                         Err(error) => {
                             let label_deps =
-                                crate::bazel_repository::take_module_ctx_path_label_deps(
+                                crate::bazel::repository::take_module_ctx_path_label_deps(
                                     module_ctx,
                                 )?;
                             if label_deps.is_empty() {
                                 Err(error.into())
                             } else {
-                                Ok(crate::bazel_repository::BazelModuleExtensionEvaluation::NeedsPathLabelDeps {
+                                Ok(crate::bazel::repository::BazelModuleExtensionEvaluation::NeedsPathLabelDeps {
                                     label_deps,
                                     error: error.to_string(),
                                 })
@@ -1110,7 +1110,7 @@ impl InterpreterForDir {
                     eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
                     eval.extra = Some(&extra);
                     Ok(
-                        crate::bazel_repository::bzlmod_module_extension_bazel_usages_digest_in_eval(
+                        crate::bazel::repository::bzlmod_module_extension_bazel_usages_digest_in_eval(
                         extension_usages_json,
                         extension_unique_name,
                         fallback_extension_bzl_file,
@@ -1132,12 +1132,12 @@ impl InterpreterForDir {
         invocation: &BazelRepositoryRuleInvocation,
         repository_ctx_working_dir: &str,
         repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
-        command_executor: crate::bazel_repository::BazelRepositoryCommandExecutor,
-        remote_downloader: Option<crate::bazel_repository::BazelRepositoryRemoteDownloaderConfig>,
+        command_executor: crate::bazel::repository::BazelRepositoryCommandExecutor,
+        remote_downloader: Option<crate::bazel::repository::BazelRepositoryRemoteDownloaderConfig>,
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<crate::bazel_repository::BazelRepositoryRuleEvaluation> {
+    ) -> buck2_error::Result<crate::bazel::repository::BazelRepositoryRuleEvaluation> {
         BuckStarlarkModule::with_profiling(|env| {
             let rule_value = rule_module
                 .get_any_visibility(&invocation.rule_id.name)
@@ -1145,13 +1145,13 @@ impl InterpreterForDir {
                 .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))
                 .or_else(|_| {
                     Err(buck2_error::Error::from(
-                        crate::bazel_repository::BazelRepositoryError::RepositoryRuleSymbolMissing {
+                        crate::bazel::repository::BazelRepositoryError::RepositoryRuleSymbolMissing {
                             path: rule_path.to_string(),
                             rule: invocation.rule_id.name.clone(),
                         },
                     ))
                 })?;
-            let repository_rule = crate::bazel_repository::repository_rule_from_loaded_module(
+            let repository_rule = crate::bazel::repository::repository_rule_from_loaded_module(
                 rule_path,
                 &invocation.rule_id.name,
                 rule_value,
@@ -1181,7 +1181,7 @@ impl InterpreterForDir {
                     eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
                     eval.extra = Some(&extra);
 
-                    let repository_ctx = crate::bazel_repository::alloc_bzlmod_repository_context(
+                    let repository_ctx = crate::bazel::repository::alloc_bzlmod_repository_context(
                         repository_rule.as_ref(),
                         invocation,
                         repository_ctx_working_dir,
@@ -1194,34 +1194,34 @@ impl InterpreterForDir {
                         .as_ref()
                         .invoke_implementation(repository_ctx, eval)
                     {
-                        Ok(value) => Ok(crate::bazel_repository::BazelRepositoryRuleEvaluation::Success(
-                            crate::bazel_repository::BazelRepositoryRuleEvaluationResult {
-                                files: crate::bazel_repository::take_repository_ctx_files(
+                        Ok(value) => Ok(crate::bazel::repository::BazelRepositoryRuleEvaluation::Success(
+                            crate::bazel::repository::BazelRepositoryRuleEvaluationResult {
+                                files: crate::bazel::repository::take_repository_ctx_files(
                                     repository_ctx,
                                 )?,
                                 recorded_inputs:
-                                    crate::bazel_repository::take_repository_ctx_recorded_inputs(
+                                    crate::bazel::repository::take_repository_ctx_recorded_inputs(
                                         repository_ctx,
                                     )?,
                                 path_label_deps:
-                                    crate::bazel_repository::take_repository_ctx_path_label_deps(
+                                    crate::bazel::repository::take_repository_ctx_path_label_deps(
                                         repository_ctx,
                                     )?,
                                 reproducible: value
-                                    .downcast_ref::<crate::bazel_repository::StarlarkRepositoryMetadata>(
+                                    .downcast_ref::<crate::bazel::repository::StarlarkRepositoryMetadata>(
                                     )
                                     .is_some_and(|metadata| metadata.reproducible()),
                             },
                         )),
                         Err(error) => {
                             let label_deps =
-                                crate::bazel_repository::take_repository_ctx_path_label_deps(
+                                crate::bazel::repository::take_repository_ctx_path_label_deps(
                                     repository_ctx,
                                 )?;
                             if label_deps.is_empty() {
                                 Err(error.into())
                             } else {
-                                Ok(crate::bazel_repository::BazelRepositoryRuleEvaluation::NeedsPathLabelDeps {
+                                Ok(crate::bazel::repository::BazelRepositoryRuleEvaluation::NeedsPathLabelDeps {
                                     label_deps,
                                     error: error.to_string(),
                                 })

@@ -27,9 +27,9 @@ use buck2_node::rule_type::StarlarkRuleType;
 use starlark::any::ProvidesStaticType;
 use starlark::eval::Evaluator;
 
-use crate::bazel_repository::BazelRepositoryCommandExecutor;
-use crate::bazel_repository::BazelRepositoryRemoteDownloaderConfig;
-use crate::bazel_repository::RepositoryPathLabelDep;
+use crate::bazel::repository::BazelRepositoryCommandExecutor;
+use crate::bazel::repository::BazelRepositoryRemoteDownloaderConfig;
+use crate::bazel::repository::RepositoryPathLabelDep;
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
 use crate::interpreter::buckconfig::LegacyBuckConfigsForStarlark;
 use crate::interpreter::bzl_eval_ctx::BzlEvalCtx;

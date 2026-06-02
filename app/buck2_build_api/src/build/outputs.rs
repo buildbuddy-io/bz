@@ -29,9 +29,9 @@ use crate::build::BuildProviderType;
 use crate::build::ProvidersToBuild;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
-use crate::interpreter::rule_defs::provider::builtin::output_group_info::BAZEL_HIDDEN_TOP_LEVEL_OUTPUT_GROUP;
-use crate::interpreter::rule_defs::provider::builtin::output_group_info::BAZEL_TEMP_FILES_OUTPUT_GROUP;
-use crate::interpreter::rule_defs::provider::builtin::output_group_info::FrozenOutputGroupInfo;
+use crate::interpreter::rule_defs::provider::builtin::bazel::output_group_info::BAZEL_HIDDEN_TOP_LEVEL_OUTPUT_GROUP;
+use crate::interpreter::rule_defs::provider::builtin::bazel::output_group_info::BAZEL_TEMP_FILES_OUTPUT_GROUP;
+use crate::interpreter::rule_defs::provider::builtin::bazel::output_group_info::FrozenOutputGroupInfo;
 use crate::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
 use crate::interpreter::rule_defs::provider::test_provider::TestProvider;
 

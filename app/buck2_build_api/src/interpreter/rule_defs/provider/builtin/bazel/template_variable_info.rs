@@ -17,10 +17,10 @@ use starlark::values::dict::DictType;
 use starlark::values::dict::UnpackDictEntries;
 
 use crate as buck2_build_api;
+use crate::interpreter::rule_defs::provider::builtin::bazel::toolchain_info::register_toolchain_info;
 use crate::interpreter::rule_defs::provider::builtin::constraint_setting_info::ConstraintSettingInfoCallable;
 use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::ConstraintValueInfoCallable;
 use crate::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfoCallable;
-use crate::interpreter::rule_defs::provider::builtin::toolchain_info::register_toolchain_info;
 
 #[internal_provider(template_variable_info_creator)]
 #[derive(Clone, Debug, Trace, Coerce, Freeze, ProvidesStaticType, Allocative)]

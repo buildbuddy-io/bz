@@ -67,7 +67,7 @@ use pagable::Pagable;
 use pagable::pagable_typetag;
 use starlark_map::ordered_map::OrderedMap;
 
-use crate::bazel_command_line_options::apply_bazel_command_line_build_settings;
+use crate::bazel::command_line_options::apply_bazel_command_line_build_settings;
 use crate::configuration::compute_platform_cfgs;
 use crate::configuration::get_matched_cfg_keys;
 use crate::configuration::get_matched_cfg_keys_for_node;

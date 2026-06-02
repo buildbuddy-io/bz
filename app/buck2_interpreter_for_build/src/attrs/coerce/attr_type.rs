@@ -24,7 +24,6 @@ use crate::attrs::coerce::coerced_attr::CoercedAttrExr;
 
 pub mod any;
 pub mod arg;
-pub mod bazel_label;
 pub mod bool;
 pub mod configuration_dep;
 pub mod dep;

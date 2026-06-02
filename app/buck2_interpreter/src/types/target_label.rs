@@ -44,11 +44,11 @@ use starlark::values::list::UnpackList;
 use starlark::values::starlark_value;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
+use crate::types::bazel::label_display::bazel_label_string_for_target;
 use crate::types::cell_path::StarlarkCellPath;
 use crate::types::configuration::StarlarkConfiguration;
 use crate::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use crate::types::configured_providers_label::StarlarkProvidersLabel;
-use crate::types::label_display::bazel_label_string_for_target;
 use crate::types::package_path::StarlarkPackagePath;
 
 fn bazel_repo_name_for_cell(cell: &str) -> String {

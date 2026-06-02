@@ -80,11 +80,11 @@ use starlark::environment::Module;
 use starlark::syntax::AstModule;
 use starlark::values::FrozenHeapName;
 
-use crate::bazel_repository::BazelRemoteRepositoryCommandExecutor;
-use crate::bazel_repository::BazelRepositoryCommandExecutor;
-use crate::bazel_repository::BazelRepositoryRuleEvaluation;
-use crate::interpreter::bazel_glob::BazelPackageDataRequest;
-use crate::interpreter::bazel_glob::compute_bazel_package_data;
+use crate::bazel::glob::BazelPackageDataRequest;
+use crate::bazel::glob::compute_bazel_package_data;
+use crate::bazel::repository::BazelRemoteRepositoryCommandExecutor;
+use crate::bazel::repository::BazelRepositoryCommandExecutor;
+use crate::bazel::repository::BazelRepositoryRuleEvaluation;
 use crate::interpreter::buckconfig::ConfigsOnDiceViewForStarlark;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::cell_info::InterpreterCellInfo;
@@ -539,12 +539,12 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         module_ctx_working_dir: &str,
         repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<crate::bazel_repository::BazelModuleExtensionEvaluation> {
+    ) -> buck2_error::Result<crate::bazel::repository::BazelModuleExtensionEvaluation> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
         let command_executor = self.bazel_repository_command_executor().await?;
         let remote_downloader =
-            crate::bazel_repository::bazel_repository_remote_downloader_config(self.ctx);
+            crate::bazel::repository::bazel_repository_remote_downloader_config(self.ctx);
 
         let configs = &self.configs;
         let ctx = &mut *self.ctx;
@@ -612,7 +612,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
         let command_executor = self.bazel_repository_command_executor().await?;
         let remote_downloader =
-            crate::bazel_repository::bazel_repository_remote_downloader_config(self.ctx);
+            crate::bazel::repository::bazel_repository_remote_downloader_config(self.ctx);
 
         let configs = &self.configs;
         let ctx = &mut *self.ctx;

@@ -75,6 +75,8 @@ use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use crate::interpreter::rule_defs::bazel::depset::BazelDepset;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptions;
@@ -94,8 +96,6 @@ use crate::interpreter::rule_defs::cmd_args::traits::SimpleCommandLineArtifactVi
 use crate::interpreter::rule_defs::cmd_args::traits::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use crate::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
-use crate::interpreter::rule_defs::depset::BazelDepset;
-use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_executable;
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]

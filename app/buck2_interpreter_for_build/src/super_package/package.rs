@@ -24,9 +24,9 @@ use starlark::values::Value;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneType;
 
-use crate::bazel_visibility::NormalizedVisibilityPattern;
-use crate::bazel_visibility::add_visibility_pattern;
-use crate::bazel_visibility::normalize_visibility_pattern;
+use crate::bazel::visibility::NormalizedVisibilityPattern;
+use crate::bazel::visibility::add_visibility_pattern;
+use crate::bazel::visibility::normalize_visibility_pattern;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::build_context::PerFileTypeContext;
 use crate::interpreter::module_internals::ModuleInternals;

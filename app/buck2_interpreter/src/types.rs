@@ -8,12 +8,11 @@
  * above-listed licenses.
  */
 
+pub mod bazel;
 pub mod cell_path;
 pub mod cell_root;
 pub mod configuration;
 pub mod configured_providers_label;
-pub mod label_context;
-pub(crate) mod label_display;
 pub mod opaque_metadata;
 pub mod package_path;
 pub mod project_root;

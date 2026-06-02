@@ -33,7 +33,7 @@ use pagable::PagablePanic;
 use starlark::environment::GlobalsBuilder;
 
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
-use crate::interpreter::bazel_glob::BazelPackageDataRequest;
+use crate::bazel::glob::BazelPackageDataRequest;
 use crate::interpreter::cell_info::InterpreterCellInfo;
 use crate::interpreter::functions::host_info::HostInfo;
 use crate::interpreter::module_internals::ModuleInternals;

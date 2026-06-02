@@ -60,8 +60,8 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::param_file::visit_bazel_p
 use buck2_build_api::interpreter::rule_defs::cmd_args::space_separated::SpaceSeparatedCommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_build_api::interpreter::rule_defs::context::bazel_runfiles_prefix;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BazelCcCompileCommandLine;
-use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::FrozenBazelCcCompileCommandLine;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileCommandLine;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::FrozenBazelCcCompileCommandLine;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::FrozenWorkerInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use buck2_build_signals::env::WaitingCategory;

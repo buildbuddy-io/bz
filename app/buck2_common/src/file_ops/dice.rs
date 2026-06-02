@@ -44,11 +44,11 @@ use futures::stream;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
+use crate::bazel::skyframe::BazelSkyframeFunction;
+use crate::bazel::skyframe::mark_bazel_skyframe_key_with_detail;
 use crate::buildfiles::HasBuildfiles;
 use crate::dice::cells::HasExternalCellOrigins;
 use crate::dice::data::HasIoProvider;
-use crate::dice::skyframe::BazelSkyframeFunction;
-use crate::dice::skyframe::mark_bazel_skyframe_key_with_detail;
 use crate::external_symlink::ExternalSymlink;
 use crate::file_ops::delegate::FileOpsDelegateWithIgnores;
 use crate::file_ops::delegate::get_delegated_file_ops;

@@ -59,8 +59,8 @@ use tracing::info;
 use super::interner::AttrCoercionInterner;
 use crate::attrs::coerce::arc_str_interner::ArcStrInterner;
 use crate::attrs::coerce::str_hash::str_hash;
-use crate::bazel_label::bazel_absolute_label_parts;
-use crate::bazel_label::parse_bazel_canonical_providers_label;
+use crate::bazel::label::bazel_absolute_label_parts;
+use crate::bazel::label::parse_bazel_canonical_providers_label;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]

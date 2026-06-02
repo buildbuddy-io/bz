@@ -45,10 +45,10 @@ use starlark::values::ValueError;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
+use crate::types::bazel::label_display::starlark_configured_providers_label_str;
+use crate::types::bazel::label_display::starlark_providers_label_str;
 use crate::types::cell_path::StarlarkCellPath;
 use crate::types::cell_root::CellRoot;
-use crate::types::label_display::starlark_configured_providers_label_str;
-use crate::types::label_display::starlark_providers_label_str;
 use crate::types::package_path::StarlarkPackagePath;
 use crate::types::project_root::StarlarkProjectRoot;
 use crate::types::target_label::StarlarkConfiguredTargetLabel;
