@@ -5,6 +5,7 @@ buck-out
 /.direnv
 .buckconfig.local
 .envrc.local
+.DS_Store
 
 # symlinks
 /examples/with_prelude/prelude
