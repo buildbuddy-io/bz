@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bazelbuild/setup-bazelisk@v3
+
+      - name: Build binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          for os in linux; do
+            for arch in amd; do
+              output="dist/bz-${os}-${arch}"
+              bazel build bz -c opt
+              binary="$(bazel cquery bz -c opt --output=files 2>/dev/null | tail -n 1)"
+              cp "$binary" "$output"
+              chmod +x "$output"
+            done
+          done
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
