@@ -22,14 +22,14 @@ def _transition_impl(platform: PlatformInfo, refs: struct) -> PlatformInfo:
 _transition_func = transition(
     impl = _transition_impl,
     refs = {
-        "val": translate_target("//buck2/app/bz:buck2_client_only_build"),
+        "val": translate_target("//buck2/app/bz:bz_client_only_build"),
     },
 )
 
 def _rule_impl(ctx: AnalysisContext) -> list[Provider]:
     return ctx.attrs.actual.providers
 
-buck2_client_transition_alias = rule(
+bz_client_transition_alias = rule(
     impl = _rule_impl,
     attrs = {
         "actual": attrs.dep(),

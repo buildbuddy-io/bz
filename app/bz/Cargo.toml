@@ -2,7 +2,7 @@
 description = ""
 edition = "2024"
 license = { workspace = true }
-name = "buck2"
+name = "bz"
 repository = { workspace = true }
 version = "0.1.0"
 
@@ -84,8 +84,8 @@ mimalloc = { workspace = true }
 windows-sys = { workspace = true }
 
 [[bin]]
-name = "buck2"
-path = "bin/buck2.rs"
+name = "bz"
+path = "bin/bz.rs"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(buck_build)", "cfg(client_only)", "cfg(fbcode_build)"] }

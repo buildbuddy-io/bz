@@ -69,9 +69,9 @@ _test_buck2_dep_graph = rule(
     },
 )
 
-_CLIENT_BIN = "fbcode//buck2/app/bz:buck2_client-bin"
+_CLIENT_BIN = "fbcode//buck2/app/bz:bz_client-bin"
 
-_BUCK2_BIN = "fbcode//buck2/app/bz:buck2-bin"
+_BUCK2_BIN = "fbcode//buck2/app/bz:bz-bin"
 
 _RE_CLIENT_TARGET = "//remote_execution/client_lib/wrappers/rust:re_client_lib"
 

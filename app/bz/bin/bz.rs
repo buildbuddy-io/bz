@@ -16,11 +16,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use buck2::exec;
-use buck2::panic;
-use buck2::process_context::ClientRuntime;
-use buck2::process_context::ProcessContext;
-use buck2::process_context::SharedProcessContext;
+use bz::exec;
+use bz::panic;
+use bz::process_context::ClientRuntime;
+use bz::process_context::ProcessContext;
+use bz::process_context::SharedProcessContext;
 use buck2_build_info::BUCK2_BUILD_INFO;
 use buck2_build_info::Buck2BuildInfo;
 use buck2_client_ctx::events_ctx::EventsCtx;
@@ -96,7 +96,7 @@ fn check_unoptimized() {
         eprintln!("WARNING: You are running an unoptimized Buck2 binary.");
         eprintln!("         Build and benchmark timings may be significantly slower.");
         eprintln!("         For performance-sensitive runs, rebuild with:");
-        eprintln!("             bazel build -c opt //app/bz:buck2_bin");
+        eprintln!("             bazel build -c opt //app/bz:bz_bin");
         eprintln!("=====================================================================");
         eprintln!();
     }

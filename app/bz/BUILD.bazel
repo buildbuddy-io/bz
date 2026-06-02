@@ -11,7 +11,7 @@ COMMON_RUSTC_ENV = {
     "CARGO_PKG_HOMEPAGE": "",
     "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
     "CARGO_PKG_LICENSE_FILE": "",
-    "CARGO_PKG_NAME": "buck2",
+    "CARGO_PKG_NAME": "bz",
     "CARGO_PKG_README": "",
     "CARGO_PKG_REPOSITORY": "https://github.com/facebook/buck2",
     "CARGO_PKG_VERSION": "0.1.0",
@@ -22,8 +22,8 @@ COMMON_RUSTC_ENV = {
     }
 
 rust_library(
-    name = "buck2",
-    crate_name = "buck2",
+    name = "bz",
+    crate_name = "bz",
     crate_root = "src/lib.rs",
     srcs = glob(["src/**/*.rs"]),
     edition = "2024",
@@ -94,14 +94,14 @@ rust_library(
 )
 
 rust_binary(
-    name = "buck2_bin",
-    crate_name = "buck2",
-    crate_root = "bin/buck2.rs",
-    srcs = ["bin/buck2.rs"],
+    name = "bz_bin",
+    crate_name = "bz",
+    crate_root = "bin/bz.rs",
+    srcs = ["bin/bz.rs"],
     edition = "2024",
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
-        ":buck2",
+        ":bz",
         "//app/bz_action_impl:buck2_action_impl",
         "//app/bz_analysis:buck2_analysis",
         "//app/bz_anon_target:buck2_anon_target",

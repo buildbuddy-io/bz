@@ -407,7 +407,7 @@ fn help() -> &'static str {
 
 #[derive(Debug, clap::Parser)]
 #[clap(
-    name = "buck2",
+    name = "bz",
     about(Some(help())),
     version(BuckVersion::get_version_for_clap()),
     styles = cli_style::get_styles(),
