@@ -574,6 +574,31 @@ pub(super) fn bzlmod_include_label_to_path(
     Ok(path)
 }
 
+fn module_include_to_path(current_module_file: &str, label: &str) -> Option<String> {
+    if label.starts_with('@') {
+        return None;
+    }
+
+    if let Some(rest) = label.strip_prefix("//") {
+        let (package, name) = rest.split_once(':')?;
+        return Some(if package.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{package}/{name}")
+        });
+    }
+
+    if let Some(name) = label.strip_prefix(':') {
+        let base = current_module_file.rsplit_once('/').map(|(base, _)| base);
+        return Some(match base {
+            Some(base) => format!("{base}/{name}"),
+            None => name.to_owned(),
+        });
+    }
+
+    None
+}
+
 fn bzlmod_module_globals() -> Globals {
     GlobalsBuilder::extended_by(&[LibraryExtension::Print])
         .with(bzlmod_module_globals_builder)

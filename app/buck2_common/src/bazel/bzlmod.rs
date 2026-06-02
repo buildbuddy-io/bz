@@ -32,6 +32,7 @@ mod cell_aliases;
 mod module_file;
 
 mod lockfile;
+mod validation;
 
 pub(crate) use self::cell_aliases::BazelModuleCellAliases;
 pub(crate) use self::cell_aliases::BzlmodOverlayConfig;
@@ -54,6 +55,9 @@ use self::module_file::BzlmodModuleEvalOptions;
 use self::module_file::bzlmod_include_label_to_path;
 use self::module_file::compile_bzlmod_module_file;
 use self::module_file::eval_bzlmod_module_file;
+use self::validation::bzlmod_version_cmp;
+use self::validation::is_valid_bzlmod_module_name;
+use self::validation::parse_bzlmod_version;
 
 use allocative::Allocative;
 use buck2_core::cells::cell_root_path::CellRootPath;
@@ -5277,206 +5281,6 @@ fn bzlmod_canonical_repo_name(module_name: &str, version: &str, multiple_version
 
 fn bzlmod_cell_name_for_canonical_repo_name(canonical_repo_name: &str) -> String {
     bzlmod_cell_name(canonical_repo_name)
-}
-
-fn is_valid_bzlmod_module_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !first.is_ascii_lowercase() {
-        return false;
-    }
-    let mut last = first;
-    for ch in chars {
-        if !(ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '.' || ch == '-' || ch == '_')
-        {
-            return false;
-        }
-        last = ch;
-    }
-    last.is_ascii_lowercase() || last.is_ascii_digit()
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum BzlmodVersionIdentifier {
-    Digits { number: u64, raw: String },
-    Text(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct BzlmodVersion {
-    release: Vec<BzlmodVersionIdentifier>,
-    prerelease: Vec<BzlmodVersionIdentifier>,
-}
-
-fn bzlmod_version_cmp(a: &str, b: &str) -> buck2_error::Result<Ordering> {
-    let a = parse_bzlmod_version(a)?;
-    let b = parse_bzlmod_version(b)?;
-
-    match (a.release.is_empty(), b.release.is_empty()) {
-        (true, true) => return Ok(Ordering::Equal),
-        (true, false) => return Ok(Ordering::Greater),
-        (false, true) => return Ok(Ordering::Less),
-        (false, false) => {}
-    }
-
-    let release = bzlmod_identifier_lex_cmp(&a.release, &b.release);
-    if release != Ordering::Equal {
-        return Ok(release);
-    }
-
-    match (a.prerelease.is_empty(), b.prerelease.is_empty()) {
-        (true, true) => Ok(Ordering::Equal),
-        (true, false) => Ok(Ordering::Greater),
-        (false, true) => Ok(Ordering::Less),
-        (false, false) => Ok(bzlmod_identifier_lex_cmp(&a.prerelease, &b.prerelease)),
-    }
-}
-
-fn parse_bzlmod_version(version: &str) -> buck2_error::Result<BzlmodVersion> {
-    if version.is_empty() {
-        return Ok(BzlmodVersion {
-            release: Vec::new(),
-            prerelease: Vec::new(),
-        });
-    }
-
-    let (version, build) = version.split_once('+').unwrap_or((version, ""));
-    if !build.is_empty()
-        && !build
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-')
-    {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "invalid bzlmod version build metadata `{}`",
-            build
-        ));
-    }
-
-    let (release, prerelease) = version.split_once('-').unwrap_or((version, ""));
-    if release.is_empty()
-        || !release
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '.')
-    {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "invalid bzlmod version release `{}`",
-            release
-        ));
-    }
-    if !prerelease.is_empty()
-        && !prerelease
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-')
-    {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "invalid bzlmod version prerelease `{}`",
-            prerelease
-        ));
-    }
-
-    Ok(BzlmodVersion {
-        release: parse_bzlmod_version_identifiers(release)?,
-        prerelease: if prerelease.is_empty() {
-            Vec::new()
-        } else {
-            parse_bzlmod_version_identifiers(prerelease)?
-        },
-    })
-}
-
-fn parse_bzlmod_version_identifiers(
-    value: &str,
-) -> buck2_error::Result<Vec<BzlmodVersionIdentifier>> {
-    value
-        .split('.')
-        .map(|identifier| {
-            if identifier.is_empty() {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "empty bzlmod version identifier in `{}`",
-                    value
-                ));
-            }
-            if identifier.chars().all(|ch| ch.is_ascii_digit()) {
-                let number = identifier.parse::<u64>().map_err(|e| {
-                    from_any_with_tag(e, buck2_error::ErrorTag::Input).context(format!(
-                        "numeric bzlmod version identifier `{identifier}` is too large"
-                    ))
-                })?;
-                Ok(BzlmodVersionIdentifier::Digits {
-                    number,
-                    raw: identifier.to_owned(),
-                })
-            } else {
-                Ok(BzlmodVersionIdentifier::Text(identifier.to_owned()))
-            }
-        })
-        .collect()
-}
-
-fn bzlmod_identifier_lex_cmp(
-    a: &[BzlmodVersionIdentifier],
-    b: &[BzlmodVersionIdentifier],
-) -> Ordering {
-    for (a, b) in a.iter().zip(b) {
-        let cmp = bzlmod_identifier_cmp(a, b);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-    }
-    a.len().cmp(&b.len())
-}
-
-fn bzlmod_identifier_cmp(a: &BzlmodVersionIdentifier, b: &BzlmodVersionIdentifier) -> Ordering {
-    match (a, b) {
-        (
-            BzlmodVersionIdentifier::Digits {
-                number: a_number,
-                raw: a_raw,
-            },
-            BzlmodVersionIdentifier::Digits {
-                number: b_number,
-                raw: b_raw,
-            },
-        ) => a_number.cmp(b_number).then_with(|| a_raw.cmp(b_raw)),
-        (BzlmodVersionIdentifier::Digits { .. }, BzlmodVersionIdentifier::Text(_)) => {
-            Ordering::Less
-        }
-        (BzlmodVersionIdentifier::Text(_), BzlmodVersionIdentifier::Digits { .. }) => {
-            Ordering::Greater
-        }
-        (BzlmodVersionIdentifier::Text(a), BzlmodVersionIdentifier::Text(b)) => a.cmp(b),
-    }
-}
-
-fn module_include_to_path(current_module_file: &str, label: &str) -> Option<String> {
-    if label.starts_with('@') {
-        return None;
-    }
-
-    if let Some(rest) = label.strip_prefix("//") {
-        let (package, name) = rest.split_once(':')?;
-        return Some(if package.is_empty() {
-            name.to_owned()
-        } else {
-            format!("{package}/{name}")
-        });
-    }
-
-    if let Some(name) = label.strip_prefix(':') {
-        let base = current_module_file.rsplit_once('/').map(|(base, _)| base);
-        return Some(match base {
-            Some(base) => format!("{base}/{name}"),
-            None => name.to_owned(),
-        });
-    }
-
-    None
 }
 
 #[cfg(test)]
