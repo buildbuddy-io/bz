@@ -91,6 +91,13 @@ impl BazelOutputRoot {
             Self::Genfiles => "buck-out/genfiles",
         }
     }
+
+    pub fn convenience_symlink_name(self) -> &'static str {
+        match self {
+            Self::Bin => "bazel-bin",
+            Self::Genfiles => "bazel-genfiles",
+        }
+    }
 }
 
 #[derive(
@@ -453,6 +460,19 @@ impl BuckOutPathResolver {
         }
         let label = path.bazel_owner()?;
 
+        let mut result = self.bazel_shared_physical_root(prefix, label).to_string();
+        Self::bazel_push_path_component(
+            &mut result,
+            &Self::bazel_logical_physical_path(path, label),
+        );
+        Some(ProjectRelativePathBuf::unchecked_new(result))
+    }
+
+    fn bazel_shared_physical_root(
+        &self,
+        prefix: &ForwardRelativePath,
+        label: &ConfiguredTargetLabel,
+    ) -> ProjectRelativePathBuf {
         let mut configuration = label.cfg().output_hash().as_str().to_owned();
         if let Some(exec_cfg) = label.exec_cfg() {
             configuration.push('-');
@@ -464,11 +484,14 @@ impl BuckOutPathResolver {
         Self::bazel_push_path_component(&mut result, prefix.as_str());
         Self::bazel_push_path_component(&mut result, label.pkg().cell_name().as_str());
         Self::bazel_push_path_component(&mut result, &configuration);
-        Self::bazel_push_path_component(
-            &mut result,
-            &Self::bazel_logical_physical_path(path, label),
-        );
-        Some(ProjectRelativePathBuf::unchecked_new(result))
+        ProjectRelativePathBuf::unchecked_new(result)
+    }
+
+    pub fn resolve_bazel_physical_output_root(
+        &self,
+        label: &ConfiguredTargetLabel,
+    ) -> ProjectRelativePathBuf {
+        self.bazel_shared_physical_root(ForwardRelativePath::unchecked_new("art"), label)
     }
 
     /// Resolves a 'BuckOutPath' into a 'ProjectRelativePath' based on the base

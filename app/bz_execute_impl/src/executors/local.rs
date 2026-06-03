@@ -196,6 +196,7 @@ fn local_action_cache_outputs_from_stored_values(
 }
 
 fn local_action_cache_outputs_from_action_metadata_values(
+    artifact_fs: &ArtifactFs,
     outputs: &BuckIndexSet<CommandExecutionOutput>,
     output_values: &[ArtifactValue],
 ) -> bz_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
@@ -203,11 +204,21 @@ fn local_action_cache_outputs_from_action_metadata_values(
         return Ok(None);
     }
 
-    let outputs = outputs
+    let outputs: BuckIndexMap<CommandExecutionOutput, ArtifactValue> = outputs
         .iter()
         .cloned()
         .zip(output_values.iter().cloned())
         .collect();
+
+    for (output, value) in &outputs {
+        let path = output
+            .as_ref()
+            .resolve(artifact_fs, Some(&value.content_based_path_hash()))?
+            .into_path();
+        if !fs_util::try_exists(artifact_fs.fs().resolve(&path))? {
+            return Ok(None);
+        }
+    }
 
     Ok(Some(outputs))
 }
@@ -2284,6 +2295,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         let start_time = SystemTime::now();
 
         let outputs = match local_action_cache_outputs_from_action_metadata_values(
+            &self.artifact_fs,
             command.outputs,
             entry.output_values.as_ref(),
         ) {
@@ -2417,6 +2429,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     }
 
                     match local_action_cache_outputs_from_action_metadata_values(
+                        &self.artifact_fs,
                         &outputs_to_check,
                         entry.output_values.as_ref(),
                     ) {
@@ -5210,6 +5223,47 @@ mod tests {
                 .await?,
             LocalActionCacheMetadataLookup::MissingMetadata
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_action_metadata_cache_outputs_require_existing_files() -> bz_error::Result<()> {
+        let (executor, _, temp) = test_executor()?;
+        let outputs = buck_indexmap! {
+            test_output("out") => ArtifactValue::file(DigestConfig::testing_default().empty_file()),
+        };
+        let output_keys = outputs.keys().cloned().collect();
+        let output_values = outputs.values().cloned().collect::<Vec<_>>();
+
+        assert!(
+            local_action_cache_outputs_from_action_metadata_values(
+                &executor.artifact_fs,
+                &output_keys,
+                &output_values,
+            )?
+            .is_none()
+        );
+
+        for (output, value) in &outputs {
+            let path = output
+                .as_ref()
+                .resolve(
+                    &executor.artifact_fs,
+                    Some(&value.content_based_path_hash()),
+                )?
+                .into_path();
+            temp.write_file(path.as_str(), "");
+        }
+
+        assert!(
+            local_action_cache_outputs_from_action_metadata_values(
+                &executor.artifact_fs,
+                &output_keys,
+                &output_values,
+            )?
+            .is_some()
+        );
+
         Ok(())
     }
 

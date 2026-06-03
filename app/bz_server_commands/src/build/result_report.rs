@@ -14,6 +14,7 @@ use std::cell::Cell;
 use std::collections::BTreeSet;
 
 use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::BaseArtifactKind;
 use bz_build_api::build::BuildProviderType;
 use bz_build_api::build::BuildTargetResult;
 use bz_build_api::build::ConfiguredBuildTargetResult;
@@ -24,17 +25,23 @@ use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use bz_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
 use bz_certs::validate::CertState;
 use bz_certs::validate::check_cert_state;
+use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::cells::external::external_cell_origin_for_cell;
 use bz_core::configuration::compatibility::MaybeCompatible;
 use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::fs::buck_out_path::BazelOutputPathKind;
 use bz_core::execution_types::executor_config::PathSeparatorKind;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::pattern::pattern::Modifiers;
 use bz_core::provider::label::ConfiguredProvidersLabel;
+use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 use bz_execute::artifact::artifact_dyn::ArtifactDyn;
 use bz_execute::artifact::fs::ExecutorFs;
 use bz_hash::BuckHashMap;
-use dupe::Dupe;
 use starlark_map::small_map::SmallMap;
+
+use crate::build::bazel_output_symlinks::BazelOutputSymlinkPaths;
 
 mod proto {
     pub(crate) use bz_cli_proto::BuildTarget;
@@ -47,9 +54,10 @@ pub(crate) struct BuildErrors {
     pub(crate) errors: Vec<bz_error::Error>,
 }
 
-#[derive(Copy, Clone, Dupe)]
+#[derive(Clone, Default)]
 pub(crate) struct ResultReporterOptions {
     pub(crate) return_outputs: bool,
+    pub(crate) bazel_output_symlinks: BazelOutputSymlinkPaths,
 }
 
 /// Collects build results into a Result<Vec<proto::BuildTarget>, bz_error::Errors>. If any targets
@@ -187,7 +195,7 @@ impl<'a> ResultReporter<'a> {
         let mut outputs: Vec<proto::BuildOutput> = Vec::new();
         for (a, providers) in artifacts.into_iter() {
             let output = proto::BuildOutput {
-                path: a.resolve_configuration_hash_path(artifact_fs)?.to_string(),
+                path: build_output_display_path(a, artifact_fs, &self.options)?,
                 providers: Some(providers),
             };
             outputs.push(output);
@@ -281,6 +289,116 @@ impl<'a> ResultReporter<'a> {
         }
         Ok(())
     }
+}
+
+fn build_output_display_path(
+    artifact: &Artifact,
+    artifact_fs: &ArtifactFs,
+    options: &ResultReporterOptions,
+) -> bz_error::Result<String> {
+    if let Some(path) = bazel_convenience_output_path(artifact, artifact_fs, options) {
+        return Ok(path);
+    }
+
+    Ok(artifact
+        .resolve_configuration_hash_path(artifact_fs)?
+        .to_string())
+}
+
+fn bazel_convenience_output_path(
+    artifact: &Artifact,
+    artifact_fs: &ArtifactFs,
+    options: &ResultReporterOptions,
+) -> Option<String> {
+    let (BaseArtifactKind::Build(build), _) = artifact.as_parts() else {
+        return None;
+    };
+    let path = build.get_path();
+    let label = path.bazel_owner()?;
+    let expected_root = artifact_fs
+        .buck_out_path_resolver()
+        .resolve_bazel_physical_output_root(label);
+    if options
+        .bazel_output_symlinks
+        .path_for(path.bazel_output_root())?
+        != expected_root
+    {
+        return None;
+    }
+
+    let short_path = bazel_visible_build_artifact_short_path(artifact);
+    let mut result = path.bazel_output_root().convenience_symlink_name().to_owned();
+    if path.bazel_output_path_kind() == BazelOutputPathKind::PackageRelative {
+        let package_exec_path = bazel_package_exec_path(label);
+        if !bazel_path_has_package_prefix(&short_path, &package_exec_path) {
+            push_bazel_path_component(&mut result, &package_exec_path);
+        }
+    }
+    push_bazel_path_component(&mut result, &short_path);
+    Some(result)
+}
+
+fn bazel_visible_build_artifact_short_path(artifact: &Artifact) -> String {
+    artifact.get_path().with_short_path(|path| {
+        let mut result = String::new();
+        for component in path
+            .iter()
+            .filter(|component| !bazel_hidden_path_component(component.as_str()))
+        {
+            push_bazel_path_component(&mut result, component.as_str());
+        }
+        result
+    })
+}
+
+fn bazel_hidden_path_component(component: &str) -> bool {
+    component.starts_with("__") && component.ends_with("__")
+}
+
+fn bazel_path_has_package_prefix(path: &str, package_exec_path: &str) -> bool {
+    !package_exec_path.is_empty()
+        && (path == package_exec_path
+            || path
+                .strip_prefix(package_exec_path)
+                .is_some_and(|path| path.starts_with('/')))
+}
+
+fn bazel_package_exec_path(label: &ConfiguredTargetLabel) -> String {
+    let package = label.pkg();
+    let cell = package.cell_name();
+    let package_path = package.cell_relative_path();
+    let mut path = String::new();
+    if let Some(origin) = external_cell_origin_for_cell(cell.as_str()) {
+        push_bazel_path_component(&mut path, "external");
+        push_bazel_path_component(&mut path, bazel_external_repo_name(cell.as_str(), &origin));
+    } else if !bazel_cell_is_main(cell.as_str()) {
+        push_bazel_path_component(&mut path, cell.as_str());
+    }
+    push_bazel_path_component(&mut path, package_path.as_str());
+    path
+}
+
+fn bazel_cell_is_main(cell: &str) -> bool {
+    cell == "root" || bzlmod_canonical_repo_name_for_cell(cell).is_some_and(|repo| repo.is_empty())
+}
+
+fn bazel_external_repo_name<'a>(cell: &'a str, origin: &'a ExternalCellOrigin) -> &'a str {
+    match origin {
+        ExternalCellOrigin::Bundled(cell) => cell.as_str(),
+        ExternalCellOrigin::Git(_) => cell,
+        ExternalCellOrigin::Bzlmod(setup) => setup.canonical_repo_name.as_ref(),
+        ExternalCellOrigin::BzlmodGenerated(setup) => setup.canonical_repo_name.as_ref(),
+    }
+}
+
+fn push_bazel_path_component(path: &mut String, component: &str) {
+    if component.is_empty() {
+        return;
+    }
+    if !path.is_empty() {
+        path.push('/');
+    }
+    path.push_str(component);
 }
 
 struct ErrorCountingArtifactPathMapperImpl<'a> {

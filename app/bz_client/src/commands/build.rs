@@ -18,6 +18,7 @@ use bz_cli_proto::TargetCfg;
 use bz_cli_proto::build_request::BuildProviders;
 use bz_cli_proto::build_request::ResponseOptions;
 use bz_cli_proto::build_request::build_providers;
+use bz_cli_proto::build_target::BuildOutput;
 use bz_client_ctx::client_ctx::ClientCommandContext;
 use bz_client_ctx::command_outcome::CommandOutcome;
 use bz_client_ctx::common::BuckArgMatches;
@@ -145,6 +146,13 @@ pub struct BuildCommand {
     )]
     output_path: Option<OutputDestinationArg>,
 
+    #[clap(
+        long = "show_result",
+        default_value_t = 1,
+        help = "Show build results for up to this many output-bearing targets."
+    )]
+    show_result: usize,
+
     #[clap(name = "TARGET_PATTERNS", help = "Patterns to build", value_hint = clap::ValueHint::Other)]
     patterns: Vec<String>,
 
@@ -197,6 +205,10 @@ impl BuildCommand {
 
     pub(crate) fn target_cfg(&self) -> TargetCfg {
         self.target_cfg.target_cfg.target_cfg().clone()
+    }
+
+    fn should_print_build_output_locations(&self) -> bool {
+        self.show_result > 0 && self.show_output.format().is_none() && self.output_path.is_none()
     }
 }
 
@@ -264,6 +276,8 @@ impl StreamingCommand for BuildCommand {
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
         let context = ctx.client_context(matches, &self)?;
+        let print_build_output_locations = self.should_print_build_output_locations();
+        let show_result = self.show_result;
 
         let result = buckd
             .with_flushing()
@@ -278,7 +292,8 @@ impl StreamingCommand for BuildCommand {
                         test_info: self.test_info() as i32,
                     }),
                     response_options: Some(ResponseOptions {
-                        return_outputs: self.show_output.format().is_some()
+                        return_outputs: print_build_output_locations
+                            || self.show_output.format().is_some()
                             || self.output_path.is_some(),
                     }),
                     build_opts: Some(
@@ -301,6 +316,14 @@ impl StreamingCommand for BuildCommand {
             Ok(CommandOutcome::Failure(_)) => false,
             Err(_) => false,
         };
+        let build_output_locations = match &result {
+            Ok(CommandOutcome::Success(response))
+                if print_build_output_locations && response.errors.is_empty() =>
+            {
+                format_build_output_locations(&response.build_targets, show_result)
+            }
+            _ => None,
+        };
 
         let console = self.common_opts.console_opts.final_console();
         print_buck_ui_and_rating(&console, ctx, events_ctx.used_superconsole)?;
@@ -309,7 +332,7 @@ impl StreamingCommand for BuildCommand {
             if self.patterns.is_empty() {
                 console.print_warning("NO BUILD TARGET PATTERNS SPECIFIED")?;
             } else {
-                print_build_succeeded(&console, ctx, None)?;
+                print_build_succeeded(&console, ctx, build_output_locations.as_deref())?;
             }
         } else {
             print_build_failed(&console)?;
@@ -514,12 +537,10 @@ pub(crate) fn print_outputs(
 
     for build_target in targets {
         // just print the default info for build command
-        let outputs = build_target.outputs.iter().filter(|output| {
-            output
-                .providers
-                .as_ref()
-                .is_none_or(|p| p.default_info && !p.other)
-        });
+        let outputs = build_target
+            .outputs
+            .iter()
+            .filter(|output| output_is_default_info_main_artifact(output));
 
         // only print the unconfigured target for now until we migrate everything to support
         // also printing configurations
@@ -536,10 +557,71 @@ pub(crate) fn print_outputs(
     print.finish()
 }
 
+fn output_is_default_info_main_artifact(output: &BuildOutput) -> bool {
+    output
+        .providers
+        .as_ref()
+        .is_none_or(|p| p.default_info && !p.other)
+}
+
+fn format_build_output_locations(targets: &[BuildTarget], show_result: usize) -> Option<String> {
+    if show_result == 0 {
+        return None;
+    }
+
+    let targets_with_outputs = targets
+        .iter()
+        .map(|target| {
+            let outputs = target
+                .outputs
+                .iter()
+                .filter(|output| output_is_default_info_main_artifact(output))
+                .collect::<Vec<_>>();
+            (target, outputs)
+        })
+        .filter(|(_, outputs)| !outputs.is_empty())
+        .collect::<Vec<_>>();
+
+    if targets_with_outputs.len() > show_result {
+        return None;
+    }
+
+    let omit_nothing_to_build = targets.len() > show_result;
+    let mut lines = Vec::new();
+
+    for (target, outputs) in targets_with_outputs {
+        lines.push(format!("Target {} up-to-date:", target.target));
+        for output in outputs {
+            lines.push(format!("  {}", output.path));
+        }
+    }
+
+    if !omit_nothing_to_build {
+        for target in targets {
+            let outputs = target
+                .outputs
+                .iter()
+                .filter(|output| output_is_default_info_main_artifact(output))
+                .collect::<Vec<_>>();
+
+            if outputs.is_empty() {
+                lines.push(format!(
+                    "Target {} up-to-date (nothing to build)",
+                    target.target
+                ));
+            }
+        }
+    }
+
+    (!lines.is_empty()).then(|| format!("\n{}", lines.join("\n")))
+}
+
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
     use build_providers::Action;
+    use bz_cli_proto::build_target::BuildOutput;
+    use bz_cli_proto::build_target::build_output::BuildOutputProviders;
     use clap::Parser;
 
     use super::*;
@@ -550,6 +632,24 @@ mod tests {
         )?)
     }
 
+    fn build_output(path: &str, providers: BuildOutputProviders) -> BuildOutput {
+        BuildOutput {
+            path: path.to_owned(),
+            providers: Some(providers),
+        }
+    }
+
+    fn build_target(target: &str, outputs: Vec<BuildOutput>) -> BuildTarget {
+        BuildTarget {
+            target: target.to_owned(),
+            run_args: Vec::new(),
+            outputs,
+            configuration: "cfg".to_owned(),
+            configured_graph_size: None,
+            target_rule_type_name: None,
+        }
+    }
+
     #[test]
     fn infos_default() -> bz_error::Result<()> {
         let opts = parse(&[])?;
@@ -557,6 +657,110 @@ mod tests {
         assert_eq!(opts.default_info(), Action::Build);
         assert_eq!(opts.run_info(), Action::BuildIfAvailable);
         assert_eq!(opts.test_info(), Action::Skip);
+
+        Ok(())
+    }
+
+    #[test]
+    fn formats_build_output_locations() {
+        let default_main = BuildOutputProviders {
+            default_info: true,
+            run_info: false,
+            other: false,
+            test_info: false,
+        };
+        let default_other = BuildOutputProviders {
+            default_info: true,
+            run_info: false,
+            other: true,
+            test_info: false,
+        };
+        let run_only = BuildOutputProviders {
+            default_info: false,
+            run_info: true,
+            other: false,
+            test_info: false,
+        };
+
+        let targets = vec![build_target(
+            "root//:one",
+            vec![
+                build_output("buck-out/v2/art/root/cfg/one", default_main.clone()),
+                build_output("buck-out/v2/art/root/cfg/one.other", default_other),
+                build_output("buck-out/v2/art/root/cfg/one.run", run_only),
+            ],
+        )];
+
+        assert_eq!(
+            format_build_output_locations(&targets, 1).as_deref(),
+            Some("\nTarget root//:one up-to-date:\n  buck-out/v2/art/root/cfg/one")
+        );
+    }
+
+    #[test]
+    fn formats_nothing_to_build_when_under_show_result_limit() {
+        let targets = vec![build_target(
+            "root//:run",
+            vec![build_output(
+                "buck-out/v2/art/root/cfg/run",
+                BuildOutputProviders {
+                    default_info: false,
+                    run_info: true,
+                    other: false,
+                    test_info: false,
+                },
+            )],
+        )];
+
+        assert_eq!(
+            format_build_output_locations(&targets, 1).as_deref(),
+            Some("\nTarget root//:run up-to-date (nothing to build)")
+        );
+    }
+
+    #[test]
+    fn skips_build_output_locations_over_show_result_limit() {
+        let default_main = BuildOutputProviders {
+            default_info: true,
+            run_info: false,
+            other: false,
+            test_info: false,
+        };
+        let targets = vec![
+            build_target(
+                "root//:one",
+                vec![build_output(
+                    "buck-out/v2/art/root/cfg/one",
+                    default_main.clone(),
+                )],
+            ),
+            build_target(
+                "root//:two",
+                vec![build_output("buck-out/v2/art/root/cfg/two", default_main)],
+            ),
+        ];
+
+        assert_eq!(format_build_output_locations(&targets, 1), None);
+        assert_eq!(
+            format_build_output_locations(&targets, 2).as_deref(),
+            Some(
+                "\nTarget root//:one up-to-date:\n  buck-out/v2/art/root/cfg/one\nTarget root//:two up-to-date:\n  buck-out/v2/art/root/cfg/two"
+            )
+        );
+    }
+
+    #[test]
+    fn build_output_locations_follow_show_result_and_output_flags() -> bz_error::Result<()> {
+        assert!(parse(&["//app:bz"])?.should_print_build_output_locations());
+        assert!(parse(&[":bazelisk"])?.should_print_build_output_locations());
+        assert!(parse(&["//app:a", "//app:b"])?.should_print_build_output_locations());
+        assert!(parse(&["//..."])?.should_print_build_output_locations());
+        assert!(parse(&["//app:all"])?.should_print_build_output_locations());
+        assert!(parse(&["//app:*"])?.should_print_build_output_locations());
+
+        assert!(!parse(&["//app:a", "--show_result=0"])?.should_print_build_output_locations());
+        assert!(!parse(&["//app:a", "--show-output"])?.should_print_build_output_locations());
+        assert!(!parse(&["//app:a", "--out", "out"])?.should_print_build_output_locations());
 
         Ok(())
     }

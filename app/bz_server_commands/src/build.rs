@@ -88,10 +88,12 @@ use itertools::Either;
 use itertools::Itertools;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::build::bazel_output_symlinks::create_bazel_output_symlinks;
 use crate::build::result_report::ResultReporter;
 use crate::build::result_report::ResultReporterOptions;
 use crate::build::unhashed_outputs::create_unhashed_outputs;
 
+mod bazel_output_symlinks;
 mod result_report;
 mod unhashed_outputs;
 
@@ -541,11 +543,15 @@ async fn process_build_result(
     let cell_resolver = ctx.get_cell_resolver().await?;
     let artifact_fs = ctx.get_artifact_fs().await?;
 
+    let bazel_output_symlinks =
+        create_bazel_output_symlinks(&build_result.configured, &artifact_fs, fs)?;
+
     let result_reports = ResultReporter::convert(
         &artifact_fs,
         server_ctx.cert_state(),
         ResultReporterOptions {
             return_outputs: response_options.return_outputs,
+            bazel_output_symlinks,
         },
         &build_result,
     )
