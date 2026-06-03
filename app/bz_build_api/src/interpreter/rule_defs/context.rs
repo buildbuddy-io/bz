@@ -191,9 +191,11 @@ pub struct BazelCppOptions {
     pub copt: Vec<String>,
     pub conlyopt: Vec<String>,
     pub cxxopt: Vec<String>,
+    pub linkopt: Vec<String>,
     pub host_copt: Vec<String>,
     pub host_conlyopt: Vec<String>,
     pub host_cxxopt: Vec<String>,
+    pub host_linkopt: Vec<String>,
     pub per_file_copt: Vec<String>,
     pub macos_minimum_os: Vec<String>,
     pub host_macos_minimum_os: Vec<String>,
@@ -219,6 +221,10 @@ impl BazelCppOptions {
 
     fn cxxopt(&self, is_exec: bool) -> &[String] {
         self.opts_for(is_exec, &self.cxxopt, &self.host_cxxopt)
+    }
+
+    fn linkopt(&self, is_exec: bool) -> &[String] {
+        self.opts_for(is_exec, &self.linkopt, &self.host_linkopt)
     }
 
     fn macos_minimum_os(&self, is_exec: bool) -> Option<&str> {
@@ -1054,6 +1060,7 @@ fn bazel_coverage_instrumented_function<'v>(heap: Heap<'v>) -> Value<'v> {
 struct BazelCppConfiguration {
     options: BazelCppOptions,
     is_exec: bool,
+    linkopts: Vec<String>,
 }
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
@@ -1550,8 +1557,7 @@ fn bazel_cpp_configuration_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &BazelCppConfiguration,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(bazel_empty_list(heap))
+        Ok(bazel_string_list(heap, &this.linkopts))
     }
 
     #[starlark(attribute)]
@@ -1871,6 +1877,38 @@ fn bazel_platform_label(label: Option<ValueTyped<'_, StarlarkConfiguredProviders
         .unwrap_or_else(|| "@@platforms//host:host".to_owned())
 }
 
+fn bazel_command_line_option_values(
+    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
+    key: &str,
+) -> Vec<String> {
+    let Some(label) = label else {
+        return Vec::new();
+    };
+    let Ok(data) = label.label().target().cfg().data() else {
+        return Vec::new();
+    };
+    match data.build_settings.get(key) {
+        Some(BazelBuildSettingValue::String(value)) => vec![value.clone()],
+        Some(BazelBuildSettingValue::StringList(values)) => values.clone(),
+        _ => Vec::new(),
+    }
+}
+
+fn bazel_cpp_linkopts(
+    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
+    options: &BazelCppOptions,
+    is_exec: bool,
+) -> Vec<String> {
+    let mut linkopts = options.linkopt(is_exec).to_vec();
+    let key = if is_exec {
+        "//command_line_option:host_linkopt"
+    } else {
+        "//command_line_option:linkopt"
+    };
+    linkopts.extend(bazel_command_line_option_values(label, key));
+    linkopts
+}
+
 fn bazel_fragments<'v>(
     heap: Heap<'v>,
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
@@ -1878,6 +1916,7 @@ fn bazel_fragments<'v>(
 ) -> Value<'v> {
     let is_exec = bazel_is_exec_configuration(label);
     let platform = bazel_platform_label(label);
+    let linkopts = bazel_cpp_linkopts(label, &bazel_cpp_options, is_exec);
     heap.alloc(AllocStruct([
         (
             "apple",
@@ -1891,6 +1930,7 @@ fn bazel_fragments<'v>(
             heap.alloc(BazelCppConfiguration {
                 options: bazel_cpp_options,
                 is_exec,
+                linkopts,
             }),
         ),
         ("java", heap.alloc(BazelJavaConfiguration)),

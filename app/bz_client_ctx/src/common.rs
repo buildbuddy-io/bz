@@ -60,6 +60,7 @@ const LLVM_BZLMOD_DEP: &str = "llvm@0.8.4";
 const LLVM_TOOLCHAIN_PATTERN: &str = "@llvm//toolchain:all";
 const LLVM_LINUX_X86_64_PLATFORM: &str = "@llvm//platforms:linux_x86_64";
 const LLVM_MACOS_AARCH64_PLATFORM: &str = "@llvm//platforms:macos_aarch64";
+const LLVM_LINUX_LINKOPT: &str = "-no-pie";
 
 #[derive(Debug, bz_error::Error)]
 #[error("indices len is not equal to collection len for flag `{flag_name}`")]
@@ -464,6 +465,27 @@ pub struct CommonBuildConfigurationOptions {
     )]
     pub bazel_extra_toolchains: Vec<String>,
 
+    /// Bazel-compatible C/C++ link option. This populates
+    /// `//command_line_option:linkopt`.
+    #[clap(
+        long = "linkopt",
+        value_name = "LINKOPT",
+        num_args = 1,
+        allow_hyphen_values = true
+    )]
+    pub bazel_linkopt: Vec<String>,
+
+    /// Bazel-compatible host C/C++ link option. This populates
+    /// `//command_line_option:host_linkopt`.
+    #[clap(
+        long = "host_linkopt",
+        alias = "host-linkopt",
+        value_name = "LINKOPT",
+        num_args = 1,
+        allow_hyphen_values = true
+    )]
+    pub bazel_host_linkopt: Vec<String>,
+
     /// Bazel-compatible Java language setting. This populates
     /// `//command_line_option:java_language_version`.
     #[clap(
@@ -737,6 +759,36 @@ impl CommonBuildConfigurationOptions {
         ))
     }
 
+    fn target_platform_is_linux(&self) -> bool {
+        match self.target_platform_spec().platform {
+            HostPlatformOverride::Linux => true,
+            HostPlatformOverride::Default => std::env::consts::OS == "linux",
+            HostPlatformOverride::MacOs | HostPlatformOverride::Windows => false,
+        }
+    }
+
+    fn llvm_linux_linkopt_settings(
+        &self,
+        matches: BuckArgMatches<'_>,
+    ) -> Option<(usize, Vec<String>)> {
+        if !(self.llvm || self.linux2mac || self.mac2linux) || !self.target_platform_is_linux() {
+            return None;
+        }
+
+        let index = ["llvm", "linux2mac", "mac2linux"]
+            .iter()
+            .filter_map(|name| Self::flag_last_index(matches, name))
+            .max()?;
+
+        Some((
+            index,
+            vec![Self::bazel_command_line_single_list_build_setting(
+                "//command_line_option:linkopt",
+                LLVM_LINUX_LINKOPT,
+            )],
+        ))
+    }
+
     fn llvm_cross_platform_settings(
         &self,
         matches: BuckArgMatches<'_>,
@@ -958,9 +1010,39 @@ impl CommonBuildConfigurationOptions {
             bazel_command_line_build_setting_args.push(settings);
         }
 
+        if let Some(settings) = self.llvm_linux_linkopt_settings(matches) {
+            bazel_command_line_build_setting_args.push(settings);
+        }
+
         if let Some(settings) = self.llvm_cross_platform_settings(matches) {
             bazel_command_line_build_setting_args.push(settings);
         }
+
+        bazel_command_line_build_setting_args.extend(
+            with_indices(&self.bazel_linkopt, "bazel_linkopt", matches)?.map(|(index, linkopt)| {
+                (
+                    index,
+                    vec![Self::bazel_command_line_single_list_build_setting(
+                        "//command_line_option:linkopt",
+                        linkopt,
+                    )],
+                )
+            }),
+        );
+
+        bazel_command_line_build_setting_args.extend(
+            with_indices(&self.bazel_host_linkopt, "bazel_host_linkopt", matches)?.map(
+                |(index, linkopt)| {
+                    (
+                        index,
+                        vec![Self::bazel_command_line_single_list_build_setting(
+                            "//command_line_option:host_linkopt",
+                            linkopt,
+                        )],
+                    )
+                },
+            ),
+        );
 
         bazel_command_line_build_setting_args.extend(
             with_indices(
@@ -1127,6 +1209,8 @@ impl CommonBuildConfigurationOptions {
             bazel_platforms: vec![],
             bazel_extra_execution_platforms: vec![],
             bazel_extra_toolchains: vec![],
+            bazel_linkopt: vec![],
+            bazel_host_linkopt: vec![],
             bazel_java_language_version: vec![],
             bazel_java_runtime_version: vec![],
             bazel_tool_java_language_version: vec![],
@@ -1157,6 +1241,8 @@ impl CommonBuildConfigurationOptions {
             bazel_platforms: vec![],
             bazel_extra_execution_platforms: vec![],
             bazel_extra_toolchains: vec![],
+            bazel_linkopt: vec![],
+            bazel_host_linkopt: vec![],
             bazel_java_language_version: vec![],
             bazel_java_runtime_version: vec![],
             bazel_tool_java_language_version: vec![],
@@ -1716,8 +1802,56 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(override_values.len(), 2);
         assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.4"));
+        let build_settings = override_values
+            .iter()
+            .find(|value| value.starts_with("bazel.command_line_build_settings="))
+            .unwrap();
+        assert!(
+            build_settings
+                .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
+        );
+        if cfg!(target_os = "linux") {
+            assert!(build_settings.contains("list\t//command_line_option:linkopt\t-no-pie"));
+        } else {
+            assert!(!build_settings.contains("//command_line_option:linkopt"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_linux_llvm_adds_no_pie_linkopt() -> bz_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--linux", "--llvm"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        let override_values = overrides
+            .iter()
+            .map(|override_| override_.config_override.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(override_values.len(), 3);
+        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.4"));
+
+        let build_settings = override_values
+            .iter()
+            .find(|value| value.starts_with("bazel.command_line_build_settings="))
+            .unwrap();
+        assert!(build_settings.contains("string\t//command_line_option:cpu\tk8"));
+        assert!(
+            build_settings
+                .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
+        );
+        assert!(build_settings.contains("list\t//command_line_option:linkopt\t-no-pie"));
         assert!(override_values.contains(
-            &"bazel.command_line_build_settings=list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all"
+            &"bazel.host_platform_constraints=@platforms//cpu:x86_64\n@platforms//os:linux"
         ));
         Ok(())
     }
@@ -1947,6 +2081,9 @@ mod tests {
                 "--platforms=//platforms:linux,@platforms//cpu:x86_64",
                 "--extra_execution_platforms=@toolchains//platforms:linux_x86_64",
                 "--extra_toolchains=@toolchains//cc:linux_x86_64",
+                "--linkopt=-Wl,-z,now",
+                "--host_linkopt",
+                "-no-pie",
                 "--host_cpu",
                 "k8",
             ])
@@ -1967,7 +2104,7 @@ mod tests {
         assert_eq!(overrides[0].config_override, "foo.bar=baz");
         assert_eq!(
             overrides[1].config_override,
-            "bazel.command_line_build_settings=string\t//command_line_option:cpu\tk8\nlist\t//command_line_option:platforms\t//platforms:linux\nlist\t//command_line_option:platforms\t@platforms//cpu:x86_64\nlist\t//command_line_option:extra_execution_platforms\t@toolchains//platforms:linux_x86_64\nlist\t//command_line_option:extra_toolchains\t@toolchains//cc:linux_x86_64\nstring\t//command_line_option:host_cpu\tk8"
+            "bazel.command_line_build_settings=string\t//command_line_option:cpu\tk8\nlist\t//command_line_option:platforms\t//platforms:linux\nlist\t//command_line_option:platforms\t@platforms//cpu:x86_64\nlist\t//command_line_option:extra_execution_platforms\t@toolchains//platforms:linux_x86_64\nlist\t//command_line_option:extra_toolchains\t@toolchains//cc:linux_x86_64\nlist\t//command_line_option:linkopt\t-Wl,-z,now\nlist\t//command_line_option:host_linkopt\t-no-pie\nstring\t//command_line_option:host_cpu\tk8"
         );
         Ok(())
     }

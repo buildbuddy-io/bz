@@ -1909,6 +1909,10 @@ async fn bazel_cpp_options(
             section: "bazel",
             property: "cxxopt",
         })?),
+        linkopt: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "linkopt",
+        })?),
         host_copt: bazel_config_list(config.get(BuckconfigKeyRef {
             section: "bazel",
             property: "host_copt",
@@ -1920,6 +1924,10 @@ async fn bazel_cpp_options(
         host_cxxopt: bazel_config_list(config.get(BuckconfigKeyRef {
             section: "bazel",
             property: "host_cxxopt",
+        })?),
+        host_linkopt: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "host_linkopt",
         })?),
         per_file_copt: bazel_config_list(config.get(BuckconfigKeyRef {
             section: "bazel",

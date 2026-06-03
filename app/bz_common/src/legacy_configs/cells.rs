@@ -1124,12 +1124,16 @@ fn bazelrc_add_options(
                 options.conlyopt.push(value);
             } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--cxxopt") {
                 options.cxxopt.push(value);
+            } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--linkopt") {
+                options.linkopt.push(value);
             } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--host_copt") {
                 options.host_copt.push(value);
             } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--host_conlyopt") {
                 options.host_conlyopt.push(value);
             } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--host_cxxopt") {
                 options.host_cxxopt.push(value);
+            } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--host_linkopt") {
+                options.host_linkopt.push(value);
             } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--per_file_copt") {
                 options.per_file_copt.push(value);
             } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--macos_minimum_os") {
@@ -1406,12 +1410,14 @@ mod tests {
     async fn test_bazelrc_bazel_native_configuration_flags() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".bazelrc",
-            "build --cpu=k8 --host_cpu=k8 --platforms=//platforms:linux,@platforms//cpu:x86_64 --extra_execution_platforms=@toolchains//platforms:linux_x86_64 --extra_toolchains=@toolchains//cc:linux_x86_64 --javacopt=-Akey=a,b\n",
+            "build --cpu=k8 --host_cpu=k8 --platforms=//platforms:linux,@platforms//cpu:x86_64 --extra_execution_platforms=@toolchains//platforms:linux_x86_64 --extra_toolchains=@toolchains//cc:linux_x86_64 --linkopt=-Wl,-z,now --host_linkopt=-no-pie --javacopt=-Akey=a,b\n",
         )])?;
 
         let options =
             super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops, &[]).await?;
 
+        assert_eq!(options.linkopt, vec!["-Wl,-z,now"]);
+        assert_eq!(options.host_linkopt, vec!["-no-pie"]);
         assert_eq!(
             options.command_line_build_settings,
             vec![
