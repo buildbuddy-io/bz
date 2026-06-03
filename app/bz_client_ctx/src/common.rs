@@ -55,6 +55,9 @@ const BAZEL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:java_language_v
 const BAZEL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:java_runtime_version";
 const BAZEL_TOOL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:tool_java_language_version";
 const BAZEL_TOOL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:tool_java_runtime_version";
+const LLVM_TOOLCHAIN_PATTERN: &str = "@llvm//toolchain:all";
+const LLVM_LINUX_X86_64_PLATFORM: &str = "@llvm//platforms:linux_x86_64";
+const LLVM_MACOS_AARCH64_PLATFORM: &str = "@llvm//platforms:macos_aarch64";
 
 #[derive(Debug, bz_error::Error)]
 #[error("indices len is not equal to collection len for flag `{flag_name}`")]
@@ -143,6 +146,18 @@ pub enum HostArchOverride {
     Default,
     AArch64,
     X86_64,
+}
+
+#[derive(Debug, Clone, Dupe, Copy)]
+struct PlatformSpec {
+    platform: HostPlatformOverride,
+    arch: HostArchOverride,
+}
+
+impl PlatformSpec {
+    fn new(platform: HostPlatformOverride, arch: HostArchOverride) -> Self {
+        Self { platform, arch }
+    }
 }
 
 /// Defines options related to commands that involves a streaming daemon command.
@@ -385,6 +400,26 @@ pub struct CommonBuildConfigurationOptions {
     )]
     pub mac_intel: bool,
 
+    /// Use hermeticbuild/hermetic-llvm's Bazel C/C++ toolchain.
+    #[clap(long)]
+    pub llvm: bool,
+
+    /// Alias for Linux x86_64 host/exec plus macOS aarch64 target using hermetic LLVM.
+    #[clap(
+        long,
+        alias = "linux-to-mac",
+        conflicts_with_all = ["linux", "linux_arm", "mac", "mac_intel", "mac2linux"]
+    )]
+    pub linux2mac: bool,
+
+    /// Alias for macOS aarch64 host/exec plus Linux x86_64 target using hermetic LLVM.
+    #[clap(
+        long,
+        alias = "mac-to-linux",
+        conflicts_with_all = ["linux", "linux_arm", "mac", "mac_intel", "linux2mac"]
+    )]
+    pub mac2linux: bool,
+
     /// Bazel-compatible target CPU setting. This populates
     /// `//command_line_option:cpu` for Bazel rules.
     #[clap(long = "cpu", value_name = "CPU", num_args = 1)]
@@ -551,7 +586,14 @@ impl CommonBuildConfigurationOptions {
             .collect()
     }
 
-    fn bazel_cpu_from_host(platform: HostPlatformOverride, arch: HostArchOverride) -> &'static str {
+    fn bazel_command_line_single_list_build_setting(key: &str, value: &str) -> String {
+        Self::bazel_command_line_build_setting_entry("list", key, value)
+    }
+
+    fn bazel_cpu_from_platform(
+        platform: HostPlatformOverride,
+        arch: HostArchOverride,
+    ) -> &'static str {
         let os = match platform {
             HostPlatformOverride::Default => std::env::consts::OS,
             HostPlatformOverride::Linux => "linux",
@@ -586,23 +628,30 @@ impl CommonBuildConfigurationOptions {
         }
     }
 
+    fn flag_last_index(matches: BuckArgMatches<'_>, name: &str) -> Option<usize> {
+        if !matches.inner.ids().any(|id| id.as_str() == name) {
+            return None;
+        }
+        matches
+            .inner
+            .indices_of(name)
+            .and_then(|indices| indices.into_iter().last())
+    }
+
     fn bazel_cpu_override_index(&self, matches: BuckArgMatches<'_>) -> Option<usize> {
         let names = [
-            "fake_host",
-            "fake_arch",
-            "linux",
-            "linux_arm",
-            "mac",
-            "mac_intel",
+            (self.fake_host.is_some(), "fake_host"),
+            (self.fake_arch.is_some(), "fake_arch"),
+            (self.linux, "linux"),
+            (self.linux_arm, "linux_arm"),
+            (self.mac, "mac"),
+            (self.mac_intel, "mac_intel"),
+            (self.linux2mac, "linux2mac"),
+            (self.mac2linux, "mac2linux"),
         ];
         names
             .iter()
-            .filter_map(|name| {
-                matches
-                    .inner
-                    .indices_of(name)
-                    .and_then(|indices| indices.into_iter().last())
-            })
+            .filter_map(|(enabled, name)| enabled.then(|| Self::flag_last_index(matches, name))?)
             .max()
     }
 
@@ -611,15 +660,17 @@ impl CommonBuildConfigurationOptions {
         matches: BuckArgMatches<'_>,
     ) -> Option<(usize, Vec<String>)> {
         let index = self.bazel_cpu_override_index(matches)?;
-        let cpu =
-            Self::bazel_cpu_from_host(self.host_platform_override(), self.host_arch_override());
+        let host = self.host_platform_spec();
+        let target = self.target_platform_spec();
+        let cpu = Self::bazel_cpu_from_platform(target.platform, target.arch);
+        let host_cpu = Self::bazel_cpu_from_platform(host.platform, host.arch);
         Some((
             index,
             vec![
                 Self::bazel_command_line_string_build_setting("//command_line_option:cpu", cpu),
                 Self::bazel_command_line_string_build_setting(
                     "//command_line_option:host_cpu",
-                    cpu,
+                    host_cpu,
                 ),
             ],
         ))
@@ -633,9 +684,66 @@ impl CommonBuildConfigurationOptions {
         Some((
             index,
             Self::bazel_host_platform_constraints_override(
-                self.host_platform_override(),
-                self.host_arch_override(),
+                self.host_platform_spec().platform,
+                self.host_platform_spec().arch,
             ),
+        ))
+    }
+
+    fn llvm_toolchain_override_settings(
+        &self,
+        matches: BuckArgMatches<'_>,
+    ) -> Option<(usize, Vec<String>)> {
+        if !(self.llvm || self.linux2mac || self.mac2linux) {
+            return None;
+        }
+
+        let index = ["llvm", "linux2mac", "mac2linux"]
+            .iter()
+            .filter_map(|name| Self::flag_last_index(matches, name))
+            .max()?;
+
+        Some((
+            index,
+            vec![Self::bazel_command_line_single_list_build_setting(
+                "//command_line_option:extra_toolchains",
+                LLVM_TOOLCHAIN_PATTERN,
+            )],
+        ))
+    }
+
+    fn llvm_cross_platform_settings(
+        &self,
+        matches: BuckArgMatches<'_>,
+    ) -> Option<(usize, Vec<String>)> {
+        let (index, target_platform, exec_platform) = if self.linux2mac {
+            (
+                Self::flag_last_index(matches, "linux2mac")?,
+                LLVM_MACOS_AARCH64_PLATFORM,
+                LLVM_LINUX_X86_64_PLATFORM,
+            )
+        } else if self.mac2linux {
+            (
+                Self::flag_last_index(matches, "mac2linux")?,
+                LLVM_LINUX_X86_64_PLATFORM,
+                LLVM_MACOS_AARCH64_PLATFORM,
+            )
+        } else {
+            return None;
+        };
+
+        Some((
+            index,
+            vec![
+                Self::bazel_command_line_single_list_build_setting(
+                    "//command_line_option:platforms",
+                    target_platform,
+                ),
+                Self::bazel_command_line_single_list_build_setting(
+                    "//command_line_option:extra_execution_platforms",
+                    exec_platform,
+                ),
+            ],
         ))
     }
 
@@ -821,6 +929,14 @@ impl CommonBuildConfigurationOptions {
             }),
         );
 
+        if let Some(settings) = self.llvm_toolchain_override_settings(matches) {
+            bazel_command_line_build_setting_args.push(settings);
+        }
+
+        if let Some(settings) = self.llvm_cross_platform_settings(matches) {
+            bazel_command_line_build_setting_args.push(settings);
+        }
+
         bazel_command_line_build_setting_args.extend(
             with_indices(
                 &self.bazel_java_language_version,
@@ -921,22 +1037,45 @@ impl CommonBuildConfigurationOptions {
     }
 
     pub fn host_platform_override(&self) -> HostPlatformOverride {
-        match &self.fake_host {
-            Some(v) => *v,
-            None if self.linux || self.linux_arm => HostPlatformOverride::Linux,
-            None if self.mac || self.mac_intel => HostPlatformOverride::MacOs,
-            None => HostPlatformOverride::Default,
+        self.host_platform_spec().platform
+    }
+
+    fn host_platform_spec(&self) -> PlatformSpec {
+        match self.fake_host {
+            Some(platform) => PlatformSpec::new(platform, self.host_arch_spec()),
+            None if self.linux || self.linux_arm || self.linux2mac => {
+                PlatformSpec::new(HostPlatformOverride::Linux, self.host_arch_spec())
+            }
+            None if self.mac || self.mac_intel || self.mac2linux => {
+                PlatformSpec::new(HostPlatformOverride::MacOs, self.host_arch_spec())
+            }
+            None => PlatformSpec::new(HostPlatformOverride::Default, self.host_arch_spec()),
         }
     }
-    pub fn host_arch_override(&self) -> HostArchOverride {
-        match &self.fake_arch {
-            Some(v) => *v,
-            None if self.linux => HostArchOverride::X86_64,
+
+    fn target_platform_spec(&self) -> PlatformSpec {
+        if self.linux2mac {
+            PlatformSpec::new(HostPlatformOverride::MacOs, HostArchOverride::AArch64)
+        } else if self.mac2linux {
+            PlatformSpec::new(HostPlatformOverride::Linux, HostArchOverride::X86_64)
+        } else {
+            self.host_platform_spec()
+        }
+    }
+
+    fn host_arch_spec(&self) -> HostArchOverride {
+        match self.fake_arch {
+            Some(arch) => arch,
+            None if self.linux || self.linux2mac => HostArchOverride::X86_64,
             None if self.linux_arm => HostArchOverride::AArch64,
-            None if self.mac => HostArchOverride::AArch64,
+            None if self.mac || self.mac2linux => HostArchOverride::AArch64,
             None if self.mac_intel => HostArchOverride::X86_64,
             None => HostArchOverride::Default,
         }
+    }
+
+    pub fn host_arch_override(&self) -> HostArchOverride {
+        self.host_arch_spec()
     }
     pub fn host_xcode_version_override(&self) -> Option<String> {
         self.fake_xcode_version.to_owned()
@@ -952,6 +1091,9 @@ impl CommonBuildConfigurationOptions {
             linux_arm: false,
             mac: false,
             mac_intel: false,
+            llvm: false,
+            linux2mac: false,
+            mac2linux: false,
             bazel_cpu: vec![],
             bazel_host_cpu: vec![],
             bazel_platforms: vec![],
@@ -979,6 +1121,9 @@ impl CommonBuildConfigurationOptions {
             linux_arm: false,
             mac: false,
             mac_intel: false,
+            llvm: false,
+            linux2mac: false,
+            mac2linux: false,
             bazel_cpu: vec![],
             bazel_host_cpu: vec![],
             bazel_platforms: vec![],
@@ -1520,6 +1665,131 @@ mod tests {
             HostPlatformOverride::MacOs
         );
         assert_eq!(opts.config.host_arch_override(), HostArchOverride::X86_64);
+    }
+
+    #[test]
+    fn test_llvm_flag_adds_hermetic_llvm_toolchain() -> bz_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--llvm"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        assert_eq!(overrides.len(), 1);
+        assert_eq!(
+            overrides[0].config_override,
+            "bazel.command_line_build_settings=list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_linux2mac_alias_sets_linux_host_and_macos_llvm_target() -> bz_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--linux2mac"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+
+        assert_eq!(
+            opts.config.host_platform_override(),
+            HostPlatformOverride::Linux
+        );
+        assert_eq!(opts.config.host_arch_override(), HostArchOverride::X86_64);
+
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        let override_values = overrides
+            .iter()
+            .map(|override_| override_.config_override.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(override_values.len(), 2);
+
+        let build_settings = override_values
+            .iter()
+            .find(|value| value.starts_with("bazel.command_line_build_settings="))
+            .unwrap();
+        assert!(build_settings.contains("string\t//command_line_option:cpu\tdarwin_arm64"));
+        assert!(build_settings.contains("string\t//command_line_option:host_cpu\tk8"));
+        assert!(
+            build_settings
+                .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
+        );
+        assert!(
+            build_settings
+                .contains("list\t//command_line_option:platforms\t@llvm//platforms:macos_aarch64")
+        );
+        assert!(build_settings.contains(
+            "list\t//command_line_option:extra_execution_platforms\t@llvm//platforms:linux_x86_64"
+        ));
+        assert!(override_values.contains(
+            &"bazel.host_platform_constraints=@platforms//cpu:x86_64\n@platforms//os:linux"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_mac2linux_alias_sets_macos_host_and_linux_llvm_target() -> bz_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--mac2linux"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+
+        assert_eq!(
+            opts.config.host_platform_override(),
+            HostPlatformOverride::MacOs
+        );
+        assert_eq!(opts.config.host_arch_override(), HostArchOverride::AArch64);
+
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        let override_values = overrides
+            .iter()
+            .map(|override_| override_.config_override.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(override_values.len(), 2);
+
+        let build_settings = override_values
+            .iter()
+            .find(|value| value.starts_with("bazel.command_line_build_settings="))
+            .unwrap();
+        assert!(build_settings.contains("string\t//command_line_option:cpu\tk8"));
+        assert!(build_settings.contains("string\t//command_line_option:host_cpu\tdarwin_arm64"));
+        assert!(
+            build_settings
+                .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
+        );
+        assert!(
+            build_settings
+                .contains("list\t//command_line_option:platforms\t@llvm//platforms:linux_x86_64")
+        );
+        assert!(build_settings.contains(
+            "list\t//command_line_option:extra_execution_platforms\t@llvm//platforms:macos_aarch64"
+        ));
+        assert!(override_values.contains(
+            &"bazel.host_platform_constraints=@platforms//cpu:aarch64\n@platforms//os:osx"
+        ));
+        Ok(())
     }
 
     #[test]
