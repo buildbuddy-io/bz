@@ -166,6 +166,7 @@ pub const BZLMOD_REPOSITORY_OS_NAME_ENV: &str = "BUCK2_REPOSITORY_OS_NAME";
 pub const BZLMOD_REPOSITORY_OS_ARCH_ENV: &str = "BUCK2_REPOSITORY_OS_ARCH";
 pub(crate) const BAZEL_HOST_PLATFORM_CONSTRAINTS: &str = "host_platform_constraints";
 pub(crate) const BAZEL_MODULE_FILE: &str = "MODULE.bazel";
+const BAZEL_EXTRA_BZLMOD_DEPS: &str = "extra_bzlmod_deps";
 
 #[derive(
     Clone,
@@ -732,6 +733,7 @@ async fn read_bzlmod_root_patch_contents(
 async fn read_bazel_module_resolution_inputs(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
+    extra_root_deps: Vec<BazelDep>,
 ) -> bz_error::Result<BzlmodRootResolutionInput> {
     let (compiled_root, included_modules) = dice_state_update_stage(
         "reading MODULE.bazel files",
@@ -796,6 +798,7 @@ async fn read_bazel_module_resolution_inputs(
     }
     aliases.registered_toolchains = evaluated.registered_toolchains.clone();
     let mut root_deps = evaluated.deps.clone();
+    merge_extra_bzlmod_root_deps(&mut root_deps, extra_root_deps);
     apply_bzlmod_dep_overrides(
         &mut root_deps,
         &evaluated.archive_overrides,
@@ -865,6 +868,77 @@ pub async fn get_bazel_module_registered_toolchains_on_dice(
         .await?
         .registered_toolchains
         .clone())
+}
+
+fn parse_extra_bzlmod_root_dep(raw: &str) -> bz_error::Result<Option<BazelDep>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let Some((name, version)) = raw.split_once('@') else {
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
+            "Invalid bazel.{} entry `{}`; expected `<module>@<version>`",
+            BAZEL_EXTRA_BZLMOD_DEPS,
+            raw
+        ));
+    };
+    let name = name.trim();
+    let version = version.trim();
+    if !is_valid_bzlmod_module_name(name) {
+        return Err(bz_error!(
+            bz_error::ErrorTag::Input,
+            "Invalid module name `{}` in bazel.{}",
+            name,
+            BAZEL_EXTRA_BZLMOD_DEPS
+        ));
+    }
+    parse_bzlmod_version(version).with_buck_error_context(|| {
+        format!(
+            "Invalid version `{}` for module `{}` in bazel.{}",
+            version, name, BAZEL_EXTRA_BZLMOD_DEPS
+        )
+    })?;
+    Ok(Some(BazelDep {
+        name: name.to_owned(),
+        version: version.to_owned(),
+        apparent_name: Some(name.to_owned()),
+    }))
+}
+
+async fn extra_bzlmod_root_deps_from_config(
+    ctx: &mut DiceComputations<'_>,
+    root_cell: CellName,
+) -> bz_error::Result<Vec<BazelDep>> {
+    let Some(entries) = ctx
+        .parse_legacy_config_list_property::<String>(
+            root_cell,
+            BuckconfigKeyRef {
+                section: "bazel",
+                property: BAZEL_EXTRA_BZLMOD_DEPS,
+            },
+        )
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+
+    entries
+        .into_iter()
+        .filter_map(|entry| parse_extra_bzlmod_root_dep(&entry).transpose())
+        .collect()
+}
+
+fn merge_extra_bzlmod_root_deps(root_deps: &mut Vec<BazelDep>, extra_root_deps: Vec<BazelDep>) {
+    for dep in extra_root_deps {
+        let visible_alias = dep.apparent_name.as_deref();
+        if root_deps.iter().any(|existing| {
+            existing.name == dep.name && existing.apparent_name.as_deref() == visible_alias
+        }) {
+            continue;
+        }
+        root_deps.push(dep);
+    }
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
@@ -1418,11 +1492,12 @@ impl Key for BzlmodRootModuleKey {
     ) -> Self::Value {
         let resolver = ctx.get_cell_resolver().await?;
         let root_path = resolver.root_cell_instance().path().to_buf();
+        let extra_root_deps = extra_bzlmod_root_deps_from_config(ctx, resolver.root_cell()).await?;
         let io_provider = ctx.global_data().get_io_provider();
         let project_fs = io_provider.project_root();
         let mut file_ops = DiceConfigFileOps::new(ctx, project_fs, &resolver);
         Ok(Arc::new(
-            read_bazel_module_resolution_inputs(&root_path, &mut file_ops).await?,
+            read_bazel_module_resolution_inputs(&root_path, &mut file_ops, extra_root_deps).await?,
         ))
     }
 
@@ -5365,6 +5440,48 @@ mod tests {
         assert_eq!(evaluated.deps[0].apparent_name.as_deref(), Some("visible"));
         assert_eq!(evaluated.deps[1].apparent_name, None);
         assert_eq!(evaluated.registered_toolchains, vec!["//:toolchain"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_extra_root_dep_parser_makes_visible_alias() -> bz_error::Result<()> {
+        let dep = super::parse_extra_bzlmod_root_dep(" llvm@0.8.4 ")?.unwrap();
+
+        assert_eq!(dep.name, "llvm");
+        assert_eq!(dep.version, "0.8.4");
+        assert_eq!(dep.apparent_name.as_deref(), Some("llvm"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_extra_root_dep_merge_adds_missing_visible_alias() -> bz_error::Result<()> {
+        let mut root_deps = vec![super::BazelDep {
+            name: "llvm".to_owned(),
+            version: "0.8.4".to_owned(),
+            apparent_name: None,
+        }];
+        let extra = vec![super::parse_extra_bzlmod_root_dep("llvm@0.8.4")?.unwrap()];
+
+        super::merge_extra_bzlmod_root_deps(&mut root_deps, extra);
+
+        assert_eq!(root_deps.len(), 2);
+        assert_eq!(root_deps[1].apparent_name.as_deref(), Some("llvm"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_extra_root_dep_merge_keeps_existing_visible_alias() -> bz_error::Result<()> {
+        let mut root_deps = vec![super::BazelDep {
+            name: "llvm".to_owned(),
+            version: "0.8.4".to_owned(),
+            apparent_name: Some("llvm".to_owned()),
+        }];
+        let extra = vec![super::parse_extra_bzlmod_root_dep("llvm@0.8.4")?.unwrap()];
+
+        super::merge_extra_bzlmod_root_deps(&mut root_deps, extra);
+
+        assert_eq!(root_deps.len(), 1);
+        assert_eq!(root_deps[0].apparent_name.as_deref(), Some("llvm"));
         Ok(())
     }
 

@@ -80,6 +80,7 @@ use bz_execute::execute::request::CommandExecutionRequest;
 use bz_execute::execute::request::ExecutorPreference;
 use bz_execute::execute::request::NetworkAccess;
 use bz_execute::execute::request::WorkerProtocol;
+use bz_execute::execute::request::WorkerSpec;
 use bz_execute::execute::result::CommandExecutionMetadata;
 use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::knobs::ExecutorGlobalKnobs;
@@ -507,15 +508,15 @@ fn bazel_shared_action_input_key(
             Some(format!("artifact_group:{}", entries.join("\0")))
         }
         CommandExecutionInput::ArtifactPathAlias {
-            source_path,
             source_requires_materialization,
             path,
-            value: _,
+            value,
+            ..
         } => Some(format!(
             "artifact_path_alias:{}:{}:{}",
-            source_path.as_str(),
-            source_requires_materialization,
             bazel_shared_action_path_key(path.as_ref()),
+            source_requires_materialization,
+            value.action_cache_fingerprint(),
         )),
         CommandExecutionInput::EmptyFile(path) => Some(format!(
             "empty_file:{}",
@@ -1077,6 +1078,19 @@ impl LocalExecutor {
                 let materialized_inputs = r1?;
                 r2?;
 
+                if request.worker().is_some() {
+                    self.materializer
+                        .ensure_materialized(
+                            materialized_inputs
+                                .copied_artifact_path_aliases
+                                .iter()
+                                .cloned()
+                                .collect(),
+                        )
+                        .await?;
+                    materialize_input_path_aliases(&self.artifact_fs, &materialized_inputs)?;
+                }
+
                 bz_error::Ok((materialized_inputs, Instant::now() - start))
             },
         )
@@ -1254,14 +1268,13 @@ impl LocalExecutor {
                     }
                 };
 
-                let mut execution_stats =
-                    execution_stats.map(|s| bz_data::CommandExecutionStats {
-                        cpu_instructions_user: s.cpu_instructions_user,
-                        cpu_instructions_kernel: s.cpu_instructions_kernel,
-                        userspace_events: s.userspace_events,
-                        kernel_events: s.kernel_events,
-                        memory_peak: None,
-                    });
+                let mut execution_stats = execution_stats.map(|s| bz_data::CommandExecutionStats {
+                    cpu_instructions_user: s.cpu_instructions_user,
+                    cpu_instructions_kernel: s.cpu_instructions_kernel,
+                    userspace_events: s.userspace_events,
+                    kernel_events: s.kernel_events,
+                    memory_peak: None,
+                });
 
                 if let Some(memory_peak) =
                     cgroup_result.as_ref().and_then(|r| r.memory_peak.as_ref())
@@ -1883,6 +1896,15 @@ impl LocalExecutor {
             } else {
                 self.root.as_ref()
             };
+            if worker_spec.protocol == WorkerProtocol::Bazel
+                && let Err(e) = materialize_bazel_worker_external_tool_aliases(
+                    &self.artifact_fs,
+                    request.working_directory(),
+                    worker_spec,
+                )
+            {
+                return ControlFlow::Break(manager.error("bazel_worker_external_tool_aliases", e));
+            }
             let env = worker_spec
                 .env
                 .iter()
@@ -2876,11 +2898,7 @@ async fn prepare_bazel_worker_sandbox(
     blocking_executor: &dyn BlockingExecutor,
 ) -> bz_error::Result<BazelWorkerSandbox> {
     let sandbox_id = BAZEL_WORKER_SANDBOX_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let relative_path = format!(
-        "__bz_worker_sandbox/{}-{}",
-        std::process::id(),
-        sandbox_id
-    );
+    let relative_path = format!("__bz_worker_sandbox/{}-{}", std::process::id(), sandbox_id);
     let relative_path_buf = ForwardRelativePathBuf::unchecked_new(relative_path.clone());
     let sandbox_project_path = request.working_directory().join(&relative_path_buf);
 
@@ -3157,6 +3175,181 @@ fn external_cell_root_alias(
     None
 }
 
+fn external_cell_root_alias_from_alias_path(
+    alias_path: &ProjectRelativePath,
+) -> Option<(ProjectRelativePathBuf, ProjectRelativePathBuf)> {
+    if let Some(external_root) = external_cell_root(alias_path) {
+        return Some((external_root.source_root.clone(), external_root.source_root));
+    }
+
+    let execroot = bazel_execroot_prefix(alias_path)?;
+    let rest = alias_path.as_str().strip_prefix(&format!("{execroot}/"))?;
+    let external_root = external_cell_root(ProjectRelativePath::unchecked_new(rest))?;
+    let alias_root = ProjectRelativePathBuf::unchecked_new(format!(
+        "{execroot}/{}",
+        external_root.source_root.as_str()
+    ));
+    Some((external_root.source_root, alias_root))
+}
+
+fn bazel_external_repo_root_alias(
+    artifact_fs: &ArtifactFs,
+    source_path: &ProjectRelativePath,
+    alias_path: &ProjectRelativePath,
+) -> bz_error::Result<Option<(ProjectRelativePathBuf, ProjectRelativePathBuf)>> {
+    if let Some(alias) = external_cell_root_alias(source_path, alias_path) {
+        return Ok(Some(alias));
+    }
+
+    if !buck_artifact_store_path(source_path)
+        && let Some(alias) = external_cell_root_alias_from_alias_path(alias_path)
+    {
+        return Ok(Some(alias));
+    }
+
+    if !buck_artifact_store_path(source_path)
+        && let Some((repo, alias_root)) = bazel_workspace_external_repo_alias_root(alias_path)
+        && let Some(source_root) = bazel_external_repo_source_root(artifact_fs, repo)?
+    {
+        return Ok(Some((source_root, alias_root)));
+    }
+
+    if !buck_artifact_store_path(source_path)
+        && let Some((repo, alias_root)) = bazel_execroot_external_repo_alias_root(alias_path)
+        && let Some(source_root) = bazel_external_repo_source_root(artifact_fs, repo)?
+    {
+        return Ok(Some((source_root, alias_root)));
+    }
+
+    Ok(None)
+}
+
+fn materialize_bazel_worker_external_tool_aliases(
+    artifact_fs: &ArtifactFs,
+    working_directory: &ProjectRelativePath,
+    worker_spec: &WorkerSpec,
+) -> bz_error::Result<()> {
+    let mut repos = BuckIndexSet::new();
+    for arg in &worker_spec.exe {
+        let Some(repo) = bazel_worker_external_repo_from_arg(arg) else {
+            continue;
+        };
+        if repos.insert(repo.to_owned()) {
+            let source_root = bazel_external_repo_source_root(artifact_fs, repo)?
+                .ok_or_else(|| {
+                    bz_error::internal_error!(
+                        "Bazel worker command references external repository `{repo}`, but no source root was found under `{}/external_cells`",
+                        artifact_fs.buck_out_path_resolver().root()
+                    )
+                })?;
+            let alias_root = working_directory.join(ForwardRelativePathBuf::unchecked_new(
+                format!("external/{repo}"),
+            ));
+            materialize_external_cell_root_alias(
+                artifact_fs,
+                source_root.as_ref(),
+                alias_root.as_ref(),
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn bazel_worker_external_repo_from_arg(arg: &str) -> Option<&str> {
+    let rest = arg.strip_prefix("external/")?;
+    let (repo, _) = rest.split_once('/')?;
+    if repo.is_empty() { None } else { Some(repo) }
+}
+
+fn bazel_workspace_external_repo_alias_root(
+    path: &ProjectRelativePath,
+) -> Option<(&str, ProjectRelativePathBuf)> {
+    let rest = path.as_str().strip_prefix("external/")?;
+    let repo = rest.split('/').next()?;
+    if repo.is_empty() {
+        return None;
+    }
+    Some((
+        repo,
+        ProjectRelativePathBuf::unchecked_new(format!("external/{repo}")),
+    ))
+}
+
+fn bazel_execroot_external_repo_alias_root(
+    path: &ProjectRelativePath,
+) -> Option<(&str, ProjectRelativePathBuf)> {
+    let execroot = bazel_execroot_prefix(path)?;
+    let prefix = format!("{execroot}/external/");
+    let rest = path.as_str().strip_prefix(&prefix)?;
+    let repo = rest.split('/').next()?;
+    if repo.is_empty() {
+        return None;
+    }
+    Some((
+        repo,
+        ProjectRelativePathBuf::unchecked_new(format!("{execroot}/external/{repo}")),
+    ))
+}
+
+fn bazel_external_repo_source_root(
+    artifact_fs: &ArtifactFs,
+    repo: &str,
+) -> bz_error::Result<Option<ProjectRelativePathBuf>> {
+    for kind in ["bzlmod_generated", "bzlmod", "bundled", "git"] {
+        let source_root = ProjectRelativePathBuf::unchecked_new(format!(
+            "{}/external_cells/{kind}/{repo}",
+            artifact_fs.buck_out_path_resolver().root()
+        ));
+        if fs_util::try_exists(artifact_fs.fs().resolve(&source_root))? {
+            return Ok(Some(source_root));
+        }
+    }
+    Ok(None)
+}
+
+fn add_bazel_external_repo_references(value: &str, repos: &mut BuckIndexSet<String>) {
+    let mut rest = value;
+    while let Some(index) = rest.find("external/") {
+        let after_external = &rest[index + "external/".len()..];
+        let Some((repo, after_repo)) = after_external.split_once('/') else {
+            break;
+        };
+        if !repo.is_empty() {
+            repos.insert(repo.to_owned());
+        }
+        rest = after_repo;
+    }
+}
+
+fn bazel_external_repo_aliases_from_command(
+    artifact_fs: &ArtifactFs,
+    request: &CommandExecutionRequest,
+) -> bz_error::Result<Vec<ExternalCellRootAlias>> {
+    let mut repos = BuckIndexSet::new();
+    for arg in request.all_args() {
+        add_bazel_external_repo_references(arg, &mut repos);
+    }
+    for (_key, value) in request.env() {
+        add_bazel_external_repo_references(value, &mut repos);
+    }
+
+    let mut aliases = Vec::new();
+    for repo in repos {
+        let Some(source_root) = bazel_external_repo_source_root(artifact_fs, &repo)? else {
+            continue;
+        };
+        let alias_root = request.working_directory().join(ForwardRelativePathBuf::unchecked_new(
+            format!("external/{repo}"),
+        ));
+        aliases.push(ExternalCellRootAlias {
+            source_root,
+            alias_root,
+        });
+    }
+    Ok(aliases)
+}
+
 fn expand_bazel_worker_args(
     artifact_fs: &ArtifactFs,
     request: &CommandExecutionRequest,
@@ -3232,9 +3425,26 @@ fn materialize_artifact_path_alias(
     path: &ProjectRelativePath,
     value: &ArtifactValue,
 ) -> bz_error::Result<()> {
+    if source_path == path {
+        return Ok(());
+    }
+
     let fs = artifact_fs.fs();
     let source = fs.resolve(source_path);
     let dest = fs.resolve(path);
+    if artifact_path_alias_source_and_dest_are_same(&source, &dest) {
+        return Ok(());
+    }
+    if let Some((source_root, alias_root)) =
+        bazel_external_repo_root_alias(artifact_fs, source_path, path)?
+    {
+        materialize_external_cell_root_alias(
+            artifact_fs,
+            source_root.as_ref(),
+            alias_root.as_ref(),
+        )?;
+        return Ok(());
+    }
 
     match value.entry() {
         ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
@@ -3275,12 +3485,12 @@ fn materialize_artifact_path_alias(
 
             match create_artifact_path_alias_file(&source, &dest) {
                 Ok(()) => return Ok(()),
-                Err(e) if artifact_path_alias_file_is_current(&dest, &source) => return Ok(()),
+                Err(_e) if artifact_path_alias_file_is_current(&dest, &source) => return Ok(()),
                 Err(_) => {
                     CleanOutputPaths::clean(std::iter::once(path), fs)?;
                     match create_artifact_path_alias_file(&source, &dest) {
                         Ok(()) => return Ok(()),
-                        Err(e) if artifact_path_alias_file_is_current(&dest, &source) => {
+                        Err(_e) if artifact_path_alias_file_is_current(&dest, &source) => {
                             return Ok(());
                         }
                         Err(e) => {
@@ -3309,12 +3519,12 @@ fn materialize_artifact_path_alias(
 
     match create_artifact_path_alias_symlink(&source, &dest) {
         Ok(()) => Ok(()),
-        Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
+        Err(_e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
         Err(_) => {
             CleanOutputPaths::clean(std::iter::once(path), fs)?;
             match create_artifact_path_alias_symlink(&source, &dest) {
                 Ok(()) => Ok(()),
-                Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
+                Err(_e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
                 Err(e) => Err(e).with_buck_error_context(|| {
                     format!("Error creating artifact path alias `{path}` -> `{source_path}`")
                 }),
@@ -3352,6 +3562,10 @@ fn materialize_external_cell_root_alias(
     source_root: &ProjectRelativePath,
     alias_root: &ProjectRelativePath,
 ) -> bz_error::Result<()> {
+    if source_root == alias_root {
+        return Ok(());
+    }
+
     let fs = artifact_fs.fs();
     let source = fs.resolve(source_root);
     let dest = fs.resolve(alias_root);
@@ -3393,7 +3607,7 @@ fn create_artifact_path_alias_symlink(
 
     match fs_util::symlink(source, dest).categorize_internal() {
         Ok(()) => Ok(()),
-        Err(e) if artifact_path_alias_is_current(dest, source) => Ok(()),
+        Err(_e) if artifact_path_alias_is_current(dest, source) => Ok(()),
         Err(e) => {
             let tmp = artifact_path_alias_tmp_path(dest)?;
             let _ignored = fs_util::remove_file(&tmp);
@@ -3402,7 +3616,7 @@ fn create_artifact_path_alias_symlink(
                 .buck_error_context("Error creating temporary artifact path alias")?;
             match fs_util::rename(&tmp, dest).categorize_internal() {
                 Ok(()) => Ok(()),
-                Err(rename_error) if artifact_path_alias_is_current(dest, source) => {
+                Err(_rename_error) if artifact_path_alias_is_current(dest, source) => {
                     let _ignored = fs_util::remove_file(&tmp);
                     Ok(())
                 }
@@ -3455,7 +3669,7 @@ fn create_artifact_path_alias_file(
 
     match fs_util::rename(&tmp, dest).categorize_internal() {
         Ok(()) => Ok(()),
-        Err(rename_error) if artifact_path_alias_file_is_current(dest, source) => {
+        Err(_rename_error) if artifact_path_alias_file_is_current(dest, source) => {
             let _ignored = fs_util::remove_file(&tmp);
             Ok(())
         }
@@ -3579,6 +3793,22 @@ fn artifact_path_alias_file_is_current(dest: &AbsNormPathBuf, source: &AbsNormPa
         return false;
     }
     artifact_path_alias_files_are_equivalent(dest, source)
+}
+
+fn artifact_path_alias_source_and_dest_are_same(
+    source: &AbsNormPathBuf,
+    dest: &AbsNormPathBuf,
+) -> bool {
+    if source.as_path() == dest.as_path() {
+        return true;
+    }
+    let Ok(source_metadata) = fs_util::metadata(source) else {
+        return false;
+    };
+    let Ok(dest_metadata) = fs_util::metadata(dest) else {
+        return false;
+    };
+    artifact_path_alias_metadata_is_same_file(&source_metadata, &dest_metadata)
 }
 
 fn artifact_path_alias_target_is_compatible(
@@ -3854,7 +4084,8 @@ pub async fn materialize_inputs(
     let mut artifact_path_alias_copies = Vec::new();
     for (source_path, path, value) in &shared_artifact_path_aliases {
         let is_external_root_alias =
-            external_cell_root_alias(source_path.as_ref(), path.as_ref()).is_some();
+            bazel_external_repo_root_alias(artifact_fs, source_path.as_ref(), path.as_ref())?
+                .is_some();
         let source_is_generated = buck_artifact_store_path(source_path.as_ref());
         let source_is_generated_file = source_is_generated
             && matches!(
@@ -3923,7 +4154,7 @@ pub async fn materialize_inputs(
             continue;
         }
         if let Some((source_root, alias_root)) =
-            external_cell_root_alias(source_path.as_ref(), path.as_ref())
+            bazel_external_repo_root_alias(artifact_fs, source_path.as_ref(), path.as_ref())?
         {
             if external_cell_root_aliases.insert((source_root.clone(), alias_root.clone())) {
                 paths.push(alias_root.clone());
@@ -3939,6 +4170,14 @@ pub async fn materialize_inputs(
                 path: path.clone(),
                 value: value.dupe(),
             });
+        }
+    }
+    for alias in bazel_external_repo_aliases_from_command(artifact_fs, request)? {
+        if external_cell_root_aliases
+            .insert((alias.source_root.clone(), alias.alias_root.clone()))
+        {
+            paths.push(alias.alias_root.clone());
+            external_cell_root_aliases_to_materialize.push(alias);
         }
     }
 
@@ -4334,6 +4573,7 @@ mod tests {
     use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     use bz_hash::StdBuckHashMap;
     use bz_hash::buck_indexmap;
+    use bz_hash::buck_indexset;
     use host_sharing::HostSharingStrategy;
 
     use super::*;
@@ -4385,6 +4625,172 @@ mod tests {
         assert_eq!(
             alias_root.as_str(),
             "buck-out/debug/__bazel_execroot/abcdef0123456789/external/bazel_tools"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_bazel_external_repo_root_alias_uses_existing_repo_root_for_cache_source()
+    -> bz_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let artifact_fs = artifact_fs(temp.path().dupe());
+        let repo = "rules_java++toolchains+remote_java_tools";
+        let source_root = ProjectRelativePathBuf::unchecked_new(format!(
+            "buck_out/v2/external_cells/bzlmod_generated/{repo}"
+        ));
+        fs_util::create_dir_all(temp.path().resolve(&source_root))?;
+
+        let (actual_source_root, alias_root) = bazel_external_repo_root_alias(
+            &artifact_fs,
+            ProjectRelativePath::new(
+                "buck_out/v2/cache/bzlmod_repo_contents/hash/generated/repo/java_tools/JavaBuilder_deploy.jar",
+            )?,
+            ProjectRelativePath::new(
+                "buck_out/v2/__bazel_execroot/external/rules_java++toolchains+remote_java_tools/java_tools/JavaBuilder_deploy.jar",
+            )?,
+        )?
+        .expect("external repository root alias");
+
+        assert_eq!(actual_source_root, source_root);
+        assert_eq!(
+            alias_root.as_str(),
+            "buck_out/v2/__bazel_execroot/external/rules_java++toolchains+remote_java_tools"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_bazel_external_repo_root_alias_uses_workspace_external_path()
+    -> bz_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let artifact_fs = artifact_fs(temp.path().dupe());
+        let repo = "llvm++http_archive+llvm-toolchain-minimal";
+        let source_root = ProjectRelativePathBuf::unchecked_new(format!(
+            "buck_out/v2/external_cells/bzlmod_generated/{repo}"
+        ));
+        fs_util::create_dir_all(temp.path().resolve(&source_root))?;
+
+        let (actual_source_root, alias_root) = bazel_external_repo_root_alias(
+            &artifact_fs,
+            ProjectRelativePath::new(
+                "buck_out/v2/external_cells/bzlmod_generated/llvm++http_archive+llvm-toolchain-minimal/bin/clang",
+            )?,
+            ProjectRelativePath::new(
+                "external/llvm++http_archive+llvm-toolchain-minimal/bin/clang",
+            )?,
+        )?
+        .expect("workspace external repository root alias");
+
+        assert_eq!(actual_source_root, source_root);
+        assert_eq!(
+            alias_root.as_str(),
+            "external/llvm++http_archive+llvm-toolchain-minimal"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_bazel_external_repo_aliases_from_command_scan_args_and_env() -> bz_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let artifact_fs = artifact_fs(temp.path().dupe());
+        for repo in [
+            "llvm++http_archive+llvm-toolchain-minimal",
+            "llvm++kernel_headers+linux_kernel_headers_x86",
+        ] {
+            fs_util::create_dir_all(temp.path().resolve(ProjectRelativePath::unchecked_new(
+                &format!("buck_out/v2/external_cells/bzlmod_generated/{repo}"),
+            )))?;
+        }
+
+        let paths = CommandExecutionPaths::new(
+            Vec::new(),
+            BuckIndexSet::default(),
+            &artifact_fs,
+            DigestConfig::testing_default(),
+            None,
+        )?;
+        let request = CommandExecutionRequest::new(
+            vec![
+                "external/llvm++http_archive+llvm-toolchain-minimal/bin/clang".to_owned(),
+            ],
+            vec![
+                "-Iexternal/llvm++kernel_headers+linux_kernel_headers_x86/include".to_owned(),
+            ],
+            paths,
+            Default::default(),
+        )
+        .with_working_directory(ProjectRelativePathBuf::unchecked_new(
+            "buck_out/v2/__bazel_execroot/action".to_owned(),
+        ));
+
+        let aliases = bazel_external_repo_aliases_from_command(&artifact_fs, &request)?;
+        let alias_roots: Vec<_> = aliases
+            .iter()
+            .map(|alias| alias.alias_root.as_str())
+            .collect();
+
+        assert_eq!(
+            alias_roots,
+            vec![
+                "buck_out/v2/__bazel_execroot/action/external/llvm++http_archive+llvm-toolchain-minimal",
+                "buck_out/v2/__bazel_execroot/action/external/llvm++kernel_headers+linux_kernel_headers_x86",
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_bazel_external_repo_root_alias_collapses_external_cell_destination()
+    -> bz_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let artifact_fs = artifact_fs(temp.path().dupe());
+
+        let (source_root, alias_root) = bazel_external_repo_root_alias(
+            &artifact_fs,
+            ProjectRelativePath::new(
+                "buck_out/v2/cache/bzlmod_repo_contents/hash/generated/repo/java_tools/JavaBuilder_deploy.jar",
+            )?,
+            ProjectRelativePath::new(
+                "buck-out/v2/external_cells/bzlmod_generated/rules_java++toolchains+remote_java_tools/java_tools/JavaBuilder_deploy.jar",
+            )?,
+        )?
+        .expect("external cell root alias");
+
+        assert_eq!(
+            source_root.as_str(),
+            "buck-out/v2/external_cells/bzlmod_generated/rules_java++toolchains+remote_java_tools"
+        );
+        assert_eq!(
+            alias_root.as_str(),
+            "buck-out/v2/external_cells/bzlmod_generated/rules_java++toolchains+remote_java_tools"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_bazel_external_repo_root_alias_collapses_execroot_external_cell_destination()
+    -> bz_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let artifact_fs = artifact_fs(temp.path().dupe());
+
+        let (source_root, alias_root) = bazel_external_repo_root_alias(
+            &artifact_fs,
+            ProjectRelativePath::new(
+                "buck_out/v2/cache/bzlmod_repo_contents/hash/generated/repo/java_tools/JavaBuilder_deploy.jar",
+            )?,
+            ProjectRelativePath::new(
+                "buck-out/v2/__bazel_execroot/buck-out/v2/external_cells/bzlmod_generated/rules_java++toolchains+remote_java_tools/java_tools/JavaBuilder_deploy.jar",
+            )?,
+        )?
+        .expect("execroot external cell root alias");
+
+        assert_eq!(
+            source_root.as_str(),
+            "buck-out/v2/external_cells/bzlmod_generated/rules_java++toolchains+remote_java_tools"
+        );
+        assert_eq!(
+            alias_root.as_str(),
+            "buck-out/v2/__bazel_execroot/buck-out/v2/external_cells/bzlmod_generated/rules_java++toolchains+remote_java_tools"
         );
         Ok(())
     }
@@ -4649,6 +5055,50 @@ mod tests {
             input_b,
             "buck-out/v2/__bazel_execroot/bbbbbbbbbbbbbbbb",
         )?;
+
+        assert_eq!(
+            bazel_shared_action_ownerless_equivalence_key(&request_a, &executor.artifact_fs),
+            bazel_shared_action_ownerless_equivalence_key(&request_b, &executor.artifact_fs),
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bazel_shared_action_equivalence_key_ignores_artifact_alias_owner_path()
+    -> bz_error::Result<()> {
+        let (executor, _, _tmpdir) = test_executor()?;
+        let output_a = bazel_shared_test_output("cell//app:app", "cell//app:app");
+        let output_b = bazel_shared_test_output("cell//app:app_bundle", "cell//app:app_bundle");
+        let value = ArtifactValue::file(DigestConfig::testing_default().empty_file());
+        let input_a = CommandExecutionInput::ArtifactPathAlias {
+            source_path: ProjectRelativePathBuf::unchecked_new(
+                "buck-out/v2/art/protobuf+/hash/src/google/protobuf/__api_cc_proto__/external/protobuf+/src/google/protobuf/libsource_context_proto.a-0.params"
+                    .to_owned(),
+            ),
+            source_requires_materialization: true,
+            path: ProjectRelativePathBuf::unchecked_new(
+                "buck-out/bin/1e8be1aa92087ba6/external/protobuf+/src/google/protobuf/libsource_context_proto.a-0.params"
+                    .to_owned(),
+            ),
+            value: value.dupe(),
+        };
+        let input_b = CommandExecutionInput::ArtifactPathAlias {
+            source_path: ProjectRelativePathBuf::unchecked_new(
+                "buck-out/v2/art/protobuf+/hash/src/google/protobuf/__type_cc_proto__/external/protobuf+/src/google/protobuf/libsource_context_proto.a-0.params"
+                    .to_owned(),
+            ),
+            source_requires_materialization: true,
+            path: ProjectRelativePathBuf::unchecked_new(
+                "buck-out/bin/1e8be1aa92087ba6/external/protobuf+/src/google/protobuf/libsource_context_proto.a-0.params"
+                    .to_owned(),
+            ),
+            value,
+        };
+        let request_a =
+            bazel_shared_test_request_with_input(&executor.artifact_fs, output_a, input_a, "same")?;
+        let request_b =
+            bazel_shared_test_request_with_input(&executor.artifact_fs, output_b, input_b, "same")?;
 
         assert_eq!(
             bazel_shared_action_ownerless_equivalence_key(&request_a, &executor.artifact_fs),

@@ -69,6 +69,7 @@ use bz_build_signals::env::WaitingData;
 use bz_common::cas_digest::CasDigestConfig;
 use bz_common::cas_digest::CasDigestData;
 use bz_common::cas_digest::DataDigester;
+use bz_common::external_symlink::ExternalSymlink;
 use bz_common::file_ops::metadata::FileDigest;
 use bz_common::file_ops::metadata::FileMetadata;
 use bz_common::file_ops::metadata::TrackedFileDigest;
@@ -125,6 +126,7 @@ use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::materialize::materializer::WriteRequest;
 use bz_fs::fs_util;
 use bz_fs::paths::RelativePathBuf;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use bz_hash::BuckIndexMap;
 use bz_hash::BuckIndexSet;
@@ -1406,10 +1408,7 @@ impl CommandLineContext for BazelLocalActionCachePrecomputeContext {
         self.resolve_artifact(artifact, &EmptyArtifactPathMapper)
     }
 
-    fn resolve_cell_path(
-        &self,
-        _path: CellPathRef,
-    ) -> bz_error::Result<CommandLineLocation<'_>> {
+    fn resolve_cell_path(&self, _path: CellPathRef) -> bz_error::Result<CommandLineLocation<'_>> {
         Err(internal_error!(
             "cell paths are not supported in Bazel local action cache precompute"
         ))
@@ -2698,8 +2697,16 @@ impl RunAction {
                 .map(|group| action_execution_ctx.artifact_values(group))
                 .collect();
 
-            let inputs: Vec<CommandExecutionInput> = local_worker_inputs[..]
-                .map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
+            let bazel_execroot = if bazel_paths {
+                Some(self.bazel_action_execroot(fs.fs(), action_execution_ctx.target())?)
+            } else {
+                None
+            };
+            let inputs = self.command_execution_inputs_with_bazel_execroot_aliases(
+                &local_worker_inputs,
+                fs.fs(),
+                bazel_execroot.as_deref(),
+            )?;
 
             let input_paths = CommandExecutionPaths::new(
                 inputs,
@@ -3118,8 +3125,17 @@ impl RunAction {
                 .inputs()
                 .map(|group| action_execution_ctx.artifact_values(group))
                 .collect();
-            let inputs: Vec<CommandExecutionInput> = local_worker_inputs[..]
-                .map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
+
+            let bazel_execroot = if bazel_paths {
+                Some(self.bazel_action_execroot(fs.fs(), action_execution_ctx.target())?)
+            } else {
+                None
+            };
+            let inputs = self.command_execution_inputs_with_bazel_execroot_aliases(
+                &local_worker_inputs,
+                fs.fs(),
+                bazel_execroot.as_deref(),
+            )?;
 
             let worker_key = if worker.supports_bazel_remote_persistent_worker_protocol {
                 let worker_digest = metadata_digest(
@@ -3337,6 +3353,169 @@ impl RunAction {
         Ok(())
     }
 
+    fn artifact_inputs_as_command_execution_inputs(
+        artifact_inputs: &[&ArtifactGroupValues],
+    ) -> Vec<CommandExecutionInput> {
+        artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())))
+    }
+
+    fn command_execution_inputs_with_bazel_execroot_aliases(
+        &self,
+        artifact_inputs: &[&ArtifactGroupValues],
+        artifact_fs: &ArtifactFs,
+        bazel_execroot: Option<&ProjectRelativePath>,
+    ) -> bz_error::Result<Vec<CommandExecutionInput>> {
+        let mut inputs = Self::artifact_inputs_as_command_execution_inputs(artifact_inputs);
+        self.add_bazel_execroot_path_aliases(
+            &mut inputs,
+            artifact_inputs,
+            artifact_fs,
+            bazel_execroot,
+        )?;
+        Ok(inputs)
+    }
+
+    fn add_bazel_external_repo_path_aliases(
+        &self,
+        inputs: &mut Vec<CommandExecutionInput>,
+        expanded: &ExpandedCommandLine,
+        artifact_fs: &ArtifactFs,
+        bazel_execroot: Option<&ProjectRelativePath>,
+    ) -> bz_error::Result<()> {
+        let Some(bazel_execroot) = bazel_execroot else {
+            return Ok(());
+        };
+
+        let mut references = BuckIndexSet::new();
+        for arg in expanded.exe.iter().chain(expanded.args.iter()) {
+            Self::add_bazel_external_repo_references(arg, &mut references);
+        }
+        for (_key, value) in expanded.env.iter() {
+            Self::add_bazel_external_repo_references(value, &mut references);
+        }
+
+        let mut aliases = inputs
+            .iter()
+            .filter_map(|input| match input {
+                CommandExecutionInput::ArtifactPathAlias { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .collect::<BuckIndexSet<_>>();
+        for (repo, path) in references {
+            let Some(source_root) = Self::bazel_external_repo_source_root(artifact_fs, &repo)?
+            else {
+                continue;
+            };
+            Self::add_bazel_external_repo_path_alias(
+                inputs,
+                &mut aliases,
+                artifact_fs,
+                bazel_execroot,
+                &repo,
+                source_root.as_ref(),
+                path.as_ref(),
+            )?;
+
+            if path.starts_with("bin/")
+                && fs_util::try_exists(artifact_fs.fs().resolve(source_root.join(
+                    ForwardRelativePathBuf::unchecked_new("lib".to_owned()),
+                )))?
+            {
+                Self::add_bazel_external_repo_path_alias(
+                    inputs,
+                    &mut aliases,
+                    artifact_fs,
+                    bazel_execroot,
+                    &repo,
+                    source_root.as_ref(),
+                    "lib",
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn add_bazel_external_repo_path_alias(
+        inputs: &mut Vec<CommandExecutionInput>,
+        aliases: &mut BuckIndexSet<ProjectRelativePathBuf>,
+        artifact_fs: &ArtifactFs,
+        bazel_execroot: &ProjectRelativePath,
+        repo: &str,
+        source_root: &ProjectRelativePath,
+        repo_path: &str,
+    ) -> bz_error::Result<()> {
+        let repo_path = ForwardRelativePathBuf::try_from(repo_path.to_owned())
+            .buck_error_context("Invalid Bazel external repository path")?;
+        let source_path = source_root.join(repo_path.clone());
+        if !fs_util::try_exists(artifact_fs.fs().resolve(&source_path))? {
+            return Ok(());
+        }
+
+        let alias_path =
+            Self::bazel_execroot_path(bazel_execroot, format!("external/{repo}/{repo_path}"))?;
+        if source_path == alias_path || !aliases.insert(alias_path.clone()) {
+            return Ok(());
+        }
+
+        let source_abs_path = artifact_fs.fs().resolve(&source_path).as_path().to_path_buf();
+        inputs.push(CommandExecutionInput::ArtifactPathAlias {
+            source_path,
+            source_requires_materialization: false,
+            path: alias_path,
+            value: ArtifactValue::external_symlink(Arc::new(ExternalSymlink::new(
+                source_abs_path,
+                ForwardRelativePathBuf::default(),
+            )?)),
+        });
+        Ok(())
+    }
+
+    fn add_bazel_external_repo_references(
+        value: &str,
+        references: &mut BuckIndexSet<(String, String)>,
+    ) {
+        let mut rest = value;
+        while let Some(index) = rest.find("external/") {
+            let after_external = &rest[index + "external/".len()..];
+            let Some((repo, after_repo)) = after_external.split_once('/') else {
+                break;
+            };
+            let repo_path = after_repo
+                .split(|c: char| {
+                    matches!(c, ':' | ',' | ';' | '"' | '\'' | ')' | '(' | '[' | ']')
+                        || c.is_whitespace()
+                })
+                .next()
+                .unwrap_or_default();
+            if !repo.is_empty()
+                && !repo_path.is_empty()
+                && ForwardRelativePath::new(repo).is_ok()
+                && !repo.contains('/')
+                && ForwardRelativePathBuf::try_from(repo_path.to_owned()).is_ok()
+            {
+                references.insert((repo.to_owned(), repo_path.to_owned()));
+            }
+            rest = after_repo;
+        }
+    }
+
+    fn bazel_external_repo_source_root(
+        artifact_fs: &ArtifactFs,
+        repo: &str,
+    ) -> bz_error::Result<Option<ProjectRelativePathBuf>> {
+        for kind in ["bzlmod_generated", "bzlmod", "bundled", "git"] {
+            let source_root = ProjectRelativePathBuf::unchecked_new(format!(
+                "{}/external_cells/{kind}/{repo}",
+                artifact_fs.buck_out_path_resolver().root()
+            ));
+            if fs_util::try_exists(artifact_fs.fs().resolve(&source_root))? {
+                return Ok(Some(source_root));
+            }
+        }
+        Ok(None)
+    }
+
     fn bazel_artifact_alias_source_path(
         artifact: &Artifact,
         value: &ArtifactValue,
@@ -3488,8 +3667,7 @@ impl RunAction {
         &'v self,
         visitor: &mut RunActionVisitor<'v>,
         ctx: &mut dyn ActionExecutionCtx,
-    ) -> bz_error::Result<Option<(LocalActionCacheKey, BuckIndexSet<CommandExecutionOutput>)>>
-    {
+    ) -> bz_error::Result<Option<(LocalActionCacheKey, BuckIndexSet<CommandExecutionOutput>)>> {
         let collect_action_inputs =
             !self.inner.dep_files.is_empty() || self.inner.metadata_param.is_some();
         let (command_line_digest, worker, remote_worker, _param_files) = {
@@ -3690,6 +3868,12 @@ impl RunAction {
             fs,
             bazel_execroot.as_deref(),
             bazel_tool_runfiles,
+        )?;
+        self.add_bazel_external_repo_path_aliases(
+            &mut inputs,
+            &expanded,
+            fs,
+            bazel_execroot.as_deref(),
         )?;
 
         let mut extra_env = Vec::new();

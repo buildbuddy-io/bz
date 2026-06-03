@@ -157,6 +157,110 @@ impl<'v> StarlarkSelector<'v> {
         }
     }
 
+    fn is_select_special_value(value: Value<'v>) -> bool {
+        StarlarkSelectFail::from_value(value).is_some()
+            || StarlarkSelectIncompatible::from_value(value).is_some()
+    }
+
+    fn primary_dict_from_value(value: Value<'v>) -> bz_error::Result<DictRef<'v>> {
+        DictRef::from_value(value)
+            .ok_or_else(|| bz_error::internal_error!("validated at construction"))
+    }
+
+    fn unsupported_union(left: &'static str, right: &'static str) -> starlark::Result<Value<'v>> {
+        Err(
+            bz_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
+                left.to_owned(),
+                right.to_owned(),
+            ))
+            .into(),
+        )
+    }
+
+    fn union_value_with_dict_after(
+        value: Value<'v>,
+        other: &DictRef<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        if Self::is_select_special_value(value) {
+            Ok(value)
+        } else if let Some(value_dict) = DictRef::from_value(value) {
+            Ok(Self::dict_union(value_dict, other, heap))
+        } else if let Some(selector) = StarlarkSelector::from_value(value) {
+            match *selector {
+                StarlarkSelectorGen::Primary(selector) => {
+                    let selector = Self::primary_dict_from_value(selector.get())?;
+                    Self::union_dict_into_primary(selector, other.clone(), heap)
+                }
+                StarlarkSelectorGen::Sum(..) => Self::unsupported_union("select", "dict"),
+            }
+        } else {
+            Err(
+                bz_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
+                    Self::select_value_type(value).unwrap_or_else(|| value.get_type().to_owned()),
+                    "dict".to_owned(),
+                ))
+                .into(),
+            )
+        }
+    }
+
+    fn union_dict_before_value(
+        other: &DictRef<'v>,
+        value: Value<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        if Self::is_select_special_value(value) {
+            Ok(value)
+        } else if let Some(value_dict) = DictRef::from_value(value) {
+            Ok(Self::dict_union(other.clone(), &value_dict, heap))
+        } else if let Some(selector) = StarlarkSelector::from_value(value) {
+            match *selector {
+                StarlarkSelectorGen::Primary(selector) => {
+                    let selector = Self::primary_dict_from_value(selector.get())?;
+                    Self::union_dict_before_primary(other.clone(), selector, heap)
+                }
+                StarlarkSelectorGen::Sum(..) => Self::unsupported_union("dict", "select"),
+            }
+        } else {
+            Err(
+                bz_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
+                    "dict".to_owned(),
+                    Self::select_value_type(value).unwrap_or_else(|| value.get_type().to_owned()),
+                ))
+                .into(),
+            )
+        }
+    }
+
+    fn union_value_with_primary_after(
+        value: Value<'v>,
+        other: DictRef<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        if Self::is_select_special_value(value) {
+            Ok(value)
+        } else if let Some(value_dict) = DictRef::from_value(value) {
+            Self::union_dict_before_primary(value_dict, other, heap)
+        } else if let Some(selector) = StarlarkSelector::from_value(value) {
+            match *selector {
+                StarlarkSelectorGen::Primary(selector) => {
+                    let selector = Self::primary_dict_from_value(selector.get())?;
+                    Self::union_primary_with_primary(selector, other, heap)
+                }
+                StarlarkSelectorGen::Sum(..) => Self::unsupported_union("select", "select"),
+            }
+        } else {
+            Err(
+                bz_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
+                    Self::select_value_type(value).unwrap_or_else(|| value.get_type().to_owned()),
+                    "select".to_owned(),
+                ))
+                .into(),
+            )
+        }
+    }
+
     fn union_dict_into_primary(
         selector: DictRef<'v>,
         other: DictRef<'v>,
@@ -164,21 +268,7 @@ impl<'v> StarlarkSelector<'v> {
     ) -> starlark::Result<Value<'v>> {
         let mut mapped = SmallMap::with_capacity(selector.len());
         for (k, v) in selector.iter_hashed() {
-            if StarlarkSelectFail::from_value(v).is_some()
-                || StarlarkSelectIncompatible::from_value(v).is_some()
-            {
-                mapped.insert_hashed(k, v);
-            } else if let Some(v) = DictRef::from_value(v) {
-                mapped.insert_hashed(k, Self::dict_union(v, &other, heap));
-            } else {
-                return Err(
-                    bz_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
-                        Self::select_value_type(v).unwrap_or_else(|| v.get_type().to_owned()),
-                        "dict".to_owned(),
-                    ))
-                    .into(),
-                );
-            }
+            mapped.insert_hashed(k, Self::union_value_with_dict_after(v, &other, heap)?);
         }
         Ok(heap.alloc(StarlarkSelector::new(
             ValueOf::unpack_value_err(heap.alloc(Dict::new(mapped)))
@@ -193,21 +283,25 @@ impl<'v> StarlarkSelector<'v> {
     ) -> starlark::Result<Value<'v>> {
         let mut mapped = SmallMap::with_capacity(selector.len());
         for (k, v) in selector.iter_hashed() {
-            if StarlarkSelectFail::from_value(v).is_some()
-                || StarlarkSelectIncompatible::from_value(v).is_some()
-            {
-                mapped.insert_hashed(k, v);
-            } else if let Some(v) = DictRef::from_value(v) {
-                mapped.insert_hashed(k, Self::dict_union(other.clone(), &v, heap));
-            } else {
-                return Err(
-                    bz_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
-                        "dict".to_owned(),
-                        Self::select_value_type(v).unwrap_or_else(|| v.get_type().to_owned()),
-                    ))
-                    .into(),
-                );
-            }
+            mapped.insert_hashed(k, Self::union_dict_before_value(&other, v, heap)?);
+        }
+        Ok(heap.alloc(StarlarkSelector::new(
+            ValueOf::unpack_value_err(heap.alloc(Dict::new(mapped)))
+                .internal_error("validated at construction")?,
+        )))
+    }
+
+    fn union_primary_with_primary(
+        left: DictRef<'v>,
+        right: DictRef<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let mut mapped = SmallMap::with_capacity(left.len());
+        for (k, v) in left.iter_hashed() {
+            mapped.insert_hashed(
+                k,
+                Self::union_value_with_primary_after(v, right.clone(), heap)?,
+            );
         }
         Ok(heap.alloc(StarlarkSelector::new(
             ValueOf::unpack_value_err(heap.alloc(Dict::new(mapped)))
@@ -426,15 +520,25 @@ where
     }
 
     fn bit_or(&self, other_value: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let Some(other) = DictRef::from_value(other_value) else {
-            return starlark::values::ValueError::unsupported_with(self, "|", other_value);
-        };
-
         match self {
             Self::Primary(v) => {
                 let selector = DictRef::from_value(v.get().to_value())
                     .ok_or_else(|| bz_error::internal_error!("validated at construction"))?;
-                StarlarkSelector::union_dict_into_primary(selector, other, heap)
+                if let Some(other) = DictRef::from_value(other_value) {
+                    StarlarkSelector::union_dict_into_primary(selector, other, heap)
+                } else if let Some(other) = StarlarkSelector::from_value(other_value) {
+                    match *other {
+                        StarlarkSelectorGen::Primary(other) => {
+                            let other = StarlarkSelector::primary_dict_from_value(other.get())?;
+                            StarlarkSelector::union_primary_with_primary(selector, other, heap)
+                        }
+                        StarlarkSelectorGen::Sum(..) => {
+                            starlark::values::ValueError::unsupported_with(self, "|", other_value)
+                        }
+                    }
+                } else {
+                    starlark::values::ValueError::unsupported_with(self, "|", other_value)
+                }
             }
             Self::Sum(..) => starlark::values::ValueError::unsupported_with(self, "|", other_value),
         }
@@ -452,10 +556,9 @@ where
         Some(match self {
             Self::Primary(v) => {
                 let Some(selector) = DictRef::from_value(v.get().to_value()) else {
-                    return Some(Err(bz_error::internal_error!(
-                        "validated at construction"
-                    )
-                    .into()));
+                    return Some(Err(
+                        bz_error::internal_error!("validated at construction").into()
+                    ));
                 };
                 StarlarkSelector::union_dict_before_primary(other, selector, heap)
             }

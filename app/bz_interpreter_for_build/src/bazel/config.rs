@@ -313,6 +313,10 @@ fn bazel_config_module(builder: &mut GlobalsBuilder) {
             exec_group: exec_group.into_option().map(str::to_owned),
         })
     }
+
+    fn none<'v>() -> starlark::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
 }
 
 #[starlark_module]
@@ -339,4 +343,18 @@ pub(crate) fn register_bazel_config(builder: &mut GlobalsBuilder) {
             BazelConfigProviderCallable::new("FeatureFlagInfo"),
         );
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use starlark::assert::Assert;
+
+    use super::register_bazel_config;
+
+    #[test]
+    fn config_none_returns_none() {
+        let mut a = Assert::new();
+        a.globals_add(register_bazel_config);
+        a.pass("assert_eq(config.none(), None)");
+    }
 }

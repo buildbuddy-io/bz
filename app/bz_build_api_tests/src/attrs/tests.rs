@@ -338,6 +338,20 @@ fn test_dict() -> bz_error::Result<()> {
             configured.as_display_no_ctx().to_string()
         );
 
+        let value = to_value(
+            &env,
+            &globals,
+            r#"select({"DEFAULT": {"b": ["1"], "a": []}}) | select({"DEFAULT": {"a": ["override"], "c": []}}) | select({"DEFAULT": {"d": []}})"#,
+        );
+        let coerced = attr.coerce(AttrIsConfigurable::Yes, &coercion_ctx(), value)?;
+        let configured = coerced
+            .configure(&attr, &configuration_ctx(), None)
+            .require_compatible()?;
+        assert_eq!(
+            r#"{"b": ["1"], "a": ["override"], "c": [], "d": []}"#,
+            configured.as_display_no_ctx().to_string()
+        );
+
         Ok(())
     })
 }
@@ -531,6 +545,7 @@ fn test_resolved_deps() -> bz_error::Result<()> {
     Module::with_temp_heap(|env| {
         let globals = GlobalsBuilder::standard()
             .with(register_select)
+            .with(bz_interpreter_for_build::label::register_bazel_label)
             .with(bz_build_api::interpreter::rule_defs::register_rule_defs)
             .build();
 
@@ -568,6 +583,7 @@ fn test_resolved_deps() -> bz_error::Result<()> {
                 ("sub/dir", "foo", ["bar"]),
                 (bar.label.package, bar.label.name, bar.label.sub_target),
             )
+            assert_eq("hit", {bar.label: "hit"}[Label("//sub/dir:foo[bar]")])
             None
             "#
         );

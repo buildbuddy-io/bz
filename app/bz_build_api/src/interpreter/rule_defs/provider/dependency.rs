@@ -20,6 +20,7 @@ use bz_core::provider::label::ProviderName;
 use bz_error::BuckErrorContext;
 use bz_error::internal_error;
 use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
@@ -367,8 +368,11 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn label<'v>(
         this: &Dependency<'v>,
-    ) -> starlark::Result<ValueOfUnchecked<'v, StarlarkConfiguredProvidersLabel>> {
-        Ok(this.label)
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(heap.alloc(StarlarkProvidersLabel::new(
+            this.label().inner().unconfigured(),
+        )))
     }
 
     /// Bazel target-style shortcut for `dep[DefaultInfo].files`.

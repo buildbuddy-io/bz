@@ -38,6 +38,7 @@ use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute_local::CommandResult;
 use bz_execute_local::GatherOutputStatus;
 use bz_execute_local::StdRedirectPaths;
+use bz_execute_local::maybe_absolutize_exe;
 use bz_fs::error::IoResultExt;
 use bz_fs::fs_util;
 use bz_fs::paths::abs_norm_path::AbsNormPath;
@@ -374,6 +375,8 @@ async fn spawn_bazel_worker(
     fs_util::create_dir_all(&worker_dir).map_err(|e| WorkerInitError::InternalError(e.into()))?;
 
     args.push("--persistent_worker".to_owned());
+    let exe =
+        maybe_absolutize_exe(&args[0], root.as_ref()).map_err(WorkerInitError::InternalError)?;
     tracing::info!(
         "Starting Bazel protocol worker with logs at {}:\n$ {}\n",
         worker_dir,
@@ -382,7 +385,7 @@ async fn spawn_bazel_worker(
 
     let stderr = std::fs::File::create(std_redirects.stderr.as_path())
         .map_err(|e| WorkerInitError::InternalError(e.into()))?;
-    let mut command = tokio::process::Command::new(&args[0]);
+    let mut command = tokio::process::Command::new(exe.as_ref());
     command
         .args(&args[1..])
         .current_dir(root.as_path())

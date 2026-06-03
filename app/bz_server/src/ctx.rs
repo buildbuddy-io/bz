@@ -870,41 +870,22 @@ fn configured_prelude_path(
     )?)))
 }
 
-fn repository_os_name(platform: InterpreterHostPlatform) -> &'static str {
-    match platform {
-        InterpreterHostPlatform::Linux => "linux",
-        InterpreterHostPlatform::MacOS => "mac os x",
-        InterpreterHostPlatform::Windows => "windows",
-        InterpreterHostPlatform::FreeBsd => "freebsd",
-        InterpreterHostPlatform::Unknown => match std::env::consts::OS {
-            "macos" => "mac os x",
-            "windows" => "windows",
-            other => other,
-        },
+fn repository_os_name() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "mac os x",
+        "windows" => "windows",
+        other => other,
     }
 }
 
-fn repository_os_arch(architecture: InterpreterHostArchitecture) -> &'static str {
-    match architecture {
-        InterpreterHostArchitecture::AArch64 => "aarch64",
-        InterpreterHostArchitecture::X86_64 => "x86_64",
-        InterpreterHostArchitecture::Arm => "arm",
-        InterpreterHostArchitecture::Riscv64 => "riscv64",
-        InterpreterHostArchitecture::X86 => "x86",
-        InterpreterHostArchitecture::Mips => "mips",
-        InterpreterHostArchitecture::Mips64 => "mips64",
-        InterpreterHostArchitecture::PowerPc => "powerpc",
-        InterpreterHostArchitecture::PowerPc64 => "powerpc64",
-        InterpreterHostArchitecture::Unknown => std::env::consts::ARCH,
-    }
+fn repository_os_arch() -> &'static str {
+    std::env::consts::ARCH
 }
 
 fn bzlmod_repository_environment(
     repo_environment: &[ClientEnvironmentVariable],
     root_config: Option<&LegacyBuckConfig>,
     workspace: Option<&str>,
-    platform: InterpreterHostPlatform,
-    architecture: InterpreterHostArchitecture,
 ) -> BTreeMap<String, String> {
     let mut env = repo_environment
         .iter()
@@ -916,6 +897,14 @@ fn bzlmod_repository_environment(
         })
         .collect::<BTreeMap<_, _>>();
     let client_env = env.clone();
+    env.insert(
+        BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
+        repository_os_name().to_owned(),
+    );
+    env.insert(
+        BZLMOD_REPOSITORY_OS_ARCH_ENV.to_owned(),
+        repository_os_arch().to_owned(),
+    );
     if let Some(repo_env) = root_config.and_then(|root_config| {
         root_config.get(BuckconfigKeyRef {
             section: "bazel",
@@ -936,14 +925,6 @@ fn bzlmod_repository_environment(
             }
         }
     }
-    env.insert(
-        BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
-        repository_os_name(platform).to_owned(),
-    );
-    env.insert(
-        BZLMOD_REPOSITORY_OS_ARCH_ENV.to_owned(),
-        repository_os_arch(architecture).to_owned(),
-    );
     env
 }
 
@@ -1032,8 +1013,6 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             &self.cmd_ctx.repo_environment,
             Some(&cells_and_configs.root_config),
             Some(&workspace),
-            self.interpreter_platform,
-            self.interpreter_architecture,
         ))?;
         let registry_epoch_hour = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1373,8 +1352,6 @@ impl DiceCommandUpdater<'_, '_> {
             &self.cmd_ctx.repo_environment,
             Some(root_config),
             Some(&workspace),
-            self.interpreter_platform,
-            self.interpreter_architecture,
         ));
         data.init_local_resource_registry();
         data.init_bxl_streaming_tracker();
@@ -1789,7 +1766,7 @@ mod tests {
     }
 
     #[test]
-    fn bzlmod_repository_environment_sets_fake_host_values() {
+    fn bzlmod_repository_environment_sets_local_host_values() {
         let env = bzlmod_repository_environment(
             &[
                 ClientEnvironmentVariable {
@@ -1807,18 +1784,16 @@ mod tests {
             ],
             None,
             None,
-            InterpreterHostPlatform::Linux,
-            InterpreterHostArchitecture::X86_64,
         );
 
         assert_eq!(Some("present"), env.get("USER_DEFINED").map(String::as_str));
         assert!(!env.contains_key("UNSET"));
         assert_eq!(
-            Some("linux"),
+            Some(repository_os_name()),
             env.get(BZLMOD_REPOSITORY_OS_NAME_ENV).map(String::as_str)
         );
         assert_eq!(
-            Some("x86_64"),
+            Some(repository_os_arch()),
             env.get(BZLMOD_REPOSITORY_OS_ARCH_ENV).map(String::as_str)
         );
     }
@@ -1834,6 +1809,8 @@ mod tests {
     INHERITED
     =REMOVED
     WORKSPACE=%bazel_workspace%/subdir
+    BUCK2_REPOSITORY_OS_NAME=linux
+    BUCK2_REPOSITORY_OS_ARCH=x86_64
 "#,
             )],
             "config",
@@ -1851,8 +1828,6 @@ mod tests {
             ],
             Some(&root_config),
             Some("/workspace"),
-            InterpreterHostPlatform::Unknown,
-            InterpreterHostArchitecture::Unknown,
         );
 
         assert_eq!(Some("1"), env.get("SET").map(String::as_str));
@@ -1864,6 +1839,14 @@ mod tests {
         assert_eq!(
             Some("/workspace/subdir"),
             env.get("WORKSPACE").map(String::as_str)
+        );
+        assert_eq!(
+            Some("linux"),
+            env.get(BZLMOD_REPOSITORY_OS_NAME_ENV).map(String::as_str)
+        );
+        assert_eq!(
+            Some("x86_64"),
+            env.get(BZLMOD_REPOSITORY_OS_ARCH_ENV).map(String::as_str)
         );
         Ok(())
     }

@@ -2,7 +2,9 @@ use std::fmt;
 
 use allocative::Allocative;
 use bz_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
+use bz_core::cells::external::ExternalCellOrigin;
 use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use bz_core::cells::external::external_cell_origin_for_cell;
 use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use bz_node::attrs::coercion_context::AttrCoercionContext;
 use starlark::any::ProvidesStaticType;
@@ -140,6 +142,30 @@ fn current_bazel_repo_name(eval: &mut Evaluator) -> bz_error::Result<String> {
     Ok(bzlmod_canonical_repo_name_for_cell(cell_name).unwrap_or_else(|| cell_name.to_owned()))
 }
 
+fn current_bazel_module_name(eval: &mut Evaluator) -> bz_error::Result<String> {
+    let cell_name = BuildContext::from_context(eval)?.cell_info().name().name();
+    let cell_name = cell_name.as_str();
+    if cell_name == "root" {
+        return Ok(String::new());
+    }
+    match external_cell_origin_for_cell(cell_name) {
+        Some(ExternalCellOrigin::Bzlmod(setup)) => Ok(setup.module_name.to_string()),
+        _ => {
+            let repo = current_bazel_repo_name(eval)?;
+            Ok(repo.strip_suffix('+').unwrap_or(&repo).to_owned())
+        }
+    }
+}
+
+fn current_bazel_module_version(eval: &mut Evaluator) -> bz_error::Result<String> {
+    let cell_name = BuildContext::from_context(eval)?.cell_info().name().name();
+    let cell_name = cell_name.as_str();
+    match external_cell_origin_for_cell(cell_name) {
+        Some(ExternalCellOrigin::Bzlmod(setup)) => Ok(setup.version.to_string()),
+        _ => Ok(String::new()),
+    }
+}
+
 #[starlark_module]
 fn bazel_native_module(builder: &mut GlobalsBuilder) {
     fn existing_rule<'v>(
@@ -166,6 +192,14 @@ fn bazel_native_module(builder: &mut GlobalsBuilder) {
             .base_path()?
             .path()
             .to_string())
+    }
+
+    fn module_name(eval: &mut Evaluator) -> starlark::Result<String> {
+        Ok(current_bazel_module_name(eval)?)
+    }
+
+    fn module_version(eval: &mut Evaluator) -> starlark::Result<String> {
+        Ok(current_bazel_module_version(eval)?)
     }
 
     fn register_toolchains<'v>(
@@ -246,6 +280,17 @@ fn bazel_build_setting_rules(builder: &mut GlobalsBuilder) {
     }
 }
 
+#[starlark_module]
+fn bazel_native_toplevels(builder: &mut GlobalsBuilder) {
+    fn module_name(eval: &mut Evaluator) -> starlark::Result<String> {
+        Ok(current_bazel_module_name(eval)?)
+    }
+
+    fn module_version(eval: &mut Evaluator) -> starlark::Result<String> {
+        Ok(current_bazel_module_version(eval)?)
+    }
+}
+
 pub(crate) fn register_bazel_native(builder: &mut GlobalsBuilder) {
     builder.namespace("native", |globals| {
         globals.set("bazel_version", BZLMOD_BAZEL_COMPAT_VERSION);
@@ -289,4 +334,5 @@ pub(crate) fn register_bazel_native(builder: &mut GlobalsBuilder) {
 
 pub(crate) fn register_bazel_native_toplevels(builder: &mut GlobalsBuilder) {
     bazel_build_setting_rules(builder);
+    bazel_native_toplevels(builder);
 }

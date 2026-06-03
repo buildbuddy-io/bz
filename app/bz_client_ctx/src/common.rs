@@ -55,6 +55,8 @@ const BAZEL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:java_language_v
 const BAZEL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:java_runtime_version";
 const BAZEL_TOOL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:tool_java_language_version";
 const BAZEL_TOOL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:tool_java_runtime_version";
+const BAZEL_EXTRA_BZLMOD_DEPS: &str = "bazel.extra_bzlmod_deps";
+const LLVM_BZLMOD_DEP: &str = "llvm@0.8.4";
 const LLVM_TOOLCHAIN_PATTERN: &str = "@llvm//toolchain:all";
 const LLVM_LINUX_X86_64_PLATFORM: &str = "@llvm//platforms:linux_x86_64";
 const LLVM_MACOS_AARCH64_PLATFORM: &str = "@llvm//platforms:macos_aarch64";
@@ -712,6 +714,29 @@ impl CommonBuildConfigurationOptions {
         ))
     }
 
+    fn llvm_bzlmod_dep_override(
+        &self,
+        matches: BuckArgMatches<'_>,
+    ) -> Option<(usize, ConfigOverride)> {
+        if !(self.llvm || self.linux2mac || self.mac2linux) {
+            return None;
+        }
+
+        let index = ["llvm", "linux2mac", "mac2linux"]
+            .iter()
+            .filter_map(|name| Self::flag_last_index(matches, name))
+            .max()?;
+
+        Some((
+            index,
+            ConfigOverride {
+                cell: None,
+                config_override: format!("{BAZEL_EXTRA_BZLMOD_DEPS}={LLVM_BZLMOD_DEP}"),
+                config_type: ConfigType::Value as i32,
+            },
+        ))
+    }
+
     fn llvm_cross_platform_settings(
         &self,
         matches: BuckArgMatches<'_>,
@@ -1028,6 +1053,9 @@ impl CommonBuildConfigurationOptions {
         let mut ordered_merged_configs: Vec<(usize, ConfigOverride)> = config_file_args;
         ordered_merged_configs.extend(config_values_args);
         ordered_merged_configs.extend(bazel_command_line_build_setting_arg);
+        if let Some(llvm_bzlmod_dep) = self.llvm_bzlmod_dep_override(matches) {
+            ordered_merged_configs.push(llvm_bzlmod_dep);
+        }
         if let Some(host_platform_constraints) = self.bazel_host_platform_constraints(matches) {
             ordered_merged_configs.push(host_platform_constraints);
         }
@@ -1682,11 +1710,15 @@ mod tests {
             .config
             .config_overrides(matches, &immediate_ctx, &cwd)?;
 
-        assert_eq!(overrides.len(), 1);
-        assert_eq!(
-            overrides[0].config_override,
-            "bazel.command_line_build_settings=list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all"
-        );
+        let override_values = overrides
+            .iter()
+            .map(|override_| override_.config_override.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(override_values.len(), 2);
+        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.4"));
+        assert!(override_values.contains(
+            &"bazel.command_line_build_settings=list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all"
+        ));
         Ok(())
     }
 
@@ -1716,7 +1748,8 @@ mod tests {
             .iter()
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(override_values.len(), 2);
+        assert_eq!(override_values.len(), 3);
+        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.4"));
 
         let build_settings = override_values
             .iter()
@@ -1767,7 +1800,8 @@ mod tests {
             .iter()
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(override_values.len(), 2);
+        assert_eq!(override_values.len(), 3);
+        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.4"));
 
         let build_settings = override_values
             .iter()
