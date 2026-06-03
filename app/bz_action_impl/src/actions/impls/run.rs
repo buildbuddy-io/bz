@@ -3406,21 +3406,7 @@ impl RunAction {
             else {
                 continue;
             };
-            Self::add_bazel_external_repo_path_alias(
-                inputs,
-                &mut aliases,
-                artifact_fs,
-                bazel_execroot,
-                &repo,
-                source_root.as_ref(),
-                path.as_ref(),
-            )?;
-
-            if path.starts_with("bin/")
-                && fs_util::try_exists(artifact_fs.fs().resolve(source_root.join(
-                    ForwardRelativePathBuf::unchecked_new("lib".to_owned()),
-                )))?
-            {
+            if path.starts_with("bin/") {
                 Self::add_bazel_external_repo_path_alias(
                     inputs,
                     &mut aliases,
@@ -3428,7 +3414,31 @@ impl RunAction {
                     bazel_execroot,
                     &repo,
                     source_root.as_ref(),
-                    "lib",
+                    "bin",
+                )?;
+
+                if fs_util::try_exists(artifact_fs.fs().resolve(source_root.join(
+                    ForwardRelativePathBuf::unchecked_new("lib".to_owned()),
+                )))? {
+                    Self::add_bazel_external_repo_path_alias(
+                        inputs,
+                        &mut aliases,
+                        artifact_fs,
+                        bazel_execroot,
+                        &repo,
+                        source_root.as_ref(),
+                        "lib",
+                    )?;
+                }
+            } else {
+                Self::add_bazel_external_repo_path_alias(
+                    inputs,
+                    &mut aliases,
+                    artifact_fs,
+                    bazel_execroot,
+                    &repo,
+                    source_root.as_ref(),
+                    path.as_ref(),
                 )?;
             }
         }

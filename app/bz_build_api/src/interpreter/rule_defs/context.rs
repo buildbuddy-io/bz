@@ -629,8 +629,11 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn label<'v>(
         this: &AnalysisActions<'v>,
-    ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>> {
-        Ok(NoneOr::from_option(this.bazel_label()))
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkProvidersLabel>>> {
+        Ok(NoneOr::from_option(this.bazel_label().map(|label| {
+            heap.alloc_typed(StarlarkProvidersLabel::new(label.as_ref().label().unconfigured()))
+        })))
     }
 
     #[starlark(attribute)]
@@ -3397,8 +3400,11 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn label<'v>(
         this: RefAnalysisContext<'v>,
-    ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>> {
-        Ok(NoneOr::from_option(this.0.label))
+        heap: Heap<'v>,
+    ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkProvidersLabel>>> {
+        Ok(NoneOr::from_option(this.0.label.map(|label| {
+            heap.alloc_typed(StarlarkProvidersLabel::new(label.as_ref().label().unconfigured()))
+        })))
     }
 
     /// An opaque value that can be indexed with a plugin kind to get a list of the available plugin
