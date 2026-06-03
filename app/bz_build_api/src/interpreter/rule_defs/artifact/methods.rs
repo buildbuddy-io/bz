@@ -72,6 +72,27 @@ fn artifact_owner_label<'v>(
     }
 }
 
+fn bazel_project_path(path: &str) -> bz_error::Result<&ForwardRelativePath> {
+    if path == "." {
+        Ok(ForwardRelativePath::empty())
+    } else {
+        ForwardRelativePath::new(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bazel_project_path;
+
+    #[test]
+    fn bazel_project_path_dot_is_empty() -> bz_error::Result<()> {
+        assert_eq!(bazel_project_path(".")?.as_str(), "");
+        assert_eq!(bazel_project_path("foo/bar")?.as_str(), "foo/bar");
+        assert!(bazel_project_path("./foo").is_err());
+        Ok(())
+    }
+}
+
 #[derive(StarlarkTypeRepr, AllocValue)]
 pub enum EitherStarlarkInputArtifact<'v> {
     Artifact(StarlarkArtifact),
@@ -219,7 +240,7 @@ fn input_artifact_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] path: &str,
         #[starlark(require = named, default = false)] hide_prefix: bool,
     ) -> starlark::Result<EitherStarlarkInputArtifact<'v>> {
-        let path = ForwardRelativePath::new(path)?;
+        let path = bazel_project_path(path)?;
         Ok(this.project(path, hide_prefix)?)
     }
 

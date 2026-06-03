@@ -6,6 +6,7 @@ use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::Valu
 use bz_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_is_singleton;
 use bz_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 use bz_build_api::interpreter::rule_defs::context::bazel_analysis_context_declare_file;
+use bz_build_api::interpreter::rule_defs::context::bazel_ctx_is_exec_configuration;
 use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
 use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_with_generated_inits_empty_files_supplier;
 use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
@@ -175,22 +176,28 @@ fn repo_mapping_cell_from_artifact<'v>(
     Ok(Some(repo_mapping_cell_from_bazel_path(path.as_str())))
 }
 
-fn repo_mapping_ctx_cell<'v>(
-    ctx: Value<'v>,
-    heap: Heap<'v>,
-) -> bz_error::Result<Option<String>> {
+fn repo_mapping_ctx_cell<'v>(ctx: Value<'v>, heap: Heap<'v>) -> bz_error::Result<Option<String>> {
     let label = ctx.get_attr_error("label", heap)?;
     if label.is_none() {
         return Ok(None);
     }
-    let label = StarlarkConfiguredProvidersLabel::from_value(label).ok_or_else(|| {
-        bz_error::Error::from(BazelPythonError::ExpectedLabel(
-            label.to_string_for_type_error(),
-        ))
-    })?;
-    Ok(Some(
-        label.label().target().pkg().cell_name().as_str().to_owned(),
-    ))
+    if let Some(label) = StarlarkConfiguredProvidersLabel::from_value(label) {
+        return Ok(Some(
+            label.label().target().pkg().cell_name().as_str().to_owned(),
+        ));
+    }
+    if let Some(label) = StarlarkProvidersLabel::from_value(label) {
+        return Ok(Some(
+            label.label().target().pkg().cell_name().as_str().to_owned(),
+        ));
+    }
+    if let Some(label) = StarlarkConfiguredTargetLabel::from_value(label) {
+        return Ok(Some(label.label().pkg().cell_name().as_str().to_owned()));
+    }
+    if let Some(label) = StarlarkTargetLabel::from_value(label) {
+        return Ok(Some(label.label().pkg().cell_name().as_str().to_owned()));
+    }
+    Err(BazelPythonError::ExpectedLabel(label.to_string_for_type_error()).into())
 }
 
 fn repo_mapping_symlink_path<'v>(heap: Heap<'v>, symlink: Value<'v>) -> starlark::Result<String> {
@@ -280,6 +287,9 @@ fn repo_mapping_manifest_content<'v>(
 }
 
 fn ctx_is_tool_configuration<'v>(ctx: Value<'v>, heap: Heap<'v>) -> starlark::Result<bool> {
+    if let Some(is_exec) = bazel_ctx_is_exec_configuration(ctx, heap)? {
+        return Ok(is_exec);
+    }
     let label = ctx.get_attr_error("label", heap)?;
     if label.is_none() {
         return Ok(false);

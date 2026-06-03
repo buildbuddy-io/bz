@@ -13,6 +13,7 @@ use std::convert::Infallible;
 use bz_interpreter::types::cell_path::StarlarkCellPath;
 use bz_interpreter::types::cell_root::CellRoot;
 use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use bz_interpreter::types::project_root::StarlarkProjectRoot;
 use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
@@ -62,6 +63,7 @@ impl<'v> ValueAsCommandLineLike<'v> {
         check!(StarlarkCellPath);
         check!(StarlarkTargetLabel);
         check!(StarlarkConfiguredProvidersLabel);
+        check!(StarlarkProvidersLabel);
         check!(CellRoot);
         check!(StarlarkProjectRoot);
 

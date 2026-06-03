@@ -35,6 +35,7 @@ use bz_hash::BuckHashMap;
 use bz_hash::BuckIndexSet;
 use bz_interpreter::types::cell_root::CellRoot;
 use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use bz_interpreter::types::project_root::StarlarkProjectRoot;
 use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use starlark::any::ProvidesStaticType;
@@ -358,6 +359,34 @@ impl<'v> CommandLineArgLike<'v> for StarlarkConfiguredProvidersLabel {
     }
 }
 
+impl<'v> CommandLineArgLike<'v> for StarlarkProvidersLabel {
+    fn register_me(&self) {
+        command_line_arg_like_impl!(StarlarkProvidersLabel::starlark_type_repr());
+    }
+
+    fn add_to_command_line(
+        &self,
+        cli: &mut dyn CommandLineBuilder,
+        _context: &mut dyn CommandLineContext,
+        _artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> bz_error::Result<()> {
+        cli.push_arg(self.to_string());
+        Ok(())
+    }
+
+    fn contains_arg_attr(&self) -> bool {
+        false
+    }
+
+    fn visit_write_to_file_macros(
+        &self,
+        _visitor: &mut dyn WriteToFileMacroVisitor,
+        _artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> bz_error::Result<()> {
+        Ok(())
+    }
+}
+
 impl<'v> CommandLineArgLike<'v> for CellRoot {
     fn register_me(&self) {
         command_line_arg_like_impl!(CellRoot::starlark_type_repr());
@@ -555,10 +584,7 @@ pub trait CommandLineContext {
     fn next_macro_file_path(&mut self) -> bz_error::Result<RelativePathBuf>;
 
     /// Register a generated parameter file and return the path to pass on the command line.
-    fn add_param_file(
-        &mut self,
-        _content: Vec<u8>,
-    ) -> bz_error::Result<CommandLineLocation<'_>> {
+    fn add_param_file(&mut self, _content: Vec<u8>) -> bz_error::Result<CommandLineLocation<'_>> {
         Err(CommandLineContextError::ParamFileNotSupported.into())
     }
 

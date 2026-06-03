@@ -343,6 +343,7 @@ fn project_declared_artifact() -> bz_error::Result<()> {
                 assert_eq("so", unbound.extension)
             "#
         ))?;
+
     Ok(())
 }
 

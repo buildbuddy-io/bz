@@ -638,7 +638,9 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkProvidersLabel>>> {
         Ok(NoneOr::from_option(this.bazel_label().map(|label| {
-            heap.alloc_typed(StarlarkProvidersLabel::new(label.as_ref().label().unconfigured()))
+            heap.alloc_typed(StarlarkProvidersLabel::new(
+                label.as_ref().label().unconfigured(),
+            ))
         })))
     }
 
@@ -1171,12 +1173,10 @@ pub(crate) fn bazel_shell_tokenize(option_string: &str) -> bz_error::Result<Vec<
                 quotation = None;
             } else if c == '\\' && quote == '"' {
                 let Some(next) = chars.next() else {
-                    return Err(bz_error::Error::from(
-                        AnalysisContextError::Tokenization {
-                            message: "backslash at end of string".to_owned(),
-                            option: option_string.to_owned(),
-                        },
-                    ));
+                    return Err(bz_error::Error::from(AnalysisContextError::Tokenization {
+                        message: "backslash at end of string".to_owned(),
+                        option: option_string.to_owned(),
+                    }));
                 };
                 if next != '\\' && next != '"' {
                     token.push('\\');
@@ -1195,12 +1195,10 @@ pub(crate) fn bazel_shell_tokenize(option_string: &str) -> bz_error::Result<Vec<
             }
         } else if c == '\\' {
             let Some(next) = chars.next() else {
-                return Err(bz_error::Error::from(
-                    AnalysisContextError::Tokenization {
-                        message: "backslash at end of string".to_owned(),
-                        option: option_string.to_owned(),
-                    },
-                ));
+                return Err(bz_error::Error::from(AnalysisContextError::Tokenization {
+                    message: "backslash at end of string".to_owned(),
+                    option: option_string.to_owned(),
+                }));
             };
             token.push(next);
         } else {
@@ -1209,12 +1207,10 @@ pub(crate) fn bazel_shell_tokenize(option_string: &str) -> bz_error::Result<Vec<
     }
 
     if quotation.is_some() {
-        return Err(bz_error::Error::from(
-            AnalysisContextError::Tokenization {
-                message: "unterminated quotation".to_owned(),
-                option: option_string.to_owned(),
-            },
-        ));
+        return Err(bz_error::Error::from(AnalysisContextError::Tokenization {
+            message: "unterminated quotation".to_owned(),
+            option: option_string.to_owned(),
+        }));
     }
 
     if force_token || !token.is_empty() {
@@ -1871,6 +1867,25 @@ fn bazel_is_exec_configuration(
     label.is_some_and(|label| label.label().target().cfg().is_marked_as_exec_platform())
 }
 
+pub fn bazel_ctx_is_exec_configuration<'v>(
+    ctx: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Option<bool>> {
+    if let Some(actions) = ctx.downcast_ref::<AnalysisActions>() {
+        return Ok(Some(bazel_is_exec_configuration(actions.bazel_label())));
+    }
+    if let Some(ctx) = ctx.downcast_ref::<AnalysisContext>() {
+        return Ok(Some(bazel_is_exec_configuration(ctx.label)));
+    }
+    let Some(actions) = ctx.get_attr("actions", heap)? else {
+        return Ok(None);
+    };
+    let Some(actions) = actions.downcast_ref::<AnalysisActions>() else {
+        return Ok(None);
+    };
+    Ok(Some(bazel_is_exec_configuration(actions.bazel_label())))
+}
+
 fn bazel_platform_label(label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>) -> String {
     label
         .and_then(|label| label.label().target().cfg().label().ok().map(str::to_owned))
@@ -2112,9 +2127,7 @@ fn bazel_files_from_attr_value<'v>(value: Value<'v>) -> bz_error::Result<Vec<Val
     Ok(files)
 }
 
-fn bazel_executable_from_attr_value<'v>(
-    value: Value<'v>,
-) -> bz_error::Result<Option<Value<'v>>> {
+fn bazel_executable_from_attr_value<'v>(value: Value<'v>) -> bz_error::Result<Option<Value<'v>>> {
     if value.is_none() {
         return Ok(None);
     }
@@ -2864,9 +2877,8 @@ fn collect_template_variables_from_info(
     info: &FrozenTemplateVariableInfo,
     variables: &mut Vec<(String, String)>,
 ) -> bz_error::Result<()> {
-    let dict = FrozenDictRef::from_frozen_value(info.variables_raw()).ok_or_else(|| {
-        bz_error::internal_error!("TemplateVariableInfo.variables is not a dict")
-    })?;
+    let dict = FrozenDictRef::from_frozen_value(info.variables_raw())
+        .ok_or_else(|| bz_error::internal_error!("TemplateVariableInfo.variables is not a dict"))?;
     for (key, value) in dict.iter() {
         let key = key.to_value().unpack_str().ok_or_else(|| {
             bz_error::internal_error!("TemplateVariableInfo variable key is not a string")
@@ -3443,7 +3455,9 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkProvidersLabel>>> {
         Ok(NoneOr::from_option(this.0.label.map(|label| {
-            heap.alloc_typed(StarlarkProvidersLabel::new(label.as_ref().label().unconfigured()))
+            heap.alloc_typed(StarlarkProvidersLabel::new(
+                label.as_ref().label().unconfigured(),
+            ))
         })))
     }
 
@@ -3479,10 +3493,10 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
             );
         };
         if !this.0.is_bazel_build_setting {
-            return Err(
-                bz_error::Error::from(AnalysisContextError::NonBuildSetting(label.to_string()))
-                    .into(),
-            );
+            return Err(bz_error::Error::from(AnalysisContextError::NonBuildSetting(
+                label.to_string(),
+            ))
+            .into());
         }
 
         let target = label.label().target();

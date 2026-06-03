@@ -350,7 +350,8 @@ pub(crate) fn new_bazel_input_file_analysis_result(
     label: &ConfiguredTargetLabel,
 ) -> bz_error::Result<AnalysisResult> {
     let heap = FrozenHeap::new();
-    let path = PackageRelativePath::new(label.unconfigured().name().as_str())?.to_arc();
+    let path =
+        bazel_source_target_name_to_package_path(label.unconfigured().name().as_str())?.to_arc();
     let source = SourceArtifact::new(SourcePath::new(label.unconfigured().pkg().dupe(), path));
     let source = heap.alloc(StarlarkArtifact::new_source(source.into(), false));
     let default_info = FrozenDefaultInfo::for_file_target(&heap, source);
@@ -368,6 +369,16 @@ pub(crate) fn new_bazel_input_file_analysis_result(
         0,
         None,
     ))
+}
+
+fn bazel_source_target_name_to_package_path(
+    target_name: &str,
+) -> bz_error::Result<&PackageRelativePath> {
+    if target_name == "." {
+        Ok(PackageRelativePath::empty())
+    } else {
+        PackageRelativePath::new(target_name)
+    }
 }
 
 async fn run_bazel_output_file_analysis_underlying(
@@ -775,7 +786,9 @@ fn bazel_source_target_dependency<'v>(
     label: &ConfiguredProvidersLabel,
     ctx: &mut dyn AttrResolutionContext<'v>,
 ) -> bz_error::Result<Value<'v>> {
-    let path = PackageRelativePath::new(label.target().unconfigured().name().as_str())?.to_arc();
+    let path =
+        bazel_source_target_name_to_package_path(label.target().unconfigured().name().as_str())?
+            .to_arc();
     let source = SourceArtifact::new(SourcePath::new(
         label.target().unconfigured().pkg().dupe(),
         path,
@@ -1891,9 +1904,7 @@ fn bazel_config_list(value: Option<Arc<str>>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-async fn bazel_cpp_options(
-    dice: &mut DiceComputations<'_>,
-) -> bz_error::Result<BazelCppOptions> {
+async fn bazel_cpp_options(dice: &mut DiceComputations<'_>) -> bz_error::Result<BazelCppOptions> {
     let root_config = dice.get_legacy_root_config_on_dice().await?;
     let mut config = root_config.view(dice);
     Ok(BazelCppOptions {
@@ -2449,5 +2460,21 @@ pub fn get_user_defined_rule_spec(
     Impl {
         module,
         name: rule_type.name.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bazel_source_target_name_to_package_path;
+
+    #[test]
+    fn bazel_source_target_name_dot_is_package_root() -> bz_error::Result<()> {
+        assert_eq!(bazel_source_target_name_to_package_path(".")?.as_str(), "");
+        assert_eq!(
+            bazel_source_target_name_to_package_path("foo/bar")?.as_str(),
+            "foo/bar"
+        );
+        assert!(bazel_source_target_name_to_package_path("./foo").is_err());
+        Ok(())
     }
 }
