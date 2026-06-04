@@ -52,7 +52,6 @@ use re_grpc_proto::build::bazel::remote::execution::v2::ExecuteResponse as GExec
 use re_grpc_proto::build::bazel::remote::execution::v2::ExecutedActionMetadata;
 use re_grpc_proto::build::bazel::remote::execution::v2::ExecutionPolicy;
 use re_grpc_proto::build::bazel::remote::execution::v2::FindMissingBlobsRequest;
-use re_grpc_proto::build::bazel::remote::execution::v2::FindMissingBlobsResponse;
 use re_grpc_proto::build::bazel::remote::execution::v2::GetActionResultRequest;
 use re_grpc_proto::build::bazel::remote::execution::v2::GetCapabilitiesRequest;
 use re_grpc_proto::build::bazel::remote::execution::v2::OutputDirectory;
@@ -108,6 +107,7 @@ use crate::stats::CountingConnector;
 const DEFAULT_MAX_TOTAL_BATCH_SIZE: usize = 4 * 1000 * 1000;
 const DEFAULT_REMOTE_MAX_CONNECTIONS: usize = 100;
 const DEFAULT_REMOTE_MAX_CONCURRENCY_PER_CONNECTION: usize = 100;
+const SAMPLE_DIGEST_HASH_LEN: usize = 64;
 
 fn tdigest_to(tdigest: TDigest) -> Digest {
     Digest {
@@ -122,6 +122,35 @@ fn tdigest_from(digest: Digest) -> TDigest {
         size_in_bytes: digest.size_bytes,
         ..Default::default()
     }
+}
+
+fn compute_max_find_missing_blobs_digests_per_message(
+    instance_name: &InstanceName,
+    max_message_size: usize,
+) -> usize {
+    let overhead = FindMissingBlobsRequest {
+        instance_name: instance_name.as_str().to_owned(),
+        ..Default::default()
+    }
+    .encoded_len();
+    let digest_tag_size = FindMissingBlobsRequest {
+        blob_digests: vec![Digest::default()],
+        ..Default::default()
+    }
+    .encoded_len()
+    .saturating_sub(FindMissingBlobsRequest::default().encoded_len());
+    let digest_size = Digest {
+        hash: "0".repeat(SAMPLE_DIGEST_HASH_LEN),
+        size_bytes: 1,
+    }
+    .encoded_len()
+        + digest_tag_size;
+
+    max_message_size
+        .saturating_sub(overhead)
+        .checked_div(digest_size.max(1))
+        .unwrap_or(0)
+        .max(1)
 }
 
 fn tstatus_ok() -> TStatus {
@@ -786,6 +815,7 @@ pub struct REClient {
     grpc_clients: GRPCClients,
     capabilities: RECapabilities,
     instance_name: InstanceName,
+    max_find_missing_blobs_digests_per_message: usize,
     // buck2 calls find_missing for same blobs
     find_missing_cache: Mutex<FindMissingCache>,
     bystream_compressor: Option<Compressor>,
@@ -860,11 +890,17 @@ impl REClient {
         instance_name: InstanceName,
         bystream_compressor: Option<Compressor>,
     ) -> Self {
+        let max_find_missing_blobs_digests_per_message =
+            compute_max_find_missing_blobs_digests_per_message(
+                &instance_name,
+                capabilities.max_total_batch_size,
+            );
         REClient {
             runtime_opts,
             grpc_clients,
             capabilities,
             instance_name,
+            max_find_missing_blobs_digests_per_message,
             find_missing_cache: Mutex::new(FindMissingCache {
                 cache: LruCache::new(NonZeroUsize::new(500_000).unwrap()),
                 ttl: Duration::from_hours(12), // 12 hours TODO: Tune this parameter
@@ -1176,57 +1212,66 @@ impl REClient {
         let mut remote_results: HashMap<TDigest, DigestRemoteState> = HashMap::new();
         let mut digests_to_check: Vec<TDigest> = Vec::new();
 
-        let mut digest_iter = request.digests.iter();
-        while digest_iter.len() > 0 {
-            // Sort our blobs based on what action we need to take
-            {
-                let mut find_missing_cache = self.find_missing_cache.lock().unwrap();
-                for digest in digest_iter.by_ref() {
-                    if let Some(rs) = find_missing_cache.get(digest) {
-                        // We have our final result already cached
-                        remote_results.insert(digest.clone(), rs);
-                    } else {
-                        // We can check this blob
-                        digests_to_check.push(digest.clone());
-                    }
-                    if digests_to_check.len() >= 100 {
-                        break;
-                    }
+        // Sort our blobs based on what action we need to take.
+        {
+            let mut find_missing_cache = self.find_missing_cache.lock().unwrap();
+            for digest in &request.digests {
+                if let Some(rs) = find_missing_cache.get(digest) {
+                    // We have our final result already cached.
+                    remote_results.insert(digest.clone(), rs);
+                } else {
+                    // We can check this blob.
+                    digests_to_check.push(digest.clone());
                 }
             }
+        }
 
-            // Send a request and notify others of the result
-            if !digests_to_check.is_empty() {
-                tracing::debug!(num_digests = digests_to_check.len(), "FindMissingBlobs");
-                let (mut cas_client, _permit) = self.grpc_clients.cas_client().await?;
-                let missing_blobs = cas_client
-                    .find_missing_blobs(with_re_metadata(
-                        FindMissingBlobsRequest {
-                            instance_name: self.instance_name.as_str().to_owned(),
-                            blob_digests: digests_to_check.map(|b| tdigest_to(b.clone())),
-                            ..Default::default()
-                        },
-                        metadata.clone(),
-                        self.runtime_opts.use_fbcode_metadata,
-                    ))
-                    .await
-                    .context("Failed to request what blobs are not present on remote")?;
-                let resp: FindMissingBlobsResponse = missing_blobs.into_inner();
+        // Send requests and notify others of the results.
+        if !digests_to_check.is_empty() {
+            let find_missing_futures = digests_to_check
+                .chunks(self.max_find_missing_blobs_digests_per_message)
+                .map(|digests| {
+                    let digests = digests.to_vec();
+                    let metadata = metadata.clone();
+                    async move {
+                        tracing::debug!(num_digests = digests.len(), "FindMissingBlobs");
+                        let (mut cas_client, _permit) = self.grpc_clients.cas_client().await?;
+                        let missing_blobs = cas_client
+                            .find_missing_blobs(with_re_metadata(
+                                FindMissingBlobsRequest {
+                                    instance_name: self.instance_name.as_str().to_owned(),
+                                    blob_digests: digests
+                                        .iter()
+                                        .cloned()
+                                        .map(tdigest_to)
+                                        .collect::<Vec<_>>(),
+                                    ..Default::default()
+                                },
+                                metadata,
+                                self.runtime_opts.use_fbcode_metadata,
+                            ))
+                            .await
+                            .context("Failed to request what blobs are not present on remote")?;
+                        anyhow::Ok((digests, missing_blobs.into_inner()))
+                    }
+                });
+            let find_missing_responses =
+                bz_util::future::try_join_all(find_missing_futures).await?;
 
-                // Update the results and the cache
-                let mut find_missing_cache = self.find_missing_cache.lock().unwrap();
-                for digest in &digests_to_check {
+            // Update the results and the cache.
+            let mut find_missing_cache = self.find_missing_cache.lock().unwrap();
+            for (digests, resp) in find_missing_responses {
+                for digest in &digests {
                     remote_results.insert(digest.clone(), DigestRemoteState::ExistsOnRemote);
                     find_missing_cache.put(digest.clone(), DigestRemoteState::ExistsOnRemote);
                 }
 
-                for digest in &resp.missing_blob_digests.map(|d| tdigest_from(d.clone())) {
+                for digest in resp.missing_blob_digests.into_iter().map(tdigest_from) {
                     // If it's present in the MissingBlobsResponse, it's expired on the remote and
                     // needs to be refetched.
                     remote_results.insert(digest.clone(), DigestRemoteState::Missing);
-                    find_missing_cache.put(digest.clone(), DigestRemoteState::Missing);
+                    find_missing_cache.put(digest, DigestRemoteState::Missing);
                 }
-                digests_to_check.clear();
             }
         }
 

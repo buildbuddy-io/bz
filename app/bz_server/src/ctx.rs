@@ -181,9 +181,10 @@ fn parse_concurrency(requested: u32) -> Option<usize> {
 
 const ACTION_PARALLELISM_WITH_HEADROOM_PER_CPU: usize = 3;
 const MIN_AVAILABLE_MEMORY_FOR_ACTION_PARALLELISM_HEADROOM: u64 = 2 * 1024 * 1024 * 1024;
-const REMOTE_METADATA_PARALLELISM_MULTIPLIER: usize = 4;
-const MIN_REMOTE_METADATA_PARALLELISM: usize = 64;
-const MAX_REMOTE_METADATA_PARALLELISM: usize = 512;
+const DEFAULT_BAZEL_REMOTE_MAX_CONNECTIONS: usize = 100;
+const DEFAULT_BAZEL_REMOTE_MAX_CONCURRENCY_PER_CONNECTION: usize = 100;
+const DEFAULT_REMOTE_METADATA_PARALLELISM: usize =
+    DEFAULT_BAZEL_REMOTE_MAX_CONNECTIONS * DEFAULT_BAZEL_REMOTE_MAX_CONCURRENCY_PER_CONNECTION;
 
 #[derive(Clone, Copy)]
 enum ActionConcurrencySource {
@@ -244,11 +245,8 @@ fn action_concurrency_from_host_headroom(
     base.saturating_add(extra_parallelism).min(max_parallelism)
 }
 
-fn default_remote_metadata_concurrency(action_concurrency: usize) -> usize {
-    action_concurrency
-        .saturating_mul(REMOTE_METADATA_PARALLELISM_MULTIPLIER)
-        .max(MIN_REMOTE_METADATA_PARALLELISM)
-        .min(MAX_REMOTE_METADATA_PARALLELISM)
+fn default_remote_metadata_concurrency(_action_concurrency: usize) -> usize {
+    DEFAULT_REMOTE_METADATA_PARALLELISM
 }
 
 fn has_memory_headroom_for_action_parallelism(memory: SystemMemoryStats) -> bool {
@@ -1751,18 +1749,9 @@ mod tests {
     }
 
     #[test]
-    fn remote_metadata_concurrency_has_bazel_shaped_minimum() {
-        assert_eq!(default_remote_metadata_concurrency(10), 64);
-    }
-
-    #[test]
-    fn remote_metadata_concurrency_scales_independently_from_local_actions() {
-        assert_eq!(default_remote_metadata_concurrency(32), 128);
-    }
-
-    #[test]
-    fn remote_metadata_concurrency_is_capped() {
-        assert_eq!(default_remote_metadata_concurrency(1000), 512);
+    fn remote_metadata_concurrency_matches_bazel_grpc_defaults() {
+        assert_eq!(default_remote_metadata_concurrency(10), 10_000);
+        assert_eq!(default_remote_metadata_concurrency(1000), 10_000);
     }
 
     #[test]
