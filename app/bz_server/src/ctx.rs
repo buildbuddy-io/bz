@@ -185,6 +185,8 @@ const DEFAULT_BAZEL_REMOTE_MAX_CONNECTIONS: usize = 100;
 const DEFAULT_BAZEL_REMOTE_MAX_CONCURRENCY_PER_CONNECTION: usize = 100;
 const DEFAULT_REMOTE_METADATA_PARALLELISM: usize =
     DEFAULT_BAZEL_REMOTE_MAX_CONNECTIONS * DEFAULT_BAZEL_REMOTE_MAX_CONCURRENCY_PER_CONNECTION;
+const DEFAULT_REMOTE_ACTION_CACHE_PARALLELISM_PER_ACTION: usize = 16;
+const DEFAULT_REMOTE_ACTION_CACHE_MAX_PARALLELISM: usize = 256;
 
 #[derive(Clone, Copy)]
 enum ActionConcurrencySource {
@@ -251,6 +253,8 @@ fn default_remote_metadata_concurrency(_action_concurrency: usize) -> usize {
 
 fn default_remote_action_cache_concurrency(action_concurrency: usize) -> usize {
     action_concurrency
+        .saturating_mul(DEFAULT_REMOTE_ACTION_CACHE_PARALLELISM_PER_ACTION)
+        .min(DEFAULT_REMOTE_ACTION_CACHE_MAX_PARALLELISM)
 }
 
 fn has_memory_headroom_for_action_parallelism(memory: SystemMemoryStats) -> bool {
@@ -1774,9 +1778,10 @@ mod tests {
     }
 
     #[test]
-    fn remote_action_cache_concurrency_matches_action_concurrency() {
-        assert_eq!(default_remote_action_cache_concurrency(10), 10);
-        assert_eq!(default_remote_action_cache_concurrency(1000), 1000);
+    fn remote_action_cache_concurrency_scales_above_action_concurrency() {
+        assert_eq!(default_remote_action_cache_concurrency(1), 16);
+        assert_eq!(default_remote_action_cache_concurrency(10), 160);
+        assert_eq!(default_remote_action_cache_concurrency(1000), 256);
     }
 
     #[test]
