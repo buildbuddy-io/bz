@@ -690,6 +690,7 @@ pub(crate) async fn configure_exec_dep_with_modifiers(
     ctx: &mut DiceComputations<'_>,
     exec_dep: &TargetLabel,
     execution_platform_cfg: &ConfigurationData,
+    source_cfg: &ConfigurationData,
 ) -> ResultMaybeCompatible<ConfiguredTargetNode> {
     let (node, super_package) = ctx.get_target_node_with_super_package(exec_dep).await?;
 
@@ -738,9 +739,13 @@ pub(crate) async fn configure_exec_dep_with_modifiers(
         .with_buck_error_context(|| {
             format!("Resolving modifiers for exec dep target `{}`", exec_dep)
         })?;
-    let cfg_config =
-        apply_bazel_exec_command_line_build_settings(ctx, cfg_config, execution_platform_cfg)
-            .await?;
+    let cfg_config = apply_bazel_exec_command_line_build_settings(
+        ctx,
+        cfg_config,
+        execution_platform_cfg,
+        source_cfg,
+    )
+    .await?;
 
     // Create configuration pair with modifiers applied
     let cfg_pair = Configuration::new(cfg_config, None);
@@ -787,7 +792,7 @@ async fn check_execution_platform(
         .compute_join(exec_deps.iter(), |ctx, dep| {
             Box::pin(async move {
                 let cfg = exec_platform.cfg().dupe();
-                configure_exec_dep_with_modifiers(ctx, dep, &cfg)
+                configure_exec_dep_with_modifiers(ctx, dep, &cfg, &cfg)
                     .await
                     .map_err(|e| {
                         e.context(format!(

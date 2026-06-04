@@ -83,6 +83,7 @@ const CC_SHARED_LIBRARY_HINT_INFO: &str = "CcSharedLibraryHintInfo";
 const CC_TOOLCHAIN_INFO: &str = "CcToolchainInfo";
 const BAZEL_LINKER_PARAM_FILE_VARIABLE: &str = "linker_param_file";
 const BAZEL_LINKER_PARAM_FILE_PLACEHOLDER: &str = "LINKER_PARAM_FILE_PLACEHOLDER";
+const BAZEL_CC_PATH_VARIABLE_PREFIX: &str = "path:";
 const BAZEL_CC_ALL_COMPILE_ACTIONS: &[&str] = &[
     "c-compile",
     "c++-compile",
@@ -2593,6 +2594,26 @@ fn bazel_cc_feature_string<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Re
     bazel_cc_link_string(value, heap)
 }
 
+fn bazel_cc_feature_path_variable(
+    flag: &str,
+    variable_name: &str,
+) -> starlark::Result<Option<String>> {
+    let Some(path) = variable_name.strip_prefix(BAZEL_CC_PATH_VARIABLE_PREFIX) else {
+        return Ok(None);
+    };
+    if path.is_empty() {
+        return Err(bazel_cc_error(format!(
+            "Invalid toolchain configuration: expected path after 'path:' while parsing C++ toolchain flag `{flag}`"
+        )));
+    }
+    if path.starts_with('/') {
+        return Err(bazel_cc_error(format!(
+            "Invalid toolchain configuration: expected relative Unix-style path after 'path:' while parsing C++ toolchain flag `{flag}`"
+        )));
+    }
+    Ok(Some(path.to_owned()))
+}
+
 fn bazel_cc_expand_feature_flag<'v>(
     flag: &str,
     variables: Value<'v>,
@@ -2613,6 +2634,16 @@ fn bazel_cc_expand_feature_flag<'v>(
             )));
         };
         let variable_name = &after_start[..end];
+        if let Some(path) = bazel_cc_feature_path_variable(flag, variable_name)? {
+            expanded.push_str(&path);
+            rest = &after_start[end + 1..];
+            let Some(next_start) = rest.find("%{") else {
+                expanded.push_str(rest);
+                return Ok(expanded);
+            };
+            start = next_start;
+            continue;
+        }
         let value = bazel_cc_feature_variable(variables, locals, variable_name, heap)?.ok_or_else(
             || {
                 bazel_cc_error(format!(

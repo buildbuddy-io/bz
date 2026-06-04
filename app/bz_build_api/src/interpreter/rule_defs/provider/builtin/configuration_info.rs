@@ -73,6 +73,17 @@ fn bazel_native_option_key(key: &str) -> Option<String> {
     }
 }
 
+fn bazel_starlark_label_to_build_setting_key(key: &str) -> Option<String> {
+    let key = key.strip_prefix("@@")?;
+    let (repo, target) = key.split_once("//")?;
+    let cell = if repo.is_empty() { "root" } else { repo };
+    Some(format!("{cell}//{target}"))
+}
+
+fn bazel_build_setting_key(key: &str) -> String {
+    bazel_starlark_label_to_build_setting_key(key).unwrap_or_else(|| key.to_owned())
+}
+
 impl<'v, V: ValueLike<'v>> ConfigurationInfoGen<V> {
     pub fn to_config_setting_data(&self) -> ConfigSettingData {
         let constraints = DictRef::from_value(self.constraints.get().to_value())
@@ -109,7 +120,10 @@ impl<'v, V: ValueLike<'v>> ConfigurationInfoGen<V> {
         let build_settings = DictRef::from_value(self.build_settings.get().to_value())
             .expect("type checked on construction");
         for (k, v) in build_settings.iter() {
-            converted_build_settings.insert(k.to_value().to_str(), v.to_value().to_str());
+            converted_build_settings.insert(
+                bazel_build_setting_key(&k.to_value().to_str()),
+                v.to_value().to_str(),
+            );
         }
 
         ConfigSettingData {
@@ -478,6 +492,27 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
             values: ValueOfUnchecked::new(heap.alloc(new_values)),
             build_settings: ValueOfUnchecked::new(heap.alloc(new_build_settings)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bazel_build_setting_keys_from_starlark_labels_are_normalized() {
+        assert_eq!(
+            bazel_build_setting_key("@@//toolchain:runtime_stage"),
+            "root//toolchain:runtime_stage"
+        );
+        assert_eq!(
+            bazel_build_setting_key("@@rules_cc+//cc/compiler:msvc-cl"),
+            "rules_cc+//cc/compiler:msvc-cl"
+        );
+        assert_eq!(
+            bazel_build_setting_key("//command_line_option:platforms"),
+            "//command_line_option:platforms"
+        );
     }
 }
 

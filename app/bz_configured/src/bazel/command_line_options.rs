@@ -8,7 +8,11 @@ use bz_common::legacy_configs::view::LegacyBuckConfigView;
 use bz_core::configuration::data::BazelBuildSettingValue;
 use bz_core::configuration::data::ConfigurationData;
 use bz_core::provider::label::ProvidersLabel;
+use bz_core::target::label::label::TargetLabel;
 use bz_error::BuckErrorContext;
+use bz_node::attrs::coerced_attr::CoercedAttr;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::nodes::frontend::TargetGraphCalculation;
 use dice::DiceComputations;
 
 #[derive(Debug, bz_error::Error)]
@@ -29,6 +33,7 @@ const BAZEL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:java_language_v
 const BAZEL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:java_runtime_version";
 const BAZEL_TOOL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:tool_java_language_version";
 const BAZEL_TOOL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:tool_java_runtime_version";
+const BAZEL_UNIVERSAL_SCOPE: &str = "universal";
 
 fn bazel_config_lines(value: Option<Arc<str>>) -> Vec<String> {
     value
@@ -181,6 +186,70 @@ async fn apply_bazel_command_line_build_settings_impl(
     )
 }
 
+fn bazel_build_setting_scope_attr(value: &CoercedAttr) -> Option<&str> {
+    match value {
+        CoercedAttr::OneOf(value, _) => bazel_build_setting_scope_attr(value),
+        CoercedAttr::String(value) | CoercedAttr::EnumVariant(value) => Some(value.0.as_str()),
+        _ => None,
+    }
+}
+
+async fn bazel_build_setting_scope(
+    ctx: &mut DiceComputations<'_>,
+    setting: &str,
+) -> bz_error::Result<Option<String>> {
+    if setting.starts_with("//command_line_option:") {
+        return Ok(None);
+    }
+
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let cell_alias_resolver = ctx
+        .get_cell_alias_resolver(cell_resolver.root_cell())
+        .await?;
+    let target = TargetLabel::parse(
+        setting,
+        cell_resolver.root_cell(),
+        &cell_resolver,
+        &cell_alias_resolver,
+    )
+    .with_buck_error_context(|| format!("Parsing Bazel build setting `{setting}`"))?;
+    let node = ctx.get_target_node(&target).await?;
+    Ok(node
+        .attr_or_none("scope", AttrInspectOptions::All)
+        .and_then(|scope| bazel_build_setting_scope_attr(scope.value))
+        .map(str::to_owned))
+}
+
+async fn propagate_bazel_exec_starlark_build_settings(
+    ctx: &mut DiceComputations<'_>,
+    cfg: ConfigurationData,
+    source_cfg: &ConfigurationData,
+) -> bz_error::Result<ConfigurationData> {
+    if !cfg.is_bound() || !source_cfg.is_bound() {
+        return Ok(cfg);
+    }
+
+    let original_data = cfg.data()?.clone();
+    let mut data = original_data.clone();
+    for (key, value) in &source_cfg.data()?.build_settings {
+        if key.starts_with("//command_line_option:") || data.build_settings.contains_key(key) {
+            continue;
+        }
+        if bazel_build_setting_scope(ctx, key).await?.as_deref() == Some(BAZEL_UNIVERSAL_SCOPE) {
+            data.build_settings.insert(key.clone(), value.clone());
+        }
+    }
+    if data == original_data {
+        return Ok(cfg);
+    }
+
+    ConfigurationData::from_platform(
+        cfg.label()?.to_owned(),
+        data,
+        cfg.is_marked_as_exec_platform(),
+    )
+}
+
 pub(crate) async fn apply_bazel_command_line_build_settings(
     ctx: &mut DiceComputations<'_>,
     cfg: ConfigurationData,
@@ -197,11 +266,13 @@ pub(crate) async fn apply_bazel_exec_command_line_build_settings(
     ctx: &mut DiceComputations<'_>,
     cfg: ConfigurationData,
     execution_platform_cfg: &ConfigurationData,
+    source_cfg: &ConfigurationData,
 ) -> bz_error::Result<ConfigurationData> {
     if !cfg.is_bound() {
         return Ok(cfg);
     }
 
+    let cfg = propagate_bazel_exec_starlark_build_settings(ctx, cfg, source_cfg).await?;
     let settings = bazel_command_line_build_settings(ctx).await?;
     let settings = exec_bazel_command_line_build_settings(settings, execution_platform_cfg)?;
     apply_bazel_command_line_build_settings_impl(cfg, settings).await

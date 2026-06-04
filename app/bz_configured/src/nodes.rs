@@ -2281,6 +2281,7 @@ async fn compute_configured_target_node_no_transition(
     // We now need to replace the dummy exec config we used above with the real one
 
     let execution_platform_cfg = &execution_platform_cfg;
+    let source_cfg = resolved_configuration.cfg().cfg();
     let toolchain_deps = &gathered_deps.toolchain_deps;
     let exec_deps = &gathered_deps.exec_deps;
     let bazel_target_label = target_label.dupe();
@@ -2322,6 +2323,7 @@ async fn compute_configured_target_node_no_transition(
                         ctx,
                         target.target().unconfigured(),
                         execution_platform_cfg.cfg(),
+                        source_cfg,
                     )
                     .await;
 
