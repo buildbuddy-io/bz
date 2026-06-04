@@ -181,6 +181,10 @@ fn parse_concurrency(requested: u32) -> Option<usize> {
 
 const ACTION_PARALLELISM_WITH_HEADROOM_PER_CPU: usize = 3;
 const MIN_AVAILABLE_MEMORY_FOR_ACTION_PARALLELISM_HEADROOM: u64 = 2 * 1024 * 1024 * 1024;
+const DEFAULT_BAZEL_REMOTE_MAX_CONNECTIONS: usize = 100;
+const DEFAULT_BAZEL_REMOTE_MAX_CONCURRENCY_PER_CONNECTION: usize = 100;
+const DEFAULT_REMOTE_METADATA_PARALLELISM: usize =
+    DEFAULT_BAZEL_REMOTE_MAX_CONNECTIONS * DEFAULT_BAZEL_REMOTE_MAX_CONCURRENCY_PER_CONNECTION;
 
 #[derive(Clone, Copy)]
 enum ActionConcurrencySource {
@@ -241,8 +245,8 @@ fn action_concurrency_from_host_headroom(
     base.saturating_add(extra_parallelism).min(max_parallelism)
 }
 
-fn default_remote_metadata_concurrency(action_concurrency: usize) -> usize {
-    action_concurrency.max(1)
+fn default_remote_metadata_concurrency(_action_concurrency: usize) -> usize {
+    DEFAULT_REMOTE_METADATA_PARALLELISM
 }
 
 fn has_memory_headroom_for_action_parallelism(memory: SystemMemoryStats) -> bool {
@@ -1748,10 +1752,9 @@ mod tests {
     }
 
     #[test]
-    fn remote_metadata_concurrency_matches_action_concurrency() {
-        assert_eq!(default_remote_metadata_concurrency(0), 1);
-        assert_eq!(default_remote_metadata_concurrency(10), 10);
-        assert_eq!(default_remote_metadata_concurrency(1000), 1000);
+    fn remote_metadata_concurrency_matches_bazel_grpc_defaults() {
+        assert_eq!(default_remote_metadata_concurrency(10), 10_000);
+        assert_eq!(default_remote_metadata_concurrency(1000), 10_000);
     }
 
     #[test]
