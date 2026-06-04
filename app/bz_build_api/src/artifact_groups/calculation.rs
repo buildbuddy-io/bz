@@ -47,6 +47,7 @@ use bz_execute::directory::ActionSharedDirectory;
 use bz_execute::directory::INTERNER;
 use bz_execute::directory::extract_artifact_value;
 use bz_execute::directory::insert_artifact;
+use bz_execute::directory::merge_action_directory_with_symlink_conflicts;
 use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use bz_util::time_span::TimeSpan;
 use derive_more::Display;
@@ -403,11 +404,17 @@ async fn dir_artifact_value(
                         DepsMerger::None => DepsMerger::One(deps.dupe()),
                         DepsMerger::One(first_deps) => {
                             let mut builder = first_deps.into_builder();
-                            builder.merge(deps.dupe().into_builder())?;
+                            merge_action_directory_with_symlink_conflicts(
+                                &mut builder,
+                                deps.dupe().into_builder(),
+                            )?;
                             DepsMerger::Multiple(builder)
                         }
                         DepsMerger::Multiple(mut builder) => {
-                            builder.merge(deps.dupe().into_builder())?;
+                            merge_action_directory_with_symlink_conflicts(
+                                &mut builder,
+                                deps.dupe().into_builder(),
+                            )?;
                             DepsMerger::Multiple(builder)
                         }
                     }

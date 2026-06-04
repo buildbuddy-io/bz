@@ -20,6 +20,16 @@ enum BazelCommandLineOptionsError {
     UnsupportedBuildSettingEntryKind(String),
 }
 
+const BAZEL_CPU_OPTION: &str = "//command_line_option:cpu";
+const BAZEL_HOST_CPU_OPTION: &str = "//command_line_option:host_cpu";
+const BAZEL_LINKOPT_OPTION: &str = "//command_line_option:linkopt";
+const BAZEL_HOST_LINKOPT_OPTION: &str = "//command_line_option:host_linkopt";
+const BAZEL_PLATFORMS_OPTION: &str = "//command_line_option:platforms";
+const BAZEL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:java_language_version";
+const BAZEL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:java_runtime_version";
+const BAZEL_TOOL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:tool_java_language_version";
+const BAZEL_TOOL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:tool_java_runtime_version";
+
 fn bazel_config_lines(value: Option<Arc<str>>) -> Vec<String> {
     value
         .as_deref()
@@ -107,15 +117,50 @@ async fn bazel_command_line_build_settings(
     Ok(settings)
 }
 
-pub(crate) async fn apply_bazel_command_line_build_settings(
-    ctx: &mut DiceComputations<'_>,
-    cfg: ConfigurationData,
-) -> bz_error::Result<ConfigurationData> {
-    if !cfg.is_bound() {
-        return Ok(cfg);
+fn exec_bazel_command_line_build_settings(
+    mut settings: BTreeMap<String, BazelBuildSettingValue>,
+    execution_platform_cfg: &ConfigurationData,
+) -> bz_error::Result<BTreeMap<String, BazelBuildSettingValue>> {
+    if let Some(host_cpu) = settings.get(BAZEL_HOST_CPU_OPTION).cloned() {
+        settings.insert(BAZEL_CPU_OPTION.to_owned(), host_cpu);
+    } else {
+        settings.remove(BAZEL_CPU_OPTION);
     }
 
-    let settings = bazel_command_line_build_settings(ctx).await?;
+    if let Some(host_linkopt) = settings.get(BAZEL_HOST_LINKOPT_OPTION).cloned() {
+        settings.insert(BAZEL_LINKOPT_OPTION.to_owned(), host_linkopt);
+    } else {
+        settings.remove(BAZEL_LINKOPT_OPTION);
+    }
+
+    if let Some(tool_java_language_version) =
+        settings.get(BAZEL_TOOL_JAVA_LANGUAGE_VERSION).cloned()
+    {
+        settings.insert(
+            BAZEL_JAVA_LANGUAGE_VERSION.to_owned(),
+            tool_java_language_version,
+        );
+    }
+    if let Some(tool_java_runtime_version) = settings.get(BAZEL_TOOL_JAVA_RUNTIME_VERSION).cloned()
+    {
+        settings.insert(
+            BAZEL_JAVA_RUNTIME_VERSION.to_owned(),
+            tool_java_runtime_version,
+        );
+    }
+
+    settings.insert(
+        BAZEL_PLATFORMS_OPTION.to_owned(),
+        BazelBuildSettingValue::StringList(vec![execution_platform_cfg.label()?.to_owned()]),
+    );
+
+    Ok(settings)
+}
+
+async fn apply_bazel_command_line_build_settings_impl(
+    cfg: ConfigurationData,
+    settings: BTreeMap<String, BazelBuildSettingValue>,
+) -> bz_error::Result<ConfigurationData> {
     if settings.is_empty() {
         return Ok(cfg);
     }
@@ -134,4 +179,30 @@ pub(crate) async fn apply_bazel_command_line_build_settings(
         data,
         cfg.is_marked_as_exec_platform(),
     )
+}
+
+pub(crate) async fn apply_bazel_command_line_build_settings(
+    ctx: &mut DiceComputations<'_>,
+    cfg: ConfigurationData,
+) -> bz_error::Result<ConfigurationData> {
+    if !cfg.is_bound() {
+        return Ok(cfg);
+    }
+
+    let settings = bazel_command_line_build_settings(ctx).await?;
+    apply_bazel_command_line_build_settings_impl(cfg, settings).await
+}
+
+pub(crate) async fn apply_bazel_exec_command_line_build_settings(
+    ctx: &mut DiceComputations<'_>,
+    cfg: ConfigurationData,
+    execution_platform_cfg: &ConfigurationData,
+) -> bz_error::Result<ConfigurationData> {
+    if !cfg.is_bound() {
+        return Ok(cfg);
+    }
+
+    let settings = bazel_command_line_build_settings(ctx).await?;
+    let settings = exec_bazel_command_line_build_settings(settings, execution_platform_cfg)?;
+    apply_bazel_command_line_build_settings_impl(cfg, settings).await
 }

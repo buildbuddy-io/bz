@@ -39,7 +39,6 @@ use bz_core::target::label::label::TargetLabel;
 use bz_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
 use bz_error::BuckErrorContext;
 use bz_error::internal_error;
-use dice_futures::cancellation::CancellationContext;
 use bz_node::attrs::configuration_context::AttrConfigurationContext;
 use bz_node::attrs::configuration_context::AttrConfigurationContextImpl;
 use bz_node::attrs::inspect_options::AttrInspectOptions;
@@ -47,27 +46,28 @@ use bz_node::attrs::spec::internal::EXEC_COMPATIBLE_WITH_ATTRIBUTE;
 use bz_node::configuration::calculation::CellNameForConfigurationResolution;
 use bz_node::configuration::resolved::ConfigurationSettingKey;
 use bz_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
-use bz_node::execution::GetExecutionPlatforms;
-use bz_node::execution::GetExecutionPlatformsImpl;
 use bz_node::execution::EXECUTION_PLATFORMS_BUCKCONFIG;
 use bz_node::execution::GET_EXECUTION_PLATFORMS;
+use bz_node::execution::GetExecutionPlatforms;
+use bz_node::execution::GetExecutionPlatformsImpl;
 use bz_node::nodes::configured::ConfiguredTargetNode;
 use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
 use bz_node::nodes::frontend::TargetGraphCalculation;
 use bz_node::nodes::unconfigured::TargetNodeRef;
 use derive_more::Display;
-use futures::future::FutureExt;
 use dice::DiceComputations;
 use dice::Key;
 use dice::OkPagableValueSerialize;
 use dice::ValueSerialize;
+use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use futures::future::FutureExt;
 use itertools::Itertools;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 use starlark_map::ordered_map::OrderedMap;
 
-use crate::bazel::command_line_options::apply_bazel_command_line_build_settings;
+use crate::bazel::command_line_options::apply_bazel_exec_command_line_build_settings;
 use crate::configuration::compute_platform_cfgs;
 use crate::configuration::get_matched_cfg_keys;
 use crate::configuration::get_matched_cfg_keys_for_node;
@@ -738,7 +738,9 @@ pub(crate) async fn configure_exec_dep_with_modifiers(
         .with_buck_error_context(|| {
             format!("Resolving modifiers for exec dep target `{}`", exec_dep)
         })?;
-    let cfg_config = apply_bazel_command_line_build_settings(ctx, cfg_config).await?;
+    let cfg_config =
+        apply_bazel_exec_command_line_build_settings(ctx, cfg_config, execution_platform_cfg)
+            .await?;
 
     // Create configuration pair with modifiers applied
     let cfg_pair = Configuration::new(cfg_config, None);

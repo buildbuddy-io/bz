@@ -29,6 +29,7 @@ use bz_execute::directory::ExternalSymlinkUploadPath;
 use bz_execute::directory::INTERNER;
 use bz_execute::directory::LazyActionDirectoryBuilder;
 use bz_execute::directory::ResolvedSymlinkUploadPath;
+use bz_execute::directory::finalize_lazy_action_directory;
 use bz_execute::directory::insert_artifact_lazy;
 use bz_execute::directory::insert_artifact_lazy_for_execution;
 use bz_execute::directory::merge_artifact_directory_for_execution;
@@ -107,8 +108,7 @@ impl ArtifactGroupValues {
                 .buck_error_context("Merge failed")?;
         }
 
-        let directory = builder
-            .finalize()?
+        let directory = finalize_lazy_action_directory(builder)?
             .fingerprint(digest_config.as_directory_serializer())
             .shared(&*INTERNER);
 

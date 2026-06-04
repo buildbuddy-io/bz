@@ -30,6 +30,7 @@ use bz_core::fs::project_rel_path::ProjectRelativePath;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
 use bz_directory::directory::builder::DirectoryBuilder;
 use bz_directory::directory::builder::DirectoryInsertError;
+use bz_directory::directory::builder::DirectoryMergeError;
 use bz_directory::directory::builder_lazy::DirectoryBuilderLike;
 use bz_directory::directory::builder_lazy::LazyDirectoryBuilder;
 use bz_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
@@ -700,7 +701,7 @@ pub fn insert_artifact(
     if artifact_value_needs_deps(value)
         && let Some(deps) = value.deps()
     {
-        builder.merge(deps.dupe().into_builder())?;
+        merge_action_directory_with_symlink_conflicts(builder, deps.dupe().into_builder())?;
     }
     Ok(())
 }
@@ -794,7 +795,8 @@ fn target_file_symlink_entry_for_execution(
                     .to_buf();
                 current_path = symlink_target_path(&prefix, &symlink)?;
                 if !remaining_path.is_empty() {
-                    current_path = current_path.join_normalized(remaining_path.as_relative_path())?;
+                    current_path =
+                        current_path.join_normalized(remaining_path.as_relative_path())?;
                 }
             }
             DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)) => {
@@ -1087,19 +1089,32 @@ fn artifact_value_needs_deps(value: &ArtifactValue) -> bool {
 pub fn finalize_lazy_action_directory(
     builder: LazyActionDirectoryBuilder,
 ) -> bz_error::Result<ActionDirectoryBuilder> {
-    fn symlink_covers_descendants(leaf: &ActionDirectoryMember) -> bool {
-        // Bazel expands spawn inputs into a flat path map (`SpawnInputExpander#getInputMapping`)
-        // and its Merkle tree builder lets an aggregate source directory subsume separately staged
-        // descendants. A symlink staged at a path has the same filesystem boundary: descendants are
-        // reached through the symlink target, not by creating a directory at the symlink path too.
-        matches!(
-            leaf,
-            ActionDirectoryMember::Symlink(_) | ActionDirectoryMember::ExternalSymlink(_)
-        )
-    }
+    let mut ignore_insert_conflict = action_symlink_covers_descendants;
+    builder.finalize_with_conflict_handlers(
+        &mut ignore_insert_conflict,
+        action_symlink_covers_descendants,
+    )
+}
 
-    let mut ignore_insert_conflict = symlink_covers_descendants;
-    builder.finalize_with_conflict_handlers(&mut ignore_insert_conflict, symlink_covers_descendants)
+pub fn merge_action_directory_with_symlink_conflicts(
+    builder: &mut ActionDirectoryBuilder,
+    other: ActionDirectoryBuilder,
+) -> Result<(), DirectoryMergeError> {
+    builder.merge_with_compatible_leaves_and_leaf_dir_conflict_handler(
+        other,
+        action_symlink_covers_descendants,
+    )
+}
+
+fn action_symlink_covers_descendants(leaf: &ActionDirectoryMember) -> bool {
+    // Bazel expands spawn inputs into a flat path map (`SpawnInputExpander#getInputMapping`)
+    // and its Merkle tree builder lets an aggregate source directory subsume separately staged
+    // descendants. A symlink staged at a path has the same filesystem boundary: descendants are
+    // reached through the symlink target, not by creating a directory at the symlink path too.
+    matches!(
+        leaf,
+        ActionDirectoryMember::Symlink(_) | ActionDirectoryMember::ExternalSymlink(_)
+    )
 }
 
 pub fn insert_file<D>(

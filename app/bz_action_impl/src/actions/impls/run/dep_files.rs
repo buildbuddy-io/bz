@@ -59,6 +59,7 @@ use bz_execute::directory::INTERNER;
 use bz_execute::directory::LazyActionDirectoryBuilder;
 use bz_execute::directory::ReDirectorySerializer;
 use bz_execute::directory::expand_selector_for_dependencies;
+use bz_execute::directory::finalize_lazy_action_directory;
 use bz_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
 use bz_execute::execute::action_digest_and_blobs::ActionDigestAndBlobsBuilder;
 use bz_execute::execute::cache_uploader::IntoRemoteDepFile;
@@ -1193,7 +1194,7 @@ impl PartitionedInputs<Vec<ArtifactGroup>> {
                 input.add_to_directory(&mut builder, ctx.fs())?;
             }
 
-            builder.finalize()
+            finalize_lazy_action_directory(builder)
         }
 
         fn untagged_reduce(
@@ -1207,7 +1208,7 @@ impl PartitionedInputs<Vec<ArtifactGroup>> {
                 input.add_to_directory(&mut builder, ctx.fs())?;
             }
 
-            builder.finalize()
+            finalize_lazy_action_directory(builder)
         }
 
         Ok(PartitionedInputs {

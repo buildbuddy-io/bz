@@ -17,6 +17,7 @@ use bz_directory::directory::directory_iterator::DirectoryIteratorPathStack;
 use bz_execute::digest_config::DigestConfig;
 use bz_execute::directory::ActionDirectoryMember;
 use bz_execute::directory::LazyActionDirectoryBuilder;
+use bz_execute::directory::finalize_lazy_action_directory;
 use bz_execute::execute::paths_with_digest::PathsWithDigestBlobData;
 use bz_execute::execute::paths_with_digest::PathsWithDigestBuilder;
 
@@ -39,7 +40,7 @@ pub(crate) fn metadata_content(
             &mut resolved_symlink_upload_paths,
         )?;
     }
-    let builder = builder.finalize()?;
+    let builder = finalize_lazy_action_directory(builder)?;
 
     let mut walk = builder.ordered_walk_leaves();
     while let Some((path, item)) = walk.next() {
@@ -84,7 +85,7 @@ pub(crate) fn metadata_digest(
             &mut resolved_symlink_upload_paths,
         )?;
     }
-    let builder = builder.finalize()?;
+    let builder = finalize_lazy_action_directory(builder)?;
 
     let mut walk = builder.ordered_walk_leaves();
     while let Some((path, item)) = walk.next() {

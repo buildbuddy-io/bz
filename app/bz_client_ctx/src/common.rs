@@ -61,6 +61,7 @@ const LLVM_TOOLCHAIN_PATTERN: &str = "@llvm//toolchain:all";
 const LLVM_LINUX_X86_64_PLATFORM: &str = "@llvm//platforms:linux_x86_64";
 const LLVM_MACOS_AARCH64_PLATFORM: &str = "@llvm//platforms:macos_aarch64";
 const LLVM_LINUX_LINKOPT: &str = "-no-pie";
+const LLVM_MACOS_FRAMEWORKS: &str = "CoreFoundation,Foundation,Kernel,OSLog,Security,SystemConfiguration,IOKit,CoreServices,DiskArbitration,CFNetwork";
 
 #[derive(Debug, bz_error::Error)]
 #[error("indices len is not equal to collection len for flag `{flag_name}`")]
@@ -759,6 +760,28 @@ impl CommonBuildConfigurationOptions {
         ))
     }
 
+    fn llvm_macos_repo_env_override(
+        &self,
+        matches: BuckArgMatches<'_>,
+    ) -> Option<(usize, ConfigOverride)> {
+        if !self.linux2mac {
+            return None;
+        }
+
+        let index = Self::flag_last_index(matches, "linux2mac")?;
+
+        Some((
+            index,
+            ConfigOverride {
+                cell: None,
+                config_override: format!(
+                    "bazel.repo_env=BAZEL_MACOS_FRAMEWORKS={LLVM_MACOS_FRAMEWORKS}"
+                ),
+                config_type: ConfigType::Value as i32,
+            },
+        ))
+    }
+
     fn target_platform_is_linux(&self) -> bool {
         match self.target_platform_spec().platform {
             HostPlatformOverride::Linux => true,
@@ -1137,6 +1160,9 @@ impl CommonBuildConfigurationOptions {
         ordered_merged_configs.extend(bazel_command_line_build_setting_arg);
         if let Some(llvm_bzlmod_dep) = self.llvm_bzlmod_dep_override(matches) {
             ordered_merged_configs.push(llvm_bzlmod_dep);
+        }
+        if let Some(llvm_macos_repo_env) = self.llvm_macos_repo_env_override(matches) {
+            ordered_merged_configs.push(llvm_macos_repo_env);
         }
         if let Some(host_platform_constraints) = self.bazel_host_platform_constraints(matches) {
             ordered_merged_configs.push(host_platform_constraints);
@@ -1837,8 +1863,11 @@ mod tests {
             .iter()
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(override_values.len(), 3);
+        assert_eq!(override_values.len(), 4);
         assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.4"));
+        let macos_frameworks_repo_env =
+            format!("bazel.repo_env=BAZEL_MACOS_FRAMEWORKS={LLVM_MACOS_FRAMEWORKS}");
+        assert!(override_values.contains(&macos_frameworks_repo_env.as_str()));
 
         let build_settings = override_values
             .iter()
