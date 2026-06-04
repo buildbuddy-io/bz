@@ -44,6 +44,10 @@ impl<T: WorkingDirectoryImpl> WorkingDirectoryGen<T> {
     pub fn is_stale(&self) -> bz_error::Result<bool> {
         self.imp.is_stale(&self.path)
     }
+
+    pub fn repair_stale(&self) -> bz_error::Result<bool> {
+        self.imp.repair_stale(&self.path)
+    }
 }
 
 /// Used to make sure our UNIX and portable implementations are identical.
@@ -51,12 +55,14 @@ pub trait WorkingDirectoryImpl: Sized {
     fn open(path: &AbsNormPath) -> bz_error::Result<Self>;
     fn chdir(&self, _path: &AbsNormPath) -> bz_error::Result<()>;
     fn is_stale(&self, path: &AbsNormPath) -> bz_error::Result<bool>;
+    fn repair_stale(&self, path: &AbsNormPath) -> bz_error::Result<bool>;
 }
 
 #[cfg(unix)]
 mod unix_impl {
 
     use std::os::fd::OwnedFd;
+    use std::sync::Mutex;
 
     use allocative::Allocative;
     use bz_error::BuckErrorContext;
@@ -69,32 +75,53 @@ mod unix_impl {
     #[derive(Allocative)]
     pub struct UnixWorkingDirectoryImpl {
         #[allocative(skip)]
-        fd: OwnedFd,
+        fd: Mutex<OwnedFd>,
     }
 
     impl WorkingDirectoryImpl for UnixWorkingDirectoryImpl {
         fn open(path: &AbsNormPath) -> bz_error::Result<Self> {
-            let fd = nix::fcntl::open(
-                path.as_path(),
-                OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_DIRECTORY,
-                Mode::empty(),
-            )
-            .with_buck_error_context(|| format!("Failed to open: `{path}`"))?;
-
-            Ok(Self { fd })
+            let fd = open_dir_fd(path)?;
+            Ok(Self { fd: Mutex::new(fd) })
         }
 
         fn chdir(&self, _path: &AbsNormPath) -> bz_error::Result<()> {
-            nix::unistd::fchdir(&self.fd)?;
+            let fd = self.fd.lock().unwrap();
+            nix::unistd::fchdir(&*fd)?;
             Ok(())
         }
 
         fn is_stale(&self, path: &AbsNormPath) -> bz_error::Result<bool> {
-            let cwd = nix::sys::stat::fstat(&self.fd).buck_error_context("Failed to stat cwd")?;
-            let path = nix::sys::stat::stat(path.as_path())
-                .with_buck_error_context(|| format!("Failed to stat `{path}`"))?;
-            Ok(cwd.st_dev != path.st_dev || cwd.st_ino != path.st_ino)
+            let fd = self.fd.lock().unwrap();
+            fd_is_stale(&*fd, path)
         }
+
+        fn repair_stale(&self, path: &AbsNormPath) -> bz_error::Result<bool> {
+            let mut fd = self.fd.lock().unwrap();
+            if !fd_is_stale(&*fd, path)? {
+                return Ok(false);
+            }
+
+            let replacement = open_dir_fd(path)?;
+            nix::unistd::fchdir(&replacement)?;
+            *fd = replacement;
+            Ok(true)
+        }
+    }
+
+    fn open_dir_fd(path: &AbsNormPath) -> bz_error::Result<OwnedFd> {
+        nix::fcntl::open(
+            path.as_path(),
+            OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_DIRECTORY,
+            Mode::empty(),
+        )
+        .with_buck_error_context(|| format!("Failed to open: `{path}`"))
+    }
+
+    fn fd_is_stale(fd: &OwnedFd, path: &AbsNormPath) -> bz_error::Result<bool> {
+        let cwd = nix::sys::stat::fstat(fd).buck_error_context("Failed to stat cwd")?;
+        let path = nix::sys::stat::stat(path.as_path())
+            .with_buck_error_context(|| format!("Failed to stat `{path}`"))?;
+        Ok(cwd.st_dev != path.st_dev || cwd.st_ino != path.st_ino)
     }
 }
 
@@ -113,6 +140,10 @@ impl WorkingDirectoryImpl for PortableWorkingDirectoryImpl {
 
     /// Not supported for PortableWorkingDirectoryImpl
     fn is_stale(&self, _path: &AbsNormPath) -> bz_error::Result<bool> {
+        Ok(false)
+    }
+
+    fn repair_stale(&self, _path: &AbsNormPath) -> bz_error::Result<bool> {
         Ok(false)
     }
 }

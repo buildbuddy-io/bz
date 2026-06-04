@@ -120,8 +120,13 @@ fn create_convenience_symlink(
         1 => {
             let target = candidates.iter().next().unwrap();
             let target_abs = fs.resolve(target);
-            create_or_replace_symlink(&target_abs, &link_abs)?;
-            Ok(Some(target.to_buf()))
+            match create_or_replace_symlink(&target_abs, &link_abs) {
+                Ok(()) => Ok(Some(target.to_buf())),
+                Err(e) => {
+                    warn!("{e}");
+                    Ok(None)
+                }
+            }
         }
         _ => {
             remove_existing_symlink(&link_abs)?;

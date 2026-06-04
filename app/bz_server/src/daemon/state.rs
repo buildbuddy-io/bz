@@ -47,7 +47,6 @@ use bz_core::rollout_percentage::RolloutPercentage;
 use bz_core::tag_result;
 use bz_error::BuckErrorContext;
 use bz_error::ErrorTag;
-use bz_error::bz_error;
 use bz_events::EventSinkWithStats;
 use bz_events::daemon_id::DaemonId;
 use bz_events::dispatch::EventDispatcher;
@@ -984,18 +983,17 @@ impl DaemonState {
     }
 
     pub fn validate_cwd(&self) -> bz_error::Result<()> {
-        let res = self.working_directory.is_stale().and_then(|stale| {
-            if stale {
-                Err(bz_error!(
-                    bz_error::ErrorTag::Environment,
-                    "Buck appears to be running in a stale working directory. \
-                     This will likely lead to failed or slow builds. \
-                     To remediate, restart bz."
-                ))
-            } else {
-                Ok(())
+        let res = (|| {
+            fs_util::create_dir_all(self.paths.buck_out_path())
+                .buck_error_context("Error creating buck_out_path")?;
+            if self.working_directory.repair_stale()? {
+                tracing::warn!(
+                    "Repaired stale daemon working directory `{}`",
+                    self.paths.buck_out_path()
+                );
             }
-        });
+            Ok(())
+        })();
 
         tag_result!(
             "stale_cwd",
