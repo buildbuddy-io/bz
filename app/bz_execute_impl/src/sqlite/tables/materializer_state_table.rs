@@ -16,6 +16,7 @@ use bz_common::file_ops::metadata::FileDigest;
 use bz_common::file_ops::metadata::FileMetadata;
 use bz_common::file_ops::metadata::Symlink;
 use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
 use bz_directory::directory::directory_iterator::DirectoryIterator;
@@ -48,10 +49,13 @@ use crate::materializers::artifact_type::ARTIFACT_TYPE_FILE;
 use crate::materializers::artifact_type::ARTIFACT_TYPE_SYMLINK;
 use crate::materializers::artifact_type::ArtifactType;
 use crate::materializers::deferred::artifact_tree::ArtifactMetadata;
+use crate::sqlite::materializer_db::MaterializerDeclaredCasState;
+use crate::sqlite::materializer_db::MaterializerDeclaredCasStateEntry;
 use crate::sqlite::materializer_db::MaterializerState;
 use crate::sqlite::materializer_db::MaterializerStateEntry;
 
 const STATE_TABLE_NAME: &str = "materializer_state";
+const DECLARED_CAS_STATE_TABLE_NAME: &str = "materializer_declared_cas_state";
 
 #[derive(bz_error::Error, Debug, PartialEq, Eq)]
 #[buck2(tag = Tier0)]
@@ -99,6 +103,12 @@ struct SqliteEntry<'a> {
     /// Path of the directory artifact which this entry belongs to.
     /// Entry represents the actual artifact when the value is not present.
     parent_path: Option<Cow<'a, str>>,
+}
+
+#[derive(Debug)]
+struct DeclaredCasSqliteEntry<'a> {
+    entry: SqliteEntry<'a>,
+    re_use_case: String,
 }
 
 impl<'a> SqliteEntry<'a> {
@@ -360,6 +370,38 @@ fn convert_sqlite_entries_to_materializer_state(
     Ok(results)
 }
 
+fn convert_sqlite_entries_to_declared_cas_state(
+    entries: Vec<DeclaredCasSqliteEntry>,
+    digest_config: DigestConfig,
+) -> bz_error::Result<MaterializerDeclaredCasState> {
+    let mut re_use_cases = StdBuckHashMap::default();
+    let mut sqlite_entries = Vec::with_capacity(entries.len());
+
+    for DeclaredCasSqliteEntry { entry, re_use_case } in entries {
+        if entry.parent_path.is_none() {
+            re_use_cases.insert(
+                ProjectRelativePathBuf::unchecked_new(entry.path.clone().into_owned()),
+                RemoteExecutorUseCase::new(re_use_case),
+            );
+        }
+        sqlite_entries.push(entry);
+    }
+
+    convert_sqlite_entries_to_materializer_state(sqlite_entries, digest_config)?
+        .into_iter()
+        .map(|entry| {
+            let re_use_case = re_use_cases.remove(&entry.path).ok_or_else(|| {
+                internal_error!("missing declared CAS use case for {}", entry.path)
+            })?;
+            Ok(MaterializerDeclaredCasStateEntry {
+                path: entry.path,
+                metadata: entry.metadata,
+                re_use_case,
+            })
+        })
+        .collect()
+}
+
 fn convert_non_directory_sqlite_entry_to_materializer_state_entry(
     sqlite_entry: SqliteEntry,
     last_access_time: DateTime<Utc>,
@@ -490,6 +532,7 @@ impl MaterializerStateSqliteTable {
             .execute(&sql, [])
             .with_buck_error_context(|| format!("creating sqlite table {STATE_TABLE_NAME}"))?;
         self.create_parent_path_index()?;
+        self.create_declared_cas_table()?;
         Ok(())
     }
 
@@ -505,6 +548,44 @@ impl MaterializerStateSqliteTable {
             .lock()
             .execute(&sql, [])
             .with_buck_error_context(|| format!("creating index on {STATE_TABLE_NAME}"))?;
+        Ok(())
+    }
+
+    fn create_declared_cas_table(&self) -> bz_error::Result<()> {
+        let sql = format!(
+            "CREATE TABLE {DECLARED_CAS_STATE_TABLE_NAME} (
+                path                    TEXT NOT NULL PRIMARY KEY,
+                artifact_type           TEXT CHECK(artifact_type IN ('{ARTIFACT_TYPE_DIRECTORY}','{ARTIFACT_TYPE_FILE}','{ARTIFACT_TYPE_SYMLINK}','{ARTIFACT_TYPE_EXTERNAL_SYMLINK}')) NOT NULL,
+                digest_size             INTEGER NULL DEFAULT NULL,
+                entry_hash              BLOB NULL DEFAULT NULL,
+                entry_hash_kind         INTEGER NULL DEFAULT NULL,
+                file_is_executable      INTEGER NULL DEFAULT NULL,
+                symlink_target          TEXT NULL DEFAULT NULL,
+                last_access_time        INTEGER NULL DEFAULT NULL,
+                parent_path             TEXT NULL DEFAULT NULL,
+                re_use_case             TEXT NOT NULL
+            )",
+        );
+        tracing::trace!(sql = %*sql, "creating table");
+        self.connection
+            .lock()
+            .execute(&sql, [])
+            .with_buck_error_context(|| {
+                format!("creating sqlite table {DECLARED_CAS_STATE_TABLE_NAME}")
+            })?;
+
+        let sql = format!(
+            "CREATE INDEX {DECLARED_CAS_STATE_TABLE_NAME}_index ON {DECLARED_CAS_STATE_TABLE_NAME} (
+                parent_path
+            )",
+        );
+        tracing::trace!(sql = %*sql, "creating index");
+        self.connection
+            .lock()
+            .execute(&sql, [])
+            .with_buck_error_context(|| {
+                format!("creating index on {DECLARED_CAS_STATE_TABLE_NAME}")
+            })?;
         Ok(())
     }
 
@@ -553,6 +634,58 @@ impl MaterializerStateSqliteTable {
         Ok(())
     }
 
+    pub(crate) fn insert_declared_cas(
+        &self,
+        path: &ProjectRelativePath,
+        metadata: &ArtifactMetadata,
+        re_use_case: RemoteExecutorUseCase,
+    ) -> bz_error::Result<()> {
+        let timestamp = Utc::now();
+        let entries = convert_artifact_metadata_to_sqlite_entries(path, metadata, &timestamp);
+        static SQL: Lazy<String> = Lazy::new(|| {
+            format!(
+                "INSERT INTO {DECLARED_CAS_STATE_TABLE_NAME} (path, artifact_type, digest_size, entry_hash, entry_hash_kind, file_is_executable, symlink_target, last_access_time, parent_path, re_use_case) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+            )
+        });
+        static DELETE_SQL: Lazy<String> = Lazy::new(|| {
+            format!(
+                "DELETE FROM {DECLARED_CAS_STATE_TABLE_NAME} WHERE path = ?1 OR parent_path = ?1"
+            )
+        });
+
+        let mut conn = self.connection.lock();
+        let tx = conn.transaction()?;
+        tx.execute(&DELETE_SQL, rusqlite::params![path.as_str()])
+            .with_buck_error_context(|| {
+                format!(
+                    "removing previous `{path}` rows from sqlite table {DECLARED_CAS_STATE_TABLE_NAME}"
+                )
+            })?;
+        for entry in entries {
+            tracing::trace!(sql = %*SQL, entry = ?entry, "inserting into table");
+            tx.execute(
+                &SQL,
+                rusqlite::params![
+                    entry.path,
+                    entry.artifact_type,
+                    entry.entry_size,
+                    entry.entry_hash,
+                    entry.entry_hash_kind,
+                    entry.file_is_executable,
+                    entry.symlink_target,
+                    entry.last_access_time,
+                    entry.parent_path,
+                    re_use_case.as_str(),
+                ],
+            )
+            .with_buck_error_context(|| {
+                format!("inserting `{path}` into sqlite table {DECLARED_CAS_STATE_TABLE_NAME}")
+            })?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub(crate) fn update_access_times(
         &self,
         updates: Vec<&ProjectRelativePathBuf>,
@@ -584,6 +717,18 @@ impl MaterializerStateSqliteTable {
         convert_sqlite_entries_to_materializer_state(entries, digest_config)
     }
 
+    pub(crate) fn read_declared_cas_state(
+        &self,
+        digest_config: DigestConfig,
+    ) -> bz_error::Result<MaterializerDeclaredCasState> {
+        let entries = self
+            .read_all_declared_cas_entries()
+            .with_buck_error_context(|| {
+                format!("error reading row of sqlite table {DECLARED_CAS_STATE_TABLE_NAME}")
+            })?;
+        convert_sqlite_entries_to_declared_cas_state(entries, digest_config)
+    }
+
     fn read_all_entries(&self) -> bz_error::Result<Vec<SqliteEntry<'_>>> {
         static SQL: Lazy<String> = Lazy::new(|| {
             format!(
@@ -610,17 +755,64 @@ impl MaterializerStateSqliteTable {
         .with_buck_error_context(|| format!("reading from sqlite table {STATE_TABLE_NAME}"))
     }
 
+    fn read_all_declared_cas_entries(&self) -> bz_error::Result<Vec<DeclaredCasSqliteEntry<'_>>> {
+        static SQL: Lazy<String> = Lazy::new(|| {
+            format!(
+                "SELECT path, artifact_type, digest_size, entry_hash, entry_hash_kind, file_is_executable, symlink_target, last_access_time, parent_path, re_use_case FROM {DECLARED_CAS_STATE_TABLE_NAME}",
+            )
+        });
+        tracing::trace!(sql = %*SQL, "reading all from table");
+        let connection = self.connection.lock();
+        let mut stmt = connection.prepare(&SQL)?;
+        stmt.query_map([], |row| -> rusqlite::Result<DeclaredCasSqliteEntry> {
+            Ok(DeclaredCasSqliteEntry {
+                entry: SqliteEntry::new(
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ),
+                re_use_case: row.get(9)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .with_buck_error_context(|| {
+            format!("reading from sqlite table {DECLARED_CAS_STATE_TABLE_NAME}")
+        })
+    }
+
     pub(crate) fn clear(&self) -> bz_error::Result<usize> {
         let sql = format!("DELETE FROM {STATE_TABLE_NAME}");
 
         tracing::trace!(sql = %sql, "clearing materializer state table");
 
-        self.connection
+        let rows_deleted = self
+            .connection
             .lock()
             .execute(&sql, [])
             .with_buck_error_context(|| {
                 format!("clearing artifact rows from sqlite table {STATE_TABLE_NAME}")
-            })
+            })?;
+
+        let sql = format!("DELETE FROM {DECLARED_CAS_STATE_TABLE_NAME}");
+
+        tracing::trace!(sql = %sql, "clearing declared CAS state table");
+
+        Ok(rows_deleted
+            + self
+                .connection
+                .lock()
+                .execute(&sql, [])
+                .with_buck_error_context(|| {
+                    format!(
+                        "clearing artifact rows from sqlite table {DECLARED_CAS_STATE_TABLE_NAME}"
+                    )
+                })?)
     }
 
     pub(crate) fn delete(&self, paths: Vec<ProjectRelativePathBuf>) -> bz_error::Result<usize> {
@@ -628,66 +820,85 @@ impl MaterializerStateSqliteTable {
             return Ok(0);
         }
 
+        Ok(self.delete_from_table(STATE_TABLE_NAME, &paths)?
+            + self.delete_from_table(DECLARED_CAS_STATE_TABLE_NAME, &paths)?)
+    }
+
+    pub(crate) fn delete_declared_cas(
+        &self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> bz_error::Result<usize> {
+        self.delete_from_table(DECLARED_CAS_STATE_TABLE_NAME, &paths)
+    }
+
+    fn delete_from_table(
+        &self,
+        table_name: &'static str,
+        paths: &[ProjectRelativePathBuf],
+    ) -> bz_error::Result<usize> {
+        if paths.is_empty() {
+            return Ok(0);
+        }
+
         let mut rows_deleted = 0;
-
-        /// Delete only rows which represent artifacts (that is where `parent_path` is `NULL`). Rows that represent members of a directory artifact are not deleted.
-        fn delete_artifact_rows(
-            connection: &Arc<Mutex<Connection>>,
-            paths: &[ProjectRelativePathBuf],
-        ) -> bz_error::Result<usize> {
-            let sql = format!(
-                "DELETE FROM {} WHERE path IN ({})",
-                STATE_TABLE_NAME,
-                // According to rusqlite docs this is the best way to generate the right
-                // number of query placeholders.
-                itertools::repeat_n("?", paths.len()).join(","),
-            );
-
-            tracing::trace!(sql = %sql, chunk = ?paths, "deleting artifact rows from table");
-            connection
-                .lock()
-                .execute(
-                    &sql,
-                    rusqlite::params_from_iter(paths.iter().map(|p| p.as_str())),
-                )
-                .with_buck_error_context(|| {
-                    format!("deleting artifact rows from sqlite table {STATE_TABLE_NAME}")
-                })
-        }
-
-        /// Delete rows which represent members of directory artifacts (that is rows where `parent_path` is not `NULL`).
-        fn delete_directory_artifact_members(
-            connection: &Arc<Mutex<Connection>>,
-            paths: &[ProjectRelativePathBuf],
-        ) -> bz_error::Result<usize> {
-            let sql = format!(
-                "DELETE FROM {} WHERE parent_path IN ({})",
-                STATE_TABLE_NAME,
-                // According to rusqlite docs this is the best way to generate the right
-                // number of query placeholders.
-                itertools::repeat_n("?", paths.len()).join(","),
-            );
-
-            tracing::trace!(sql = %sql, chunk = ?paths, "deleting directory artifact members from table");
-            connection
-                .lock()
-                .execute(
-                    &sql,
-                    rusqlite::params_from_iter(paths.iter().map(|p| p.as_str())),
-                )
-                .with_buck_error_context(|| {
-                    format!(
-                        "deleting directory artifact members from sqlite table {STATE_TABLE_NAME}"
-                    )
-                })
-        }
-
         for chunk in paths.chunks(100) {
-            rows_deleted += delete_artifact_rows(&self.connection, chunk)?;
-            rows_deleted += delete_directory_artifact_members(&self.connection, chunk)?;
+            rows_deleted += self.delete_artifact_rows(table_name, chunk)?;
+            rows_deleted += self.delete_directory_artifact_members(table_name, chunk)?;
         }
 
         Ok(rows_deleted)
+    }
+
+    /// Delete only rows which represent artifacts (that is where `parent_path` is `NULL`). Rows that represent members of a directory artifact are not deleted.
+    fn delete_artifact_rows(
+        &self,
+        table_name: &'static str,
+        paths: &[ProjectRelativePathBuf],
+    ) -> bz_error::Result<usize> {
+        let sql = format!(
+            "DELETE FROM {} WHERE path IN ({})",
+            table_name,
+            // According to rusqlite docs this is the best way to generate the right
+            // number of query placeholders.
+            itertools::repeat_n("?", paths.len()).join(","),
+        );
+
+        tracing::trace!(sql = %sql, chunk = ?paths, "deleting artifact rows from table");
+        self.connection
+            .lock()
+            .execute(
+                &sql,
+                rusqlite::params_from_iter(paths.iter().map(|p| p.as_str())),
+            )
+            .with_buck_error_context(|| {
+                format!("deleting artifact rows from sqlite table {table_name}")
+            })
+    }
+
+    /// Delete rows which represent members of directory artifacts (that is rows where `parent_path` is not `NULL`).
+    fn delete_directory_artifact_members(
+        &self,
+        table_name: &'static str,
+        paths: &[ProjectRelativePathBuf],
+    ) -> bz_error::Result<usize> {
+        let sql = format!(
+            "DELETE FROM {} WHERE parent_path IN ({})",
+            table_name,
+            // According to rusqlite docs this is the best way to generate the right
+            // number of query placeholders.
+            itertools::repeat_n("?", paths.len()).join(","),
+        );
+
+        tracing::trace!(sql = %sql, chunk = ?paths, "deleting directory artifact members from table");
+        self.connection
+            .lock()
+            .execute(
+                &sql,
+                rusqlite::params_from_iter(paths.iter().map(|p| p.as_str())),
+            )
+            .with_buck_error_context(|| {
+                format!("deleting directory artifact members from sqlite table {table_name}")
+            })
     }
 }
 
@@ -897,6 +1108,40 @@ mod tests {
             .collect();
 
         table.delete(paths)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_declared_cas_state_roundtrip() -> bz_error::Result<()> {
+        let digest_config = DigestConfig::testing_default();
+        let conn = Connection::open_in_memory()?;
+        let table = MaterializerStateSqliteTable::new(Arc::new(Mutex::new(conn)));
+        table.create_table()?;
+
+        let path = ProjectRelativePath::unchecked_new("foo/bar");
+        let metadata = DirectoryEntry::Leaf(ActionDirectoryMember::File(FileMetadata {
+            digest: TrackedFileDigest::from_content(b"file", digest_config.cas_digest_config()),
+            is_executable: true,
+        }));
+        let re_use_case = RemoteExecutorUseCase::new("declared-cas-test".to_owned());
+
+        table.insert_declared_cas(path, &metadata, re_use_case)?;
+
+        assert!(table.read_materializer_state(digest_config)?.is_empty());
+        let state = table.read_declared_cas_state(digest_config)?;
+        assert_eq!(state.len(), 1);
+        assert_eq!(state[0].path, path);
+        assert_eq!(state[0].re_use_case.as_str(), "declared-cas-test");
+        assert!(artifact_metadata_eq(&state[0].metadata, &metadata));
+
+        let rows_deleted = table.delete(vec![path.to_owned()])?;
+        assert_eq!(rows_deleted, 1);
+        assert!(table.read_declared_cas_state(digest_config)?.is_empty());
+
+        table.insert_declared_cas(path, &metadata, re_use_case)?;
+        assert_eq!(table.clear()?, 1);
+        assert!(table.read_declared_cas_state(digest_config)?.is_empty());
 
         Ok(())
     }

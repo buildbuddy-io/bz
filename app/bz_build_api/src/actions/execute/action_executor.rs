@@ -204,9 +204,7 @@ impl ActionExecutionKind {
             ActionExecutionKind::Simple => bz_data::ActionExecutionKind::Simple,
             ActionExecutionKind::Deferred => bz_data::ActionExecutionKind::Deferred,
             ActionExecutionKind::LocalDepFile => bz_data::ActionExecutionKind::LocalDepFile,
-            ActionExecutionKind::LocalActionCache => {
-                bz_data::ActionExecutionKind::LocalActionCache
-            }
+            ActionExecutionKind::LocalActionCache => bz_data::ActionExecutionKind::LocalActionCache,
         }
     }
 
@@ -585,10 +583,15 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         &mut self,
         local_action_cache_key: &LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+        remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
         self.executor
             .command_executor
-            .insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
+            .insert_unprepared_action_cache_metadata(
+                local_action_cache_key,
+                outputs,
+                remote_cache_entry,
+            )
     }
 
     async fn remote_dep_file_cache(

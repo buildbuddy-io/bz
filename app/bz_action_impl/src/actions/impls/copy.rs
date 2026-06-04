@@ -570,6 +570,7 @@ impl Action for CopyAction {
         ctx.insert_unprepared_action_cache_metadata(
             &local_action_cache_key,
             &buck_indexmap![local_action_cache_output => value.dupe()],
+            false,
         )?;
 
         Ok((
@@ -659,6 +660,7 @@ impl Action for SymlinkAction {
         ctx.insert_unprepared_action_cache_metadata(
             &local_action_cache_key,
             &buck_indexmap![local_action_cache_output => value.dupe()],
+            false,
         )?;
 
         Ok((

@@ -111,6 +111,7 @@ pub trait PreparedCommandOptionalExecutor: Send + Sync {
         &self,
         _local_action_cache_key: &LocalActionCacheKey,
         _outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+        _remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
         Ok(())
     }
@@ -144,8 +145,13 @@ impl PreparedCommandOptionalExecutor for Arc<dyn PreparedCommandOptionalExecutor
         &self,
         local_action_cache_key: &LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+        remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
-        (**self).insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
+        (**self).insert_unprepared_action_cache_metadata(
+            local_action_cache_key,
+            outputs,
+            remote_cache_entry,
+        )
     }
 }
 

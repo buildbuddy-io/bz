@@ -742,15 +742,18 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
             let materializer_state_entries_from_sqlite =
                 materializer_state_entries_from_sqlite.dupe();
             move |cancellations| -> bz_error::Result<_> {
-                let (sqlite_db, sqlite_state) = match sqlite_db {
+                let (sqlite_db, sqlite_state, declared_cas_state) = match sqlite_db {
                     Some(sqlite_db) => {
-                        let (sqlite_db, sqlite_state) = sqlite_db.load()?;
-                        let sqlite_state = sqlite_state.ok();
+                        let (sqlite_db, persisted_state) = sqlite_db.load()?;
+                        let persisted_state = persisted_state.ok();
+                        let (sqlite_state, declared_cas_state) = persisted_state
+                            .map(|state| (Some(state.materialized), Some(state.declared_cas)))
+                            .unwrap_or((None, None));
 
-                        let num_entries_from_sqlite =
-                            sqlite_state.as_ref().map_or(0, |s| s.len()) as u64;
+                        let num_entries_from_sqlite = sqlite_state.as_ref().map_or(0, |s| s.len())
+                            + declared_cas_state.as_ref().map_or(0, |s| s.len());
                         materializer_state_entries_from_sqlite
-                            .store(num_entries_from_sqlite, Ordering::Relaxed);
+                            .store(num_entries_from_sqlite as u64, Ordering::Relaxed);
 
                         if let Some(sqlite_state) = &sqlite_state {
                             for entry in sqlite_state {
@@ -760,13 +763,21 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
                                 );
                             }
                         }
+                        if let Some(declared_cas_state) = &declared_cas_state {
+                            for entry in declared_cas_state {
+                                declared_artifact_values.insert(
+                                    entry.path.clone(),
+                                    ArtifactValue::new(entry.metadata.dupe(), None),
+                                );
+                            }
+                        }
 
-                        (Some(sqlite_db), sqlite_state)
+                        (Some(sqlite_db), sqlite_state, declared_cas_state)
                     }
-                    None => (None, None),
+                    None => (None, None, None),
                 };
 
-                let tree = ArtifactTree::initialize(sqlite_state);
+                let tree = ArtifactTree::initialize(sqlite_state, declared_cas_state);
 
                 Ok(DeferredMaterializerCommandProcessor::new(
                     io,

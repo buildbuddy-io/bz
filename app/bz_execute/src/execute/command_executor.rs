@@ -194,10 +194,15 @@ impl CommandExecutor {
         &self,
         local_action_cache_key: &LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+        remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
         self.0
             .action_cache_checker
-            .insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
+            .insert_unprepared_action_cache_metadata(
+                local_action_cache_key,
+                outputs,
+                remote_cache_entry,
+            )
     }
 
     pub async fn remote_dep_file_cache(

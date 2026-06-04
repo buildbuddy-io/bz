@@ -31,7 +31,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
 const STATE_TABLE_NAME: &str = "local_action_cache_v4";
-const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_v5";
+const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_v6";
 const REMOTE_ACTION_CACHE_TABLE_NAME: &str = "local_action_cache_remote_v1";
 const OUTPUT_VALUES_VERSION: u8 = 1;
 
@@ -72,6 +72,7 @@ pub struct LocalActionCacheEntry {
     pub action_fingerprint: Arc<[u8]>,
     pub outputs_fingerprint: Arc<[u8]>,
     pub output_values: Arc<[ArtifactValue]>,
+    pub remote_cache_entry: bool,
 }
 
 #[derive(Clone)]
@@ -88,6 +89,7 @@ struct LocalActionCacheStoredEntry {
     action_fingerprint: Arc<[u8]>,
     outputs_fingerprint: Arc<[u8]>,
     output_values: Arc<LocalActionCacheStoredOutputValues>,
+    remote_cache_entry: bool,
 }
 
 struct LocalActionCacheStoredOutputValues {
@@ -142,6 +144,7 @@ impl LocalActionCacheStoredEntry {
             action_fingerprint: self.action_fingerprint.clone(),
             outputs_fingerprint: self.outputs_fingerprint.clone(),
             output_values: self.output_values.get(digest_config)?,
+            remote_cache_entry: self.remote_cache_entry,
         })
     }
 }
@@ -338,12 +341,7 @@ impl LocalActionCache {
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
     ) -> bz_error::Result<()> {
-        self.insert_impl(
-            action_digest,
-            outputs_fingerprint,
-            output_values,
-            false,
-        )
+        self.insert_impl(action_digest, outputs_fingerprint, output_values, false)
     }
 
     pub fn insert_remote(
@@ -352,12 +350,7 @@ impl LocalActionCache {
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
     ) -> bz_error::Result<()> {
-        self.insert_impl(
-            action_digest,
-            outputs_fingerprint,
-            output_values,
-            true,
-        )
+        self.insert_impl(action_digest, outputs_fingerprint, output_values, true)
     }
 
     fn insert_impl(
@@ -393,6 +386,7 @@ impl LocalActionCache {
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
+        remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
         let Some(cache) = self.loaded() else {
             return Ok(());
@@ -404,6 +398,7 @@ impl LocalActionCache {
             action_fingerprint,
             outputs_fingerprint,
             output_values,
+            remote_cache_entry,
         )
     }
 
@@ -541,13 +536,12 @@ impl LoadedLocalActionCache {
                 remote_cache_entry,
             },
         );
-        LocalActionCacheSqliteTable::new(self.connection.dupe())
-            .insert_or_replace(
-                key,
-                outputs_fingerprint,
-                serialized_output_values,
-                remote_cache_entry,
-            )
+        LocalActionCacheSqliteTable::new(self.connection.dupe()).insert_or_replace(
+            key,
+            outputs_fingerprint,
+            serialized_output_values,
+            remote_cache_entry,
+        )
     }
 
     fn get_action_metadata(&self, key: &str) -> Option<LocalActionCacheEntry> {
@@ -602,6 +596,7 @@ impl LoadedLocalActionCache {
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
+        remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
         let serialized_output_values = serialize_output_values(output_values.as_ref())?;
         self.action_metadata_entries.insert(
@@ -615,6 +610,7 @@ impl LoadedLocalActionCache {
                     serialized_output_values.clone(),
                     output_values,
                 )),
+                remote_cache_entry,
             },
         );
         LocalActionCacheSqliteTable::new(self.connection.dupe()).insert_or_replace_action_metadata(
@@ -624,6 +620,7 @@ impl LoadedLocalActionCache {
             action_fingerprint,
             outputs_fingerprint,
             serialized_output_values,
+            remote_cache_entry,
         )
     }
 
@@ -682,7 +679,8 @@ impl LocalActionCacheSqliteTable {
                 input_metadata_digest BLOB NOT NULL,
                 action_fingerprint    BLOB NOT NULL,
                 outputs_fingerprint   BLOB NOT NULL,
-                output_values         BLOB NOT NULL
+                output_values         BLOB NOT NULL,
+                remote_cache_entry    INTEGER NOT NULL
             )",
         );
         self.connection
@@ -696,9 +694,12 @@ impl LocalActionCacheSqliteTable {
                 action_digest TEXT PRIMARY KEY NOT NULL
             )",
         );
-        self.connection.lock().execute(&sql, []).with_buck_error_context(|| {
-            format!("creating sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME}")
-        })?;
+        self.connection
+            .lock()
+            .execute(&sql, [])
+            .with_buck_error_context(|| {
+                format!("creating sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME}")
+            })?;
         Ok(())
     }
 
@@ -723,9 +724,8 @@ impl LocalActionCacheSqliteTable {
         };
         drop(stmt);
 
-        let sql = format!(
-            "SELECT 1 FROM {REMOTE_ACTION_CACHE_TABLE_NAME} WHERE action_digest = ?1"
-        );
+        let sql =
+            format!("SELECT 1 FROM {REMOTE_ACTION_CACHE_TABLE_NAME} WHERE action_digest = ?1");
         let remote_cache_entry = connection
             .query_row(&sql, [action_digest], |_| Ok(()))
             .optional()?
@@ -745,7 +745,7 @@ impl LocalActionCacheSqliteTable {
         key: &str,
     ) -> bz_error::Result<Option<LocalActionCacheStoredEntry>> {
         let sql = format!(
-            "SELECT action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values FROM {ACTION_METADATA_TABLE_NAME} WHERE cache_key = ?1"
+            "SELECT action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values, remote_cache_entry FROM {ACTION_METADATA_TABLE_NAME} WHERE cache_key = ?1"
         );
         let connection = self.connection.lock();
         let mut stmt = connection.prepare(&sql)?;
@@ -755,6 +755,7 @@ impl LocalActionCacheSqliteTable {
             let action_fingerprint = row.get::<_, Vec<u8>>(2)?;
             let outputs_fingerprint = row.get::<_, Vec<u8>>(3)?;
             let output_values = row.get::<_, Vec<u8>>(4)?;
+            let remote_cache_entry = row.get::<_, bool>(5)?;
             Ok(LocalActionCacheStoredEntry {
                 action_key_digest: Arc::from(action_key_digest.as_slice()),
                 input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
@@ -763,6 +764,7 @@ impl LocalActionCacheSqliteTable {
                 output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
                     output_values,
                 )),
+                remote_cache_entry,
             })
         })?;
         match rows.next() {
@@ -788,9 +790,7 @@ impl LocalActionCacheSqliteTable {
             &sql,
             rusqlite::params![&action_digest, outputs_fingerprint, output_values],
         )
-        .with_buck_error_context(|| {
-            format!("inserting into sqlite table {STATE_TABLE_NAME}")
-        })?;
+        .with_buck_error_context(|| format!("inserting into sqlite table {STATE_TABLE_NAME}"))?;
         if remote_cache_entry {
             let sql = format!(
                 "INSERT OR REPLACE INTO {REMOTE_ACTION_CACHE_TABLE_NAME} \
@@ -820,10 +820,11 @@ impl LocalActionCacheSqliteTable {
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
         output_values: Vec<u8>,
+        remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
         let sql = format!(
             "INSERT OR REPLACE INTO {ACTION_METADATA_TABLE_NAME} \
-                (cache_key, action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+                (cache_key, action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values, remote_cache_entry) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
         );
         self.connection
             .lock()
@@ -835,7 +836,8 @@ impl LocalActionCacheSqliteTable {
                     input_metadata_digest,
                     action_fingerprint,
                     outputs_fingerprint,
-                    output_values
+                    output_values,
+                    remote_cache_entry,
                 ],
             )
             .with_buck_error_context(|| {
@@ -899,11 +901,18 @@ impl PreparedCommandOptionalExecutor for ChainedCommandOptionalExecutor {
         &self,
         local_action_cache_key: &bz_execute::execute::request::LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+        remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
-        self.first
-            .insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)?;
-        self.second
-            .insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
+        self.first.insert_unprepared_action_cache_metadata(
+            local_action_cache_key,
+            outputs,
+            remote_cache_entry,
+        )?;
+        self.second.insert_unprepared_action_cache_metadata(
+            local_action_cache_key,
+            outputs,
+            remote_cache_entry,
+        )
     }
 
     async fn maybe_execute(

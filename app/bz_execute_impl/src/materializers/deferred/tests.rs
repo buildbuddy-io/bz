@@ -432,7 +432,7 @@ mod state_machine {
             None,
         )
         .unwrap();
-        (db, state.ok())
+        (db, state.ok().map(|state| state.materialized))
     }
 
     fn make_processor_for_io(
@@ -444,7 +444,7 @@ mod state_machine {
         ChannelEventSource,
     ) {
         let (db, sqlite_state) = make_db(io.fs());
-        let tree = ArtifactTree::initialize(sqlite_state);
+        let tree = ArtifactTree::initialize(sqlite_state, None);
 
         let (daemon_dispatcher_events, daemon_dispatcher_sink) =
             bz_events::create_source_sink_pair();

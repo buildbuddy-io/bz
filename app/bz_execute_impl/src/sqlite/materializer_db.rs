@@ -14,6 +14,7 @@ use bz_common::sqlite::sqlite_db::SqliteDb;
 use bz_common::sqlite::sqlite_db::SqliteIdentity;
 use bz_common::sqlite::sqlite_db::SqliteTable;
 use bz_common::sqlite::sqlite_db::SqliteTables;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use bz_core::fs::project::ProjectRoot;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -34,7 +35,7 @@ use crate::sqlite::tables::materializer_state_table::MaterializerStateSqliteTabl
 /// materializer state sqlite db schema! If you forget to bump this version,
 /// then you can fix forward by bumping the `buck2.sqlite_materializer_state_version`
 /// buckconfig in the project root's .buckconfig.
-pub const MATERIALIZER_DB_SCHEMA_VERSION: u64 = 9;
+pub const MATERIALIZER_DB_SCHEMA_VERSION: u64 = 10;
 
 #[derive(Debug)]
 pub struct MaterializerStateEntry {
@@ -44,6 +45,20 @@ pub struct MaterializerStateEntry {
 }
 
 pub type MaterializerState = Vec<MaterializerStateEntry>;
+
+#[derive(Debug, PartialEq)]
+pub struct MaterializerDeclaredCasStateEntry {
+    pub path: ProjectRelativePathBuf,
+    pub metadata: ArtifactMetadata,
+    pub re_use_case: RemoteExecutorUseCase,
+}
+
+pub type MaterializerDeclaredCasState = Vec<MaterializerDeclaredCasStateEntry>;
+
+pub struct MaterializerPersistedState {
+    pub materialized: MaterializerState,
+    pub declared_cas: MaterializerDeclaredCasState,
+}
 
 /// Concrete implementation of SqliteTable for MaterializerStateSqliteTable
 impl SqliteTable for MaterializerStateSqliteTable {
@@ -64,6 +79,7 @@ pub struct MaterializerStateSqliteDb {
 pub struct MaterializerStateSqliteDbDeferredLoad {
     db: MaterializerStateSqliteDb,
     load_error: Option<bz_error::Error>,
+    digest_config: DigestConfig,
 }
 
 impl SqliteDb for MaterializerStateSqliteDb {
@@ -90,9 +106,13 @@ impl MaterializerStateSqliteDb {
     /// Given path to the sqlite DB, opens the materializer state DB or creates a new one if the
     /// existing DB is missing or version-incompatible.
     ///
-    /// Startup intentionally does not hydrate persisted materializer rows. This matches Bazel's
+    /// Startup intentionally does not hydrate persisted materialized rows. This matches Bazel's
     /// shape more closely: cached action validation should be driven by action/cache metadata and
     /// per-output checks, not by eagerly loading the full materializer tree into memory.
+    ///
+    /// Lazy CAS declarations are still restored because they are metadata-only: they let cached
+    /// remote outputs remain available as downloadable digests without pretending they exist on
+    /// disk.
     pub async fn initialize(
         materializer_state_dir: AbsNormPathBuf,
         versions: StdBuckHashMap<String, String>,
@@ -102,7 +122,7 @@ impl MaterializerStateSqliteDb {
         io_executor: Arc<dyn BlockingExecutor>,
         digest_config: DigestConfig,
         reject_identity: Option<&SqliteIdentity>,
-    ) -> bz_error::Result<(Self, bz_error::Result<MaterializerState>)> {
+    ) -> bz_error::Result<(Self, bz_error::Result<MaterializerPersistedState>)> {
         io_executor
             .execute_io_inline(|| {
                 Self::defer_load(
@@ -121,7 +141,7 @@ impl MaterializerStateSqliteDb {
         materializer_state_dir: AbsNormPathBuf,
         versions: StdBuckHashMap<String, String>,
         current_instance_metadata: StdBuckHashMap<String, String>,
-        _digest_config: DigestConfig,
+        digest_config: DigestConfig,
         reject_identity: Option<&SqliteIdentity>,
     ) -> bz_error::Result<MaterializerStateSqliteDbDeferredLoad> {
         let reject_identity = reject_identity.cloned();
@@ -135,6 +155,7 @@ impl MaterializerStateSqliteDb {
             Ok(db) => Ok(MaterializerStateSqliteDbDeferredLoad {
                 db,
                 load_error: None,
+                digest_config,
             }),
             Err(e) => {
                 let db = Self::create_sqlite_db(
@@ -145,6 +166,7 @@ impl MaterializerStateSqliteDb {
                 Ok(MaterializerStateSqliteDbDeferredLoad {
                     db,
                     load_error: Some(e),
+                    digest_config,
                 })
             }
         }
@@ -157,7 +179,7 @@ impl MaterializerStateSqliteDb {
         current_instance_metadata: StdBuckHashMap<String, String>,
         digest_config: DigestConfig,
         reject_identity: Option<&SqliteIdentity>,
-    ) -> bz_error::Result<(Self, bz_error::Result<MaterializerState>)> {
+    ) -> bz_error::Result<(Self, bz_error::Result<MaterializerPersistedState>)> {
         let reject_identity = reject_identity.cloned();
 
         match Self::get_sqlite_db(
@@ -167,13 +189,23 @@ impl MaterializerStateSqliteDb {
             reject_identity.as_ref(),
         ) {
             Ok(db) => {
-                match db
+                let materialized = db
                     .tables
                     .domain_table
-                    .read_materializer_state(digest_config)
-                {
-                    Ok(state) => Ok((db, Ok(state))),
-                    Err(e) => {
+                    .read_materializer_state(digest_config);
+                let declared_cas = db
+                    .tables
+                    .domain_table
+                    .read_declared_cas_state(digest_config);
+                match (materialized, declared_cas) {
+                    (Ok(materialized), Ok(declared_cas)) => Ok((
+                        db,
+                        Ok(MaterializerPersistedState {
+                            materialized,
+                            declared_cas,
+                        }),
+                    )),
+                    (Err(e), _) | (_, Err(e)) => {
                         let state = Self::create_sqlite_db(
                             materializer_state_dir,
                             versions,
@@ -194,6 +226,26 @@ impl MaterializerStateSqliteDb {
         }
     }
 
+    fn empty_persisted_state() -> MaterializerPersistedState {
+        MaterializerPersistedState {
+            materialized: Vec::new(),
+            declared_cas: Vec::new(),
+        }
+    }
+
+    fn load_bazel_aligned_state(
+        &self,
+        digest_config: DigestConfig,
+    ) -> bz_error::Result<MaterializerPersistedState> {
+        Ok(MaterializerPersistedState {
+            materialized: Vec::new(),
+            declared_cas: self
+                .tables
+                .domain_table
+                .read_declared_cas_state(digest_config)?,
+        })
+    }
+
     pub(crate) fn materializer_state_table(&mut self) -> &MaterializerStateSqliteTable {
         &self.tables.domain_table
     }
@@ -208,15 +260,20 @@ impl MaterializerStateSqliteDbDeferredLoad {
         self,
     ) -> bz_error::Result<(
         MaterializerStateSqliteDb,
-        bz_error::Result<MaterializerState>,
+        bz_error::Result<MaterializerPersistedState>,
     )> {
-        let Self { db, load_error } = self;
+        let Self {
+            db,
+            load_error,
+            digest_config,
+        } = self;
 
         if load_error.is_some() {
-            return Ok((db, Ok(Vec::new())));
+            return Ok((db, Ok(MaterializerStateSqliteDb::empty_persisted_state())));
         }
 
-        Ok((db, Ok(Vec::new())))
+        let state = db.load_bazel_aligned_state(digest_config);
+        Ok((db, state))
     }
 }
 
@@ -228,7 +285,7 @@ pub(crate) fn testing_materializer_state_sqlite_db(
     reject_identity: Option<&SqliteIdentity>,
 ) -> bz_error::Result<(
     MaterializerStateSqliteDb,
-    bz_error::Result<MaterializerState>,
+    bz_error::Result<MaterializerPersistedState>,
 )> {
     MaterializerStateSqliteDb::initialize_materializer_sqlite_db(
         fs.resolve(ProjectRelativePath::unchecked_new(
@@ -484,7 +541,8 @@ mod tests {
             assert_matches!(
                 loaded_state,
                 Ok(v) => {
-                    assert_eq!(v, vec![MaterializerStateEntry {path: path.clone(), metadata: artifact_metadata.clone(), last_access_time: timestamp}]);
+                    assert_eq!(v.materialized, vec![MaterializerStateEntry {path: path.clone(), metadata: artifact_metadata.clone(), last_access_time: timestamp}]);
+                    assert!(v.declared_cas.is_empty());
                 }
             );
             assert_metadata_matches(db.tables.created_by_table.read_all()?, &metadatas[0]);
@@ -520,7 +578,8 @@ mod tests {
             assert_matches!(
                 loaded_state,
                 Ok(v) => {
-                    assert_eq!(v, vec![MaterializerStateEntry { path, metadata: artifact_metadata, last_access_time: timestamp }]);
+                    assert_eq!(v.materialized, vec![MaterializerStateEntry { path, metadata: artifact_metadata, last_access_time: timestamp }]);
+                    assert!(v.declared_cas.is_empty());
                 }
             );
             assert_metadata_matches(db.tables.created_by_table.read_all()?, &metadatas[2]);

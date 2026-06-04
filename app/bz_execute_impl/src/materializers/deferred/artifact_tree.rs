@@ -37,6 +37,8 @@ use tracing::instrument;
 use crate::materializers::deferred::SharedMaterializingError;
 use crate::materializers::deferred::WriteFile;
 use crate::materializers::deferred::file_tree::FileTree;
+use crate::sqlite::materializer_db::MaterializerDeclaredCasState;
+use crate::sqlite::materializer_db::MaterializerDeclaredCasStateEntry;
 use crate::sqlite::materializer_db::MaterializerState;
 use crate::sqlite::materializer_db::MaterializerStateEntry;
 use crate::sqlite::materializer_db::MaterializerStateSqliteDb;
@@ -227,7 +229,10 @@ impl MaterializationMethodToProto for ArtifactMaterializationMethod {
 }
 
 impl ArtifactTree {
-    pub(crate) fn initialize(sqlite_state: Option<MaterializerState>) -> Self {
+    pub(crate) fn initialize(
+        sqlite_state: Option<MaterializerState>,
+        declared_cas_state: Option<MaterializerDeclaredCasState>,
+    ) -> Self {
         let mut tree = ArtifactTree::new();
         if let Some(sqlite_state) = sqlite_state {
             for entry in sqlite_state.into_iter() {
@@ -244,6 +249,28 @@ impl ArtifactTree {
                             metadata,
                             last_access_time,
                             active: false,
+                        },
+                        processing: Processing::Done(Version(0)),
+                    }),
+                );
+            }
+        }
+        if let Some(declared_cas_state) = declared_cas_state {
+            for entry in declared_cas_state.into_iter() {
+                let MaterializerDeclaredCasStateEntry {
+                    path,
+                    metadata,
+                    re_use_case,
+                } = entry;
+                tree.insert(
+                    path.iter().map(|f| f.to_owned()),
+                    Box::new(ArtifactMaterializationData {
+                        deps: None,
+                        stage: ArtifactMaterializationStage::Declared {
+                            entry: metadata,
+                            method: Arc::new(ArtifactMaterializationMethod::CasDownload {
+                                info: Arc::new(CasDownloadInfo::new_declared(re_use_case)),
+                            }),
                         },
                         processing: Processing::Done(Version(0)),
                     }),

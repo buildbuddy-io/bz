@@ -1119,7 +1119,18 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
 
         let existing_futs = ExistingFutures(existing_futs);
 
-        let method = Arc::from(method);
+        let method: Arc<ArtifactMaterializationMethod> = Arc::from(method);
+        if let ArtifactMaterializationMethod::CasDownload { info } = method.as_ref()
+            && info.persist_declared_cas
+            && let Some(sqlite_db) = self.sqlite_db.as_mut()
+            && let Err(e) = sqlite_db.materializer_state_table().insert_declared_cas(
+                path,
+                value.entry(),
+                info.re_use_case,
+            )
+        {
+            let _unused = soft_error!("materializer_declared_cas_insert_error", e, quiet: true);
+        }
 
         // Dispatch Write actions eagerly if possible. We can do this if no cleanup is required. We
         // also check that there are no deps, though for writes there should never be deps.
@@ -1727,10 +1738,11 @@ fn on_materialization(
     error_name: &'static str,
 ) {
     if let Some(sqlite_db) = sqlite_db {
-        if let Err(e) = sqlite_db
-            .materializer_state_table()
-            .insert(path, metadata, timestamp)
-        {
+        let table = sqlite_db.materializer_state_table();
+        if let Err(e) = table.delete_declared_cas(vec![path.to_owned()]) {
+            let _unused = soft_error!(error_name, e, quiet: true);
+        }
+        if let Err(e) = table.insert(path, metadata, timestamp) {
             let _unused = soft_error!(error_name, e, quiet: true);
         }
     }

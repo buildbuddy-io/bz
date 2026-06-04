@@ -5334,10 +5334,14 @@ impl Action for RunAction {
             && !result.was_locally_executed()
             && let Some(local_action_cache_key) = request.local_action_cache_key()
         {
-            ctx.insert_unprepared_action_cache_metadata(local_action_cache_key, &result.outputs)
-                .buck_error_context(
-                    "Failed to persist remote output metadata in the local action cache",
-                )?;
+            ctx.insert_unprepared_action_cache_metadata(
+                local_action_cache_key,
+                &result.outputs,
+                true,
+            )
+            .buck_error_context(
+                "Failed to persist remote output metadata in the local action cache",
+            )?;
         }
 
         let was_locally_executed = result.was_locally_executed();

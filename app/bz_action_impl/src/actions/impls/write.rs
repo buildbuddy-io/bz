@@ -593,6 +593,7 @@ impl Action for TemplateExpansionAction {
         ctx.insert_unprepared_action_cache_metadata(
             &local_action_cache_key,
             &buck_indexmap![local_action_cache_output => value.dupe()],
+            false,
         )?;
 
         let wall_time = Instant::now()

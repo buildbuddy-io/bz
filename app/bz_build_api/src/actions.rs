@@ -326,6 +326,7 @@ pub trait ActionExecutionCtx: Send + Sync {
         &mut self,
         _local_action_cache_key: &LocalActionCacheKey,
         _outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+        _remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
         Ok(())
     }

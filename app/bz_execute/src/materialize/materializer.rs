@@ -601,6 +601,8 @@ pub struct CasDownloadInfo {
     pub origin: CasDownloadInfoOrigin,
     /// RE Use case to use when downloading this
     pub re_use_case: RemoteExecutorUseCase,
+    /// Whether declared CAS metadata should be persisted in the materializer state database.
+    pub persist_declared_cas: bool,
 }
 
 impl CasDownloadInfo {
@@ -617,6 +619,7 @@ impl CasDownloadInfo {
                 ttl,
             }),
             re_use_case,
+            persist_declared_cas: true,
         }
     }
 
@@ -624,6 +627,15 @@ impl CasDownloadInfo {
         Self {
             origin: CasDownloadInfoOrigin::Declared,
             re_use_case,
+            persist_declared_cas: true,
+        }
+    }
+
+    pub fn new_declared_transient(re_use_case: RemoteExecutorUseCase) -> Self {
+        Self {
+            origin: CasDownloadInfoOrigin::Declared,
+            re_use_case,
+            persist_declared_cas: false,
         }
     }
 
