@@ -85,6 +85,17 @@ pub mod process_context;
 
 const BUILDBUDDY_REMOTE_ENDPOINT: &str = "remote.buildbuddy.dev";
 const BUILDBUDDY_DEFAULT_RBE_CONTAINER_IMAGE: &str = "docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:f7db0d4791247f032fdb4451b7c3ba90e567923a341cc6dc43abfc283436791a";
+const BUILDBUDDY_API_KEY_ENV_VAR: &str = "BUILDBUDDY_API_KEY";
+
+fn non_empty_buildbuddy_api_key(api_key: String) -> Option<String> {
+    (!api_key.trim().is_empty()).then_some(api_key)
+}
+
+fn buildbuddy_api_key_from_env() -> Option<String> {
+    std::env::var(BUILDBUDDY_API_KEY_ENV_VAR)
+        .ok()
+        .and_then(non_empty_buildbuddy_api_key)
+}
 
 fn parse_remote_default_exec_property(
     value: &str,
@@ -238,6 +249,8 @@ struct BeforeSubcommandOptions {
     buildbuddy: bool,
 
     /// BuildBuddy API key to send to BuildBuddy gRPC endpoints.
+    ///
+    /// Can also be set with the `BUILDBUDDY_API_KEY` environment variable.
     #[clap(long = "api-key", value_name = "KEY", global = true)]
     api_key: Option<String>,
 
@@ -325,6 +338,15 @@ impl BeforeSubcommandOptions {
     }
 
     fn remote_execution_startup_config(&self) -> RemoteExecutionStartupConfig {
+        self.remote_execution_startup_config_with_buildbuddy_api_key_env(
+            buildbuddy_api_key_from_env(),
+        )
+    }
+
+    fn remote_execution_startup_config_with_buildbuddy_api_key_env(
+        &self,
+        buildbuddy_api_key_env: Option<String>,
+    ) -> RemoteExecutionStartupConfig {
         let remote_default_exec_properties = if !self.remote_default_exec_properties.is_empty() {
             Some(self.remote_default_exec_properties.clone())
         } else if self.rbe || self.buildbuddy {
@@ -353,7 +375,10 @@ impl BeforeSubcommandOptions {
             remote_downloader: self.remote_downloader.clone().or_else(|| {
                 (self.rbe || self.buildbuddy).then(|| BUILDBUDDY_REMOTE_ENDPOINT.to_owned())
             }),
-            buildbuddy_api_key: self.api_key.clone(),
+            buildbuddy_api_key: self
+                .api_key
+                .clone()
+                .or_else(|| buildbuddy_api_key_env.and_then(non_empty_buildbuddy_api_key)),
             remote_default_exec_properties,
             remote_max_connections: self.remote_max_connections,
             remote_max_concurrency_per_connection: self.remote_max_concurrency_per_connection,
@@ -1157,6 +1182,47 @@ mod tests {
             remote_execution.buildbuddy_api_key.as_deref(),
             Some("secret")
         );
+    }
+
+    #[test]
+    fn api_key_can_come_from_env() {
+        let opts = Opt::try_parse_from(["buck2", "build", "//:target"]).unwrap();
+
+        let remote_execution = opts
+            .common_opts
+            .remote_execution_startup_config_with_buildbuddy_api_key_env(Some(
+                "from-env".to_owned(),
+            ));
+        assert_eq!(
+            remote_execution.buildbuddy_api_key.as_deref(),
+            Some("from-env")
+        );
+    }
+
+    #[test]
+    fn api_key_flag_overrides_api_key_env() {
+        let opts =
+            Opt::try_parse_from(["buck2", "build", "--api-key=from-cli", "//:target"]).unwrap();
+
+        let remote_execution = opts
+            .common_opts
+            .remote_execution_startup_config_with_buildbuddy_api_key_env(Some(
+                "from-env".to_owned(),
+            ));
+        assert_eq!(
+            remote_execution.buildbuddy_api_key.as_deref(),
+            Some("from-cli")
+        );
+    }
+
+    #[test]
+    fn empty_api_key_env_is_ignored() {
+        let opts = Opt::try_parse_from(["buck2", "build", "//:target"]).unwrap();
+
+        let remote_execution = opts
+            .common_opts
+            .remote_execution_startup_config_with_buildbuddy_api_key_env(Some(" \t".to_owned()));
+        assert_eq!(remote_execution.buildbuddy_api_key, None);
     }
 
     #[test]
