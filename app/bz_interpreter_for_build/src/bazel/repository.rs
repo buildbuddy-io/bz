@@ -272,11 +272,17 @@ use self::command_executor::repository_ctx_rewrite_embedded_project_paths;
 #[cfg(test)]
 use self::download::MODULE_CTX_DOWNLOAD_CACHE_LOCKS;
 #[cfg(test)]
+use self::download::ModuleCtxChecksum;
+#[cfg(test)]
 use self::download::ModuleCtxChecksumKind;
 #[cfg(test)]
 use self::download::module_ctx_checksum_from_integrity;
 #[cfg(test)]
+use self::download::module_ctx_checksum_hex;
+#[cfg(test)]
 use self::download::module_ctx_copy_download_file;
+#[cfg(test)]
+use self::download::module_ctx_download_cache_import_entry;
 #[cfg(test)]
 use self::download::module_ctx_download_cache_lock;
 #[cfg(test)]
@@ -285,6 +291,8 @@ use self::download::module_ctx_download_cache_release_lock;
 use self::download::module_ctx_download_request_headers_for_url;
 #[cfg(test)]
 use self::download::module_ctx_integrity_from_checksum;
+#[cfg(test)]
+use self::download::module_ctx_repository_cache_id_path;
 #[cfg(test)]
 use self::recorded_inputs::repository_recorded_dir_tree_value;
 #[cfg(test)]
@@ -1413,6 +1421,47 @@ mod tests {
         drop(other);
         module_ctx_download_cache_release_lock(&key, &lock);
         assert!(!module_ctx_download_cache_lock_exists(&key));
+    }
+
+    #[test]
+    fn test_module_ctx_download_cache_import_entry_copies_file_and_canonical_id() {
+        let dir = module_ctx_download_test_dir("cache-import");
+        fs::create_dir_all(&dir).unwrap();
+        let source_entry = dir.join("source");
+        let destination_entry = dir.join("destination");
+        fs::create_dir_all(&source_entry).unwrap();
+
+        let contents = b"cached archive";
+        let checksum = ModuleCtxChecksum {
+            kind: ModuleCtxChecksumKind::Sha256,
+            hex: module_ctx_checksum_hex(ModuleCtxChecksumKind::Sha256, contents),
+        };
+        let canonical_id = "https://example.com/archive.pkg";
+        fs::write(source_entry.join("file"), contents).unwrap();
+        fs::write(
+            module_ctx_repository_cache_id_path(&source_entry, &checksum, canonical_id).unwrap(),
+            b"",
+        )
+        .unwrap();
+
+        module_ctx_download_cache_import_entry(
+            &checksum,
+            canonical_id,
+            &source_entry,
+            &destination_entry,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contents,
+            fs::read(destination_entry.join("file")).unwrap().as_slice()
+        );
+        assert!(
+            module_ctx_repository_cache_id_path(&destination_entry, &checksum, canonical_id)
+                .unwrap()
+                .exists()
+        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     fn repository_recorded_input_test_dir(name: &str) -> PathBuf {

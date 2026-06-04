@@ -1368,16 +1368,69 @@ fn module_ctx_repository_cache_path() -> Option<PathBuf> {
     )
 }
 
-fn module_ctx_repository_cache_entry_dir(checksum: &ModuleCtxChecksum) -> Option<PathBuf> {
+fn module_ctx_bazel_repository_cache_path() -> Option<PathBuf> {
+    if env::var("BUCK2_BAZEL_REPOSITORY_CACHE")
+        .map(|path| path.is_empty())
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    let output_root =
+        if let Some(test_tmpdir) = env::var_os("TEST_TMPDIR").filter(|path| !path.is_empty()) {
+            PathBuf::from(test_tmpdir)
+        } else if let Some(xdg_cache_home) =
+            env::var_os("XDG_CACHE_HOME").filter(|path| !path.is_empty())
+        {
+            PathBuf::from(xdg_cache_home).join("bazel")
+        } else {
+            let home = PathBuf::from(env::var_os("HOME")?);
+            if cfg!(target_os = "macos") {
+                home.join("Library").join("Caches").join("bazel")
+            } else {
+                home.join(".cache").join("bazel")
+            }
+        };
+
+    let user = env::var("USER")
+        .or_else(|_| env::var("USERNAME"))
+        .ok()
+        .filter(|user| !user.is_empty())?;
+
     Some(
-        module_ctx_repository_cache_path()?
-            .join("content_addressable")
-            .join(checksum.kind.repository_cache_dir_name())
-            .join(&checksum.hex),
+        output_root
+            .join(format!("_bazel_{user}"))
+            .join("cache")
+            .join("repos")
+            .join("v1"),
     )
 }
 
-fn module_ctx_repository_cache_id_path(
+fn module_ctx_repository_cache_entry_dir_for_path(
+    cache_path: &Path,
+    checksum: &ModuleCtxChecksum,
+) -> PathBuf {
+    cache_path
+        .join("content_addressable")
+        .join(checksum.kind.repository_cache_dir_name())
+        .join(&checksum.hex)
+}
+
+fn module_ctx_repository_cache_entry_dir(checksum: &ModuleCtxChecksum) -> Option<PathBuf> {
+    Some(module_ctx_repository_cache_entry_dir_for_path(
+        &module_ctx_repository_cache_path()?,
+        checksum,
+    ))
+}
+
+fn module_ctx_bazel_repository_cache_entry_dir(checksum: &ModuleCtxChecksum) -> Option<PathBuf> {
+    Some(module_ctx_repository_cache_entry_dir_for_path(
+        &module_ctx_bazel_repository_cache_path()?,
+        checksum,
+    ))
+}
+
+pub(super) fn module_ctx_repository_cache_id_path(
     entry: &Path,
     checksum: &ModuleCtxChecksum,
     canonical_id: &str,
@@ -1441,20 +1494,18 @@ pub(super) fn module_ctx_copy_download_file(
     }
 }
 
-fn module_ctx_download_cache_get_to_path(
+fn module_ctx_download_cache_entry_get_to_path(
     checksum: &ModuleCtxChecksum,
     canonical_id: &str,
+    entry: &Path,
     destination: &Path,
     executable: bool,
 ) -> bz_error::Result<bool> {
-    let Some(entry) = module_ctx_repository_cache_entry_dir(checksum) else {
-        return Ok(false);
-    };
     let file = entry.join("file");
     if !file.is_file() {
         return Ok(false);
     }
-    if let Some(id_path) = module_ctx_repository_cache_id_path(&entry, checksum, canonical_id)
+    if let Some(id_path) = module_ctx_repository_cache_id_path(entry, checksum, canonical_id)
         && !id_path.exists()
     {
         return Ok(false);
@@ -1467,6 +1518,117 @@ fn module_ctx_download_cache_get_to_path(
         module_ctx_download_cache_record_verified(verification_key, metadata);
     }
     module_ctx_copy_download_file(&file, destination, executable)?;
+    Ok(true)
+}
+
+fn module_ctx_download_cache_publish_file(
+    source: &Path,
+    destination: &Path,
+) -> bz_error::Result<()> {
+    if destination.is_file() {
+        return Ok(());
+    }
+    let parent = destination.parent().ok_or_else(|| {
+        module_ctx_download_cache_io_error(
+            "find parent for",
+            destination,
+            std::io::Error::new(std::io::ErrorKind::NotFound, "missing parent"),
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .map_err(|error| module_ctx_download_cache_io_error("create", parent, error))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let tmp = parent.join(format!("tmp-{}-{}", std::process::id(), nanos));
+    if let Err(hardlink_error) = fs::hard_link(source, &tmp) {
+        fs::copy(source, &tmp).map(|_| ()).map_err(|copy_error| {
+            module_ctx_download_cache_io_error(
+                "hardlink or copy",
+                source,
+                std::io::Error::other(format!(
+                    "hardlink failed: {hardlink_error}; copy failed: {copy_error}"
+                )),
+            )
+        })?;
+    }
+    if let Err(error) = fs::rename(&tmp, destination) {
+        let _unused = fs::remove_file(&tmp);
+        if !destination.is_file() {
+            return Err(module_ctx_download_cache_io_error(
+                "rename",
+                destination,
+                error,
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn module_ctx_download_cache_import_entry(
+    checksum: &ModuleCtxChecksum,
+    canonical_id: &str,
+    source_entry: &Path,
+    destination_entry: &Path,
+) -> bz_error::Result<()> {
+    let source_file = source_entry.join("file");
+    let destination_file = destination_entry.join("file");
+    module_ctx_download_cache_publish_file(&source_file, &destination_file)?;
+    if let Some(source_id_path) =
+        module_ctx_repository_cache_id_path(source_entry, checksum, canonical_id)
+        && let Some(destination_id_path) =
+            module_ctx_repository_cache_id_path(destination_entry, checksum, canonical_id)
+        && !destination_id_path.exists()
+    {
+        if let Err(_hardlink_error) = fs::hard_link(&source_id_path, &destination_id_path) {
+            fs::write(&destination_id_path, b"").map_err(|error| {
+                module_ctx_download_cache_io_error("write", &destination_id_path, error)
+            })?;
+        }
+    }
+    let verification_key =
+        module_ctx_download_cache_verification_key(&destination_file, checksum, canonical_id);
+    let metadata = module_ctx_download_cache_file_metadata(&destination_file)?;
+    module_ctx_download_cache_record_verified(verification_key, metadata);
+    Ok(())
+}
+
+fn module_ctx_download_cache_get_to_path(
+    checksum: &ModuleCtxChecksum,
+    canonical_id: &str,
+    destination: &Path,
+    executable: bool,
+) -> bz_error::Result<bool> {
+    let Some(primary_entry) = module_ctx_repository_cache_entry_dir(checksum) else {
+        return Ok(false);
+    };
+    if module_ctx_download_cache_entry_get_to_path(
+        checksum,
+        canonical_id,
+        &primary_entry,
+        destination,
+        executable,
+    )? {
+        return Ok(true);
+    }
+
+    let Some(bazel_entry) = module_ctx_bazel_repository_cache_entry_dir(checksum) else {
+        return Ok(false);
+    };
+    if bazel_entry == primary_entry {
+        return Ok(false);
+    }
+    if !module_ctx_download_cache_entry_get_to_path(
+        checksum,
+        canonical_id,
+        &bazel_entry,
+        destination,
+        executable,
+    )? {
+        return Ok(false);
+    }
+
+    module_ctx_download_cache_import_entry(checksum, canonical_id, &bazel_entry, &primary_entry)?;
     Ok(true)
 }
 
@@ -1752,7 +1914,7 @@ fn module_ctx_bytestream_download_resource_name(
     }
 }
 
-fn module_ctx_checksum_hex(kind: ModuleCtxChecksumKind, bytes: &[u8]) -> String {
+pub(super) fn module_ctx_checksum_hex(kind: ModuleCtxChecksumKind, bytes: &[u8]) -> String {
     match kind {
         ModuleCtxChecksumKind::Sha1 => hex::encode(Sha1::digest(bytes)),
         ModuleCtxChecksumKind::Sha256 => hex::encode(Sha256::digest(bytes)),
