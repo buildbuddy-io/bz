@@ -30,9 +30,9 @@ use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use bz_core::cells::external::external_cell_origin_for_cell;
 use bz_core::configuration::compatibility::MaybeCompatible;
 use bz_core::content_hash::ContentBasedPathHash;
-use bz_core::fs::buck_out_path::BazelOutputPathKind;
 use bz_core::execution_types::executor_config::PathSeparatorKind;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
+use bz_core::fs::buck_out_path::BazelOutputPathKind;
 use bz_core::pattern::pattern::Modifiers;
 use bz_core::provider::label::ConfiguredProvidersLabel;
 use bz_core::target::configured_target_label::ConfiguredTargetLabel;
@@ -327,7 +327,7 @@ fn bazel_convenience_output_path(
     }
 
     let short_path = bazel_visible_build_artifact_short_path(artifact);
-    let mut result = path.bazel_output_root().convenience_symlink_name().to_owned();
+    let mut result = path.bazel_output_root().exec_root().to_owned();
     if path.bazel_output_path_kind() == BazelOutputPathKind::PackageRelative {
         let package_exec_path = bazel_package_exec_path(label);
         if !bazel_path_has_package_prefix(&short_path, &package_exec_path) {

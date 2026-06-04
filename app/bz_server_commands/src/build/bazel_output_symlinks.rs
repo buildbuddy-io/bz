@@ -77,7 +77,11 @@ fn collect_candidate_roots(
     let mut roots = CandidateRoots::default();
 
     for result in configured.values().flatten() {
-        for output in result.outputs.iter().filter_map(|output| output.inner.as_ref().ok()) {
+        for output in result
+            .outputs
+            .iter()
+            .filter_map(|output| output.inner.as_ref().ok())
+        {
             if !matches!(output.provider_type, BuildProviderType::Default) {
                 continue;
             }
@@ -108,8 +112,7 @@ fn create_convenience_symlink(
     candidates: &BTreeSet<ProjectRelativePathBuf>,
     fs: &ProjectRoot,
 ) -> bz_error::Result<Option<ProjectRelativePathBuf>> {
-    let link_path =
-        ProjectRelativePathBuf::unchecked_new(root.convenience_symlink_name().to_owned());
+    let link_path = ProjectRelativePathBuf::unchecked_new(root.exec_root().to_owned());
     let link_abs = fs.resolve(&link_path);
 
     match candidates.len() {
@@ -124,7 +127,7 @@ fn create_convenience_symlink(
             remove_existing_symlink(&link_abs)?;
             warn!(
                 "Cleared {} because it would not contain all requested targets' outputs: {:?}",
-                root.convenience_symlink_name(),
+                root.exec_root(),
                 candidates
             );
             Ok(None)
@@ -138,6 +141,14 @@ fn create_or_replace_symlink(
 ) -> bz_error::Result<()> {
     fs_util::create_dir_all(target)
         .with_buck_error_context(|| format!("Error creating Bazel output root `{target}`"))?;
+    if let Some(parent) = link.parent() {
+        fs_util::create_dir_all(parent).with_buck_error_context(|| {
+            format!(
+                "Error creating parent directory for Bazel output symlink `{}`",
+                link.display()
+            )
+        })?;
+    }
 
     if fs_util::read_link(link)
         .map(|current| current == target.as_path())
@@ -163,7 +174,10 @@ fn remove_existing_symlink(link: &AbsNormPathBuf) -> bz_error::Result<()> {
         fs_util::remove_file(link)
             .categorize_internal()
             .with_buck_error_context(|| {
-                format!("Error removing Bazel convenience symlink `{}`", link.display())
+                format!(
+                    "Error removing Bazel convenience symlink `{}`",
+                    link.display()
+                )
             })?;
     }
     Ok(())
