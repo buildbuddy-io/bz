@@ -521,7 +521,7 @@ impl<'a> ServerCommandContext<'a> {
                     .remote_execution_startup_config
                     .should_upload_local_results_to_remote_cache(),
             action_paths_interner: None,
-            deduplicate_get_digests_ttl_calls: false,
+            deduplicate_get_digests_ttl_calls: true,
         };
 
         let concurrency = self
@@ -1207,12 +1207,15 @@ impl DiceCommandUpdater<'_, '_> {
             run_action_knobs.action_paths_interner = Some(DashMapDirectoryInterner::new());
         }
 
-        run_action_knobs.deduplicate_get_digests_ttl_calls |= root_config
-            .parse::<bool>(BuckconfigKeyRef {
+        if let Some(deduplicate_get_digests_ttl_calls) =
+            root_config.parse::<bool>(BuckconfigKeyRef {
                 section: "buck2",
                 property: "deduplicate_get_digests_ttl_calls",
             })?
-            .unwrap_or(false);
+        {
+            run_action_knobs.deduplicate_get_digests_ttl_calls =
+                deduplicate_get_digests_ttl_calls;
+        }
 
         let output_trees_download_semaphore_size = root_config.parse::<u32>(BuckconfigKeyRef {
             section: "buck2",

@@ -810,6 +810,20 @@ impl FindMissingCache {
     }
 }
 
+fn upload_request_digests(request: &UploadRequest) -> Vec<TDigest> {
+    let file_digests = request
+        .files_with_digest
+        .iter()
+        .flatten()
+        .map(|file| file.digest.clone());
+    let blob_digests = request
+        .inlined_blobs_with_digest
+        .iter()
+        .flatten()
+        .map(|blob| blob.digest.clone());
+    file_digests.chain(blob_digests).collect()
+}
+
 pub struct REClient {
     runtime_opts: RERuntimeOpts,
     grpc_clients: GRPCClients,
@@ -1097,7 +1111,8 @@ impl REClient {
         metadata: RemoteExecutionMetadata,
         request: UploadRequest,
     ) -> anyhow::Result<UploadResponse> {
-        upload_impl(
+        let uploaded_digests = upload_request_digests(&request);
+        let response = upload_impl(
             &self.instance_name,
             request,
             self.bystream_compressor,
@@ -1131,7 +1146,16 @@ impl REClient {
                 Ok(resp.into_inner())
             },
         )
-        .await
+        .await?;
+
+        if !uploaded_digests.is_empty() {
+            let mut find_missing_cache = self.find_missing_cache.lock().unwrap();
+            for digest in uploaded_digests {
+                find_missing_cache.put(digest, DigestRemoteState::ExistsOnRemote);
+            }
+        }
+
+        Ok(response)
     }
 
     pub async fn upload_blob_with_digest(
