@@ -60,6 +60,7 @@ const LLVM_BZLMOD_DEP: &str = "llvm@0.8.4";
 const LLVM_TOOLCHAIN_PATTERN: &str = "@llvm//toolchain:all";
 const LLVM_LINUX_X86_64_PLATFORM: &str = "@llvm//platforms:linux_x86_64";
 const LLVM_MACOS_AARCH64_PLATFORM: &str = "@llvm//platforms:macos_aarch64";
+const LLVM_STUB_LIBGCC_S_SETTING: &str = "@llvm//config:experimental_stub_libgcc_s";
 const LLVM_LINUX_LINKOPT: &str = "-no-pie";
 const LLVM_MACOS_FRAMEWORKS: &str = "CoreFoundation,Foundation,Kernel,OSLog,Security,SystemConfiguration,IOKit,CoreServices,DiskArbitration,CFNetwork";
 
@@ -602,6 +603,14 @@ impl CommonBuildConfigurationOptions {
         Self::bazel_command_line_build_setting_entry("string", key, value)
     }
 
+    fn bazel_command_line_bool_build_setting(key: &str, value: bool) -> String {
+        Self::bazel_command_line_build_setting_entry(
+            "bool",
+            key,
+            if value { "true" } else { "false" },
+        )
+    }
+
     fn bazel_command_line_list_build_setting(key: &str, value: &str) -> Vec<String> {
         value
             .split(',')
@@ -730,10 +739,13 @@ impl CommonBuildConfigurationOptions {
 
         Some((
             index,
-            vec![Self::bazel_command_line_single_list_build_setting(
-                "//command_line_option:extra_toolchains",
-                LLVM_TOOLCHAIN_PATTERN,
-            )],
+            vec![
+                Self::bazel_command_line_single_list_build_setting(
+                    "//command_line_option:extra_toolchains",
+                    LLVM_TOOLCHAIN_PATTERN,
+                ),
+                Self::bazel_command_line_bool_build_setting(LLVM_STUB_LIBGCC_S_SETTING, true),
+            ],
         ))
     }
 
@@ -1836,6 +1848,10 @@ mod tests {
             build_settings
                 .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
         );
+        assert!(
+            build_settings
+                .contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue")
+        );
         if cfg!(target_os = "linux") {
             assert!(build_settings.contains("list\t//command_line_option:linkopt\t-no-pie"));
         } else {
@@ -1877,6 +1893,10 @@ mod tests {
         assert!(
             build_settings
                 .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
+        );
+        assert!(
+            build_settings
+                .contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue")
         );
         assert!(build_settings.contains("list\t//command_line_option:linkopt\t-no-pie"));
         assert!(override_values.contains(
@@ -1923,6 +1943,10 @@ mod tests {
         assert!(
             build_settings
                 .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
+        );
+        assert!(
+            build_settings
+                .contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue")
         );
         assert!(
             build_settings
@@ -1975,6 +1999,10 @@ mod tests {
         assert!(
             build_settings
                 .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
+        );
+        assert!(
+            build_settings
+                .contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue")
         );
         assert!(
             build_settings
