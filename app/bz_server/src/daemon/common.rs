@@ -105,6 +105,7 @@ pub struct CommandExecutorFactory {
     deduplicate_get_digests_ttl_calls: bool,
     output_trees_download_config: OutputTreesDownloadConfig,
     remote_metadata_semaphore: Arc<Semaphore>,
+    remote_action_cache_semaphore: Arc<Semaphore>,
     daemon_id: DaemonId,
     bazel_remote_endpoint_overrides: BazelRemoteEndpointOverrides,
 }
@@ -134,6 +135,7 @@ impl CommandExecutorFactory {
         deduplicate_get_digests_ttl_calls: bool,
         output_trees_download_config: OutputTreesDownloadConfig,
         remote_metadata_concurrency: usize,
+        remote_action_cache_concurrency: usize,
         daemon_id: DaemonId,
         remote_execution_startup_config: &RemoteExecutionStartupConfig,
     ) -> Self {
@@ -166,6 +168,9 @@ impl CommandExecutorFactory {
             deduplicate_get_digests_ttl_calls,
             output_trees_download_config,
             remote_metadata_semaphore: Arc::new(Semaphore::new(remote_metadata_concurrency)),
+            remote_action_cache_semaphore: Arc::new(Semaphore::new(
+                remote_action_cache_concurrency,
+            )),
             daemon_id,
             bazel_remote_endpoint_overrides: BazelRemoteEndpointOverrides::from_startup_config(
                 remote_execution_startup_config,
@@ -591,7 +596,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                                 paranoid: self.paranoid.dupe(),
                                 deduplicate_get_digests_ttl_calls: self.deduplicate_get_digests_ttl_calls,
                                 output_trees_download_config: self.output_trees_download_config.dupe(),
-                                remote_metadata_semaphore: self.remote_metadata_semaphore.dupe(),
+                                remote_action_cache_semaphore: self.remote_action_cache_semaphore.dupe(),
                                 local_action_cache: self.local_action_cache.dupe(),
                             }) as _
                         };

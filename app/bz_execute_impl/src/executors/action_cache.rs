@@ -66,7 +66,7 @@ pub struct ActionCacheChecker {
     pub paranoid: Option<ParanoidDownloader>,
     pub deduplicate_get_digests_ttl_calls: bool,
     pub output_trees_download_config: OutputTreesDownloadConfig,
-    pub remote_metadata_semaphore: Arc<Semaphore>,
+    pub remote_action_cache_semaphore: Arc<Semaphore>,
     pub local_action_cache: Arc<LocalActionCache>,
 }
 
@@ -194,7 +194,7 @@ async fn query_action_cache_and_download_result(
     details: RemoteCommandExecutionDetails,
     deduplicate_get_digests_ttl_calls: bool,
     output_trees_download_config: &OutputTreesDownloadConfig,
-    remote_metadata_semaphore: &Arc<Semaphore>,
+    remote_cache_query_semaphore: &Arc<Semaphore>,
     local_action_cache: Option<&Arc<LocalActionCache>>,
 ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
     let request = command.request;
@@ -210,39 +210,43 @@ async fn query_action_cache_and_download_result(
         re_action_key.as_deref(),
         command.request.paths(),
     );
+    let execution_kind = command_execution_kind_for_cache_type(&cache_type, details.clone());
     let action_cache_query_key = ActionCacheQueryKey::new(&cache_type, &digest);
 
-    let action_cache_response = executor_stage_async(
-        bz_data::CacheQuery {
-            action_digest: digest.to_string(),
-            cache_type: cache_type.to_proto().into(),
-        },
-        async {
-            match ActionCacheQueryDeduper::claim(action_cache_query_key.clone()) {
-                ActionCacheQueryClaim::Owner(owner) => {
-                    let _permit = remote_metadata_semaphore.acquire().await.map_err(|_| {
-                        bz_error::bz_error!(
-                            bz_error::ErrorTag::InternalError,
-                            "remote metadata semaphore was closed"
-                        )
-                    })?;
-                    let response = re_client
-                        .action_cache(
+    let action_cache_response = match ActionCacheQueryDeduper::claim(action_cache_query_key) {
+        ActionCacheQueryClaim::Owner(owner) => {
+            let response = match remote_cache_query_semaphore.acquire().await {
+                Ok(_permit) => {
+                    executor_stage_async(
+                        bz_data::CacheQuery {
+                            action_digest: digest.to_string(),
+                            cache_type: cache_type.to_proto().into(),
+                        },
+                        re_client.action_cache(
                             digest.dupe(),
                             &command.prepared_action.platform,
                             Some(&identity),
-                        )
-                        .await;
-                    owner.complete(&response);
-                    response
+                        ),
+                    )
+                    .await
                 }
-                ActionCacheQueryClaim::Wait(receiver) => receiver.await.map_err(|_| {
-                    internal_error!("deduplicated remote action cache query was cancelled")
-                })?,
-            }
-        },
-    )
-    .await;
+                Err(_) => Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::InternalError,
+                    "remote cache query semaphore was closed"
+                )),
+            };
+            owner.complete(&response);
+            response
+        }
+        ActionCacheQueryClaim::Wait(receiver) => receiver
+            .await
+            .unwrap_or_else(|_| {
+                Err(internal_error!(
+                    "deduplicated remote action cache query was cancelled"
+                ))
+            }),
+    };
+    let manager = manager.with_execution_kind(execution_kind);
 
     if upload_all_actions {
         if let Err(e) = re_client
@@ -418,10 +422,6 @@ impl PreparedCommandOptionalExecutor for ActionCacheChecker {
             false,
         );
         let cache_type = CacheType::ActionCache;
-        let manager = manager.with_execution_kind(command_execution_kind_for_cache_type(
-            &cache_type,
-            details.clone(),
-        ));
         query_action_cache_and_download_result(
             cache_type,
             &self.artifact_fs,
@@ -439,7 +439,7 @@ impl PreparedCommandOptionalExecutor for ActionCacheChecker {
             details,
             self.deduplicate_get_digests_ttl_calls,
             &self.output_trees_download_config,
-            &self.remote_metadata_semaphore,
+            &self.remote_action_cache_semaphore,
             Some(&self.local_action_cache),
         )
         .await
@@ -486,11 +486,6 @@ impl PreparedCommandOptionalExecutor for RemoteDepFileCacheChecker {
             &command.prepared_action.platform,
             false,
         );
-        let manager = manager.with_execution_kind(command_execution_kind_for_cache_type(
-            &cache_type,
-            details.clone(),
-        ));
-
         query_action_cache_and_download_result(
             cache_type,
             &self.artifact_fs,

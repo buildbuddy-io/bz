@@ -249,6 +249,10 @@ fn default_remote_metadata_concurrency(_action_concurrency: usize) -> usize {
     DEFAULT_REMOTE_METADATA_PARALLELISM
 }
 
+fn default_remote_action_cache_concurrency(action_concurrency: usize) -> usize {
+    action_concurrency
+}
+
 fn has_memory_headroom_for_action_parallelism(memory: SystemMemoryStats) -> bool {
     if memory.total == 0 || memory.available == 0 {
         return false;
@@ -1091,6 +1095,13 @@ impl DiceCommandUpdater<'_, '_> {
             })?
             .and_then(parse_concurrency)
             .unwrap_or_else(|| default_remote_metadata_concurrency(concurrency));
+        let remote_action_cache_concurrency = root_config
+            .parse::<u32>(BuckconfigKeyRef {
+                section: "build",
+                property: "remote_action_cache_threads",
+            })?
+            .and_then(parse_concurrency)
+            .unwrap_or_else(|| default_remote_action_cache_concurrency(concurrency));
 
         if let Some(max_lines) = root_config.parse(BuckconfigKeyRef {
             section: "ui",
@@ -1310,6 +1321,7 @@ impl DiceCommandUpdater<'_, '_> {
             run_action_knobs.deduplicate_get_digests_ttl_calls,
             output_trees_download_config.dupe(),
             remote_metadata_concurrency,
+            remote_action_cache_concurrency,
             self.cmd_ctx.base_context.daemon.daemon_id.dupe(),
             &self
                 .cmd_ctx
@@ -1371,6 +1383,10 @@ impl DiceCommandUpdater<'_, '_> {
             format!(
                 "remote-metadata-parallelism:{}",
                 remote_metadata_concurrency
+            ),
+            format!(
+                "remote-action-cache-parallelism:{}",
+                remote_action_cache_concurrency
             ),
         ];
         self.cmd_ctx
@@ -1755,6 +1771,12 @@ mod tests {
     fn remote_metadata_concurrency_matches_bazel_grpc_defaults() {
         assert_eq!(default_remote_metadata_concurrency(10), 10_000);
         assert_eq!(default_remote_metadata_concurrency(1000), 10_000);
+    }
+
+    #[test]
+    fn remote_action_cache_concurrency_matches_action_concurrency() {
+        assert_eq!(default_remote_action_cache_concurrency(10), 10);
+        assert_eq!(default_remote_action_cache_concurrency(1000), 1000);
     }
 
     #[test]
