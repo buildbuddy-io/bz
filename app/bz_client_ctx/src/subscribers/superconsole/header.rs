@@ -415,10 +415,23 @@ impl ProgressHeader<'_> {
                         CommaSeparatedCount::new(self.action_stats.remote_actions)
                     ));
                 }
-                if self.action_stats.total_cached_actions() > 0 {
+                let mut cache_types = Vec::new();
+                if self.action_stats.local_cached_actions > 0 {
+                    cache_types.push(format!(
+                        "{} local cache",
+                        CommaSeparatedCount::new(self.action_stats.local_cached_actions)
+                    ));
+                }
+                if self.action_stats.total_remote_cached_actions() > 0 {
+                    cache_types.push(format!(
+                        "{} remote cache",
+                        CommaSeparatedCount::new(self.action_stats.total_remote_cached_actions())
+                    ));
+                }
+                if !cache_types.is_empty() {
                     res_types.push(format!(
-                        "{} cache ({}%{})",
-                        CommaSeparatedCount::new(self.action_stats.total_cached_actions()),
+                        "{} ({}%{})",
+                        cache_types.join(", "),
                         self.action_stats.total_cache_hit_percentage(),
                         if compact { "" } else { " hit" }
                     ));
@@ -707,10 +720,48 @@ mod tests {
             local_actions: 100,
             remote_actions: 122,
             cached_actions: 133,
+            local_cached_actions: 0,
             fallback_actions: 0,
             remote_dep_file_cached_actions: 0,
             excess_cache_misses: 0,
         }
+    }
+
+    #[test]
+    fn test_final_stats_split_local_and_remote_cache() -> bz_error::Result<()> {
+        let phase_stats = &phase_stats();
+        let progress_stats = &progress_stats();
+        let action_stats = ActionStats {
+            local_actions: 0,
+            remote_actions: 0,
+            cached_actions: 11,
+            local_cached_actions: 7,
+            fallback_actions: 0,
+            remote_dep_file_cached_actions: 0,
+            excess_cache_misses: 0,
+        };
+        let header = ProgressHeader {
+            header: "header",
+            phase_stats,
+            progress_stats,
+            action_stats: &action_stats,
+            time_elapsed: "1234s".to_owned(),
+        };
+
+        let output = header
+            .draw(
+                Dimensions {
+                    width: 160,
+                    height: 10,
+                },
+                DrawMode::Final,
+            )?
+            .fmt_for_test()
+            .to_string();
+
+        assert!(output.contains("7 local cache, 11 remote cache (100% hit)"));
+
+        Ok(())
     }
 
     #[test]
@@ -820,31 +871,31 @@ mod tests {
                 Analyzing targets.   Analyzed    222/22222 (running:    22)
                 Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)
                 Running validations. Validated   444/44444 (running:    44)
-                header               Finished 100 local, 122 remote, 133 cache (37% hit)         Time elapsed: 1234s
+                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)         Time elapsed: 1234s
 
                 Loading targets.     Loaded      111/11111 (running:    11)
                 Analyzing targets.   Analyzed    222/22222 (running:    22)
                 Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)
                 Running validations. Validated   444/44444 (running:    44)
-                header               Finished 100 local, 122 remote, 133 cache (37% hit)                                      Time elapsed: 1234s
+                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)                                      Time elapsed: 1234s
 
                 Loading targets.     Loaded      111/11111 (running:    11)                      111 dirs read, 22222 targets declared
                 Analyzing targets.   Analyzed    222/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
                 Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
                 Running validations. Validated   444/44444 (running:    44)
-                header               Finished 100 local, 122 remote, 133 cache (37% hit)                                       Time elapsed: 1234s
+                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)                                       Time elapsed: 1234s
 
                 Loading targets.     Loaded      111/11111 (running:    11)                      111 dirs read, 22222 targets declared
                 Analyzing targets.   Analyzed    222/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
                 Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
                 Running validations. Validated   444/44444 (running:    44)
-                header               Finished 100 local, 122 remote, 133 cache (37% hit)         11:06.0s exec time cached (8%)          Time elapsed: 1234s
+                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)         11:06.0s exec time cached (8%)          Time elapsed: 1234s
 
                 Loading targets.     Loaded      111/11111 (running:    11)                                111 dirs read, 22222 targets declared
                 Analyzing targets.   Analyzed    222/22222 (running:    22)                                3333333 actions, 4444444 artifacts declared
                 Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)            2:09:37.0s exec time total
                 Running validations. Validated   444/44444 (running:    44)
-                header               Finished 100 local, 122 remote, 133 cache (37% hit)                   11:06.0s exec time cached (8%)                    Time elapsed: 1234s
+                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)                   11:06.0s exec time cached (8%)                    Time elapsed: 1234s
 
                 Loading targets.     Loaded    11111/11111
                 Analyzing targets.   Analyzed  22222/22222
@@ -857,7 +908,7 @@ mod tests {
                 Analyzing targets.   Analyzed  22222/22222                                3333333 actions, 4444444 artifacts declared
                 Executing actions.   Executed  33333/33333                                2:09:37.0s exec time total
                 Running validations. Validated 44444/44444
-                header               Finished 100 local, 122 remote, 133 cache (37% hit)  11:06.0s exec time cached (8%)
+                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)  11:06.0s exec time cached (8%)
                 Time elapsed: 1234s
 
         "#
@@ -966,6 +1017,7 @@ mod tests {
             local_actions: 0,
             remote_actions: 0,
             cached_actions: 1,
+            local_cached_actions: 0,
             fallback_actions: 0,
             remote_dep_file_cached_actions: 0,
             excess_cache_misses: 0,
@@ -997,6 +1049,7 @@ mod tests {
             local_actions: 0,
             remote_actions: 0,
             cached_actions: 0,
+            local_cached_actions: 0,
             fallback_actions: 0,
             remote_dep_file_cached_actions: 0,
             excess_cache_misses: 0,
@@ -1029,6 +1082,7 @@ mod tests {
             local_actions: 0,
             remote_actions: 0,
             cached_actions: 1,
+            local_cached_actions: 0,
             fallback_actions: 0,
             remote_dep_file_cached_actions: 0,
             excess_cache_misses: 0,
@@ -1062,6 +1116,7 @@ mod tests {
             local_actions: 0,
             remote_actions: 0,
             cached_actions: 1,
+            local_cached_actions: 0,
             fallback_actions: 0,
             remote_dep_file_cached_actions: 0,
             excess_cache_misses: 0,

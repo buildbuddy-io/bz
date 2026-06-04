@@ -475,13 +475,16 @@ where
             let cache_hit_percentage = self.observer().action_stats().total_cache_hit_percentage();
             echo!("Cache hits: {}%", cache_hit_percentage)?;
             echo!(
-                "Commands: {} (cached: {}, remote: {}, local: {})",
+                "Commands: {} (remote cache: {}, local cache: {}, remote: {}, local: {})",
                 CommaSeparatedCount::new(
                     self.observer()
                         .action_stats()
                         .total_executed_and_cached_actions()
                 ),
-                CommaSeparatedCount::new(self.observer().action_stats().cached_actions),
+                CommaSeparatedCount::new(
+                    self.observer().action_stats().total_remote_cached_actions()
+                ),
+                CommaSeparatedCount::new(self.observer().action_stats().local_cached_actions),
                 CommaSeparatedCount::new(self.observer().action_stats().remote_actions),
                 CommaSeparatedCount::new(self.observer().action_stats().local_actions)
             )?;

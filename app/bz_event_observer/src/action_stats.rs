@@ -22,9 +22,10 @@ use crate::last_command_execution_kind::get_last_command_execution_kind;
 /// There's no overlap between the actions - summing them all up
 /// gives the total number of actions. `local_actions` + `remote_actions`
 /// provides the total number of actually executed actions while
-/// `cached_actions` provides number of actions which we found
-/// in the action cache.  `fallback_actions` provides the number of actions
-/// that had its command run more than once (hence, using fallback to run).
+/// `cached_actions` provides number of actions found in the remote action cache,
+/// while `local_cached_actions` provides number of actions found in Buck's local
+/// action cache.  `fallback_actions` provides the number of actions that had its
+/// command run more than once (hence, using fallback to run).
 ///
 /// These stats only track executions/commands.
 #[derive(Default, Clone, Dupe)]
@@ -32,6 +33,7 @@ pub struct ActionStats {
     pub local_actions: u64,
     pub remote_actions: u64,
     pub cached_actions: u64,
+    pub local_cached_actions: u64,
     pub fallback_actions: u64,
     pub remote_dep_file_cached_actions: u64,
     pub excess_cache_misses: u64,
@@ -50,6 +52,7 @@ impl ActionStats {
             self.local_actions,
             self.remote_actions,
             self.cached_actions,
+            self.local_cached_actions,
             self.remote_dep_file_cached_actions,
         ) * 100f64;
         let rate = if rate == 100.0 || rate == 0.0 {
@@ -62,6 +65,10 @@ impl ActionStats {
     }
 
     pub fn total_cached_actions(&self) -> u64 {
+        self.cached_actions + self.local_cached_actions + self.remote_dep_file_cached_actions
+    }
+
+    pub fn total_remote_cached_actions(&self) -> u64 {
         self.cached_actions + self.remote_dep_file_cached_actions
     }
 
@@ -73,6 +80,7 @@ impl ActionStats {
         self.local_actions
             + self.remote_actions
             + self.cached_actions
+            + self.local_cached_actions
             + self.remote_dep_file_cached_actions
     }
 
@@ -85,7 +93,7 @@ impl ActionStats {
             self.fallback_actions += 1;
         }
         if action.execution_kind() == bz_data::ActionExecutionKind::LocalActionCache {
-            self.cached_actions += 1;
+            self.local_cached_actions += 1;
             return;
         }
         match get_last_command_execution_kind(action) {
@@ -118,10 +126,11 @@ impl ActionStats {
 impl fmt::Display for ActionStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut action_stats_message = format!(
-            "Cache hits: {}%. Commands: {} (cached: {}, remote: {}, local: {})",
+            "Cache hits: {}%. Commands: {} (remote cache: {}, local cache: {}, remote: {}, local: {})",
             self.total_cache_hit_percentage(),
             CommaSeparatedCount::new(self.total_executed_and_cached_actions()),
-            CommaSeparatedCount::new(self.total_cached_actions()),
+            CommaSeparatedCount::new(self.total_remote_cached_actions()),
+            CommaSeparatedCount::new(self.local_cached_actions),
             CommaSeparatedCount::new(self.remote_actions),
             CommaSeparatedCount::new(self.local_actions)
         );

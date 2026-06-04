@@ -1011,6 +1011,7 @@ impl InvocationRecorder {
                 self.run_local_count,
                 self.run_remote_count,
                 self.run_action_cache_count,
+                0,
                 self.run_remote_dep_file_cache_count,
             ) as f32,
             run_skipped_count: self.run_skipped_count,
