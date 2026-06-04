@@ -28,9 +28,11 @@ use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use parking_lot::Mutex;
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 
 const STATE_TABLE_NAME: &str = "local_action_cache_v4";
 const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_v5";
+const REMOTE_ACTION_CACHE_TABLE_NAME: &str = "local_action_cache_remote_v1";
 const OUTPUT_VALUES_VERSION: u8 = 1;
 
 pub struct LocalActionCache {
@@ -60,6 +62,7 @@ struct LoadedLocalActionCache {
 pub struct LocalActionCacheOutputEntry {
     pub outputs_fingerprint: Arc<[u8]>,
     pub output_values: Arc<[ArtifactValue]>,
+    pub remote_cache_entry: bool,
 }
 
 #[derive(Clone)]
@@ -75,6 +78,7 @@ pub struct LocalActionCacheEntry {
 struct LocalActionCacheStoredOutputEntry {
     outputs_fingerprint: Arc<[u8]>,
     output_values: Arc<LocalActionCacheStoredOutputValues>,
+    remote_cache_entry: bool,
 }
 
 #[derive(Clone)]
@@ -125,6 +129,7 @@ impl LocalActionCacheStoredOutputEntry {
         Ok(LocalActionCacheOutputEntry {
             outputs_fingerprint: self.outputs_fingerprint.clone(),
             output_values: self.output_values.get(digest_config)?,
+            remote_cache_entry: self.remote_cache_entry,
         })
     }
 }
@@ -333,10 +338,44 @@ impl LocalActionCache {
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
     ) -> bz_error::Result<()> {
+        self.insert_impl(
+            action_digest,
+            outputs_fingerprint,
+            output_values,
+            false,
+        )
+    }
+
+    pub fn insert_remote(
+        &self,
+        action_digest: &ActionDigest,
+        outputs_fingerprint: Vec<u8>,
+        output_values: Arc<[ArtifactValue]>,
+    ) -> bz_error::Result<()> {
+        self.insert_impl(
+            action_digest,
+            outputs_fingerprint,
+            output_values,
+            true,
+        )
+    }
+
+    fn insert_impl(
+        &self,
+        action_digest: &ActionDigest,
+        outputs_fingerprint: Vec<u8>,
+        output_values: Arc<[ArtifactValue]>,
+        remote_cache_entry: bool,
+    ) -> bz_error::Result<()> {
         let Some(cache) = self.loaded() else {
             return Ok(());
         };
-        cache.insert(action_digest, outputs_fingerprint, output_values)
+        cache.insert(
+            action_digest,
+            outputs_fingerprint,
+            output_values,
+            remote_cache_entry,
+        )
     }
 
     pub fn remove(&self, action_digest: &ActionDigest) -> bz_error::Result<()> {
@@ -487,6 +526,7 @@ impl LoadedLocalActionCache {
         action_digest: &ActionDigest,
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
+        remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
         let serialized_output_values = serialize_output_values(output_values.as_ref())?;
         let key = action_digest.to_string();
@@ -498,10 +538,16 @@ impl LoadedLocalActionCache {
                     serialized_output_values.clone(),
                     output_values,
                 )),
+                remote_cache_entry,
             },
         );
         LocalActionCacheSqliteTable::new(self.connection.dupe())
-            .insert_or_replace(key, outputs_fingerprint, serialized_output_values)
+            .insert_or_replace(
+                key,
+                outputs_fingerprint,
+                serialized_output_values,
+                remote_cache_entry,
+            )
     }
 
     fn get_action_metadata(&self, key: &str) -> Option<LocalActionCacheEntry> {
@@ -645,6 +691,14 @@ impl LocalActionCacheSqliteTable {
             .with_buck_error_context(|| {
                 format!("creating sqlite table {ACTION_METADATA_TABLE_NAME}")
             })?;
+        let sql = format!(
+            "CREATE TABLE IF NOT EXISTS {REMOTE_ACTION_CACHE_TABLE_NAME} (
+                action_digest TEXT PRIMARY KEY NOT NULL
+            )",
+        );
+        self.connection.lock().execute(&sql, []).with_buck_error_context(|| {
+            format!("creating sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME}")
+        })?;
         Ok(())
     }
 
@@ -657,20 +711,33 @@ impl LocalActionCacheSqliteTable {
         );
         let connection = self.connection.lock();
         let mut stmt = connection.prepare(&sql)?;
-        let mut rows = stmt.query_map([action_digest], |row| {
-            let outputs_fingerprint = row.get::<_, Vec<u8>>(0)?;
-            let output_values = row.get::<_, Vec<u8>>(1)?;
-            Ok(LocalActionCacheStoredOutputEntry {
-                outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
-                output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
-                    output_values,
-                )),
+        let stored = stmt
+            .query_row([action_digest], |row| {
+                let outputs_fingerprint = row.get::<_, Vec<u8>>(0)?;
+                let output_values = row.get::<_, Vec<u8>>(1)?;
+                Ok((outputs_fingerprint, output_values))
             })
-        })?;
-        match rows.next() {
-            Some(row) => Ok(Some(row?)),
-            None => Ok(None),
-        }
+            .optional()?;
+        let Some((outputs_fingerprint, output_values)) = stored else {
+            return Ok(None);
+        };
+        drop(stmt);
+
+        let sql = format!(
+            "SELECT 1 FROM {REMOTE_ACTION_CACHE_TABLE_NAME} WHERE action_digest = ?1"
+        );
+        let remote_cache_entry = connection
+            .query_row(&sql, [action_digest], |_| Ok(()))
+            .optional()?
+            .is_some();
+
+        Ok(Some(LocalActionCacheStoredOutputEntry {
+            outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
+            output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
+                output_values,
+            )),
+            remote_cache_entry,
+        }))
     }
 
     fn read_action_metadata_entry(
@@ -709,20 +776,39 @@ impl LocalActionCacheSqliteTable {
         action_digest: String,
         outputs_fingerprint: Vec<u8>,
         output_values: Vec<u8>,
+        remote_cache_entry: bool,
     ) -> bz_error::Result<()> {
         let sql = format!(
             "INSERT OR REPLACE INTO {STATE_TABLE_NAME} \
                 (action_digest, outputs_fingerprint, output_values) VALUES (?1, ?2, ?3)"
         );
-        self.connection
-            .lock()
-            .execute(
-                &sql,
-                rusqlite::params![action_digest, outputs_fingerprint, output_values],
-            )
-            .with_buck_error_context(|| {
-                format!("inserting into sqlite table {STATE_TABLE_NAME}")
-            })?;
+        let mut connection = self.connection.lock();
+        let tx = connection.transaction()?;
+        tx.execute(
+            &sql,
+            rusqlite::params![&action_digest, outputs_fingerprint, output_values],
+        )
+        .with_buck_error_context(|| {
+            format!("inserting into sqlite table {STATE_TABLE_NAME}")
+        })?;
+        if remote_cache_entry {
+            let sql = format!(
+                "INSERT OR REPLACE INTO {REMOTE_ACTION_CACHE_TABLE_NAME} \
+                    (action_digest) VALUES (?1)"
+            );
+            tx.execute(&sql, rusqlite::params![&action_digest])
+                .with_buck_error_context(|| {
+                    format!("inserting into sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME}")
+                })?;
+        } else {
+            let sql =
+                format!("DELETE FROM {REMOTE_ACTION_CACHE_TABLE_NAME} WHERE action_digest = ?1");
+            tx.execute(&sql, rusqlite::params![&action_digest])
+                .with_buck_error_context(|| {
+                    format!("deleting from sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME}")
+                })?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -759,11 +845,17 @@ impl LocalActionCacheSqliteTable {
     }
 
     fn delete(&self, action_digest: String) -> bz_error::Result<()> {
+        let mut connection = self.connection.lock();
+        let tx = connection.transaction()?;
         let sql = format!("DELETE FROM {STATE_TABLE_NAME} WHERE action_digest = ?1");
-        self.connection
-            .lock()
-            .execute(&sql, rusqlite::params![action_digest])
+        tx.execute(&sql, rusqlite::params![&action_digest])
             .with_buck_error_context(|| format!("deleting from sqlite table {STATE_TABLE_NAME}"))?;
+        let sql = format!("DELETE FROM {REMOTE_ACTION_CACHE_TABLE_NAME} WHERE action_digest = ?1");
+        tx.execute(&sql, rusqlite::params![&action_digest])
+            .with_buck_error_context(|| {
+                format!("deleting from sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME}")
+            })?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -786,6 +878,10 @@ impl LocalActionCacheSqliteTable {
         tx.execute(&format!("DELETE FROM {ACTION_METADATA_TABLE_NAME}"), [])
             .with_buck_error_context(|| {
                 format!("clearing sqlite table {ACTION_METADATA_TABLE_NAME}")
+            })?;
+        tx.execute(&format!("DELETE FROM {REMOTE_ACTION_CACHE_TABLE_NAME}"), [])
+            .with_buck_error_context(|| {
+                format!("clearing sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME}")
             })?;
         tx.commit()?;
         Ok(())

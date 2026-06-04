@@ -10,12 +10,14 @@
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use bz_action_metadata_proto::REMOTE_DEP_FILE_KEY;
 use bz_action_metadata_proto::RemoteDepFile;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::soft_error;
 use bz_execute::execute::action_digest::ActionDigest;
 use bz_execute::execute::action_digest::ActionDigestKind;
 use bz_execute::execute::dep_file_digest::DepFileDigest;
@@ -33,13 +35,20 @@ use bz_execute::re::action_identity::ReActionIdentity;
 use bz_execute::re::manager::ManagedRemoteExecutionClient;
 use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
 use bz_execute::re::remote_action_result::ActionCacheResult;
+use bz_error::internal_error;
+use bz_hash::StdBuckHashMap;
 use bz_util::time_span::TimeSpan;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use once_cell::sync::Lazy;
 use prost::Message;
+use remote_execution::ActionResultResponse;
+use tokio::sync::oneshot;
 use tokio::sync::Semaphore;
 
 use crate::incremental_actions_helper::save_content_based_incremental_state;
+use crate::executors::local_action_cache::LocalActionCache;
+use crate::executors::local_action_cache::local_action_cache_outputs_fingerprint;
 use crate::re::download::DownloadResult;
 use crate::re::download::download_action_results;
 use crate::re::download::missing_mandatory_output;
@@ -58,11 +67,104 @@ pub struct ActionCacheChecker {
     pub deduplicate_get_digests_ttl_calls: bool,
     pub output_trees_download_config: OutputTreesDownloadConfig,
     pub remote_metadata_semaphore: Arc<Semaphore>,
+    pub local_action_cache: Arc<LocalActionCache>,
 }
 
 enum CacheType {
     ActionCache,
     RemoteDepFileCache(DepFileDigest),
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum ActionCacheQueryKind {
+    ActionCache,
+    RemoteDepFileCache,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ActionCacheQueryKey {
+    kind: ActionCacheQueryKind,
+    digest: String,
+}
+
+impl ActionCacheQueryKey {
+    fn new(cache_type: &CacheType, digest: &ActionDigest) -> Self {
+        let kind = match cache_type {
+            CacheType::ActionCache => ActionCacheQueryKind::ActionCache,
+            CacheType::RemoteDepFileCache(_) => ActionCacheQueryKind::RemoteDepFileCache,
+        };
+        Self {
+            kind,
+            digest: digest.to_string(),
+        }
+    }
+}
+
+type ActionCacheQueryResult = bz_error::Result<Option<ActionResultResponse>>;
+
+enum ActionCacheQueryClaim {
+    Owner(ActionCacheQueryOwner),
+    Wait(oneshot::Receiver<ActionCacheQueryResult>),
+}
+
+struct ActionCacheQueryOwner {
+    key: Option<ActionCacheQueryKey>,
+}
+
+impl ActionCacheQueryOwner {
+    fn complete(mut self, result: &ActionCacheQueryResult) {
+        if let Some(key) = self.key.take() {
+            ActionCacheQueryDeduper::complete(key, result);
+        }
+    }
+}
+
+impl Drop for ActionCacheQueryOwner {
+    fn drop(&mut self) {
+        if let Some(key) = self.key.take() {
+            let error = Err(internal_error!(
+                "deduplicated remote action cache query was cancelled"
+            ));
+            ActionCacheQueryDeduper::complete(key, &error);
+        }
+    }
+}
+
+#[derive(Default)]
+struct ActionCacheQueryDeduper {
+    in_flight:
+        StdBuckHashMap<ActionCacheQueryKey, Vec<oneshot::Sender<ActionCacheQueryResult>>>,
+}
+
+static ACTION_CACHE_QUERY_DEDUPER: Lazy<Mutex<ActionCacheQueryDeduper>> =
+    Lazy::new(|| Mutex::new(ActionCacheQueryDeduper::default()));
+
+impl ActionCacheQueryDeduper {
+    fn claim(key: ActionCacheQueryKey) -> ActionCacheQueryClaim {
+        let mut deduper = ACTION_CACHE_QUERY_DEDUPER.lock().expect("Poisoned lock");
+        if let Some(waiters) = deduper.in_flight.get_mut(&key) {
+            let (sender, receiver) = oneshot::channel();
+            waiters.push(sender);
+            ActionCacheQueryClaim::Wait(receiver)
+        } else {
+            deduper.in_flight.insert(key.clone(), Vec::new());
+            ActionCacheQueryClaim::Owner(ActionCacheQueryOwner { key: Some(key) })
+        }
+    }
+
+    fn complete(key: ActionCacheQueryKey, result: &ActionCacheQueryResult) {
+        let waiters = ACTION_CACHE_QUERY_DEDUPER
+            .lock()
+            .expect("Poisoned lock")
+            .in_flight
+            .remove(&key);
+
+        if let Some(waiters) = waiters {
+            for waiter in waiters {
+                let _ = waiter.send(result.clone());
+            }
+        }
+    }
 }
 
 impl CacheType {
@@ -93,6 +195,7 @@ async fn query_action_cache_and_download_result(
     deduplicate_get_digests_ttl_calls: bool,
     output_trees_download_config: &OutputTreesDownloadConfig,
     remote_metadata_semaphore: &Arc<Semaphore>,
+    local_action_cache: Option<&Arc<LocalActionCache>>,
 ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
     let request = command.request;
     let action_blobs = &command.prepared_action.action_and_blobs.blobs;
@@ -107,6 +210,7 @@ async fn query_action_cache_and_download_result(
         re_action_key.as_deref(),
         command.request.paths(),
     );
+    let action_cache_query_key = ActionCacheQueryKey::new(&cache_type, &digest);
 
     let action_cache_response = executor_stage_async(
         bz_data::CacheQuery {
@@ -114,19 +218,28 @@ async fn query_action_cache_and_download_result(
             cache_type: cache_type.to_proto().into(),
         },
         async {
-            let _permit = remote_metadata_semaphore.acquire().await.map_err(|_| {
-                bz_error::bz_error!(
-                    bz_error::ErrorTag::InternalError,
-                    "remote metadata semaphore was closed"
-                )
-            })?;
-            re_client
-                .action_cache(
-                    digest.dupe(),
-                    &command.prepared_action.platform,
-                    Some(&identity),
-                )
-                .await
+            match ActionCacheQueryDeduper::claim(action_cache_query_key.clone()) {
+                ActionCacheQueryClaim::Owner(owner) => {
+                    let _permit = remote_metadata_semaphore.acquire().await.map_err(|_| {
+                        bz_error::bz_error!(
+                            bz_error::ErrorTag::InternalError,
+                            "remote metadata semaphore was closed"
+                        )
+                    })?;
+                    let response = re_client
+                        .action_cache(
+                            digest.dupe(),
+                            &command.prepared_action.platform,
+                            Some(&identity),
+                        )
+                        .await;
+                    owner.complete(&response);
+                    response
+                }
+                ActionCacheQueryClaim::Wait(receiver) => receiver.await.map_err(|_| {
+                    internal_error!("deduplicated remote action cache query was cancelled")
+                })?,
+            }
         },
     )
     .await;
@@ -253,6 +366,23 @@ async fn query_action_cache_and_download_result(
                 action_digest,
             );
             res.action_result = Some(response.0.action_result);
+            if let Some(local_action_cache) = local_action_cache {
+                let outputs_fingerprint =
+                    match local_action_cache_outputs_fingerprint(artifact_fs, &res.outputs) {
+                        Ok(fingerprint) => fingerprint,
+                        Err(e) => {
+                            let _unused = soft_error!("local_action_cache_fingerprint_failed", e);
+                            return ControlFlow::Break(res);
+                        }
+                    };
+                if let Err(e) = local_action_cache.insert_remote(
+                    action_digest,
+                    outputs_fingerprint,
+                    res.outputs.values().cloned().collect::<Vec<_>>().into(),
+                ) {
+                    let _unused = soft_error!("local_action_cache_insert_failed", e);
+                }
+            }
         }
     }
 
@@ -310,6 +440,7 @@ impl PreparedCommandOptionalExecutor for ActionCacheChecker {
             self.deduplicate_get_digests_ttl_calls,
             &self.output_trees_download_config,
             &self.remote_metadata_semaphore,
+            Some(&self.local_action_cache),
         )
         .await
     }
@@ -378,6 +509,7 @@ impl PreparedCommandOptionalExecutor for RemoteDepFileCacheChecker {
             self.deduplicate_get_digests_ttl_calls,
             &self.output_trees_download_config,
             &self.remote_metadata_semaphore,
+            None,
         )
         .await
     }

@@ -33,6 +33,7 @@ use bz_common::liveliness_observer::LivelinessObserverExt;
 use bz_common::liveliness_observer::NoopLivelinessObserver;
 use bz_common::local_resource_state::LocalResourceHolder;
 use bz_core::content_hash::ContentBasedPathHash;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::fs::buck_out_path::BuildArtifactPath;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
@@ -84,6 +85,7 @@ use bz_execute::execute::request::WorkerSpec;
 use bz_execute::execute::result::CommandExecutionMetadata;
 use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::knobs::ExecutorGlobalKnobs;
+use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_execute::materialize::materializer::CopiedArtifact;
 use bz_execute::materialize::materializer::DeclareArtifactPayload;
 use bz_execute::materialize::materializer::MaterializationError;
@@ -168,6 +170,7 @@ fn local_action_cache_outputs_from_stored_values(
     outputs: &BuckIndexSet<CommandExecutionOutput>,
     output_values: &[ArtifactValue],
     expected_fingerprint: &[u8],
+    require_existing_files: bool,
 ) -> bz_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
     if outputs.len() != output_values.len() {
         return Ok(None);
@@ -182,13 +185,15 @@ fn local_action_cache_outputs_from_stored_values(
     if actual_fingerprint.as_slice() != expected_fingerprint {
         return Ok(None);
     }
-    for (output, value) in &outputs {
-        let path = output
-            .as_ref()
-            .resolve(artifact_fs, Some(&value.content_based_path_hash()))?
-            .into_path();
-        if !fs_util::try_exists(artifact_fs.fs().resolve(&path))? {
-            return Ok(None);
+    if require_existing_files {
+        for (output, value) in &outputs {
+            let path = output
+                .as_ref()
+                .resolve(artifact_fs, Some(&value.content_based_path_hash()))?
+                .into_path();
+            if !fs_util::try_exists(artifact_fs.fs().resolve(&path))? {
+                return Ok(None);
+            }
         }
     }
 
@@ -572,6 +577,7 @@ pub struct LocalExecutor {
     materializer: Arc<dyn Materializer>,
     incremental_db_state: Arc<IncrementalDbState>,
     local_action_cache: Arc<LocalActionCache>,
+    local_action_cache_re_use_case: RemoteExecutorUseCase,
     shared_state: LocalExecutorSharedState,
     blocking_executor: Arc<dyn BlockingExecutor>,
     pub(crate) host_sharing_broker: Arc<HostSharingBroker>,
@@ -590,6 +596,7 @@ impl LocalExecutor {
         materializer: Arc<dyn Materializer>,
         incremental_db_state: Arc<IncrementalDbState>,
         local_action_cache: Arc<LocalActionCache>,
+        local_action_cache_re_use_case: RemoteExecutorUseCase,
         shared_state: LocalExecutorSharedState,
         blocking_executor: Arc<dyn BlockingExecutor>,
         host_sharing_broker: Arc<HostSharingBroker>,
@@ -605,6 +612,7 @@ impl LocalExecutor {
             materializer,
             incremental_db_state,
             local_action_cache,
+            local_action_cache_re_use_case,
             shared_state,
             blocking_executor,
             host_sharing_broker,
@@ -1770,6 +1778,56 @@ impl LocalExecutor {
         Ok(())
     }
 
+    async fn declare_remote_local_action_cache_outputs(
+        &self,
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> bz_error::Result<()> {
+        let mut to_declare = Vec::with_capacity(outputs.len());
+
+        for (output, value) in outputs {
+            let output = output.as_ref();
+            let CommandExecutionOutputRef::BuildArtifact { .. } = output else {
+                continue;
+            };
+
+            let content_hash = if output.has_content_based_path() {
+                Some(value.content_based_path_hash())
+            } else {
+                None
+            };
+            let path = output
+                .resolve(&self.artifact_fs, content_hash.as_ref())?
+                .into_path();
+            let configuration_path = if self.materializer.is_eager_materialization_enabled()
+                && output.has_content_based_path()
+            {
+                Some(
+                    output
+                        .resolve_configuration_hash_path(&self.artifact_fs)?
+                        .path
+                        .to_owned(),
+                )
+            } else {
+                None
+            };
+
+            to_declare.push(DeclareArtifactPayload {
+                path,
+                artifact: value.dupe(),
+                configuration_path,
+            });
+        }
+
+        self.materializer
+            .declare_cas_many(
+                Arc::new(CasDownloadInfo::new_declared(
+                    self.local_action_cache_re_use_case,
+                )),
+                to_declare,
+            )
+            .await
+    }
+
     async fn transform_bazel_shared_action_outputs(
         &self,
         shared_outputs: &BuckIndexMap<String, BazelSharedActionOutput>,
@@ -2542,16 +2600,18 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             }
             Ok(LocalActionCacheMetadataLookup::MissingMetadata) => {}
             Ok(LocalActionCacheMetadataLookup::Stale) => {
-                tracing::debug!(
-                    "local action cache miss for `{}` because persisted output metadata did not match",
-                    action_digest
-                );
-                if let Err(e) = self.local_action_cache.remove(&action_digest) {
-                    return ControlFlow::Break(
-                        manager.error("local_action_cache_remove_failed", e),
+                if !cache_entry.remote_cache_entry {
+                    tracing::debug!(
+                        "local action cache miss for `{}` because persisted output metadata did not match",
+                        action_digest
                     );
+                    if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                        return ControlFlow::Break(
+                            manager.error("local_action_cache_remove_failed", e),
+                        );
+                    }
+                    return ControlFlow::Continue(manager);
                 }
-                return ControlFlow::Continue(manager);
             }
             Err(e) => {
                 return ControlFlow::Break(
@@ -2570,9 +2630,19 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             &outputs_to_check,
             cache_entry.output_values.as_ref(),
             expected_fingerprint.as_ref(),
+            !cache_entry.remote_cache_entry,
         ) {
             Ok(Some(outputs)) => {
-                if let Err(e) = self
+                if cache_entry.remote_cache_entry {
+                    if let Err(e) = self
+                        .declare_remote_local_action_cache_outputs(&outputs)
+                        .await
+                    {
+                        return ControlFlow::Break(
+                            manager.error("local_action_cache_declare_outputs_failed", e),
+                        );
+                    }
+                } else if let Err(e) = self
                     .declare_local_action_cache_outputs(&outputs, command.digest_config)
                     .await
                 {
@@ -2612,7 +2682,20 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     timing,
                 ));
             }
-            Ok(None) => {}
+            Ok(None) => {
+                if cache_entry.remote_cache_entry {
+                    tracing::debug!(
+                        "local action cache miss for `{}` because stored remote output metadata did not match",
+                        action_digest
+                    );
+                    if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                        return ControlFlow::Break(
+                            manager.error("local_action_cache_remove_failed", e),
+                        );
+                    }
+                    return ControlFlow::Continue(manager);
+                }
+            }
             Err(e) => {
                 return ControlFlow::Break(
                     manager.error("local_action_cache_metadata_lookup_failed", e),
@@ -4982,6 +5065,7 @@ mod tests {
             Arc::new(NoDiskMaterializer),
             Arc::new(IncrementalDbState::db_disabled()),
             Arc::new(LocalActionCache::testing_new_in_memory()?),
+            RemoteExecutorUseCase::bz_default(),
             LocalExecutorSharedState::default(),
             Arc::new(DummyBlockingExecutor {
                 fs: project_fs.dupe(),
