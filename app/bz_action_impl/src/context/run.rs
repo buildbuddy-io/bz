@@ -646,6 +646,7 @@ fn register_bazel_run_action<'v>(
     use_default_shell_env: bool,
     resource_set: NoneOr<StarlarkCallable<'v>>,
     local_only: bool,
+    supports_bazel_path_mapping: bool,
     bazel_string_args: Option<Box<[String]>>,
     bazel_cc_command_line: Option<ValueTyped<'v, BazelCcCompileCommandLine<'v>>>,
     precomputed_local_action_cache_command_line_digest: Option<ExpandedCommandLineDigest>,
@@ -741,6 +742,7 @@ fn register_bazel_run_action<'v>(
         expected_eligible_for_dedupe: None,
         timeout: None,
         bazel_use_default_shell_env: Some(use_default_shell_env),
+        supports_bazel_path_mapping: supports_bazel_path_mapping && !local_only,
         bazel_string_args,
         precomputed_local_action_cache_command_line_digest,
     };
@@ -748,6 +750,16 @@ fn register_bazel_run_action<'v>(
     this.state()?
         .register_action(outputs, action, Some(starlark_values), None)?;
     Ok(NoneType)
+}
+
+fn supports_bazel_path_mapping(execution_requirements: Value<'_>) -> starlark::Result<bool> {
+    let Some(requirements) = DictRef::from_value(execution_requirements) else {
+        return Ok(false);
+    };
+    Ok(requirements.get_str("supports-path-mapping").is_some()
+        && requirements.get_str("local").is_none()
+        && !(requirements.get_str("no-sandbox").is_some()
+            && requirements.get_str("no-remote").is_some()))
 }
 
 pub(crate) fn register_bazel_cc_compile_action<'v>(
@@ -790,6 +802,7 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
         Some(action.mnemonic),
         true,
         NoneOr::None,
+        false,
         false,
         None,
         Some(action.command_line),
@@ -850,6 +863,7 @@ pub(crate) fn register_bazel_java_run_action<'v>(
         true,
         NoneOr::None,
         false,
+        false,
         None,
         None,
         None,
@@ -884,12 +898,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] local_only: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let _unused = (
-            progress_message,
-            execution_requirements,
-            toolchain,
-            exec_group,
-        );
+        let supports_bazel_path_mapping = supports_bazel_path_mapping(execution_requirements)?;
+        let _unused = (progress_message, toolchain, exec_group);
         let heap = eval.heap();
         let exe = StarlarkCmdArgs::from_values([heap.alloc_str("/bin/bash").to_value()])?;
         let mut shell_args = Vec::with_capacity(arguments.items.len() + 3);
@@ -915,6 +925,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             use_default_shell_env,
             resource_set,
             local_only,
+            supports_bazel_path_mapping,
             None,
             None,
             None,
@@ -1114,12 +1125,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneType> {
         let arguments = arguments.into_option();
         if let Some(executable) = executable {
-            let _unused = (
-                progress_message,
-                execution_requirements,
-                toolchain,
-                exec_group,
-            );
+            let supports_bazel_path_mapping = supports_bazel_path_mapping(execution_requirements)?;
+            let _unused = (progress_message, toolchain, exec_group);
             if let Ok(worker_run) = ValueOf::<&WorkerRunInfo>::unpack_value_err(executable) {
                 let worker = worker_run.typed.worker();
                 let remote_worker = worker_run.typed.remote_worker();
@@ -1146,6 +1153,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                     use_default_shell_env,
                     resource_set,
                     local_only,
+                    supports_bazel_path_mapping,
                     None,
                     None,
                     None,
@@ -1183,6 +1191,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                 use_default_shell_env,
                 resource_set,
                 local_only,
+                supports_bazel_path_mapping,
                 None,
                 None,
                 None,
@@ -1527,6 +1536,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             expected_eligible_for_dedupe: expect_eligible_for_dedupe.into_option(),
             timeout,
             bazel_use_default_shell_env: None,
+            supports_bazel_path_mapping: false,
             bazel_string_args: None,
             precomputed_local_action_cache_command_line_digest: None,
         };

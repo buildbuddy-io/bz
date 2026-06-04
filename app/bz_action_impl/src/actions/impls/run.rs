@@ -307,6 +307,7 @@ pub(crate) struct UnregisteredRunAction {
     pub(crate) expected_eligible_for_dedupe: Option<bool>,
     pub(crate) timeout: Option<Duration>,
     pub(crate) bazel_use_default_shell_env: Option<bool>,
+    pub(crate) supports_bazel_path_mapping: bool,
     pub(crate) bazel_string_args: Option<Box<[String]>>,
     #[pagable(discard = "None")]
     pub(crate) precomputed_local_action_cache_command_line_digest:
@@ -1107,6 +1108,7 @@ enum RunActionCommandLineContext<'v> {
         inner: BazelCommandLineContext<'v>,
         param_files: RunActionParamFilesRef,
         param_file_mode: RunActionParamFileMode,
+        bazel_path_mapping: bool,
     },
 }
 
@@ -1114,6 +1116,7 @@ impl<'v> RunActionCommandLineContext<'v> {
     fn new(
         fs: &'v ExecutorFs<'v>,
         bazel_paths: bool,
+        bazel_path_mapping: bool,
         param_files: RunActionParamFilesRef,
         param_file_mode: RunActionParamFileMode,
     ) -> Self {
@@ -1122,6 +1125,7 @@ impl<'v> RunActionCommandLineContext<'v> {
                 inner: BazelCommandLineContext::new(fs),
                 param_files,
                 param_file_mode,
+                bazel_path_mapping,
             }
         } else {
             Self::Default {
@@ -1190,6 +1194,7 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
                 inner,
                 param_files,
                 param_file_mode,
+                ..
             } => param_files.add_param_file(inner.fs(), *param_file_mode, content),
         }
     }
@@ -1209,6 +1214,7 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
                 inner,
                 param_files,
                 param_file_mode,
+                ..
             } => param_files.add_param_file_args(inner.fs(), *param_file_mode, args, format),
         }
     }
@@ -1216,7 +1222,9 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
     fn normalize_param_file_arg(&self, arg: String) -> String {
         match self {
             Self::Default { .. } => arg,
-            Self::Bazel { .. } => bazel_normalize_buck_owned_exec_paths(&arg),
+            Self::Bazel {
+                bazel_path_mapping, ..
+            } => bazel_normalize_and_map_buck_owned_exec_paths(&arg, *bazel_path_mapping),
         }
     }
 }
@@ -1224,13 +1232,17 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
 struct LocalActionCacheCommandLineFingerprinter<'a> {
     inner: &'a mut ExpandedCommandLineFingerprinter,
     bazel_paths: bool,
+    bazel_path_mapping: bool,
 }
 
 impl CommandLineBuilder for LocalActionCacheCommandLineFingerprinter<'_> {
     fn push_arg(&mut self, s: String) {
         if self.bazel_paths {
             self.inner
-                .push_arg(bazel_normalize_buck_owned_exec_paths(&s));
+                .push_arg(bazel_normalize_and_map_buck_owned_exec_paths(
+                    &s,
+                    self.bazel_path_mapping,
+                ));
         } else {
             self.inner.push_arg(s);
         }
@@ -1284,14 +1296,33 @@ fn push_string_args_for_local_action_cache(
     command_line_digest: &mut ExpandedCommandLineFingerprinter,
     args: &[String],
     bazel_paths: bool,
+    bazel_path_mapping: bool,
 ) {
     for arg in args {
         if bazel_paths {
-            command_line_digest.push_arg(bazel_normalize_buck_owned_exec_paths(arg));
+            command_line_digest.push_arg(bazel_normalize_and_map_buck_owned_exec_paths(
+                arg,
+                bazel_path_mapping,
+            ));
         } else {
             command_line_digest.push_arg(arg.to_owned());
         }
     }
+}
+
+fn push_string_args_for_dep_file_digest(
+    command_line_digest: &mut ExpandedCommandLineFingerprinter,
+    args: &[String],
+    bazel_paths: bool,
+    bazel_path_mapping: bool,
+) {
+    push_string_args_for_local_action_cache(
+        command_line_digest,
+        args,
+        bazel_paths,
+        bazel_path_mapping,
+    );
+    command_line_digest.push_count();
 }
 
 pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cc_compile_command_line<
@@ -1314,7 +1345,7 @@ pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cc_com
 
     let env = command_line.environment_strings(heap)?;
     let mut env = env.into_iter().collect::<SortedVectorMap<_, _>>();
-    bazel_normalize_command_env(&mut env);
+    bazel_normalize_command_env(&mut env, false);
     for (key, value) in env {
         command_line_digest.push_arg(key);
         command_line_digest.push_arg(value);
@@ -1463,6 +1494,7 @@ pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cmd_ar
         let mut command_line_builder = LocalActionCacheCommandLineFingerprinter {
             inner: &mut command_line_digest,
             bazel_paths: true,
+            bazel_path_mapping: false,
         };
         exe.add_to_command_line(&mut command_line_builder, &mut ctx, &artifact_path_mapping)
             .ok()?;
@@ -1473,6 +1505,7 @@ pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cmd_ar
         let mut command_line_builder = LocalActionCacheCommandLineFingerprinter {
             inner: &mut command_line_digest,
             bazel_paths: true,
+            bazel_path_mapping: false,
         };
         args.add_to_command_line(&mut command_line_builder, &mut ctx, &artifact_path_mapping)
             .ok()?;
@@ -1483,7 +1516,7 @@ pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cmd_ar
         .iter()
         .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
         .collect::<SortedVectorMap<_, _>>();
-    bazel_normalize_command_env(&mut env);
+    bazel_normalize_command_env(&mut env, false);
     for (key, value) in env {
         command_line_digest.push_arg(key);
         command_line_digest.push_arg(value);
@@ -1497,15 +1530,73 @@ pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cmd_ar
     Some(command_line_digest.finalize())
 }
 
-fn bazel_normalize_command_line(args: &mut [String]) {
-    for arg in args {
-        *arg = bazel_normalize_buck_owned_exec_paths(arg);
+fn bazel_path_mapping_enabled_value(bazel_paths: bool, supports_bazel_path_mapping: bool) -> bool {
+    bazel_paths && supports_bazel_path_mapping
+}
+
+fn bazel_strip_output_path_config_segments(value: &str, marker: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut cursor = 0;
+    while let Some(marker_offset) = value[cursor..].find(marker) {
+        let marker_start = cursor + marker_offset;
+        let config_start = marker_start + marker.len();
+        let config_len = value[config_start..]
+            .find('/')
+            .unwrap_or(value.len() - config_start);
+        let config_end = config_start + config_len;
+        let config = &value[config_start..config_end];
+        if !config.is_empty()
+            && config
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        {
+            result.push_str(&value[cursor..config_start]);
+            result.push_str("cfg");
+            cursor = config_end;
+        } else {
+            result.push_str(&value[cursor..config_start]);
+            cursor = config_start;
+        }
+    }
+    result.push_str(&value[cursor..]);
+    result
+}
+
+fn bazel_strip_buck_output_path_config_segments(value: &str) -> String {
+    let mut value = Cow::Borrowed(value);
+    if value.contains("buck-out/bin/") {
+        value = Cow::Owned(bazel_strip_output_path_config_segments(
+            &value,
+            "buck-out/bin/",
+        ));
+    }
+    if value.contains("buck-out/genfiles/") {
+        value = Cow::Owned(bazel_strip_output_path_config_segments(
+            &value,
+            "buck-out/genfiles/",
+        ));
+    }
+    value.into_owned()
+}
+
+fn bazel_normalize_and_map_buck_owned_exec_paths(value: &str, path_mapping: bool) -> String {
+    let value = bazel_normalize_buck_owned_exec_paths(value);
+    if path_mapping {
+        bazel_strip_buck_output_path_config_segments(&value)
+    } else {
+        value
     }
 }
 
-fn bazel_normalize_command_env(env: &mut SortedVectorMap<String, String>) {
+fn bazel_normalize_command_line(args: &mut [String], path_mapping: bool) {
+    for arg in args {
+        *arg = bazel_normalize_and_map_buck_owned_exec_paths(arg, path_mapping);
+    }
+}
+
+fn bazel_normalize_command_env(env: &mut SortedVectorMap<String, String>, path_mapping: bool) {
     for (_, value) in env.iter_mut() {
-        *value = bazel_normalize_buck_owned_exec_paths(value);
+        *value = bazel_normalize_and_map_buck_owned_exec_paths(value, path_mapping);
     }
 }
 
@@ -1828,14 +1919,20 @@ impl CommandLineArtifactVisitor<'_> for SkipHiddenCommandLineArtifactVisitor {
 struct BazelOutputExecPathVisitor<'a> {
     outputs: &'a BoxSliceSet<BuildArtifact>,
     paths: &'a mut BuckIndexMap<BuildArtifactPath, String>,
+    bazel_path_mapping: bool,
 }
 
 impl<'a> BazelOutputExecPathVisitor<'a> {
     fn new(
         outputs: &'a BoxSliceSet<BuildArtifact>,
         paths: &'a mut BuckIndexMap<BuildArtifactPath, String>,
+        bazel_path_mapping: bool,
     ) -> Self {
-        Self { outputs, paths }
+        Self {
+            outputs,
+            paths,
+            bazel_path_mapping,
+        }
     }
 
     fn record_path(&mut self, path: bz_execute::path::artifact_path::ArtifactPath<'_>) {
@@ -1845,7 +1942,10 @@ impl<'a> BazelOutputExecPathVisitor<'a> {
         };
         self.paths.insert(
             build_path,
-            bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(path)),
+            bazel_normalize_and_map_buck_owned_exec_paths(
+                &bazel_artifact_path(path),
+                self.bazel_path_mapping,
+            ),
         );
     }
 }
@@ -2040,6 +2140,7 @@ impl RunAction {
         let mut ctx = RunActionCommandLineContext::new(
             fs,
             uses_bazel_execroot_paths,
+            false,
             param_files,
             RunActionParamFileMode::Record,
         );
@@ -2295,6 +2396,8 @@ impl RunAction {
 
         let fs = &action_execution_ctx.executor_fs();
         let bazel_paths = self.uses_bazel_execroot_paths();
+        let bazel_path_mapping =
+            bazel_path_mapping_enabled_value(bazel_paths, self.inner.supports_bazel_path_mapping);
         let base_output = self
             .outputs
             .iter()
@@ -2302,9 +2405,10 @@ impl RunAction {
             .ok_or_else(|| internal_error!("run actions must have at least one output"))?;
         let base_bazel_exec_path = if bazel_paths {
             let artifact = Artifact::from(base_output.dupe());
-            Some(bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
-                artifact.get_path(),
-            )))
+            Some(bazel_normalize_and_map_buck_owned_exec_paths(
+                &bazel_artifact_path(artifact.get_path()),
+                bazel_path_mapping,
+            ))
         } else {
             None
         };
@@ -2330,6 +2434,7 @@ impl RunAction {
             let mut output_visitor = BazelOutputExecPathVisitor::new(
                 &self.outputs,
                 &mut artifact_visitor.bazel_output_exec_paths,
+                bazel_path_mapping,
             );
             values.exe.visit_artifacts(&mut output_visitor)?;
             if values.bazel_cc_command_line.is_none() {
@@ -2379,17 +2484,24 @@ impl RunAction {
 
         let mut command_line_digest = ExpandedCommandLineFingerprinter::new();
         if let Some(args) = &self.inner.bazel_string_args {
-            push_string_args_for_local_action_cache(&mut command_line_digest, args, bazel_paths);
+            push_string_args_for_local_action_cache(
+                &mut command_line_digest,
+                args,
+                bazel_paths,
+                bazel_path_mapping,
+            );
         } else {
             let mut cli_ctx = RunActionCommandLineContext::new(
                 fs,
                 bazel_paths,
+                bazel_path_mapping,
                 param_files.clone(),
                 RunActionParamFileMode::RecordDigestOnly,
             );
             let mut command_line_builder = LocalActionCacheCommandLineFingerprinter {
                 inner: &mut command_line_digest,
                 bazel_paths,
+                bazel_path_mapping,
             };
             values.exe.add_to_command_line(
                 &mut command_line_builder,
@@ -2403,17 +2515,24 @@ impl RunAction {
         }
 
         if let Some((args, _)) = &bazel_cc_command_line {
-            push_string_args_for_local_action_cache(&mut command_line_digest, args, bazel_paths);
+            push_string_args_for_local_action_cache(
+                &mut command_line_digest,
+                args,
+                bazel_paths,
+                bazel_path_mapping,
+            );
         } else {
             let mut cli_ctx = RunActionCommandLineContext::new(
                 fs,
                 bazel_paths,
+                bazel_path_mapping,
                 param_files.clone(),
                 RunActionParamFileMode::RecordDigestOnly,
             );
             let mut command_line_builder = LocalActionCacheCommandLineFingerprinter {
                 inner: &mut command_line_digest,
                 bazel_paths,
+                bazel_path_mapping,
             };
             values.args.add_to_command_line(
                 &mut command_line_builder,
@@ -2450,6 +2569,7 @@ impl RunAction {
                 let mut ctx = RunActionCommandLineContext::new(
                     fs,
                     bazel_paths,
+                    bazel_path_mapping,
                     param_files.clone(),
                     RunActionParamFileMode::RecordDigestOnly,
                 );
@@ -2471,7 +2591,7 @@ impl RunAction {
             }
         }
         if bazel_paths {
-            bazel_normalize_command_env(&mut cli_env);
+            bazel_normalize_command_env(&mut cli_env, bazel_path_mapping);
         }
         for (k, v) in cli_env {
             command_line_digest.push_arg(k);
@@ -2500,6 +2620,8 @@ impl RunAction {
     )> {
         let fs = &action_execution_ctx.executor_fs();
         let bazel_paths = self.uses_bazel_execroot_paths();
+        let bazel_path_mapping =
+            bazel_path_mapping_enabled_value(bazel_paths, self.inner.supports_bazel_path_mapping);
         let base_output = self
             .outputs
             .iter()
@@ -2507,9 +2629,10 @@ impl RunAction {
             .ok_or_else(|| internal_error!("run actions must have at least one output"))?;
         let base_bazel_exec_path = if bazel_paths {
             let artifact = Artifact::from(base_output.dupe());
-            Some(bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
-                artifact.get_path(),
-            )))
+            Some(bazel_normalize_and_map_buck_owned_exec_paths(
+                &bazel_artifact_path(artifact.get_path()),
+                bazel_path_mapping,
+            ))
         } else {
             None
         };
@@ -2533,6 +2656,7 @@ impl RunAction {
         let mut cli_ctx = RunActionCommandLineContext::new(
             fs,
             bazel_paths,
+            bazel_path_mapping,
             param_files.clone(),
             RunActionParamFileMode::Record,
         );
@@ -2540,6 +2664,7 @@ impl RunAction {
             RunActionCommandLineContext::new(
                 fs,
                 bazel_paths,
+                bazel_path_mapping,
                 param_files.clone(),
                 RunActionParamFileMode::Replay,
             )
@@ -2553,6 +2678,7 @@ impl RunAction {
             let mut output_visitor = BazelOutputExecPathVisitor::new(
                 &self.outputs,
                 &mut artifact_visitor.bazel_output_exec_paths,
+                bazel_path_mapping,
             );
             values.exe.visit_artifacts(&mut output_visitor)?;
             if values.bazel_cc_command_line.is_none() {
@@ -2657,6 +2783,7 @@ impl RunAction {
                     let mut ctx = RunActionCommandLineContext::new(
                         fs,
                         bazel_paths,
+                        bazel_path_mapping,
                         param_files.clone(),
                         RunActionParamFileMode::Record,
                     );
@@ -2677,6 +2804,7 @@ impl RunAction {
                         let mut digest_ctx = RunActionCommandLineContext::new(
                             fs,
                             bazel_paths,
+                            bazel_path_mapping,
                             param_files.clone(),
                             RunActionParamFileMode::Replay,
                         );
@@ -2706,6 +2834,7 @@ impl RunAction {
                 &local_worker_inputs,
                 fs.fs(),
                 bazel_execroot.as_deref(),
+                bazel_paths,
             )?;
 
             let input_paths = CommandExecutionPaths::new(
@@ -2800,6 +2929,7 @@ impl RunAction {
                     let mut ctx = RunActionCommandLineContext::new(
                         fs,
                         bazel_paths,
+                        bazel_path_mapping,
                         param_files.clone(),
                         RunActionParamFileMode::Record,
                     );
@@ -2820,6 +2950,7 @@ impl RunAction {
                         let mut digest_ctx = RunActionCommandLineContext::new(
                             fs,
                             bazel_paths,
+                            bazel_path_mapping,
                             param_files.clone(),
                             RunActionParamFileMode::Replay,
                         );
@@ -2869,19 +3000,23 @@ impl RunAction {
             args_rendered.extend(args.iter().cloned());
             if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files
             {
-                for arg in args {
-                    command_line_digest_for_dep_files.push_arg(arg.to_owned());
-                }
-                command_line_digest_for_dep_files.push_count();
+                push_string_args_for_dep_file_digest(
+                    command_line_digest_for_dep_files,
+                    args,
+                    bazel_paths,
+                    bazel_path_mapping,
+                );
             }
         } else if let Some((args, _)) = &bazel_cc_command_line {
             args_rendered.extend(args.iter().cloned());
             if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files
             {
-                for arg in args {
-                    command_line_digest_for_dep_files.push_arg(arg.to_owned());
-                }
-                command_line_digest_for_dep_files.push_count();
+                push_string_args_for_dep_file_digest(
+                    command_line_digest_for_dep_files,
+                    args,
+                    bazel_paths,
+                    bazel_path_mapping,
+                );
             }
         } else {
             values.args.add_to_command_line(
@@ -2930,6 +3065,7 @@ impl RunAction {
                 let mut ctx = RunActionCommandLineContext::new(
                     fs,
                     bazel_paths,
+                    bazel_path_mapping,
                     param_files.clone(),
                     RunActionParamFileMode::Record,
                 );
@@ -2948,6 +3084,7 @@ impl RunAction {
                     let mut digest_ctx = RunActionCommandLineContext::new(
                         fs,
                         bazel_paths,
+                        bazel_path_mapping,
                         param_files.clone(),
                         RunActionParamFileMode::Replay,
                     );
@@ -2970,7 +3107,12 @@ impl RunAction {
                     &mut command_line_digest_for_dep_files
                 {
                     command_line_digest_for_dep_files.push_arg(key.to_owned());
-                    command_line_digest_for_dep_files.push_arg(value.to_owned());
+                    command_line_digest_for_dep_files.push_arg(
+                        bazel_normalize_and_map_buck_owned_exec_paths(
+                            value,
+                            bazel_path_mapping,
+                        ),
+                    );
                     command_line_digest_for_dep_files.push_count();
                 }
             }
@@ -2984,16 +3126,16 @@ impl RunAction {
         let mut worker = worker;
         let mut remote_worker = remote_worker;
         if bazel_paths {
-            bazel_normalize_command_line(&mut exe_rendered);
-            bazel_normalize_command_line(&mut args_rendered);
-            bazel_normalize_command_env(&mut cli_env);
+            bazel_normalize_command_line(&mut exe_rendered, bazel_path_mapping);
+            bazel_normalize_command_line(&mut args_rendered, bazel_path_mapping);
+            bazel_normalize_command_env(&mut cli_env, bazel_path_mapping);
             if let Some(worker) = &mut worker {
-                bazel_normalize_command_line(&mut worker.exe);
-                bazel_normalize_command_env(&mut worker.env);
+                bazel_normalize_command_line(&mut worker.exe, bazel_path_mapping);
+                bazel_normalize_command_env(&mut worker.env, bazel_path_mapping);
             }
             if let Some(remote_worker) = &mut remote_worker {
-                bazel_normalize_command_line(&mut remote_worker.init);
-                bazel_normalize_command_env(&mut remote_worker.env);
+                bazel_normalize_command_line(&mut remote_worker.init, bazel_path_mapping);
+                bazel_normalize_command_env(&mut remote_worker.env, bazel_path_mapping);
             }
         }
 
@@ -3026,6 +3168,8 @@ impl RunAction {
 
         let fs = &action_execution_ctx.executor_fs();
         let bazel_paths = self.uses_bazel_execroot_paths();
+        let bazel_path_mapping =
+            bazel_path_mapping_enabled_value(bazel_paths, self.inner.supports_bazel_path_mapping);
         let base_output = self
             .outputs
             .iter()
@@ -3033,9 +3177,10 @@ impl RunAction {
             .ok_or_else(|| internal_error!("run actions must have at least one output"))?;
         let base_bazel_exec_path = if bazel_paths {
             let artifact = Artifact::from(base_output.dupe());
-            Some(bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
-                artifact.get_path(),
-            )))
+            Some(bazel_normalize_and_map_buck_owned_exec_paths(
+                &bazel_artifact_path(artifact.get_path()),
+                bazel_path_mapping,
+            ))
         } else {
             None
         };
@@ -3081,6 +3226,7 @@ impl RunAction {
             let mut cli_ctx = RunActionCommandLineContext::new(
                 fs,
                 bazel_paths,
+                bazel_path_mapping,
                 param_files.clone(),
                 RunActionParamFileMode::RecordDigestOnly,
             );
@@ -3104,6 +3250,7 @@ impl RunAction {
                     let mut ctx = RunActionCommandLineContext::new(
                         fs,
                         bazel_paths,
+                        bazel_path_mapping,
                         param_files.clone(),
                         RunActionParamFileMode::RecordDigestOnly,
                     );
@@ -3135,6 +3282,7 @@ impl RunAction {
                 &local_worker_inputs,
                 fs.fs(),
                 bazel_execroot.as_deref(),
+                bazel_paths,
             )?;
 
             let worker_key = if worker.supports_bazel_remote_persistent_worker_protocol {
@@ -3173,6 +3321,7 @@ impl RunAction {
             let mut cli_ctx = RunActionCommandLineContext::new(
                 fs,
                 bazel_paths,
+                bazel_path_mapping,
                 param_files.clone(),
                 RunActionParamFileMode::RecordDigestOnly,
             );
@@ -3195,6 +3344,7 @@ impl RunAction {
                     let mut ctx = RunActionCommandLineContext::new(
                         fs,
                         bazel_paths,
+                        bazel_path_mapping,
                         param_files.clone(),
                         RunActionParamFileMode::RecordDigestOnly,
                     );
@@ -3233,12 +3383,12 @@ impl RunAction {
         let mut remote_worker = remote_worker;
         if bazel_paths {
             if let Some(worker) = &mut worker {
-                bazel_normalize_command_line(&mut worker.exe);
-                bazel_normalize_command_env(&mut worker.env);
+                bazel_normalize_command_line(&mut worker.exe, bazel_path_mapping);
+                bazel_normalize_command_env(&mut worker.env, bazel_path_mapping);
             }
             if let Some(remote_worker) = &mut remote_worker {
-                bazel_normalize_command_line(&mut remote_worker.init);
-                bazel_normalize_command_env(&mut remote_worker.env);
+                bazel_normalize_command_line(&mut remote_worker.init, bazel_path_mapping);
+                bazel_normalize_command_env(&mut remote_worker.env, bazel_path_mapping);
             }
         }
 
@@ -3310,6 +3460,7 @@ impl RunAction {
         artifact_inputs: &[&ArtifactGroupValues],
         artifact_fs: &ArtifactFs,
         bazel_execroot: Option<&ProjectRelativePath>,
+        stage_bazel_path_mapping_aliases: bool,
     ) -> bz_error::Result<()> {
         let Some(bazel_execroot) = bazel_execroot else {
             return Ok(());
@@ -3327,7 +3478,7 @@ impl RunAction {
                 let bazel_path = bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
                     artifact.get_path(),
                 ));
-                let bazel_alias = Self::bazel_execroot_path(bazel_execroot, bazel_path)?;
+                let bazel_alias = Self::bazel_execroot_path(bazel_execroot, bazel_path.clone())?;
                 if aliases.insert(bazel_alias.clone()) && source_path != bazel_alias {
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
@@ -3347,6 +3498,56 @@ impl RunAction {
                         value: value.dupe(),
                     });
                 }
+
+                let normalized_source_path =
+                    bazel_normalize_buck_owned_exec_paths(source_path.as_str());
+                let normalized_source_alias =
+                    Self::bazel_execroot_path(bazel_execroot, normalized_source_path.clone())?;
+                if aliases.insert(normalized_source_alias.clone())
+                    && source_path != normalized_source_alias
+                {
+                    inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                        source_path: source_path.clone(),
+                        source_requires_materialization,
+                        path: normalized_source_alias,
+                        value: value.dupe(),
+                    });
+                }
+
+                if stage_bazel_path_mapping_aliases {
+                    // Bazel may let a non-path-mapped action consume strings emitted by an
+                    // earlier path-mapped action, such as rules_go GoLink consuming GoStdlib
+                    // flags. Stage the stripped cfg aliases for all Bazel execroot actions.
+                    let mapped_bazel_path =
+                        bazel_strip_buck_output_path_config_segments(&bazel_path);
+                    let mapped_bazel_alias =
+                        Self::bazel_execroot_path(bazel_execroot, mapped_bazel_path)?;
+                    if aliases.insert(mapped_bazel_alias.clone())
+                        && source_path != mapped_bazel_alias
+                    {
+                        inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                            source_path: source_path.clone(),
+                            source_requires_materialization,
+                            path: mapped_bazel_alias,
+                            value: value.dupe(),
+                        });
+                    }
+
+                    let mapped_normalized_source_path =
+                        bazel_strip_buck_output_path_config_segments(&normalized_source_path);
+                    let mapped_normalized_source_alias =
+                        Self::bazel_execroot_path(bazel_execroot, mapped_normalized_source_path)?;
+                    if aliases.insert(mapped_normalized_source_alias.clone())
+                        && source_path != mapped_normalized_source_alias
+                    {
+                        inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                            source_path: source_path.clone(),
+                            source_requires_materialization,
+                            path: mapped_normalized_source_alias,
+                            value: value.dupe(),
+                        });
+                    }
+                }
             }
         }
 
@@ -3364,6 +3565,7 @@ impl RunAction {
         artifact_inputs: &[&ArtifactGroupValues],
         artifact_fs: &ArtifactFs,
         bazel_execroot: Option<&ProjectRelativePath>,
+        stage_bazel_path_mapping_aliases: bool,
     ) -> bz_error::Result<Vec<CommandExecutionInput>> {
         let mut inputs = Self::artifact_inputs_as_command_execution_inputs(artifact_inputs);
         self.add_bazel_execroot_path_aliases(
@@ -3371,6 +3573,7 @@ impl RunAction {
             artifact_inputs,
             artifact_fs,
             bazel_execroot,
+            stage_bazel_path_mapping_aliases,
         )?;
         Ok(inputs)
     }
@@ -3723,6 +3926,8 @@ impl RunAction {
         let executor_fs = ctx.executor_fs();
         let fs = executor_fs.fs();
         let bazel_paths = self.uses_bazel_execroot_paths();
+        let bazel_path_mapping =
+            bazel_path_mapping_enabled_value(bazel_paths, self.inner.supports_bazel_path_mapping);
         let mut local_action_cache_extra_inputs: Vec<CommandExecutionInput> = Vec::with_capacity(2);
 
         let mut extra_env = Vec::new();
@@ -3768,9 +3973,10 @@ impl RunAction {
                             path.clone()
                         } else {
                             let artifact = Artifact::from(b.dupe());
-                            bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
-                                artifact.get_path(),
-                            ))
+                            bazel_normalize_and_map_buck_owned_exec_paths(
+                                &bazel_artifact_path(artifact.get_path()),
+                                bazel_path_mapping,
+                            )
                         };
                     Some(Self::bazel_execroot_path(bazel_execroot, bazel_path)?)
                 } else {
@@ -3827,6 +4033,8 @@ impl RunAction {
         let fs = executor_fs.fs();
 
         let bazel_paths = self.uses_bazel_execroot_paths();
+        let bazel_path_mapping =
+            bazel_path_mapping_enabled_value(bazel_paths, self.inner.supports_bazel_path_mapping);
         // Bazel command lines can be pre-expanded into strings. Use the full action input set so
         // execroot aliases match the action graph even when render-time visits are incomplete.
         let artifact_inputs: Vec<&ArtifactGroupValues> = if bazel_paths {
@@ -3855,6 +4063,7 @@ impl RunAction {
             &artifact_inputs,
             fs,
             bazel_execroot.as_deref(),
+            bazel_paths,
         )?;
         let bazel_executable_runfiles = {
             let values = Self::unpack(&self.starlark_values)?;
@@ -3955,9 +4164,10 @@ impl RunAction {
                                 path.clone()
                             } else {
                                 let artifact = Artifact::from(b.dupe());
-                                bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
-                                    artifact.get_path(),
-                                ))
+                                bazel_normalize_and_map_buck_owned_exec_paths(
+                                    &bazel_artifact_path(artifact.get_path()),
+                                    bazel_path_mapping,
+                                )
                             };
                         (
                             Some(Self::bazel_execroot_path(
