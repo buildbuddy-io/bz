@@ -57,7 +57,7 @@ pub(crate) fn bes_invocation_url(results_url: &str, invocation_id: &str) -> Stri
 fn bes_results_url_message(results_url: &str, invocation_id: &str, color: bool) -> String {
     let url = bes_invocation_url(results_url, invocation_id);
     if color {
-        format!("\x1b[1;32mINFO:\x1b[0m Streaming build results to: \x1b[4;36m{url}\x1b[0m")
+        format!("\x1b[32mINFO:\x1b[0m Streaming build results to: \x1b[4;36m{url}\x1b[0m")
     } else {
         format!("INFO: Streaming build results to: {url}")
     }
@@ -2137,6 +2137,14 @@ mod tests {
                 "user_keyword=pull-request",
                 "user_keyword=linux"
             ]
+        );
+    }
+
+    #[test]
+    fn bes_results_url_info_prefix_is_not_bold() {
+        assert_eq!(
+            bes_results_url_message("https://app.buildbuddy.dev/invocation", "abc", true),
+            "\x1b[32mINFO:\x1b[0m Streaming build results to: \x1b[4;36mhttps://app.buildbuddy.dev/invocation/abc\x1b[0m"
         );
     }
 

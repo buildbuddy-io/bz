@@ -44,6 +44,7 @@ use bz_wrapper_common::BUCK_WRAPPER_UUID_ENV_VAR;
 use bz_wrapper_common::BUCK2_WRAPPER_ENV_VAR;
 use serde::Serialize;
 
+use crate::commands::build::has_bes_results_url;
 use crate::commands::build::print_buck_ui_and_rating;
 use crate::commands::build::print_build_failed;
 use crate::commands::build::print_build_result;
@@ -195,7 +196,14 @@ impl StreamingCommand for RunCommand {
             None
         };
 
-        print_buck_ui_and_rating(&console, ctx, events_ctx.used_superconsole)?;
+        let printed_bes_results_url =
+            has_bes_results_url(&self.common_opts.event_log_opts, ctx.buildbuddy_bes());
+        print_buck_ui_and_rating(
+            &console,
+            ctx,
+            events_ctx.used_superconsole,
+            printed_bes_results_url,
+        )?;
         print_build_succeeded(&console, ctx, extra)?;
 
         // Special case for recursive invocations of buck; `BUCK2_WRAPPER` is set by wrapper scripts that execute

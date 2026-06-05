@@ -148,6 +148,7 @@ impl BuckSubcommand for ReplayCommand {
                 timekeeper,
                 "(replay)", // Could be better
                 console_opts.superconsole_config(),
+                false,
                 None,
             );
 

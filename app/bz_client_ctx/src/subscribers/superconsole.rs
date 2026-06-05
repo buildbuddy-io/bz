@@ -9,6 +9,7 @@
  */
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use bz_data::CommandExecutionDetails;
 use bz_error::BuckErrorContext;
+use bz_error::ExitCode;
 use bz_event_observer::action_sub_error_display::ActionSubErrorDisplay;
 use bz_event_observer::display;
 use bz_event_observer::display::TargetDisplayOptions;
@@ -50,6 +52,7 @@ use superconsole::style::Stylize;
 use tokio::sync::mpsc::Receiver;
 
 use crate::console_interaction_stream::SuperConsoleToggle;
+use crate::exit_result::ExitResult;
 use crate::subscribers::console_output_limit::EmitResult;
 use crate::subscribers::emit_event::emit_event_if_relevant;
 use crate::subscribers::simpleconsole::SimpleConsole;
@@ -383,6 +386,7 @@ pub struct StatefulSuperConsoleImpl {
     verbosity: Verbosity,
     games_overlay: GamesOverlay,
     shown_interactive_console_message: bool,
+    suppress_final_render: bool,
 }
 
 pub struct SuperConsoleState {
@@ -392,6 +396,9 @@ pub struct SuperConsoleState {
     config: SuperConsoleConfig,
     active_warnings: Option<Vec<DisplayReport>>,
     system_resource_usage: SystemResourceUsageTracker,
+    resource_lines_reserved_height: Cell<usize>,
+    resource_lines_reserved_start: Cell<usize>,
+    build_output_emitted: bool,
 }
 
 impl SuperConsoleState {
@@ -401,6 +408,39 @@ impl SuperConsoleState {
 
     pub(crate) fn system_resource_usage(&self) -> SystemResourceUsage {
         self.system_resource_usage.current()
+    }
+
+    fn build_output_emitted(&self) -> bool {
+        self.build_output_emitted
+    }
+
+    fn note_build_output_emitted(&mut self) {
+        self.build_output_emitted = true;
+    }
+
+    fn reserve_resource_lines_height(&self, height: usize) -> usize {
+        let reserved_height = self.resource_lines_reserved_height.get().max(height);
+        self.resource_lines_reserved_height.set(reserved_height);
+        reserved_height
+    }
+
+    fn reserve_resource_lines_start(
+        &self,
+        content_line_count: usize,
+        resource_line_count: usize,
+        canvas_height: usize,
+    ) -> usize {
+        let previous_start = self.resource_lines_reserved_start.get();
+        let start = resource_lines_start(
+            content_line_count,
+            resource_line_count,
+            canvas_height,
+            previous_start,
+        );
+        if start > previous_start {
+            self.resource_lines_reserved_start.set(start);
+        }
+        start
     }
 }
 
@@ -468,6 +508,7 @@ pub struct SuperConsoleConfig {
     pub enable_detailed_re: bool,
     pub enable_io: bool,
     pub enable_commands: bool,
+    pub hide_build_id: bool,
     pub display_platform: bool,
     pub expanded_progress: bool,
     /// Two lines for root events with single child event.
@@ -483,6 +524,7 @@ impl Default for SuperConsoleConfig {
             enable_detailed_re: false,
             enable_io: false,
             enable_commands: false,
+            hide_build_id: false,
             expanded_progress: true,
             display_platform: false,
             two_lines: false,
@@ -552,6 +594,20 @@ impl Component for StaticLinesAdapter<'_> {
     }
 }
 
+struct ProgressHeaderSpacer;
+
+impl Component for ProgressHeaderSpacer {
+    type Error = bz_error::Error;
+
+    fn draw_unchecked(
+        &self,
+        _dimensions: Dimensions,
+        _mode: DrawMode,
+    ) -> bz_error::Result<Lines> {
+        Ok(Lines(vec![Line::default()]))
+    }
+}
+
 impl Component for BuckRootComponent<'_> {
     type Error = bz_error::Error;
 
@@ -562,7 +618,26 @@ impl Component for BuckRootComponent<'_> {
             height: usize::MAX,
         });
 
-        let mut draw = DrawVertical::new(dimensions);
+        let mut resource_lines = ResourceHeader {
+            state: self.state,
+            re_state: self.state.simple_console.observer.re_state(),
+            two_snapshots: self.state.simple_console.observer.two_snapshots(),
+        }
+        .draw(dimensions, mode)?;
+        let resource_lines_reserved_height = if resource_lines.is_empty() {
+            0
+        } else {
+            self.state
+                .reserve_resource_lines_height(resource_lines.len())
+        };
+        let content_dimensions = Dimensions {
+            width: dimensions.width,
+            height: dimensions
+                .height
+                .saturating_sub(resource_lines_reserved_height),
+        };
+
+        let mut draw = DrawVertical::new(content_dimensions);
 
         // Render games overlay above normal build output when active.
         if self.games_overlay.active {
@@ -610,14 +685,7 @@ impl Component for BuckRootComponent<'_> {
         draw.draw(
             &SessionInfoComponent {
                 session_info: self.state.session_info(),
-            },
-            mode,
-        )?;
-        draw.draw(
-            &ResourceHeader {
-                state: self.state,
-                re_state: self.state.simple_console.observer.re_state(),
-                two_snapshots: self.state.simple_console.observer.two_snapshots(),
+                hide_build_id: self.state.config.hide_build_id,
             },
             mode,
         )?;
@@ -674,11 +742,37 @@ impl Component for BuckRootComponent<'_> {
             },
             mode,
         )?;
+        if self.state.config.expanded_progress && self.state.build_output_emitted() {
+            draw.draw(&ProgressHeaderSpacer, mode)?;
+        }
         draw.draw(&TasksHeader::new(self.header, self.state), mode)?;
         draw.draw(&TimedList::new(&CUTOFFS, self.state), mode)?;
 
-        Ok(draw.finish())
+        let mut lines = draw.finish();
+        if !resource_lines.is_empty() {
+            let resource_lines_start = self.state.reserve_resource_lines_start(
+                lines.len(),
+                resource_lines.len(),
+                dimensions.height,
+            );
+            let padding = resource_lines_start.saturating_sub(lines.len());
+            lines.pad_lines_bottom(padding);
+            lines.extend(std::mem::take(&mut resource_lines.0));
+            lines.shrink_lines_to_dimensions(dimensions);
+        }
+        Ok(lines)
     }
+}
+
+fn resource_lines_start(
+    content_line_count: usize,
+    resource_line_count: usize,
+    canvas_height: usize,
+    previous_start: usize,
+) -> usize {
+    let max_start = canvas_height.saturating_sub(resource_line_count);
+    let current_start = content_line_count + max_start.saturating_sub(content_line_count).min(1);
+    previous_start.max(current_start).min(max_start)
 }
 
 impl StatefulSuperConsole {
@@ -739,6 +833,7 @@ impl StatefulSuperConsole {
             verbosity,
             games_overlay: GamesOverlay::new(),
             shown_interactive_console_message: false,
+            suppress_final_render: false,
         }))
     }
 
@@ -813,11 +908,15 @@ impl SuperConsoleState {
                 trace_id,
                 verbosity,
                 expect_spans,
+                config.hide_build_id,
                 health_check_reports_receiver,
             ),
             config,
             active_warnings: None,
             system_resource_usage: SystemResourceUsageTracker::new(),
+            resource_lines_reserved_height: Cell::new(0),
+            resource_lines_reserved_start: Cell::new(0),
+            build_output_emitted: false,
         })
     }
 
@@ -841,6 +940,27 @@ impl SuperConsoleState {
 pub(crate) const BUCK_NO_INTERACTIVE_CONSOLE: &str = "BUCK_NO_INTERACTIVE_CONSOLE";
 
 impl StatefulSuperConsoleImpl {
+    fn emit_build_output(&mut self, lines: Lines) {
+        if !lines.is_empty() {
+            self.state.note_build_output_emitted();
+        }
+        self.super_console.emit(lines);
+    }
+
+    fn emit_build_aux_output(&mut self, lines: Lines) {
+        if !lines.is_empty() {
+            self.state.note_build_output_emitted();
+        }
+        self.super_console.emit_aux(lines);
+    }
+
+    async fn handle_build_stderr(&mut self, msg: &str) -> bz_error::Result<()> {
+        if !msg.is_empty() {
+            self.state.note_build_output_emitted();
+        }
+        self.handle_stderr(msg).await
+    }
+
     async fn toggle(
         &mut self,
         what: &str,
@@ -937,7 +1057,7 @@ impl StatefulSuperConsoleImpl {
             return Ok(());
         }
 
-        self.super_console.emit(
+        self.emit_build_output(
             err.payload
                 .lines()
                 .map(|line| Line::from_iter([Span::new_colored_lossy(line, Color::DarkYellow)]))
@@ -965,7 +1085,7 @@ impl StatefulSuperConsoleImpl {
     ) -> bz_error::Result<()> {
         // TODO(nmj): Maybe better handling of messages that have color data in them. Right now
         //            they're just stripped
-        self.super_console.emit(Lines::from_multiline_string_raw(
+        self.emit_build_output(Lines::from_multiline_string_raw(
             &message.message,
             ContentStyle::default(),
         ));
@@ -976,11 +1096,10 @@ impl StatefulSuperConsoleImpl {
         &mut self,
         message: &bz_data::StdoutStreamingOutput,
     ) -> bz_error::Result<()> {
-        self.super_console
-            .emit_aux(Lines::from_multiline_string_raw(
-                &message.message,
-                ContentStyle::default(),
-            ));
+        self.emit_build_aux_output(Lines::from_multiline_string_raw(
+            &message.message,
+            ContentStyle::default(),
+        ));
         Ok(())
     }
 
@@ -992,8 +1111,7 @@ impl StatefulSuperConsoleImpl {
             foreground_color: Some(Color::Yellow),
             ..Default::default()
         };
-        self.super_console
-            .emit(Lines::from_multiline_string_raw(&message.message, style));
+        self.emit_build_output(Lines::from_multiline_string_raw(&message.message, style));
         Ok(())
     }
 
@@ -1028,10 +1146,10 @@ impl StatefulSuperConsoleImpl {
                     );
                     lines.push(Line::from_iter([Span::new_styled_lossy(action_id)]));
                     lines.extend(Lines::from_colored_multiline_string(stderr));
-                    self.super_console.emit(Lines(lines));
+                    self.emit_build_output(Lines(lines));
                 }
                 EmitResult::Exceeded(msg) => {
-                    self.super_console.emit(Lines(vec![Line::sanitized(msg)]));
+                    self.emit_build_output(Lines(vec![Line::sanitized(msg)]));
                 }
                 EmitResult::Skipped => {}
             }
@@ -1123,7 +1241,7 @@ impl StatefulSuperConsoleImpl {
             lines.push(Line::sanitized(msg));
         }
 
-        self.super_console.emit(Lines(lines));
+        self.emit_build_output(Lines(lines));
 
         Ok(())
     }
@@ -1136,10 +1254,10 @@ impl StatefulSuperConsoleImpl {
             let byte_count: usize = msg.0.iter().map(|line| line.len()).sum();
             match self.state.simple_console.output_limit.emit(byte_count) {
                 EmitResult::Emit => {
-                    self.super_console.emit(msg);
+                    self.emit_build_output(msg);
                 }
                 EmitResult::Exceeded(msg) => {
-                    self.super_console.emit(Lines(vec![Line::sanitized(msg)]));
+                    self.emit_build_output(Lines(vec![Line::sanitized(msg)]));
                 }
                 EmitResult::Skipped => {}
             }
@@ -1476,7 +1594,7 @@ impl StatefulSuperConsoleImpl {
         result: &bz_cli_proto::CommandResult,
     ) -> bz_error::Result<()> {
         let lines = StatefulSuperConsole::render_result_errors(result);
-        self.super_console.emit(lines);
+        self.emit_build_output(lines);
         Ok(())
     }
 
@@ -1486,14 +1604,17 @@ impl StatefulSuperConsoleImpl {
         SuperConsoleState,
         Option<superconsole::Error<bz_error::Error>>,
     ) {
-        let err = self
-            .super_console
-            .finalize(&BuckRootComponent {
+        let err = if self.suppress_final_render {
+            self.super_console
+                .finalize_without_render::<bz_error::Error>()
+        } else {
+            self.super_console.finalize(&BuckRootComponent {
                 header: &self.header,
                 state: &self.state,
                 games_overlay: &self.games_overlay,
             })
-            .err();
+        }
+        .err();
         (self.state, err)
     }
 }
@@ -1517,7 +1638,7 @@ impl EventSubscriber for StatefulSuperConsole {
 
     async fn handle_tailer_stderr(&mut self, stderr: &str) -> bz_error::Result<()> {
         match self {
-            StatefulSuperConsole::Running(c) => c.handle_stderr(stderr).await,
+            StatefulSuperConsole::Running(c) => c.handle_build_stderr(stderr).await,
             StatefulSuperConsole::Finalized(c) => c.handle_stderr(stderr).await,
         }
     }
@@ -1561,8 +1682,21 @@ impl EventSubscriber for StatefulSuperConsole {
         None
     }
 
+    fn handle_exit_result(&mut self, result: &ExitResult) {
+        if matches!(result.exit_code(), Some(ExitCode::SignalInterrupt))
+            && let Self::Running(c) = self
+        {
+            c.suppress_final_render = true;
+        }
+    }
+
     async fn handle_error(&mut self, _error: &bz_error::Error) -> bz_error::Result<()> {
         self.finalize()?;
+        Ok(())
+    }
+
+    async fn finalize(mut self: Box<Self>) -> bz_error::Result<()> {
+        StatefulSuperConsole::finalize(&mut self)?;
         Ok(())
     }
 }
@@ -1892,7 +2026,7 @@ mod tests {
         } else {
             assert_frame_contains(&frame, "Build ID:");
         }
-        assert_frame_contains(&frame, "Network:");
+        assert_frame_contains(&frame, "Upload:");
         assert_frame_contains(&frame, "(reSessionID-123)");
         assert_frame_contains(&frame, "Loaded");
 
@@ -1916,6 +2050,7 @@ mod tests {
 
         let full = SessionInfoComponent {
             session_info: &info,
+            hide_build_id: false,
         }
         .draw_unchecked(
             Dimensions {
@@ -1931,6 +2066,7 @@ mod tests {
 
         let multiline = SessionInfoComponent {
             session_info: &info,
+            hide_build_id: false,
         }
         .draw_unchecked(
             Dimensions {
@@ -1947,6 +2083,7 @@ mod tests {
 
         let too_small = SessionInfoComponent {
             session_info: &info,
+            hide_build_id: false,
         }
         .draw_unchecked(
             Dimensions {
@@ -1958,7 +2095,47 @@ mod tests {
 
         assert_eq!(too_small.len(), 1);
 
+        let hidden_build_id = SessionInfoComponent {
+            session_info: &info,
+            hide_build_id: true,
+        }
+        .draw_unchecked(
+            Dimensions {
+                width: 110,
+                height: 1,
+            },
+            DrawMode::Normal,
+        )?;
+
+        assert_eq!(hidden_build_id.len(), 1);
+        assert!(!hidden_build_id
+            .fmt_for_test()
+            .to_string()
+            .contains("Build ID:"));
+
         Ok(())
+    }
+
+    #[test]
+    fn test_resource_lines_start_does_not_shrink_after_progress_shrinks() {
+        let canvas_height = 30;
+        let resource_line_count = 1;
+
+        let initial_start = resource_lines_start(10, resource_line_count, canvas_height, 0);
+        assert_eq!(initial_start, 11);
+
+        let grown_start =
+            resource_lines_start(28, resource_line_count, canvas_height, initial_start);
+        assert_eq!(grown_start, 29);
+
+        let shrunk_start =
+            resource_lines_start(10, resource_line_count, canvas_height, grown_start);
+        assert_eq!(shrunk_start, grown_start);
+    }
+
+    #[test]
+    fn test_resource_lines_start_caps_to_available_height() {
+        assert_eq!(resource_lines_start(10, 2, 8, 20), 6);
     }
 
     #[tokio::test]

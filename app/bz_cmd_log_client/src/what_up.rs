@@ -163,6 +163,7 @@ impl WhatUpCommand {
                 draw.draw(
                     &SessionInfoComponent {
                         session_info: self.state.session_info(),
+                        hide_build_id: false,
                     },
                     mode,
                 )?;

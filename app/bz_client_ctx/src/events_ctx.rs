@@ -9,6 +9,7 @@
  */
 
 use std::ops::ControlFlow;
+use std::io::IsTerminal;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +21,7 @@ use bz_cli_proto::CommandResult;
 use bz_cli_proto::command_result;
 use bz_error::BuckErrorContext;
 use bz_error::ErrorTag;
+use bz_error::ExitCode;
 use bz_error::internal_error;
 use bz_event_log::stream_value::StreamValue;
 use bz_events::BuckEvent;
@@ -46,7 +48,9 @@ use crate::daemon::client::NoPartialResultHandler;
 use crate::daemon::client::tonic_status_to_error;
 use crate::exit_result::ExitResult;
 use crate::file_tailers::tailers::FileTailers;
+use crate::final_console::FinalConsole;
 use crate::subscribers::observer::ErrorObserver;
+use crate::subscribers::recorder::BuildSummaryStats;
 use crate::subscribers::recorder::InvocationRecorder;
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::ticker::Tick;
@@ -711,6 +715,7 @@ impl EventsCtx {
         runtime.block_on(async move {
             let buck_log_dir = self.buck_log_dir.take();
             let command_report_path = self.command_report_path.take();
+            let interrupted_build_summary = interrupted_build_summary(&result, self.recorder.as_deref());
             let finalize_events = async {
                 self.handle_exit_result(&result);
                 self.finalize().await
@@ -726,6 +731,15 @@ impl EventsCtx {
                     )]
                 });
 
+            if let Some((elapsed, stats)) = interrupted_build_summary {
+                let console = if std::io::stderr().is_terminal() {
+                    FinalConsole::new_with_tty()
+                } else {
+                    FinalConsole::new_without_tty()
+                };
+                let _ignored = print_interrupted_build_summary(&console, elapsed, &stats);
+            }
+
             // Don't fail the command if command report fails to write. TODO(ctolliday) show a warning?
             let _unused = result.write_command_report(
                 trace_id,
@@ -736,6 +750,45 @@ impl EventsCtx {
             result
         })
     }
+}
+
+fn interrupted_build_summary(
+    result: &ExitResult,
+    recorder: Option<&InvocationRecorder>,
+) -> Option<(Duration, BuildSummaryStats)> {
+    if !matches!(result.exit_code(), Some(ExitCode::SignalInterrupt)) {
+        return None;
+    }
+    let recorder = recorder?;
+    if recorder.command_name() != Some("build") {
+        return None;
+    }
+    Some((
+        recorder.start_time().elapsed().unwrap_or_default(),
+        recorder.build_summary_stats(),
+    ))
+}
+
+fn print_interrupted_build_summary(
+    console: &FinalConsole,
+    elapsed: Duration,
+    stats: &BuildSummaryStats,
+) -> bz_error::Result<()> {
+    console.print_error_prefix("build interrupted")?;
+    console.print_info_prefix(&format!(
+        "Elapsed time: {:.3}s, Critical Path: {:.2}s",
+        elapsed.as_secs_f64(),
+        stats
+            .critical_path_duration
+            .unwrap_or_default()
+            .as_secs_f64()
+    ))?;
+    console.print_info_prefix(
+        &stats
+            .process_summary()
+            .unwrap_or_else(|| "0 processes.".to_owned()),
+    )?;
+    console.print_error_prefix("Build did NOT complete successfully")
 }
 
 #[derive(bz_error::Error, Debug)]

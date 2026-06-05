@@ -10,6 +10,7 @@
 
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use bz_cli_proto::BuildRequest;
@@ -40,6 +41,7 @@ use bz_client_ctx::exit_result::ExitResult;
 use bz_client_ctx::final_console::FinalConsole;
 use bz_client_ctx::output_destination_arg::OutputDestinationArg;
 use bz_client_ctx::streaming::StreamingCommand;
+use bz_client_ctx::subscribers::recorder::BuildSummaryStats;
 use bz_core::bz_env;
 use bz_error::BuckErrorContext;
 use bz_error::bz_error;
@@ -318,6 +320,7 @@ impl StreamingCommand for BuildCommand {
             Ok(CommandOutcome::Failure(_)) => false,
             Err(_) => false,
         };
+        let has_build_response = matches!(&result, Ok(CommandOutcome::Success(_)));
         let build_output_locations = match &result {
             Ok(CommandOutcome::Success(response))
                 if print_build_output_locations && response.errors.is_empty() =>
@@ -328,16 +331,36 @@ impl StreamingCommand for BuildCommand {
         };
 
         let console = self.common_opts.console_opts.final_console();
-        print_buck_ui_and_rating(&console, ctx, events_ctx.used_superconsole)?;
+        let printed_bes_results_url =
+            has_bes_results_url(&self.common_opts.event_log_opts, ctx.buildbuddy_bes());
+        print_buck_ui_and_rating(
+            &console,
+            ctx,
+            events_ctx.used_superconsole,
+            printed_bes_results_url,
+        )?;
+        let summary_stats = events_ctx
+            .recorder
+            .as_ref()
+            .map(|recorder| recorder.build_summary_stats());
 
         if success {
             if self.patterns.is_empty() {
                 console.print_warning("NO BUILD TARGET PATTERNS SPECIFIED")?;
             } else {
-                print_build_succeeded(&console, ctx, build_output_locations.as_deref())?;
+                print_build_succeeded_with_stats(
+                    &console,
+                    ctx,
+                    summary_stats.as_ref(),
+                    build_output_locations.as_deref(),
+                )?;
             }
-        } else {
-            print_build_failed(&console)?;
+        } else if !has_build_response {
+            print_build_failed_with_stats(
+                &console,
+                ctx.start_time.elapsed().unwrap_or_default(),
+                summary_stats.as_ref(),
+            )?;
         }
 
         if bz_env!("BUCK2_TEST_BUILD_ERROR", bool, applicability = testing)? {
@@ -384,6 +407,11 @@ impl StreamingCommand for BuildCommand {
 
             ExitResult::success()
         } else {
+            print_build_failed_with_stats(
+                &console,
+                ctx.start_time.elapsed().unwrap_or_default(),
+                summary_stats.as_ref(),
+            )?;
             ExitResult::from_command_result_errors(response.errors)
         };
 
@@ -416,17 +444,103 @@ pub(crate) fn print_build_succeeded(
     ctx: &ClientCommandContext<'_>,
     extra: Option<&str>,
 ) -> bz_error::Result<()> {
-    if ctx.verbosity.print_success_message() {
-        console.print_success_no_newline("BUILD SUCCEEDED")?;
-        console.print_stderr(extra.unwrap_or_default())?;
+    print_build_succeeded_with_stats(console, ctx, None, extra)
+}
+
+fn print_build_succeeded_with_stats(
+    console: &FinalConsole,
+    ctx: &ClientCommandContext<'_>,
+    stats: Option<&BuildSummaryStats>,
+    extra: Option<&str>,
+) -> bz_error::Result<()> {
+    if !ctx.verbosity.print_success_message() {
+        return Ok(());
     }
+
+    let suffix = print_success_extra(console, extra)?;
+    print_build_timing_summary(console, ctx.start_time.elapsed().unwrap_or_default(), stats)?;
+    print_build_process_summary(console, stats)?;
+
+    let mut message = if let Some(stats) = stats {
+        format!(
+            "Build completed successfully, {} {}",
+            format_count(stats.total_actions()),
+            pluralize("total action", stats.total_actions())
+        )
+    } else {
+        "Build completed successfully".to_owned()
+    };
+    message.push_str(suffix);
+    console.print_info_prefix(&message)?;
     Ok(())
+}
+
+fn print_success_extra<'a>(
+    console: &FinalConsole,
+    extra: Option<&'a str>,
+) -> bz_error::Result<&'a str> {
+    let Some(extra) = extra else {
+        return Ok("");
+    };
+    if let Some(output_locations) = extra.strip_prefix('\n') {
+        if !output_locations.is_empty() {
+            console.print_stderr(output_locations)?;
+        }
+        Ok("")
+    } else {
+        Ok(extra)
+    }
+}
+
+fn print_build_timing_summary(
+    console: &FinalConsole,
+    elapsed: Duration,
+    stats: Option<&BuildSummaryStats>,
+) -> bz_error::Result<()> {
+    let mut message = format!("Elapsed time: {:.3}s", elapsed.as_secs_f64());
+    if let Some(critical_path) = stats.and_then(|stats| stats.critical_path_duration) {
+        message.push_str(&format!(
+            ", Critical Path: {:.2}s",
+            critical_path.as_secs_f64()
+        ));
+    }
+    console.print_info_prefix(&message)
+}
+
+fn print_build_process_summary(
+    console: &FinalConsole,
+    stats: Option<&BuildSummaryStats>,
+) -> bz_error::Result<()> {
+    let Some(stats) = stats else {
+        return Ok(());
+    };
+    let Some(summary) = stats.process_summary() else {
+        return Ok(());
+    };
+    console.print_info_prefix(&summary)
+}
+
+fn pluralize(noun: &str, count: u64) -> String {
+    format!("{noun}{}", if count == 1 { "" } else { "s" })
+}
+
+fn format_count(count: u64) -> String {
+    let digits = count.to_string();
+    let mut formatted = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            formatted.push(',');
+        }
+        formatted.push(ch);
+    }
+    formatted
 }
 
 /// Prints two things at command end:
 ///
 /// 1. **Buck UI URL re-print** — emitted only when a superconsole was
-///    actually constructed for the command (`used_superconsole`).
+///    actually constructed for the command (`used_superconsole`) and no BES
+///    results URL was already printed.
 ///    Superconsole's live area showed the URL during the command but
 ///    clears on exit, so without the re-print the URL would be gone from
 ///    scrollback. Simple-console runs already printed it at command start
@@ -455,10 +569,11 @@ pub(crate) fn print_buck_ui_and_rating(
     console: &FinalConsole,
     ctx: &ClientCommandContext<'_>,
     used_superconsole: bool,
+    printed_bes_results_url: bool,
 ) -> bz_error::Result<()> {
     let show_rating = should_show_rating(&ctx.trace_id);
 
-    if used_superconsole {
+    if should_reprint_buck_ui_or_build_id(used_superconsole, printed_bes_results_url) {
         if cfg!(fbcode_build) {
             // ?rbs (rate build speed) triggers a modal in Buck UI prompting
             // the user to rate their build speed experience. Only emitted in
@@ -485,6 +600,25 @@ pub(crate) fn print_buck_ui_and_rating(
     Ok(())
 }
 
+pub(crate) fn has_bes_results_url(
+    event_log_opts: &CommonEventLogOptions,
+    buildbuddy_bes: bool,
+) -> bool {
+    event_log_opts
+        .bes_backend_with_buildbuddy_default(buildbuddy_bes)
+        .is_some()
+        && event_log_opts
+            .bes_results_url_with_buildbuddy_default(buildbuddy_bes)
+            .is_some()
+}
+
+fn should_reprint_buck_ui_or_build_id(
+    used_superconsole: bool,
+    printed_bes_results_url: bool,
+) -> bool {
+    used_superconsole && !printed_bes_results_url
+}
+
 /// Sample 1/16 of builds (those whose trace id's first hex digit is `'0'`)
 /// for the rating prompt — keeps the survey unobtrusive while still reaching
 /// the population.
@@ -500,7 +634,17 @@ fn is_in_rating_sample(first_byte: u8) -> bool {
 }
 
 pub(crate) fn print_build_failed(console: &FinalConsole) -> bz_error::Result<()> {
-    console.print_error("BUILD FAILED")
+    console.print_error_prefix("Build did NOT complete successfully")
+}
+
+fn print_build_failed_with_stats(
+    console: &FinalConsole,
+    elapsed: Duration,
+    stats: Option<&BuildSummaryStats>,
+) -> bz_error::Result<()> {
+    print_build_timing_summary(console, elapsed, stats)?;
+    print_build_process_summary(console, stats)?;
+    console.print_error_prefix("Build did NOT complete successfully")
 }
 
 #[cfg(fbcode_build)]
@@ -615,7 +759,7 @@ fn format_build_output_locations(targets: &[BuildTarget], show_result: usize) ->
         }
     }
 
-    (!lines.is_empty()).then(|| format!("\n{}", lines.join("\n")))
+    (!lines.is_empty()).then(|| format!("\n\n {}\n", lines.join("\n ")))
 }
 
 #[cfg(test)]
@@ -695,7 +839,7 @@ mod tests {
 
         assert_eq!(
             format_build_output_locations(&targets, 1).as_deref(),
-            Some("\nTarget root//:one up-to-date:\n  buck-out/v2/art/root/cfg/one")
+            Some("\n\n Target root//:one up-to-date:\n   buck-out/v2/art/root/cfg/one\n")
         );
     }
 
@@ -716,7 +860,7 @@ mod tests {
 
         assert_eq!(
             format_build_output_locations(&targets, 1).as_deref(),
-            Some("\nTarget root//:run up-to-date (nothing to build)")
+            Some("\n\n Target root//:run up-to-date (nothing to build)\n")
         );
     }
 
@@ -746,7 +890,7 @@ mod tests {
         assert_eq!(
             format_build_output_locations(&targets, 2).as_deref(),
             Some(
-                "\nTarget root//:one up-to-date:\n  buck-out/v2/art/root/cfg/one\nTarget root//:two up-to-date:\n  buck-out/v2/art/root/cfg/two"
+                "\n\n Target root//:one up-to-date:\n   buck-out/v2/art/root/cfg/one\n Target root//:two up-to-date:\n   buck-out/v2/art/root/cfg/two\n"
             )
         );
     }
@@ -861,6 +1005,38 @@ mod tests {
             event_log_opts.bes_results_url(),
             Some("https://example.com/invocation/")
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn bes_results_url_suppresses_final_build_id_reprint() -> bz_error::Result<()> {
+        let opts = parse(&["--bes"])?;
+        let event_log_opts = &opts.common_opts.event_log_opts;
+
+        assert!(has_bes_results_url(event_log_opts, false));
+        assert!(!should_reprint_buck_ui_or_build_id(true, true));
+
+        Ok(())
+    }
+
+    #[test]
+    fn final_build_id_reprint_stays_enabled_without_bes_results_url() -> bz_error::Result<()> {
+        let opts = parse(&[])?;
+        let event_log_opts = &opts.common_opts.event_log_opts;
+
+        assert!(!has_bes_results_url(event_log_opts, false));
+        assert!(should_reprint_buck_ui_or_build_id(true, false));
+        assert!(!should_reprint_buck_ui_or_build_id(false, false));
+
+        Ok(())
+    }
+
+    #[test]
+    fn buildbuddy_default_counts_as_bes_results_url() -> bz_error::Result<()> {
+        let opts = parse(&[])?;
+
+        assert!(has_bes_results_url(&opts.common_opts.event_log_opts, true));
 
         Ok(())
     }

@@ -74,15 +74,18 @@ pub fn get_console_with_root(
     expect_spans: bool,
     timekeeper: Timekeeper,
     command_name: &str,
-    config: SuperConsoleConfig,
+    mut config: SuperConsoleConfig,
+    hide_build_id: bool,
     health_check_display_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
 ) -> (Box<dyn EventSubscriber>, bool) {
+    config.hide_build_id = hide_build_id;
     let result: bz_error::Result<(Box<dyn EventSubscriber>, bool)> = match console_type {
         ConsoleType::Simple => Ok((
             Box::new(SimpleConsole::<NoopEventObserverExtra>::autodetect(
                 trace_id.dupe(),
                 verbosity,
                 expect_spans,
+                hide_build_id,
                 health_check_display_reports_receiver,
             )),
             false,
@@ -92,6 +95,7 @@ pub fn get_console_with_root(
                 trace_id.dupe(),
                 verbosity,
                 expect_spans,
+                hide_build_id,
                 health_check_display_reports_receiver,
             )),
             false,
@@ -101,6 +105,7 @@ pub fn get_console_with_root(
                 trace_id.dupe(),
                 verbosity,
                 expect_spans,
+                hide_build_id,
                 health_check_display_reports_receiver,
             )),
             false,
@@ -137,6 +142,7 @@ pub fn get_console_with_root(
                         trace_id.dupe(),
                         verbosity,
                         expect_spans,
+                        hide_build_id,
                         health_check_display_reports_receiver,
                     )),
                     false,
@@ -156,6 +162,7 @@ pub fn get_console_with_root(
                     trace_id,
                     verbosity,
                     expect_spans,
+                    hide_build_id,
                     // Maybe refactor and set this.
                     None,
                 )),

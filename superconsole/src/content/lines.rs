@@ -327,6 +327,23 @@ impl Lines {
         }
     }
 
+    /// Formats and renders all lines to `buffer`, leaving the cursor on the final line.
+    /// Notably, this *queues* the lines for rendering.  You must flush the buffer.
+    pub(crate) fn render_from_line_without_trailing_newline(
+        &self,
+        writer: &mut Vec<u8>,
+        start: usize,
+    ) {
+        let last = self.0.len().saturating_sub(1);
+        for (index, line) in self.0.iter().enumerate().skip(start) {
+            if index == last {
+                line.render_with_clear_no_nl(writer);
+            } else {
+                line.render_with_clear_and_nl(writer);
+            }
+        }
+    }
+
     /// Render the lines without an escape sequence to clear the line.
     /// It will clear the lines at the end.
     pub(crate) fn render_raw(&mut self, writer: &mut Vec<u8>) {

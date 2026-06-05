@@ -26,6 +26,7 @@ use bz_client_ctx::events_ctx::EventsCtx;
 use bz_client_ctx::exit_result::ExitResult;
 use bz_client_ctx::streaming::StreamingCommand;
 
+use crate::commands::build::has_bes_results_url;
 use crate::commands::build::print_buck_ui_and_rating;
 
 #[derive(Debug, clap::Parser)]
@@ -213,7 +214,14 @@ impl StreamingCommand for InstallCommand {
             )
             .await?;
         let console = self.common_opts.console_opts.final_console();
-        print_buck_ui_and_rating(&console, ctx, events_ctx.used_superconsole)?;
+        let printed_bes_results_url =
+            has_bes_results_url(&self.common_opts.event_log_opts, ctx.buildbuddy_bes());
+        print_buck_ui_and_rating(
+            &console,
+            ctx,
+            events_ctx.used_superconsole,
+            printed_bes_results_url,
+        )?;
 
         match response {
             CommandOutcome::Success(_) => {

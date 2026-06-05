@@ -21,19 +21,18 @@ use superconsole::Span;
 /// This component is used to display session information for a command e.g. RE session ID
 pub struct SessionInfoComponent<'s> {
     pub session_info: &'s SessionInfo,
+    pub hide_build_id: bool,
 }
 
 impl Component for SessionInfoComponent<'_> {
     type Error = bz_error::Error;
 
-    fn draw_unchecked(
-        &self,
-        dimensions: Dimensions,
-        _mode: DrawMode,
-    ) -> bz_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, _mode: DrawMode) -> bz_error::Result<Lines> {
         let mut headers = Lines::new();
         let mut ids = vec![];
-        if cfg!(fbcode_build) {
+        if self.hide_build_id {
+            // The build event stream prints an invocation URL for this trace id.
+        } else if cfg!(fbcode_build) {
             headers.push(Line::unstyled("Buck UI:")?);
             ids.push(Span::new_unstyled(format!(
                 "https://www.internalfb.com/buck2/{}",

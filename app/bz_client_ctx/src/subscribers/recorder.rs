@@ -48,6 +48,7 @@ use bz_error::source_location::SourceLocation;
 use bz_event_log::ttl::manifold_event_log_ttl;
 use bz_event_observer::action_stats;
 use bz_event_observer::cache_hit_rate::total_cache_hit_rate;
+use bz_event_observer::humanized::CommaSeparatedCount;
 use bz_event_observer::last_command_execution_kind;
 use bz_event_observer::last_command_execution_kind::LastCommandExecutionKind;
 use bz_event_observer::last_command_execution_kind::get_last_command_execution_time;
@@ -96,6 +97,78 @@ pub fn process_memory(snapshot: &bz_data::Snapshot) -> Option<u64> {
         .into_iter()
         .chain(snapshot.bz_rss)
         .max()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildSummaryStats {
+    pub critical_path_duration: Option<Duration>,
+    pub local_actions: u64,
+    pub remote_actions: u64,
+    pub action_cache_hits: u64,
+    pub remote_dep_file_cache_hits: u64,
+    pub skipped_actions: u64,
+}
+
+impl BuildSummaryStats {
+    pub fn executed_actions(&self) -> u64 {
+        self.local_actions + self.remote_actions
+    }
+
+    pub fn total_actions(&self) -> u64 {
+        self.executed_actions()
+            + self.action_cache_hits
+            + self.remote_dep_file_cache_hits
+            + self.skipped_actions
+    }
+
+    pub fn process_summary(&self) -> Option<String> {
+        if self.total_actions() == 0 {
+            return None;
+        }
+
+        let mut parts = Vec::new();
+        push_build_summary_count(
+            &mut parts,
+            self.action_cache_hits,
+            "action cache hit",
+            "action cache hits",
+        );
+        push_build_summary_count(
+            &mut parts,
+            self.remote_dep_file_cache_hits,
+            "remote dep file cache hit",
+            "remote dep file cache hits",
+        );
+        push_build_summary_count(&mut parts, self.remote_actions, "remote", "remote");
+        push_build_summary_count(&mut parts, self.local_actions, "local", "local");
+        push_build_summary_count(
+            &mut parts,
+            self.skipped_actions,
+            "skipped action",
+            "skipped actions",
+        );
+
+        Some(format!(
+            "{} {}: {}.",
+            CommaSeparatedCount::new(self.executed_actions()),
+            build_summary_noun("process", "processes", self.executed_actions()),
+            parts.join(", ")
+        ))
+    }
+}
+
+fn push_build_summary_count(parts: &mut Vec<String>, count: u64, singular: &str, plural: &str) {
+    if count > 0 {
+        parts.push(format!(
+            "{} {}",
+            CommaSeparatedCount::new(count),
+            if count == 1 { singular } else { plural }
+        ));
+    }
+}
+
+fn build_summary_noun<'a>(singular: &'a str, plural: &'a str, count: u64) -> &'a str {
+    if count == 1 { singular } else { plural }
 }
 
 const MEMORY_PRESSURE_TAG: &str = "memory_pressure_warning";
@@ -514,9 +587,23 @@ impl InvocationRecorder {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    pub fn build_summary_stats(&self) -> BuildSummaryStats {
+        BuildSummaryStats {
+            critical_path_duration: self.critical_path_duration,
+            local_actions: self.run_local_count,
+            remote_actions: self.run_remote_count,
+            action_cache_hits: self.run_action_cache_count,
+            remote_dep_file_cache_hits: self.run_remote_dep_file_cache_count,
+            skipped_actions: self.run_skipped_count,
+        }
+    }
+
     pub(crate) fn start_time(&self) -> SystemTime {
         self.start_time
+    }
+
+    pub(crate) fn command_name(&self) -> Option<&'static str> {
+        self.command_name
     }
 
     pub fn update_for_client_ctx(
@@ -2644,6 +2731,7 @@ mod tests {
     use bz_wrapper_common::invocation_id::TraceId;
 
     use crate::exit_result::ExitResult;
+    use crate::subscribers::recorder::BuildSummaryStats;
     use crate::subscribers::recorder::InvocationRecorder;
     use crate::subscribers::recorder::truncate_stderr;
 
@@ -2657,6 +2745,35 @@ mod tests {
         }
         let truncated = truncate_stderr(&stderr);
         assert_eq!(truncated.len(), 19_999);
+    }
+
+    #[test]
+    fn test_build_summary_process_pluralization() {
+        let cache_only = BuildSummaryStats {
+            critical_path_duration: None,
+            local_actions: 0,
+            remote_actions: 0,
+            action_cache_hits: 5472,
+            remote_dep_file_cache_hits: 0,
+            skipped_actions: 0,
+        };
+        assert_eq!(
+            cache_only.process_summary().as_deref(),
+            Some("0 processes: 5,472 action cache hits.")
+        );
+
+        let one_local_action = BuildSummaryStats {
+            critical_path_duration: None,
+            local_actions: 1,
+            remote_actions: 0,
+            action_cache_hits: 0,
+            remote_dep_file_cache_hits: 0,
+            skipped_actions: 0,
+        };
+        assert_eq!(
+            one_local_action.process_summary().as_deref(),
+            Some("1 process: 1 local.")
+        );
     }
 
     #[test]

@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use superconsole::style::Attribute;
 use superconsole::style::Color;
 use superconsole::style::ContentStyle;
 use superconsole::style::StyledContent;
@@ -56,9 +57,63 @@ impl FinalConsole {
         Ok(())
     }
 
+    fn stderr_colored_prefix_ln(
+        &self,
+        prefix: &str,
+        color: Color,
+        bold: bool,
+        message: &str,
+    ) -> bz_error::Result<()> {
+        self.stderr_colored_with_style(prefix, color, bold)?;
+        crate::eprintln!(" {}", message)?;
+        Ok(())
+    }
+
+    fn stderr_colored_with_style(
+        &self,
+        message: &str,
+        color: Color,
+        bold: bool,
+    ) -> bz_error::Result<()> {
+        if self.is_tty {
+            if let Some(code) = standard_ansi_foreground(color) {
+                let bold = if bold { "1;" } else { "" };
+                crate::eprint!("\x1b[{bold}{code}m{message}\x1b[0m")?;
+            } else {
+                let sc = StyledContent::new(
+                    ContentStyle {
+                        foreground_color: Some(color),
+                        background_color: None,
+                        underline_color: None,
+                        attributes: if bold {
+                            Attribute::Bold.into()
+                        } else {
+                            Default::default()
+                        },
+                    },
+                    message,
+                );
+                crate::eprint!("{}", sc)?;
+            }
+        } else {
+            crate::eprint!("{}", message)?;
+        }
+        Ok(())
+    }
+
     /// Print the given message to stderr, in red if possible
     pub fn print_error(&self, message: &str) -> bz_error::Result<()> {
         self.stderr_colored_ln(message, Color::DarkRed)
+    }
+
+    /// Print an INFO-style line with only the prefix in green.
+    pub fn print_info_prefix(&self, message: &str) -> bz_error::Result<()> {
+        self.stderr_colored_prefix_ln("INFO:", Color::Green, false, message)
+    }
+
+    /// Print an ERROR-style line with only the prefix in red.
+    pub fn print_error_prefix(&self, message: &str) -> bz_error::Result<()> {
+        self.stderr_colored_prefix_ln("ERROR:", Color::DarkRed, true, message)
     }
 
     /// Print the given message to stderr, in yellow if possible

@@ -42,6 +42,8 @@ const MAX_GRAPHEME_BUFFER: usize = 1000000;
 pub struct SuperConsole {
     /// Number of lines that were used to render the canvas last time.
     canvas_contents: Lines,
+    /// Whether the last rendered canvas left the cursor on the row after the canvas.
+    canvas_ends_with_newline: bool,
     /// Buffer storing the lines (stderr by default) we should emit next time we render.
     to_emit: Lines,
     // Buffer storing auxillary output (stdio by default) that should be emitted next time we render.
@@ -88,6 +90,7 @@ impl SuperConsole {
     ) -> Self {
         Self {
             canvas_contents: Lines::new(),
+            canvas_ends_with_newline: true,
             to_emit: Lines::new(),
             fallback_size,
             output: Some(output),
@@ -150,6 +153,14 @@ impl SuperConsole {
     /// Each component will have a chance to finalize themselves before the terminal is disposed of.
     pub fn finalize<C: Component + ?Sized>(self, root: &C) -> crate::RenderResult<(), C> {
         self.finalize_with_mode(root, DrawMode::Final)
+    }
+
+    /// Dispose of the terminal output without rendering a final frame.
+    pub fn finalize_without_render<D>(mut self) -> Result<(), crate::Error<D>> {
+        if !self.canvas_ends_with_newline && !self.canvas_contents.0.is_empty() {
+            self.output.as_mut().unwrap().output(b"\n".to_vec())?;
+        }
+        self.output.take().unwrap().finalize().map_err(Into::into)
     }
 
     /// Perform a final render, using a specified [`DrawMode`].
@@ -228,6 +239,20 @@ impl SuperConsole {
         Ok(())
     }
 
+    fn clear_canvas_pre_for_reuse(
+        &self,
+        writer: &mut Vec<u8>,
+        reuse_prefix: usize,
+    ) -> Result<(), OutputError> {
+        let dirty_height = self.canvas_contents.len().saturating_sub(reuse_prefix);
+        let move_up = if self.canvas_ends_with_newline {
+            dirty_height
+        } else {
+            dirty_height.saturating_sub(1)
+        };
+        Self::clear_canvas_pre(writer, move_up)
+    }
+
     /// The last step of drawing. Ensures there is nothing else below on the console.
     /// Important in case the new canvas was smaller than the last.
     pub(crate) fn clear_canvas_post(writer: &mut Vec<u8>) -> Result<(), OutputError> {
@@ -240,8 +265,9 @@ impl SuperConsole {
     /// Clears the canvas portion of the superconsole.
     pub fn clear(&mut self) -> Result<(), OutputError> {
         let mut buffer = Vec::new();
-        Self::clear_canvas_pre(&mut buffer, self.canvas_contents.len())?;
+        self.clear_canvas_pre_for_reuse(&mut buffer, 0)?;
         self.canvas_contents = Lines::new();
+        self.canvas_ends_with_newline = true;
         Self::clear_canvas_post(&mut buffer)?;
         self.output_mut().output(buffer).map_err(Into::into)
     }
@@ -256,10 +282,15 @@ impl SuperConsole {
         // size so it can be completed in a single syscall otherwise we might see a partially
         // rendered frame.
 
-        // We remove the last line as we always have a blank final line in our output.
-        let size = self.size()?.saturating_sub(1, Direction::Vertical);
+        let render_canvas_trailing_newline = matches!(mode, DrawMode::Final);
+        let size = if render_canvas_trailing_newline {
+            // We remove the last line as we always have a blank final line in our output.
+            self.size()?.saturating_sub(1, Direction::Vertical)
+        } else {
+            self.size()?
+        };
 
-        self.render_general(root, mode, size)?;
+        self.render_general(root, mode, size, render_canvas_trailing_newline)?;
 
         Ok(())
     }
@@ -270,6 +301,7 @@ impl SuperConsole {
         root: &C,
         mode: DrawMode,
         size: Dimensions,
+        render_canvas_trailing_newline: bool,
     ) -> crate::RenderResult<(), C> {
         /// Heuristic to determine if a buffer is too large to buffer.
         /// Can be tuned, but is currently set to 1000000 graphemes.
@@ -303,16 +335,47 @@ impl SuperConsole {
 
         // How much of the canvas hasn't changed, so I can avoid overwriting
         // and thus avoid flickering things like URL's in VS Code terminal.
-        let reuse_prefix = if self.to_emit.is_empty() && self.aux_to_emit.is_empty() {
+        let mut reuse_prefix = if self.to_emit.is_empty() && self.aux_to_emit.is_empty() {
             self.canvas_contents.lines_equal(&canvas)
         } else {
             0
         };
 
+        if reuse_prefix == self.canvas_contents.len()
+            && reuse_prefix == canvas.len()
+            && self.canvas_ends_with_newline == render_canvas_trailing_newline
+        {
+            self.canvas_contents = canvas;
+            self.canvas_ends_with_newline = render_canvas_trailing_newline;
+            return Ok(());
+        }
+
+        let old_canvas_len = self.canvas_contents.len();
+        let new_canvas_len = canvas.len();
+        let rerender_last_reused_line = !canvas.is_empty()
+            && reuse_prefix > 0
+            && (
+                // The canvas grew while the cursor was still on the previous final row.
+                (reuse_prefix == old_canvas_len
+                    && reuse_prefix < new_canvas_len
+                    && !self.canvas_ends_with_newline)
+                    // The canvas shrank but the new final row should keep the cursor.
+                    || (!render_canvas_trailing_newline
+                        && reuse_prefix == new_canvas_len
+                        && reuse_prefix < old_canvas_len)
+                    // The content is unchanged, but the cursor should move between final row
+                    // and the row after the canvas.
+                    || (self.canvas_ends_with_newline != render_canvas_trailing_newline
+                        && reuse_prefix == new_canvas_len)
+            );
+        if rerender_last_reused_line {
+            reuse_prefix -= 1;
+        }
+
         let mut buffer = Vec::new();
         buffer.queue(cursor::Hide).map_err(OutputError::Terminal)?;
 
-        Self::clear_canvas_pre(&mut buffer, self.canvas_contents.len() - reuse_prefix)?;
+        self.clear_canvas_pre_for_reuse(&mut buffer, reuse_prefix)?;
 
         if !self.aux_to_emit.is_empty() {
             if self.output().aux_stream_is_tty() {
@@ -340,11 +403,16 @@ impl SuperConsole {
 
         self.to_emit.render_with_limit(&mut buffer, limit);
 
-        canvas.render_from_line(&mut buffer, reuse_prefix);
+        if render_canvas_trailing_newline {
+            canvas.render_from_line(&mut buffer, reuse_prefix);
+        } else {
+            canvas.render_from_line_without_trailing_newline(&mut buffer, reuse_prefix);
+        }
 
         buffer.queue(cursor::Show).map_err(OutputError::Terminal)?;
         Self::clear_canvas_post(&mut buffer)?;
         self.canvas_contents = canvas;
+        self.canvas_ends_with_newline = render_canvas_trailing_newline;
 
         self.output_mut().output(buffer)?;
 
@@ -388,7 +456,7 @@ mod tests {
         let root = Echo(msg);
 
         // even though the canvas is larger than the tty
-        console.render_general(&root, DrawMode::Normal, Dimensions::new(100, 2))?;
+        console.render_general(&root, DrawMode::Normal, Dimensions::new(100, 2), false)?;
 
         // we should still drain a minimum of 5 messages.
         assert_eq!(console.to_emit.len(), msg_count - MINIMUM_EMIT);
@@ -406,7 +474,7 @@ mod tests {
         let root = Echo(Lines(vec![vec!["line"].try_into()?]));
 
         // Even though we have more messages than fit on the screen in the `to_emit` buffer
-        console.render_general(&root, DrawMode::Normal, Dimensions::new(100, 20))?;
+        console.render_general(&root, DrawMode::Normal, Dimensions::new(100, 20), false)?;
 
         // We have so many that we should just drain them all.
         assert!(console.to_emit.is_empty());

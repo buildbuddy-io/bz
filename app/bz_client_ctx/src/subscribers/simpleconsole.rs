@@ -157,6 +157,7 @@ fn init_remaining_system_warning_count() {
 pub struct SimpleConsole<E> {
     tty_mode: TtyMode,
     verbosity: Verbosity,
+    hide_build_id: bool,
     // Whether to show "Waiting for daemon..." when no root spans are received
     expect_spans: bool,
     pub(crate) observer: EventObserver<E>,
@@ -175,12 +176,14 @@ where
         trace_id: TraceId,
         verbosity: Verbosity,
         expect_spans: bool,
+        hide_build_id: bool,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
     ) -> Self {
         init_remaining_system_warning_count();
         SimpleConsole {
             tty_mode: TtyMode::Enabled,
             verbosity,
+            hide_build_id,
             expect_spans,
             observer: EventObserver::new(trace_id),
             action_errors: Vec::new(),
@@ -195,12 +198,14 @@ where
         trace_id: TraceId,
         verbosity: Verbosity,
         expect_spans: bool,
+        hide_build_id: bool,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
     ) -> Self {
         init_remaining_system_warning_count();
         SimpleConsole {
             tty_mode: TtyMode::Disabled,
             verbosity,
+            hide_build_id,
             expect_spans,
             observer: EventObserver::new(trace_id),
             action_errors: Vec::new(),
@@ -216,6 +221,7 @@ where
         trace_id: TraceId,
         verbosity: Verbosity,
         expect_spans: bool,
+        hide_build_id: bool,
         health_check_reports_receiver: Option<Receiver<Vec<DisplayReport>>>,
     ) -> Self {
         match SuperConsole::compatible() {
@@ -223,12 +229,14 @@ where
                 trace_id,
                 verbosity,
                 expect_spans,
+                hide_build_id,
                 health_check_reports_receiver,
             ),
             false => Self::without_tty(
                 trace_id,
                 verbosity,
                 expect_spans,
+                hide_build_id,
                 health_check_reports_receiver,
             ),
         }
@@ -452,7 +460,9 @@ where
         _command: &bz_data::CommandStart,
         event: &BuckEvent,
     ) -> bz_error::Result<()> {
-        if cfg!(fbcode_build) {
+        if self.hide_build_id {
+            return Ok(());
+        } else if cfg!(fbcode_build) {
             echo!(
                 "Buck UI: https://www.internalfb.com/buck2/{}",
                 event.trace_id()?
