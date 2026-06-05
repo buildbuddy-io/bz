@@ -12,6 +12,7 @@
 
 use std::fs;
 use std::io;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -36,6 +37,8 @@ use bz_fs::working_dir::AbsWorkingDir;
 use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use superconsole::Stdin;
+
+const BZ_SUPPRESS_UNOPTIMIZED_WARNING: &str = "BZ_SUPPRESS_UNOPTIMIZED_WARNING";
 
 // fbcode likes to set its own allocator in fbcode.default_allocator
 // So when we set our own allocator, buck build buck2 or bz build buck2 often breaks.
@@ -91,9 +94,14 @@ fn check_cargo() {
 }
 
 fn check_unoptimized() {
-    if cfg!(debug_assertions) {
+    if cfg!(debug_assertions) && std::env::var_os(BZ_SUPPRESS_UNOPTIMIZED_WARNING).is_none() {
+        let warning = if io::stderr().is_terminal() {
+            "\x1b[1;31mWARNING\x1b[0m"
+        } else {
+            "WARNING"
+        };
         eprintln!("=====================================================================");
-        eprintln!("WARNING: You are running an unoptimized bz binary.");
+        eprintln!("{warning}: You are running an unoptimized bz binary.");
         eprintln!("         Build and benchmark timings may be significantly slower.");
         eprintln!("         For performance-sensitive runs, rebuild with:");
         eprintln!("             bazel build -c opt //app/bz:bz");

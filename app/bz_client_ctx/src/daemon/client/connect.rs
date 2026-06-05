@@ -347,6 +347,7 @@ impl<'a> BuckdLifecycle<'a> {
         let mut daemon_env_vars = Vec::new();
 
         daemon_env_vars.push((OsStr::new("RUST_BACKTRACE"), OsStr::new("1")));
+        daemon_env_vars.push((OsStr::new("BZ_SUPPRESS_UNOPTIMIZED_WARNING"), OsStr::new("1")));
 
         // TODO(nga): We create too many backtraces during `attrs.source()` coercion. Can be
         //   reproduced with this command:
