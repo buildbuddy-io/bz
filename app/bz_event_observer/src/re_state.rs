@@ -68,12 +68,20 @@ impl ReState {
                     DrawMode::Normal => {
                         fn format_bits_per_second(bytes_per_second: u64) -> String {
                             if bytes_per_second == 0 {
-                                " ".repeat(HumanizedBitsPerSecond::FIXED_WIDTH_WIDTH)
+                                " ".repeat(HumanizedBitsPerSecond::FIXED_WIDTH_WIDTH + 2)
                             } else {
-                                HumanizedBitsPerSecond::fixed_width_from_bytes_per_second(
-                                    bytes_per_second,
+                                let rate =
+                                    HumanizedBitsPerSecond::fixed_width_from_bytes_per_second(
+                                        bytes_per_second,
+                                    )
+                                    .to_string();
+                                let rate = rate.trim();
+                                format!(
+                                    "{}({rate})",
+                                    " ".repeat(
+                                        HumanizedBitsPerSecond::FIXED_WIDTH_WIDTH - rate.len()
+                                    ),
                                 )
-                                .to_string()
                             }
                         }
 
@@ -87,7 +95,7 @@ impl ReState {
                             .http_download_bytes_per_second()
                             .unwrap_or_default();
                         format!(
-                            "Up: {} {}  Down: {} {}",
+                            "Upload: {} {}  Download: {} {}",
                             HumanizedBytes::fixed_width(re_upload_bytes),
                             format_bits_per_second(re_upload_bytes_per_second),
                             HumanizedBytes::fixed_width(re_download_bytes + http_download_bytes),
@@ -98,7 +106,7 @@ impl ReState {
                     }
                     DrawMode::Final => {
                         format!(
-                            "Up: {}  Down: {}",
+                            "Upload: {}  Download: {}",
                             HumanizedBytes::new(re_upload_bytes),
                             HumanizedBytes::new(re_download_bytes + http_download_bytes),
                         )
@@ -112,7 +120,7 @@ impl ReState {
             return None;
         }
 
-        Some(format!("Network: {}", parts.join("  ")))
+        Some(parts.join("  "))
     }
 
     fn render_detailed_item_no_progress_stats(

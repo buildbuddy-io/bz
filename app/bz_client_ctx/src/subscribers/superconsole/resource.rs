@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
+use bz_event_observer::humanized::CommaSeparatedCount;
 use bz_event_observer::humanized::HumanizedBytesPerSecond;
-use bz_event_observer::humanized::HumanizedCount;
 use bz_event_observer::re_state::ReState;
 use bz_event_observer::two_snapshots::TwoSnapshots;
 use superconsole::Component;
@@ -17,6 +17,8 @@ use superconsole::Dimensions;
 use superconsole::DrawMode;
 use superconsole::Line;
 use superconsole::Lines;
+use superconsole::Span;
+use superconsole::style::Color;
 
 use crate::subscribers::superconsole::SuperConsoleState;
 use crate::subscribers::superconsole::SystemResourceUsage;
@@ -32,19 +34,21 @@ pub(crate) struct ResourceHeader<'s> {
 impl Component for ResourceHeader<'_> {
     type Error = bz_error::Error;
 
-    fn draw_unchecked(
-        &self,
-        _dimensions: Dimensions,
-        mode: DrawMode,
-    ) -> bz_error::Result<Lines> {
+    fn draw_unchecked(&self, _dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
+        if matches!(mode, DrawMode::Final) {
+            return Ok(Lines::new());
+        }
+
         let system_resource_usage = self.state.system_resource_usage();
-        Ok(Lines(vec![Line::unstyled(&format!(
+        let line = format!(
             "{}  {}  {}  {}",
             render_cpu_usage(self.state),
             render_memory_usage(system_resource_usage),
-            render_disk_io_usage(system_resource_usage),
             render_network_usage(self.re_state, self.two_snapshots, mode),
-        ))?]))
+            render_disk_io_usage(system_resource_usage),
+        );
+        let stats_line = Line::from_iter([Span::new_colored_lossy(&line, Color::Grey)]);
+        Ok(Lines(vec![stats_line]))
     }
 }
 
@@ -55,28 +59,28 @@ fn render_network_usage(
 ) -> String {
     re_state
         .render_header(two_snapshots, mode)
-        .unwrap_or_else(|| "Network: Up: 0B  Down: 0B".to_owned())
+        .unwrap_or_else(|| "Upload: 0B  Download: 0B".to_owned())
 }
 
 fn render_cpu_usage(state: &SuperConsoleState) -> String {
     let max_cpu_cores = bz_util::system_stats::num_cores();
-    if let Some(host_cpu_cores) = host_cpu_usage_cores(
-        state.simple_console.observer.two_snapshots(),
-    ) && max_cpu_cores > 0
+    if let Some(host_cpu_cores) =
+        host_cpu_usage_cores(state.simple_console.observer.two_snapshots())
+        && max_cpu_cores > 0
         && host_cpu_cores.is_finite()
     {
         let host_cpu_cores = host_cpu_cores.max(0.0);
         let cpu_percent = host_cpu_cores * 100.0 / max_cpu_cores as f64;
         format!(
-            "CPU: {:.1}/{} cores ({:.0}%)",
+            "System CPU: {:.1}/{} cores ({:.0}%)",
             host_cpu_cores,
             max_cpu_cores,
             cpu_percent.max(0.0),
         )
     } else if max_cpu_cores > 0 {
-        format!("CPU: --/{max_cpu_cores} cores (--%)")
+        format!("System CPU: --/{max_cpu_cores} cores (--%)")
     } else {
-        "CPU: --/-- cores (--%)".to_owned()
+        "System CPU: --/-- cores (--%)".to_owned()
     }
 }
 
@@ -103,20 +107,20 @@ fn render_memory_usage(system_resource_usage: SystemResourceUsage) -> String {
 fn render_disk_io_usage(system_resource_usage: SystemResourceUsage) -> String {
     if let Some(disk_io) = system_resource_usage.disk_io {
         format!(
-            "Disk: R: {}/{}IOPS  W: {}/{}IOPS",
+            "Disk: R: {} ({} IOPS)  W: {} ({} IOPS)",
             HumanizedBytesPerSecond::new(disk_io.read_bytes_per_second),
             format_iops(disk_io.read_operations_per_second),
             HumanizedBytesPerSecond::new(disk_io.write_bytes_per_second),
             format_iops(disk_io.write_operations_per_second),
         )
     } else {
-        "Disk: R: --/s  W: --/s".to_owned()
+        "Disk: R: --/s (-- IOPS)  W: --/s (-- IOPS)".to_owned()
     }
 }
 
 fn format_iops(operations_per_second: Option<u64>) -> String {
     operations_per_second
-        .map(|operations_per_second| HumanizedCount::new(operations_per_second).to_string())
+        .map(|operations_per_second| CommaSeparatedCount::new(operations_per_second).to_string())
         .unwrap_or_else(|| "--".to_owned())
 }
 
@@ -211,7 +215,7 @@ mod tests {
                     write_operations_per_second: Some(3000),
                 }),
             }),
-            "Disk: R: 1.0KiB/s/2IOPS  W: 1.0MiB/s/3.0KIOPS"
+            "Disk: R: 1.0KiB/s (2 IOPS)  W: 1.0MiB/s (3,000 IOPS)"
         );
         assert_eq!(
             render_disk_io_usage(SystemResourceUsage {
@@ -219,7 +223,7 @@ mod tests {
                 memory_total_bytes: None,
                 disk_io: None,
             }),
-            "Disk: R: --/s  W: --/s"
+            "Disk: R: --/s (-- IOPS)  W: --/s (-- IOPS)"
         );
     }
 }
