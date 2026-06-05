@@ -1063,6 +1063,7 @@ struct BazelCppConfiguration {
     options: BazelCppOptions,
     is_exec: bool,
     linkopts: Vec<String>,
+    compilation_mode: String,
 }
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
@@ -1595,9 +1596,9 @@ fn bazel_cpp_configuration_methods(builder: &mut MethodsBuilder) {
     }
 
     fn compilation_mode(
-        #[starlark(this)] _this: &BazelCppConfiguration,
-    ) -> starlark::Result<&'static str> {
-        Ok("fastbuild")
+        #[starlark(this)] this: &BazelCppConfiguration,
+    ) -> starlark::Result<String> {
+        Ok(this.compilation_mode.clone())
     }
 
     fn cs_fdo_instrument<'v>(
@@ -1886,6 +1887,34 @@ pub fn bazel_ctx_is_exec_configuration<'v>(
     Ok(Some(bazel_is_exec_configuration(actions.bazel_label())))
 }
 
+pub fn bazel_ctx_compilation_mode<'v>(
+    ctx: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Option<String>> {
+    if let Some(actions) = ctx.downcast_ref::<AnalysisActions>() {
+        let is_exec = bazel_is_exec_configuration(actions.bazel_label());
+        return Ok(Some(bazel_cpp_compilation_mode(
+            actions.bazel_label(),
+            is_exec,
+        )));
+    }
+    if let Some(ctx) = ctx.downcast_ref::<AnalysisContext>() {
+        let is_exec = bazel_is_exec_configuration(ctx.label);
+        return Ok(Some(bazel_cpp_compilation_mode(ctx.label, is_exec)));
+    }
+    let Some(actions) = ctx.get_attr("actions", heap)? else {
+        return Ok(None);
+    };
+    let Some(actions) = actions.downcast_ref::<AnalysisActions>() else {
+        return Ok(None);
+    };
+    let is_exec = bazel_is_exec_configuration(actions.bazel_label());
+    Ok(Some(bazel_cpp_compilation_mode(
+        actions.bazel_label(),
+        is_exec,
+    )))
+}
+
 fn bazel_platform_label(label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>) -> String {
     label
         .and_then(|label| label.label().target().cfg().label().ok().map(str::to_owned))
@@ -1924,6 +1953,27 @@ fn bazel_cpp_linkopts(
     linkopts
 }
 
+fn bazel_cpp_compilation_mode(
+    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
+    is_exec: bool,
+) -> String {
+    let key = if is_exec {
+        "//command_line_option:host_compilation_mode"
+    } else {
+        "//command_line_option:compilation_mode"
+    };
+    bazel_command_line_option_values(label, key)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| {
+            if is_exec {
+                "opt".to_owned()
+            } else {
+                "fastbuild".to_owned()
+            }
+        })
+}
+
 fn bazel_fragments<'v>(
     heap: Heap<'v>,
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
@@ -1932,6 +1982,7 @@ fn bazel_fragments<'v>(
     let is_exec = bazel_is_exec_configuration(label);
     let platform = bazel_platform_label(label);
     let linkopts = bazel_cpp_linkopts(label, &bazel_cpp_options, is_exec);
+    let compilation_mode = bazel_cpp_compilation_mode(label, is_exec);
     heap.alloc(AllocStruct([
         (
             "apple",
@@ -1946,6 +1997,7 @@ fn bazel_fragments<'v>(
                 options: bazel_cpp_options,
                 is_exec,
                 linkopts,
+                compilation_mode,
             }),
         ),
         ("java", heap.alloc(BazelJavaConfiguration)),
@@ -2856,6 +2908,8 @@ fn bazel_global_make_variables(this: &AnalysisContext<'_>) -> Vec<(String, Strin
         || "buck-out/genfiles".to_owned(),
         |label| bazel_output_root_for_configured_label("buck-out/genfiles", label.label().target()),
     );
+    let is_exec = bazel_is_exec_configuration(this.label);
+    let compilation_mode = bazel_cpp_compilation_mode(this.label, is_exec);
     vec![
         (
             "TARGET_CPU".to_owned(),
@@ -2867,7 +2921,7 @@ fn bazel_global_make_variables(this: &AnalysisContext<'_>) -> Vec<(String, Strin
                 }
             }),
         ),
-        ("COMPILATION_MODE".to_owned(), "fastbuild".to_owned()),
+        ("COMPILATION_MODE".to_owned(), compilation_mode),
         ("BINDIR".to_owned(), bin_dir),
         ("GENDIR".to_owned(), gen_dir),
     ]

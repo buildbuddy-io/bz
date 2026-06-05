@@ -72,6 +72,7 @@ use crate::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use crate::interpreter::rule_defs::context::AnalysisActions;
 use crate::interpreter::rule_defs::context::analysis_actions_to_bazel_ctx;
+use crate::interpreter::rule_defs::context::bazel_ctx_compilation_mode;
 use crate::interpreter::rule_defs::provider::ProviderLike;
 use crate::interpreter::rule_defs::provider::callable::provider_callable_equals;
 use crate::interpreter::rule_defs::provider::callable::provider_callable_write_hash;
@@ -2326,10 +2327,12 @@ fn bazel_cc_configure_features_from_ctx<'v>(
     }
 
     let features = bazel_cc_toolchain_features_from_toolchain(cc_toolchain, heap)?;
+    let compilation_mode =
+        bazel_ctx_compilation_mode(ctx, heap)?.unwrap_or_else(|| "fastbuild".to_owned());
     bazel_cc_add_requested_feature(
         &mut all_requested_features,
         &all_unsupported_features,
-        "fastbuild",
+        &compilation_mode,
     );
     bazel_cc_add_requested_features(
         &mut all_requested_features,
@@ -2408,7 +2411,6 @@ fn bazel_cc_configure_features_from_ctx<'v>(
         None => false,
     };
 
-    let compilation_mode = "fastbuild";
     if let Some(branch_fdo_provider) = branch_fdo_provider
         && compilation_mode == "opt"
     {
@@ -2804,6 +2806,76 @@ fn bazel_cc_feature_command_line<'v>(
             .map(|arg| heap.alloc_str(&arg).to_value())
             .collect(),
     )
+}
+
+fn bazel_cc_variable_has_probe_value<'v>(
+    variables: Value<'v>,
+    name: &str,
+) -> starlark::Result<bool> {
+    let Some(value) = bazel_cc_build_variable(variables, name) else {
+        return Ok(false);
+    };
+    let mut values = Vec::new();
+    bazel_cc_collect_values(value, &mut values)?;
+    Ok(!values.is_empty())
+}
+
+fn bazel_cc_should_include_probe_link_flags<'v>(
+    action_name: &str,
+    variables: Value<'v>,
+) -> starlark::Result<bool> {
+    if !matches!(action_name, "c-compile" | "c++-compile") {
+        return Ok(false);
+    }
+
+    for name in [
+        "source_file",
+        "output_file",
+        "input_file",
+        "thinlto_index",
+        "thinlto_input_bitcode_file",
+        "thinlto_output_object_file",
+        "include_paths",
+        "quote_include_paths",
+        "system_include_paths",
+        "framework_include_paths",
+        "preprocessor_defines",
+        "stripopts",
+        "user_compile_flags",
+    ] {
+        if bazel_cc_variable_has_probe_value(variables, name)? {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn bazel_cc_probe_link_variables<'v>(
+    parent: Value<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let heap = eval.heap();
+    let empty = heap.alloc(AllocList::EMPTY);
+    bazel_cc_alloc_toolchain_variables(
+        Some(parent),
+        vec![
+            ("is_cc_test".to_owned(), Value::new_bool(false)),
+            ("libraries_to_link".to_owned(), empty),
+            ("library_search_directories".to_owned(), empty),
+            ("runtime_library_search_directories".to_owned(), empty),
+            ("user_link_flags".to_owned(), empty),
+        ],
+        eval,
+    )
+}
+
+fn bazel_cc_probe_link_flag_is_compile_safe(flag: &str) -> bool {
+    // rules_rust exposes generic cc_common compile flags to build scripts via
+    // CFLAGS. Some build scripts also reuse CFLAGS as LDFLAGS for configure
+    // probes, so include driver/linker mode flags but avoid concrete archive
+    // inputs that would break normal `clang -c` calls.
+    !flag.ends_with(".a")
 }
 
 fn bazel_cc_link_param_file<'v>(
@@ -3294,6 +3366,70 @@ fn bazel_cc_optional_bool_arg(value: Value<'_>, name: &str) -> starlark::Result<
             value.get_type()
         ))
     })
+}
+
+fn bazel_cc_bool_kwarg<'v>(
+    kwargs: &SmallMap<String, Value<'v>>,
+    name: &str,
+    default: bool,
+) -> starlark::Result<bool> {
+    let value = cc_internal_kw_value(kwargs, name, Value::new_none());
+    Ok(bazel_cc_optional_bool_arg(value, name)?.unwrap_or(default))
+}
+
+fn bazel_cc_toolchain_build_variables<'v>(
+    cc_toolchain: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Option<Value<'v>>> {
+    if cc_toolchain.is_none() {
+        return Ok(None);
+    }
+    for attr in ["_build_variables", "_build_variables_dict"] {
+        if let Some(value) = cc_toolchain.get_attr(attr, heap)?
+            && !value.is_none()
+        {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
+}
+
+fn bazel_cc_push_variable<'v>(values: &mut Vec<(String, Value<'v>)>, name: &str, value: Value<'v>) {
+    values.push((name.to_owned(), value));
+}
+
+fn bazel_cc_push_string_variable<'v>(
+    values: &mut Vec<(String, Value<'v>)>,
+    name: &str,
+    value: &str,
+    heap: Heap<'v>,
+) {
+    bazel_cc_push_variable(values, name, heap.alloc_str(value).to_value());
+}
+
+fn bazel_cc_push_sequence_variable<'v>(
+    values: &mut Vec<(String, Value<'v>)>,
+    name: &str,
+    value: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<()> {
+    let mut items = Vec::new();
+    bazel_cc_collect_values(value, &mut items)?;
+    bazel_cc_push_variable(values, name, heap.alloc(AllocList(items)));
+    Ok(())
+}
+
+fn bazel_cc_alloc_toolchain_variables<'v>(
+    parent: Option<Value<'v>>,
+    mut values: Vec<(String, Value<'v>)>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    values.sort_by(|(left, _), (right, _)| left.cmp(right));
+    bazel_cc_check_duplicate_toolchain_variables(&values)?;
+    Ok(eval.heap().alloc(BazelCcToolchainVariables {
+        parent,
+        values: values.into_boxed_slice(),
+    }))
 }
 
 fn bazel_cc_collect_output<'v>(
@@ -4129,16 +4265,14 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
         unsupported_features: UnpackList<String>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<BazelFeatureConfiguration> {
-        let _unused = (ctx, language);
-        let unsupported_features = unsupported_features.into_iter().collect::<Vec<_>>();
-        let mut requested_features = requested_features
-            .into_iter()
-            .filter(|feature| !unsupported_features.contains(feature))
-            .collect::<Vec<_>>();
-        requested_features.sort();
-        requested_features.dedup();
-        let features = bazel_cc_toolchain_features_from_toolchain(cc_toolchain, eval.heap())?;
-        features.configure_features(requested_features)
+        bazel_cc_configure_features_from_ctx(
+            ctx,
+            cc_toolchain,
+            language,
+            requested_features.into_iter().collect(),
+            unsupported_features.into_iter().collect(),
+            eval,
+        )
     }
 
     fn is_cc_toolchain_resolution_enabled_do_not_use<'v>(
@@ -4202,12 +4336,27 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
             .unpack_str()
             .ok_or_else(|| bazel_cc_error("Expected action_name to be a string"))?;
         let variables = cc_internal_kw_value(&kwargs, "variables", none);
-        Ok(eval.heap().alloc(AllocList(bazel_cc_feature_command_line(
+        let mut args = bazel_cc_feature_command_line(
             feature_configuration,
             action_name,
             variables,
             eval.heap(),
-        )?)))
+        )?;
+        if bazel_cc_should_include_probe_link_flags(action_name, variables)? {
+            let link_variables = bazel_cc_probe_link_variables(variables, eval)?;
+            args.extend(
+                bazel_cc_feature_command_line_strings(
+                    feature_configuration,
+                    "c++-link-executable",
+                    link_variables,
+                    eval.heap(),
+                )?
+                .into_iter()
+                .filter(|arg| bazel_cc_probe_link_flag_is_compile_safe(arg))
+                .map(|arg| eval.heap().alloc_str(&arg).to_value()),
+            );
+        }
+        Ok(eval.heap().alloc(AllocList(args)))
     }
 
     fn get_environment_variables<'v>(
@@ -4239,21 +4388,127 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
     }
 
     fn create_compile_variables<'v>(
-        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(eval
-            .heap()
-            .alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new())))
+        let heap = eval.heap();
+        let none = Value::new_none();
+        let cc_toolchain = cc_internal_kw_value(&kwargs, "cc_toolchain", none);
+        let parent = bazel_cc_toolchain_build_variables(cc_toolchain, heap)?;
+        let mut values = Vec::new();
+
+        for (kwarg, variable) in [
+            ("source_file", "source_file"),
+            ("output_file", "output_file"),
+            ("thinlto_index", "thinlto_index"),
+            ("thinlto_input_bitcode_file", "thinlto_input_bitcode_file"),
+            ("thinlto_output_object_file", "thinlto_output_object_file"),
+            ("input_file", "input_file"),
+        ] {
+            let value = cc_internal_kw_value(&kwargs, kwarg, none);
+            if !value.is_none() {
+                bazel_cc_push_variable(&mut values, variable, value);
+            }
+        }
+
+        for (kwarg, variable) in [
+            ("user_compile_flags", "user_compile_flags"),
+            ("includes", "includes"),
+            ("include_directories", "include_paths"),
+            ("quote_include_directories", "quote_include_paths"),
+            ("system_include_directories", "system_include_paths"),
+            ("framework_include_directories", "framework_include_paths"),
+            ("preprocessor_defines", "preprocessor_defines"),
+            ("strip_opts", "stripopts"),
+        ] {
+            let value = cc_internal_kw_value(&kwargs, kwarg, none);
+            if !value.is_none() {
+                bazel_cc_push_sequence_variable(&mut values, variable, value, heap)?;
+            }
+        }
+
+        let use_pic = bazel_cc_bool_kwarg(&kwargs, "use_pic", false)?;
+        if use_pic {
+            bazel_cc_push_string_variable(&mut values, "pic", "", heap);
+        }
+
+        let variables_extension = cc_internal_kw_value(&kwargs, "variables_extension", none);
+        if !variables_extension.is_none() {
+            bazel_cc_extend_local_toolchain_variables(variables_extension, &mut values)?;
+        }
+
+        bazel_cc_alloc_toolchain_variables(parent, values, eval)
     }
 
     fn create_link_variables<'v>(
-        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(eval
-            .heap()
-            .alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new())))
+        let heap = eval.heap();
+        let none = Value::new_none();
+        let cc_toolchain = cc_internal_kw_value(&kwargs, "cc_toolchain", none);
+        let parent = bazel_cc_toolchain_build_variables(cc_toolchain, heap)?;
+        let mut values = Vec::new();
+
+        for (kwarg, variable) in [
+            (
+                "runtime_library_search_directories",
+                "runtime_library_search_directories",
+            ),
+            ("library_search_directories", "library_search_directories"),
+            ("user_link_flags", "user_link_flags"),
+        ] {
+            let value = cc_internal_kw_value(&kwargs, kwarg, none);
+            bazel_cc_push_sequence_variable(&mut values, variable, value, heap)?;
+        }
+        bazel_cc_push_sequence_variable(&mut values, "libraries_to_link", none, heap)?;
+
+        for (kwarg, variable) in [
+            ("output_file", "output_execpath"),
+            ("param_file", "linker_param_file"),
+        ] {
+            let value = cc_internal_kw_value(&kwargs, kwarg, none);
+            if !value.is_none() {
+                bazel_cc_push_variable(&mut values, variable, value);
+            }
+        }
+
+        let is_using_linker = bazel_cc_bool_kwarg(&kwargs, "is_using_linker", true)?;
+        if !is_using_linker {
+            values.retain(|(name, _)| name != "user_link_flags");
+            bazel_cc_push_sequence_variable(&mut values, "user_link_flags", none, heap)?;
+        }
+
+        let is_linking_dynamic_library =
+            bazel_cc_bool_kwarg(&kwargs, "is_linking_dynamic_library", false)?;
+        if is_linking_dynamic_library {
+            let flags = values
+                .iter_mut()
+                .find(|(name, _)| name == "user_link_flags")
+                .map(|(_, value)| value);
+            if let Some(flags) = flags {
+                let filtered = bazel_cc_link_sequence_values(*flags, "user_link_flags")?
+                    .into_iter()
+                    .filter(|flag| flag.unpack_str() != Some("-pie"))
+                    .filter(|flag| flag.unpack_str() != Some("-Wl,-pie"))
+                    .collect::<Vec<_>>();
+                *flags = heap.alloc(AllocList(filtered));
+            }
+        }
+
+        let must_keep_debug = bazel_cc_bool_kwarg(&kwargs, "must_keep_debug", true)?;
+        if !must_keep_debug {
+            bazel_cc_push_string_variable(&mut values, "strip_debug_symbols", "", heap);
+        }
+
+        let use_test_only_flags = bazel_cc_bool_kwarg(&kwargs, "use_test_only_flags", false)?;
+        bazel_cc_push_variable(
+            &mut values,
+            "is_cc_test",
+            Value::new_bool(use_test_only_flags),
+        );
+
+        bazel_cc_alloc_toolchain_variables(parent, values, eval)
     }
 
     fn legacy_cc_flags_make_variable_do_not_use<'v>(
