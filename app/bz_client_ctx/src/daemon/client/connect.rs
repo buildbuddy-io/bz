@@ -70,7 +70,7 @@ use crate::startup_deadline::StartupDeadline;
 use crate::subscribers::classify_server_stderr::classify_server_stderr;
 use crate::subscribers::stdout_stderr_forwarder::StdoutStderrForwarder;
 
-const DEFAULT_BUCKD_STARTUP_TIMEOUT_SECS: u64 = 10;
+const DEFAULT_BUCKD_STARTUP_TIMEOUT_SECS: u64 = 120;
 
 /// The client side matcher for DaemonConstraints.
 #[derive(Clone, Debug)]
