@@ -467,6 +467,7 @@ message CommonBuildOptions {
   string unstable_streaming_build_report_filename = 4242007;
   bool unstable_exclude_action_error_diagnostics = 4242008;
   bool unstable_truncate_error_content = 4242009;
+  bool unstable_print_analysis_execution_overlap = 4242010;
 }
 
 message BuildRequest {

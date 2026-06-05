@@ -346,7 +346,9 @@ async fn build(
     )
     .await?;
 
-    maybe_report_analysis_execution_overlap(&ctx);
+    if build_opts.unstable_print_analysis_execution_overlap {
+        maybe_report_analysis_execution_overlap(&ctx);
+    }
 
     let want_detailed_metrics = ctx
         .parse_legacy_config_property(

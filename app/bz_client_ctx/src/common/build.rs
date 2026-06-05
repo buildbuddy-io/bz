@@ -207,6 +207,10 @@ pub struct CommonBuildOptions {
     /// Materializes outputs (if present) for failed actions which ran on RE
     #[clap(long)]
     materialize_failed_outputs: bool,
+
+    /// Print a diagnostic when action execution overlaps analysis.
+    #[clap(long, hide = true)]
+    unstable_print_analysis_execution_overlap: bool,
 }
 
 impl CommonBuildOptions {
@@ -311,6 +315,8 @@ impl CommonBuildOptions {
             unstable_streaming_build_report_filename,
             unstable_exclude_action_error_diagnostics,
             unstable_truncate_error_content,
+            unstable_print_analysis_execution_overlap: self
+                .unstable_print_analysis_execution_overlap,
         })
     }
 }
@@ -418,6 +424,19 @@ mod tests {
             err.to_string().contains("--rbe/--bb imply --remote-only"),
             "{err}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn print_analysis_execution_overlap_flag_maps_to_proto() -> bz_error::Result<()> {
+        let opts = TestBuildOptions::try_parse_from([
+            "buck2",
+            "--unstable-print-analysis-execution-overlap",
+        ])?
+        .opts;
+        let proto = opts.to_proto();
+
+        assert!(proto.unstable_print_analysis_execution_overlap);
         Ok(())
     }
 }
