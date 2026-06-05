@@ -483,8 +483,11 @@ fn print_success_extra<'a>(
         return Ok("");
     };
     if let Some(output_locations) = extra.strip_prefix('\n') {
+        let output_locations = output_locations.trim_matches('\n');
         if !output_locations.is_empty() {
+            console.print_stderr("")?;
             console.print_stderr(output_locations)?;
+            console.print_stderr("")?;
         }
         Ok("")
     } else {
@@ -759,7 +762,7 @@ fn format_build_output_locations(targets: &[BuildTarget], show_result: usize) ->
         }
     }
 
-    (!lines.is_empty()).then(|| format!("\n\n {}\n", lines.join("\n ")))
+    (!lines.is_empty()).then(|| format!("\n {}", lines.join("\n ")))
 }
 
 #[cfg(test)]
@@ -839,7 +842,7 @@ mod tests {
 
         assert_eq!(
             format_build_output_locations(&targets, 1).as_deref(),
-            Some("\n\n Target root//:one up-to-date:\n   buck-out/v2/art/root/cfg/one\n")
+            Some("\n Target root//:one up-to-date:\n   buck-out/v2/art/root/cfg/one")
         );
     }
 
@@ -860,7 +863,7 @@ mod tests {
 
         assert_eq!(
             format_build_output_locations(&targets, 1).as_deref(),
-            Some("\n\n Target root//:run up-to-date (nothing to build)\n")
+            Some("\n Target root//:run up-to-date (nothing to build)")
         );
     }
 
@@ -890,7 +893,7 @@ mod tests {
         assert_eq!(
             format_build_output_locations(&targets, 2).as_deref(),
             Some(
-                "\n\n Target root//:one up-to-date:\n   buck-out/v2/art/root/cfg/one\n Target root//:two up-to-date:\n   buck-out/v2/art/root/cfg/two\n"
+                "\n Target root//:one up-to-date:\n   buck-out/v2/art/root/cfg/one\n Target root//:two up-to-date:\n   buck-out/v2/art/root/cfg/two"
             )
         );
     }
