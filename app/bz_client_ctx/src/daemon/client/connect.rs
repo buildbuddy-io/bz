@@ -70,6 +70,8 @@ use crate::startup_deadline::StartupDeadline;
 use crate::subscribers::classify_server_stderr::classify_server_stderr;
 use crate::subscribers::stdout_stderr_forwarder::StdoutStderrForwarder;
 
+const DEFAULT_BUCKD_STARTUP_TIMEOUT_SECS: u64 = 10;
+
 /// The client side matcher for DaemonConstraints.
 #[derive(Clone, Debug)]
 pub struct DaemonConstraintsRequest {
@@ -273,15 +275,27 @@ pub async fn new_daemon_api_client(
 }
 
 pub fn buckd_startup_timeout() -> bz_error::Result<Duration> {
-    Ok(Duration::from_secs(
-        bz_env!("BUCKD_STARTUP_TIMEOUT", type=u64)?.unwrap_or(10),
-    ))
+    Ok(Duration::from_secs(buckd_startup_timeout_secs()?))
 }
 
 pub fn buckd_startup_init_timeout() -> bz_error::Result<Duration> {
-    Ok(Duration::from_secs(
-        bz_env!("BUCKD_STARTUP_INIT_TIMEOUT", type=u64)?.unwrap_or(3),
+    Ok(buckd_startup_init_timeout_from_values(
+        buckd_startup_timeout_secs()?,
+        bz_env!("BUCKD_STARTUP_INIT_TIMEOUT", type=u64)?,
     ))
+}
+
+fn buckd_startup_timeout_secs() -> bz_error::Result<u64> {
+    let timeout_secs =
+        bz_env!("BUCKD_STARTUP_TIMEOUT", type=u64)?.unwrap_or(DEFAULT_BUCKD_STARTUP_TIMEOUT_SECS);
+    Ok(timeout_secs)
+}
+
+fn buckd_startup_init_timeout_from_values(
+    startup_timeout_secs: u64,
+    startup_init_timeout_secs: Option<u64>,
+) -> Duration {
+    Duration::from_secs(startup_init_timeout_secs.unwrap_or(startup_timeout_secs))
 }
 
 /// Responsible for starting the daemon when no daemon is running.
@@ -799,16 +813,24 @@ async fn establish_connection_inner(
                         reason.to_daemon_was_started_reason()
                     }
                     Err(reason) => {
-                        events_ctx
-                            .eprintln(&format!(
-                                "Could not connect to bz daemon ({}), killing daemon..",
-                                explain_failed_to_connect_reason(reason)
-                            ))
-                            .await?;
+                        if reason == bz_data::DaemonWasStartedReason::NoDaemonProcess {
+                            events_ctx
+                                .eprintln(
+                                    "Stale bz daemon info found (daemon is not running); starting new bz daemon...",
+                                )
+                                .await?;
+                        } else {
+                            events_ctx
+                                .eprintln(&format!(
+                                    "Could not connect to bz daemon ({}), killing daemon...",
+                                    explain_failed_to_connect_reason(reason)
+                                ))
+                                .await?;
 
-                        hard_kill_until(&buckd_info.info, &deadline)
-                            .await
-                            .map_err(|error| BuckdConnectError::DaemonKillFailed { error })?;
+                            hard_kill_until(&buckd_info.info, &deadline)
+                                .await
+                                .map_err(|error| BuckdConnectError::DaemonKillFailed { error })?;
+                        }
 
                         reason
                     }
@@ -1221,6 +1243,18 @@ mod tests {
             reject_materializer_state: None,
             daemon_startup_config: DaemonStartupConfig::testing_empty(),
         }
+    }
+
+    #[test]
+    fn test_startup_init_timeout_defaults_to_startup_timeout() {
+        assert_eq!(
+            buckd_startup_init_timeout_from_values(42, None),
+            Duration::from_secs(42)
+        );
+        assert_eq!(
+            buckd_startup_init_timeout_from_values(42, Some(5)),
+            Duration::from_secs(5)
+        );
     }
 
     #[test]
