@@ -290,7 +290,7 @@ pub trait ActionExecutionCtx: Send + Sync {
 
     fn mergebase(&self) -> &Mergebase;
 
-    fn prepare_action(
+    async fn prepare_action(
         &mut self,
         request: &CommandExecutionRequest,
         re_outputs_required: bool,

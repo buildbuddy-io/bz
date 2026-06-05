@@ -308,6 +308,7 @@ impl HasActionExecutor for DiceComputations<'_> {
             remote_dep_file_cache_checker,
             cache_uploader,
             output_trees_download_config,
+            remote_action_building_semaphore,
         } = self.get_command_executor_from_dice(executor_config).await?;
         let blocking_executor = self.get_blocking_executor();
         let materializer = self.per_transaction_data().get_materializer();
@@ -320,7 +321,7 @@ impl HasActionExecutor for DiceComputations<'_> {
         let invalidation_tracking_enabled = self.get_invalidation_tracking_config().enabled;
 
         Ok(Arc::new(BuckActionExecutor::new(
-            CommandExecutor::new(
+            CommandExecutor::new_with_remote_action_building_semaphore(
                 executor,
                 action_cache_checker,
                 remote_dep_file_cache_checker,
@@ -328,6 +329,7 @@ impl HasActionExecutor for DiceComputations<'_> {
                 artifact_fs,
                 executor_config.options,
                 platform,
+                remote_action_building_semaphore,
             ),
             blocking_executor,
             materializer,
@@ -505,16 +507,15 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         &self.executor.mergebase
     }
 
-    fn prepare_action(
+    async fn prepare_action(
         &mut self,
         request: &CommandExecutionRequest,
         re_outputs_required: bool,
     ) -> bz_error::Result<PreparedAction> {
-        self.executor.command_executor.prepare_action(
-            request,
-            self.digest_config(),
-            re_outputs_required,
-        )
+        self.executor
+            .command_executor
+            .prepare_action(request, self.digest_config(), re_outputs_required)
+            .await
     }
 
     async fn action_cache(
@@ -1167,7 +1168,7 @@ mod tests {
                 );
 
                 // on fake executor, this does nothing
-                let prepared_action = ctx.prepare_action(&req, true)?;
+                let prepared_action = ctx.prepare_action(&req, true).await?;
                 let manager = ctx.command_execution_manager(waiting_data);
                 let res = ctx.exec_cmd(manager, &req, &prepared_action).await;
 

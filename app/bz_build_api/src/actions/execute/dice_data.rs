@@ -28,6 +28,7 @@ use dice::DiceDataBuilder;
 use dice::UserComputationData;
 use dupe::Dupe;
 use remote_execution as RE;
+use tokio::sync::Semaphore;
 
 use crate::actions::artifact::get_artifact_fs::GetArtifactFs;
 
@@ -38,6 +39,7 @@ pub struct CommandExecutorResponse {
     pub remote_dep_file_cache_checker: Arc<dyn PreparedCommandOptionalExecutor>,
     pub cache_uploader: Arc<dyn UploadCache>,
     pub output_trees_download_config: OutputTreesDownloadConfig,
+    pub remote_action_building_semaphore: Arc<Semaphore>,
 }
 
 pub trait SetCommandExecutor {

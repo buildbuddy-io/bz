@@ -2640,47 +2640,9 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 ));
             }
             Ok(None) => {
-                if cache_entry.remote_cache_entry {
-                    tracing::debug!(
-                        "local action cache miss for `{}` because stored remote output metadata did not match",
-                        action_digest
-                    );
-                    if let Err(e) = self.local_action_cache.remove(&action_digest) {
-                        return ControlFlow::Break(
-                            manager.error("local_action_cache_remove_failed", e),
-                        );
-                    }
-                    return ControlFlow::Continue(manager);
-                }
-            }
-            Err(e) => {
-                return ControlFlow::Break(
-                    manager.error("local_action_cache_metadata_lookup_failed", e),
-                );
-            }
-        }
-
-        // The persisted cache entry proves these outputs should exist, and the
-        // fingerprint check below proves the bytes still match. Declare the
-        // verified outputs so a cold daemon can reuse materializer metadata on
-        // the next invocation, but do not promote produced paths: this is a
-        // cache hit, so nothing just wrote to the execution-only output path.
-        let (outputs, hashing_info) = match self
-            .calculate_and_declare_output_values(
-                command.request,
-                command.digest_config,
-                true,
-                false,
-            )
-            .boxed()
-            .await
-        {
-            Ok(outputs) => outputs,
-            Err(e) => {
                 tracing::debug!(
-                    "local action cache miss for `{}` while reading outputs: {}",
-                    action_digest,
-                    e
+                    "local action cache miss for `{}` because stored output metadata did not match",
+                    action_digest
                 );
                 if let Err(e) = self.local_action_cache.remove(&action_digest) {
                     return ControlFlow::Break(
@@ -2689,153 +2651,12 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 }
                 return ControlFlow::Continue(manager);
             }
-        };
-        let expected_output_count = command
-            .request
-            .outputs()
-            .filter(|output| matches!(output, CommandExecutionOutputRef::BuildArtifact { .. }))
-            .count();
-        if outputs.len() != expected_output_count {
-            tracing::debug!(
-                "local action cache miss for `{}` because only {} of {} outputs were present",
-                action_digest,
-                outputs.len(),
-                expected_output_count
-            );
-            if let Err(e) = self.local_action_cache.remove(&action_digest) {
-                return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
-            }
-            return ControlFlow::Continue(manager);
-        }
-
-        let actual_fingerprint =
-            match local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs) {
-                Ok(fingerprint) => fingerprint,
-                Err(e) => {
-                    return ControlFlow::Break(
-                        manager.error("local_action_cache_fingerprint_failed", e),
-                    );
-                }
-            };
-
-        if actual_fingerprint.as_slice() != expected_fingerprint.as_ref() {
-            tracing::debug!(
-                "local action cache miss for `{}` because outputs changed",
-                action_digest
-            );
-            if let Err(e) = self.local_action_cache.remove(&action_digest) {
-                return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
-            }
-            return ControlFlow::Continue(manager);
-        }
-
-        if !outputs
-            .keys()
-            .any(CommandExecutionOutput::has_content_based_path)
-        {
-            if let Err(e) = self.insert_local_action_cache_metadata(
-                command.request,
-                expected_fingerprint.as_ref(),
-                &outputs,
-                false,
-            ) {
-                return ControlFlow::Break(
-                    manager.error("local_action_cache_insert_metadata_failed", e),
-                );
-            }
-            let time_span = start.end_now();
-            let timing = CommandExecutionMetadata {
-                time_span,
-                execution_time: Duration::ZERO,
-                start_time,
-                execution_stats: None,
-                input_materialization_duration: Duration::ZERO,
-                hashing_duration: hashing_info.hashing_duration,
-                hashed_artifacts_count: hashing_info.hashed_artifacts_count,
-                queue_duration: None,
-                suspend_duration: None,
-                suspend_count: None,
-            };
-
-            return ControlFlow::Break(manager.success_without_claim(
-                CommandExecutionKind::LocalActionCache {
-                    digest: action_digest,
-                },
-                outputs,
-                CommandStdStreams::Empty,
-                timing,
-            ));
-        }
-
-        let output_matches = match outputs
-            .iter()
-            .map(|(output, value)| {
-                Ok((
-                    output
-                        .as_ref()
-                        .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
-                        .into_path(),
-                    value.dupe(),
-                ))
-            })
-            .collect::<bz_error::Result<Vec<_>>>()
-        {
-            Ok(output_matches) => output_matches,
             Err(e) => {
                 return ControlFlow::Break(
-                    manager.error("local_action_cache_match_paths_failed", e),
+                    manager.error("local_action_cache_metadata_lookup_failed", e),
                 );
             }
-        };
-        let materializer_accepts = match self.materializer.declare_match(output_matches).await {
-            Ok(outcome) => outcome.is_match(),
-            Err(e) => {
-                return ControlFlow::Break(manager.error("local_action_cache_match_failed", e));
-            }
-        };
-        if !materializer_accepts {
-            tracing::debug!(
-                "local action cache miss for `{}` because materializer state did not match",
-                action_digest
-            );
-            if let Err(e) = self.local_action_cache.remove(&action_digest) {
-                return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
-            }
-            return ControlFlow::Continue(manager);
         }
-
-        let time_span = start.end_now();
-        if let Err(e) = self.insert_local_action_cache_metadata(
-            command.request,
-            expected_fingerprint.as_ref(),
-            &outputs,
-            false,
-        ) {
-            return ControlFlow::Break(
-                manager.error("local_action_cache_insert_metadata_failed", e),
-            );
-        }
-        let timing = CommandExecutionMetadata {
-            time_span,
-            execution_time: Duration::ZERO,
-            start_time,
-            execution_stats: None,
-            input_materialization_duration: Duration::ZERO,
-            hashing_duration: hashing_info.hashing_duration,
-            hashed_artifacts_count: hashing_info.hashed_artifacts_count,
-            queue_duration: None,
-            suspend_duration: None,
-            suspend_count: None,
-        };
-
-        ControlFlow::Break(manager.success_without_claim(
-            CommandExecutionKind::LocalActionCache {
-                digest: action_digest,
-            },
-            outputs,
-            CommandStdStreams::Empty,
-            timing,
-        ))
     }
 }
 
@@ -5277,12 +5098,15 @@ mod tests {
         };
         let output_keys = outputs.keys().cloned().collect();
         let output_values = outputs.values().cloned().collect::<Vec<_>>();
+        let fingerprint = local_action_cache_outputs_fingerprint(&executor.artifact_fs, &outputs)?;
 
         assert!(
-            local_action_cache_outputs_from_action_metadata_values(
+            local_action_cache_outputs_from_stored_values(
                 &executor.artifact_fs,
                 &output_keys,
                 &output_values,
+                fingerprint.as_slice(),
+                true,
             )?
             .is_none()
         );
@@ -5299,10 +5123,37 @@ mod tests {
         }
 
         assert!(
-            local_action_cache_outputs_from_action_metadata_values(
+            local_action_cache_outputs_from_stored_values(
                 &executor.artifact_fs,
                 &output_keys,
                 &output_values,
+                fingerprint.as_slice(),
+                true,
+            )?
+            .is_some()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remote_action_metadata_cache_outputs_do_not_require_existing_files()
+    -> bz_error::Result<()> {
+        let (executor, _, _temp) = test_executor()?;
+        let outputs = buck_indexmap! {
+            test_output("out") => ArtifactValue::file(DigestConfig::testing_default().empty_file()),
+        };
+        let output_keys = outputs.keys().cloned().collect();
+        let output_values = outputs.values().cloned().collect::<Vec<_>>();
+        let fingerprint = local_action_cache_outputs_fingerprint(&executor.artifact_fs, &outputs)?;
+
+        assert!(
+            local_action_cache_outputs_from_stored_values(
+                &executor.artifact_fs,
+                &output_keys,
+                &output_values,
+                fingerprint.as_slice(),
+                false,
             )?
             .is_some()
         );

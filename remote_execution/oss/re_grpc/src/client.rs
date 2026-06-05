@@ -107,6 +107,10 @@ use crate::stats::CountingConnector;
 const DEFAULT_MAX_TOTAL_BATCH_SIZE: usize = 4 * 1000 * 1000;
 const DEFAULT_REMOTE_MAX_CONNECTIONS: usize = 100;
 const DEFAULT_REMOTE_MAX_CONCURRENCY_PER_CONNECTION: usize = 100;
+const DEFAULT_REMOTE_TIMEOUT_SECS: u64 = 60;
+const DEFAULT_GRPC_KEEPALIVE_TIME_SECS: u64 = 60;
+const DEFAULT_GRPC_KEEPALIVE_TIMEOUT_SECS: u64 = 20;
+const DEFAULT_GRPC_KEEPALIVE_WHILE_IDLE: bool = false;
 const SAMPLE_DIGEST_HASH_LEN: usize = 64;
 
 fn tdigest_to(tdigest: TDigest) -> Digest {
@@ -276,6 +280,8 @@ pub struct RECapabilities {
 pub struct RERuntimeOpts {
     /// Use the Meta version of the request metadata
     use_fbcode_metadata: bool,
+    /// Maximum amount of time to wait for a remote execution/cache gRPC call.
+    remote_timeout: Duration,
     /// Maximum number of concurrent upload requests.
     max_concurrent_uploads_per_action: Option<usize>,
     /// Time that digests are assumed to live in CAS after being touched.
@@ -339,6 +345,32 @@ fn reapi_service_address(opts: &Buck2OssReConfiguration) -> Option<String> {
         .or_else(|| opts.cas_address.clone())
 }
 
+fn remote_timeout(opts: &Buck2OssReConfiguration) -> Duration {
+    Duration::from_secs(
+        opts.remote_timeout_secs
+            .unwrap_or(DEFAULT_REMOTE_TIMEOUT_SECS),
+    )
+}
+
+fn grpc_keepalive_time(opts: &Buck2OssReConfiguration) -> Option<Duration> {
+    let secs = opts
+        .grpc_keepalive_time_secs
+        .unwrap_or(DEFAULT_GRPC_KEEPALIVE_TIME_SECS);
+    (secs != 0).then(|| Duration::from_secs(secs))
+}
+
+fn grpc_keepalive_timeout(opts: &Buck2OssReConfiguration) -> Duration {
+    Duration::from_secs(
+        opts.grpc_keepalive_timeout_secs
+            .unwrap_or(DEFAULT_GRPC_KEEPALIVE_TIMEOUT_SECS),
+    )
+}
+
+fn grpc_keepalive_while_idle(opts: &Buck2OssReConfiguration) -> bool {
+    opts.grpc_keepalive_while_idle
+        .unwrap_or(DEFAULT_GRPC_KEEPALIVE_WHILE_IDLE)
+}
+
 fn counting_connector() -> CountingConnector<HttpConnector> {
     let mut http = HttpConnector::new();
     http.enforce_http(false);
@@ -360,14 +392,11 @@ fn endpoint_for_address(
         endpoint = endpoint.tls_config(tls_config.clone())?;
     }
 
-    if let Some(keepalive_time_secs) = opts.grpc_keepalive_time_secs {
-        endpoint = endpoint.http2_keep_alive_interval(Duration::from_secs(keepalive_time_secs));
-    }
-    if let Some(keepalive_timeout_secs) = opts.grpc_keepalive_timeout_secs {
-        endpoint = endpoint.keep_alive_timeout(Duration::from_secs(keepalive_timeout_secs));
-    }
-    if let Some(keepalive_while_idle) = opts.grpc_keepalive_while_idle {
-        endpoint = endpoint.keep_alive_while_idle(keepalive_while_idle);
+    if let Some(keepalive_time) = grpc_keepalive_time(opts) {
+        endpoint = endpoint
+            .http2_keep_alive_interval(keepalive_time)
+            .keep_alive_timeout(grpc_keepalive_timeout(opts))
+            .keep_alive_while_idle(grpc_keepalive_while_idle(opts));
     }
 
     Ok((endpoint, address))
@@ -400,6 +429,7 @@ impl REClientBuilder {
                 .context("Error creating Capabilities endpoint")?;
 
         let interceptor = InjectHeadersInterceptor::new(&opts.http_headers)?;
+        let remote_timeout = remote_timeout(opts);
 
         let max_connections = opts
             .remote_max_connections
@@ -432,6 +462,7 @@ impl REClientBuilder {
                 &mut capabilities_client,
                 &instance_name,
                 opts.max_total_batch_size,
+                remote_timeout,
             )
             .await?
         } else {
@@ -499,6 +530,7 @@ impl REClientBuilder {
         Ok(REClient::new(
             RERuntimeOpts {
                 use_fbcode_metadata: opts.use_fbcode_metadata,
+                remote_timeout,
                 max_concurrent_uploads_per_action: opts.max_concurrent_uploads_per_action,
                 // NOTE: This is an arbitrary number because RBE does not return information
                 // on the TTL of the remote blob.
@@ -515,13 +547,16 @@ impl REClientBuilder {
         client: &mut CapabilitiesClient<GrpcService>,
         instance_name: &InstanceName,
         max_total_batch_size: Option<usize>,
+        remote_timeout: Duration,
     ) -> anyhow::Result<RECapabilities> {
         // TODO use more of the capabilities of the remote build executor
 
+        let mut request = tonic::Request::new(GetCapabilitiesRequest {
+            instance_name: instance_name.as_str().to_owned(),
+        });
+        request.set_timeout(remote_timeout);
         let resp = client
-            .get_capabilities(GetCapabilitiesRequest {
-                instance_name: instance_name.as_str().to_owned(),
-            })
+            .get_capabilities(request)
             .await
             .context("Failed to query capabilities of remote")?
             .into_inner();
@@ -940,6 +975,7 @@ impl REClient {
                 },
                 metadata,
                 self.runtime_opts.use_fbcode_metadata,
+                self.runtime_opts.remote_timeout,
             ))
             .await?;
 
@@ -967,6 +1003,7 @@ impl REClient {
                 },
                 metadata,
                 self.runtime_opts.use_fbcode_metadata,
+                self.runtime_opts.remote_timeout,
             ))
             .await?;
 
@@ -1007,6 +1044,7 @@ impl REClient {
                 request,
                 metadata,
                 self.runtime_opts.use_fbcode_metadata,
+                self.runtime_opts.remote_timeout,
             ))
             .await?
             .into_inner();
@@ -1126,6 +1164,7 @@ impl REClient {
                         re_request,
                         metadata,
                         self.runtime_opts.use_fbcode_metadata,
+                        self.runtime_opts.remote_timeout,
                     ))
                     .await?;
                 Ok(resp.into_inner())
@@ -1140,6 +1179,7 @@ impl REClient {
                         requests,
                         metadata,
                         self.runtime_opts.use_fbcode_metadata,
+                        self.runtime_opts.remote_timeout,
                     ))
                     .await?;
 
@@ -1201,6 +1241,7 @@ impl REClient {
                         re_request,
                         metadata,
                         self.runtime_opts.use_fbcode_metadata,
+                        self.runtime_opts.remote_timeout,
                     ))
                     .await?
                     .into_inner())
@@ -1214,6 +1255,7 @@ impl REClient {
                             read_request,
                             metadata,
                             self.runtime_opts.use_fbcode_metadata,
+                            self.runtime_opts.remote_timeout,
                         ))
                         .await?
                         .into_inner();
@@ -1273,6 +1315,7 @@ impl REClient {
                                 },
                                 metadata,
                                 self.runtime_opts.use_fbcode_metadata,
+                                self.runtime_opts.remote_timeout,
                             ))
                             .await
                             .context("Failed to request what blobs are not present on remote")?;
@@ -1971,6 +2014,7 @@ fn with_re_metadata<T>(
     t: T,
     metadata: RemoteExecutionMetadata,
     use_fbcode_metadata: bool,
+    remote_timeout: Duration,
 ) -> tonic::Request<T> {
     // This creates a new Tonic request with attached metadata for the RE
     // backend. There are two cases here we need to support:
@@ -1992,6 +2036,7 @@ fn with_re_metadata<T>(
     // Meta builds catch those issues earlier.
 
     let mut msg = tonic::Request::new(t);
+    msg.set_timeout(remote_timeout);
 
     if use_fbcode_metadata {
         // This is pretty ugly, but the protobuf spec that defines this is
@@ -2122,6 +2167,44 @@ mod tests {
         assert_eq!(
             reapi_service_address(&opts).as_deref(),
             Some("executor.example.com")
+        );
+    }
+
+    #[test]
+    fn test_grpc_defaults_match_bazel_remote_defaults() {
+        let opts = Buck2OssReConfiguration::default();
+
+        assert_eq!(remote_timeout(&opts), Duration::from_secs(60));
+        assert_eq!(grpc_keepalive_time(&opts), Some(Duration::from_secs(60)));
+        assert_eq!(grpc_keepalive_timeout(&opts), Duration::from_secs(20));
+        assert!(!grpc_keepalive_while_idle(&opts));
+    }
+
+    #[test]
+    fn test_grpc_keepalive_time_zero_disables_keepalive() {
+        let opts = Buck2OssReConfiguration {
+            grpc_keepalive_time_secs: Some(0),
+            ..Default::default()
+        };
+
+        assert_eq!(grpc_keepalive_time(&opts), None);
+    }
+
+    #[test]
+    fn test_with_re_metadata_sets_grpc_timeout() {
+        let request = with_re_metadata(
+            (),
+            RemoteExecutionMetadata::default(),
+            false,
+            Duration::from_secs(60),
+        );
+
+        assert_eq!(
+            request
+                .metadata()
+                .get("grpc-timeout")
+                .and_then(|value| value.to_str().ok()),
+            Some("60000000u")
         );
     }
 

@@ -289,6 +289,7 @@ impl BazelRemoteRepositoryCommandExecutor {
         let prepared_action = self
             .command_executor
             .prepare_action(&request, self.digest_config, true)
+            .await
             .map_err(|error| error.to_string())?;
         let target = RepositoryCommandExecutionTarget {
             repository: "<which>".to_owned(),
@@ -546,6 +547,7 @@ input_root="$1"
         let prepared_action = self
             .command_executor
             .prepare_action(&request, self.digest_config, true)
+            .await
             .map_err(|error| error.to_string())?;
         let target = RepositoryCommandExecutionTarget {
             repository: repository_working_dir_rel.as_str().to_owned(),

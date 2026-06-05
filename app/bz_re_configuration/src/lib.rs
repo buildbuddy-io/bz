@@ -21,6 +21,10 @@ use bz_core::rollout_percentage::RolloutPercentage;
 
 static BUCK2_RE_CLIENT_CFG_SECTION: &str = "buck2_re_client";
 
+fn available_parallelism() -> usize {
+    std::thread::available_parallelism().map_or(1, |value| value.get())
+}
+
 /// We put functions here that both things need to implement for code that isn't gated behind a
 /// fbcode_build or not(fbcode_build)
 pub trait RemoteExecutionStaticMetadataImpl: Sized {
@@ -29,7 +33,7 @@ pub trait RemoteExecutionStaticMetadataImpl: Sized {
         &mut self,
         config: &RemoteExecutionStartupConfig,
     ) -> bz_error::Result<()>;
-    fn cas_semaphore_size(&self) -> usize;
+    fn remote_action_building_semaphore_size(&self) -> usize;
     fn exec_semaphore_size(&self) -> usize;
 }
 
@@ -542,8 +546,8 @@ mod fbcode {
             Ok(())
         }
 
-        fn cas_semaphore_size(&self) -> usize {
-            self.cas_connection_count as usize * 30
+        fn remote_action_building_semaphore_size(&self) -> usize {
+            available_parallelism()
         }
 
         fn exec_semaphore_size(&self) -> usize {
@@ -574,9 +578,8 @@ mod not_fbcode {
             self.0.apply_remote_execution_startup_config(config)
         }
 
-        fn cas_semaphore_size(&self) -> usize {
-            // FIXME: make this configurable?
-            1024
+        fn remote_action_building_semaphore_size(&self) -> usize {
+            available_parallelism()
         }
 
         fn exec_semaphore_size(&self) -> usize {
@@ -631,6 +634,8 @@ pub struct Buck2OssReConfiguration {
     pub remote_max_connections: Option<usize>,
     /// Maximum number of concurrent requests per remote gRPC connection.
     pub remote_max_concurrency_per_connection: Option<usize>,
+    /// Maximum amount of time to wait for a remote execution/cache gRPC call.
+    pub remote_timeout_secs: Option<u64>,
     /// Time that digests are assumed to live in CAS after being touched.
     pub cas_ttl_secs: Option<i64>,
     /// Interval in seconds for HTTP/2 ping frames to detect stale connections.
@@ -795,6 +800,10 @@ impl Buck2OssReConfiguration {
             remote_max_concurrency_per_connection: legacy_config.parse(BuckconfigKeyRef {
                 section: BUCK2_RE_CLIENT_CFG_SECTION,
                 property: "remote_max_concurrency_per_connection",
+            })?,
+            remote_timeout_secs: legacy_config.parse(BuckconfigKeyRef {
+                section: BUCK2_RE_CLIENT_CFG_SECTION,
+                property: "remote_timeout_secs",
             })?,
             cas_ttl_secs: legacy_config.parse(BuckconfigKeyRef {
                 section: BUCK2_RE_CLIENT_CFG_SECTION,
@@ -977,6 +986,18 @@ mod tests {
         assert_eq!(config.remote_max_concurrency_per_connection, Some(34));
 
         Ok(())
+    }
+
+    #[cfg(not(fbcode_build))]
+    #[test]
+    fn oss_remote_action_building_semaphore_matches_available_parallelism() {
+        let metadata =
+            not_fbcode::RemoteExecutionStaticMetadata(Buck2OssReConfiguration::default());
+
+        assert_eq!(
+            metadata.remote_action_building_semaphore_size(),
+            available_parallelism()
+        );
     }
 }
 

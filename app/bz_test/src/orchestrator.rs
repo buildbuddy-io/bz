@@ -1042,7 +1042,10 @@ impl BuckTestOrchestrator<'_> {
 
         // For test execution, we currently do not do any cache queries
 
-        let prepared_action = match executor.prepare_action(&request, digest_config, false) {
+        let prepared_action = match executor
+            .prepare_action(&request, digest_config, false)
+            .await
+        {
             Ok(prepared_action) => prepared_action,
             Err(e) => return Err(ExecuteError::Error(e)),
         };
@@ -1316,6 +1319,7 @@ impl BuckTestOrchestrator<'_> {
             remote_dep_file_cache_checker: _,
             cache_uploader,
             output_trees_download_config: _,
+            remote_action_building_semaphore,
         } = dice.get_command_executor_from_dice(executor_config).await?;
 
         let (cache_uploader, action_cache_checker) = match stage {
@@ -1333,7 +1337,7 @@ impl BuckTestOrchestrator<'_> {
             }
         };
 
-        let executor = CommandExecutor::new(
+        let executor = CommandExecutor::new_with_remote_action_building_semaphore(
             executor,
             action_cache_checker,
             Arc::new(NoOpCommandOptionalExecutor {}),
@@ -1341,6 +1345,7 @@ impl BuckTestOrchestrator<'_> {
             fs.clone(),
             executor_config.options,
             platform,
+            remote_action_building_semaphore,
         );
         Ok(executor)
     }
@@ -1364,10 +1369,11 @@ impl BuckTestOrchestrator<'_> {
             remote_dep_file_cache_checker: _,
             cache_uploader: _,
             output_trees_download_config: _,
+            remote_action_building_semaphore,
         } = dice
             .get_command_executor_from_dice(&executor_config)
             .await?;
-        let executor = CommandExecutor::new(
+        let executor = CommandExecutor::new_with_remote_action_building_semaphore(
             executor,
             Arc::new(NoOpCommandOptionalExecutor {}),
             Arc::new(NoOpCommandOptionalExecutor {}),
@@ -1375,6 +1381,7 @@ impl BuckTestOrchestrator<'_> {
             fs.clone(),
             executor_config.options,
             platform,
+            remote_action_building_semaphore,
         );
         Ok(executor)
     }
@@ -1769,8 +1776,9 @@ impl BuckTestOrchestrator<'_> {
         let local_resource_target = LocalResourceTarget {
             target: &context.target,
         };
-        let prepared_action =
-            executor.prepare_action(&context.execution_request, digest_config, false)?;
+        let prepared_action = executor
+            .prepare_action(&context.execution_request, digest_config, false)
+            .await?;
         let prepared_command = PreparedCommand {
             target: &local_resource_target as _,
             request: &context.execution_request,

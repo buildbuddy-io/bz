@@ -30,6 +30,7 @@ use dupe::Dupe;
 use remote_execution as RE;
 use remote_execution::TActionResult2;
 use sorted_vector_map::SortedVectorMap;
+use tokio::sync::Semaphore;
 
 use super::cache_uploader::CacheUploadResults;
 use crate::artifact::fs::ExecutorFs;
@@ -88,6 +89,7 @@ struct CommandExecutorData {
     inner: Arc<dyn PreparedCommandExecutor>,
     action_cache_checker: Arc<dyn PreparedCommandOptionalExecutor>,
     remote_dep_file_cache_checker: Arc<dyn PreparedCommandOptionalExecutor>,
+    remote_action_building_semaphore: Arc<Semaphore>,
     artifact_fs: ArtifactFs,
     options: CommandGenerationOptions,
     re_platform: RE::Platform,
@@ -104,15 +106,42 @@ impl CommandExecutor {
         options: CommandGenerationOptions,
         re_platform: RE::Platform,
     ) -> Self {
+        Self::new_with_remote_action_building_semaphore(
+            inner,
+            action_cache_checker,
+            remote_dep_file_cache_checker,
+            cache_uploader,
+            artifact_fs,
+            options,
+            re_platform,
+            Self::remote_action_building_semaphore(),
+        )
+    }
+
+    pub fn new_with_remote_action_building_semaphore(
+        inner: Arc<dyn PreparedCommandExecutor>,
+        action_cache_checker: Arc<dyn PreparedCommandOptionalExecutor>,
+        remote_dep_file_cache_checker: Arc<dyn PreparedCommandOptionalExecutor>,
+        cache_uploader: Arc<dyn UploadCache>,
+        artifact_fs: ArtifactFs,
+        options: CommandGenerationOptions,
+        re_platform: RE::Platform,
+        remote_action_building_semaphore: Arc<Semaphore>,
+    ) -> Self {
         Self(Arc::new(CommandExecutorData {
             inner,
             action_cache_checker,
             remote_dep_file_cache_checker,
+            remote_action_building_semaphore,
             artifact_fs,
             options,
             re_platform,
             cache_uploader,
         }))
+    }
+
+    pub fn remote_action_building_semaphore() -> Arc<Semaphore> {
+        Arc::new(Semaphore::new(bz_util::threads::available_parallelism()))
     }
 
     pub fn fs(&self) -> &ArtifactFs {
@@ -266,12 +295,23 @@ impl CommandExecutor {
         self.0.inner.is_full_hybrid_enabled()
     }
 
-    pub fn prepare_action(
+    pub async fn prepare_action(
         &self,
         request: &CommandExecutionRequest,
         digest_config: DigestConfig,
         re_outputs_required: bool,
     ) -> bz_error::Result<PreparedAction> {
+        let _remote_action_building = self
+            .0
+            .remote_action_building_semaphore
+            .acquire()
+            .await
+            .map_err(|_| {
+                bz_error!(
+                    bz_error::ErrorTag::InternalError,
+                    "remote action building semaphore was closed"
+                )
+            })?;
         executor_stage(bz_data::PrepareAction {}, || {
             let input_digest = request.paths().input_directory().fingerprint();
 
