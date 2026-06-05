@@ -55,14 +55,23 @@ const BAZEL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:java_language_v
 const BAZEL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:java_runtime_version";
 const BAZEL_TOOL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:tool_java_language_version";
 const BAZEL_TOOL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:tool_java_runtime_version";
+const BAZEL_ACTION_ENV: &str = "//command_line_option:action_env";
+const BAZEL_HOST_ACTION_ENV: &str = "//command_line_option:host_action_env";
 const BAZEL_EXTRA_BZLMOD_DEPS: &str = "bazel.extra_bzlmod_deps";
-const LLVM_BZLMOD_DEP: &str = "llvm@0.8.4";
+const LLVM_BZLMOD_DEP: &str = "llvm@0.8.5";
 const LLVM_TOOLCHAIN_PATTERN: &str = "@llvm//toolchain:all";
 const LLVM_LINUX_X86_64_PLATFORM: &str = "@llvm//platforms:linux_x86_64";
 const LLVM_MACOS_AARCH64_PLATFORM: &str = "@llvm//platforms:macos_aarch64";
 const LLVM_STUB_LIBGCC_S_SETTING: &str = "@llvm//config:experimental_stub_libgcc_s";
 const LLVM_EMPTY_SYSROOT_SETTING: &str = "@llvm//config:empty_sysroot";
+const RULES_CC_USE_LIBTOOL_ON_MACOS_SETTING: &str =
+    "@@rules_cc+//cc/toolchains/args/archiver_flags:use_libtool_on_macos";
+const RULES_RUST_SH_BOOTSTRAP_PROCESS_WRAPPER_SETTING: &str =
+    "@@rules_rust+//rust/settings:experimental_use_sh_toolchain_for_bootstrap_process_wrapper";
 const LLVM_LINUX_LINKOPT: &str = "-no-pie";
+const LLVM_CARGO_CC_RS_LINKER_FLAG: &str = "-fuse-ld=lld";
+const LLVM_MACOS_AARCH64_CFLAGS_ENV: &str = "CFLAGS_aarch64_apple_darwin";
+const LLVM_MACOS_AARCH64_CXXFLAGS_ENV: &str = "CXXFLAGS_aarch64_apple_darwin";
 const LLVM_MACOS_FRAMEWORKS: &str = "CoreFoundation,Foundation,Kernel,OSLog,Security,SystemConfiguration,IOKit,CoreServices,DiskArbitration,CFNetwork";
 
 #[derive(Debug, bz_error::Error)]
@@ -499,6 +508,26 @@ pub struct CommonBuildConfigurationOptions {
     )]
     pub bazel_host_linkopt: Vec<String>,
 
+    /// Bazel-compatible action environment setting. Values are formatted as
+    /// `NAME`, `NAME=VALUE`, or `=NAME`.
+    #[clap(
+        long = "action_env",
+        alias = "action-env",
+        value_name = "ENV",
+        num_args = 1
+    )]
+    pub bazel_action_env: Vec<String>,
+
+    /// Bazel-compatible host/exec action environment setting. Values are
+    /// formatted as `NAME`, `NAME=VALUE`, or `=NAME`.
+    #[clap(
+        long = "host_action_env",
+        alias = "host-action-env",
+        value_name = "ENV",
+        num_args = 1
+    )]
+    pub bazel_host_action_env: Vec<String>,
+
     /// Bazel-compatible Java language setting. This populates
     /// `//command_line_option:java_language_version`.
     #[clap(
@@ -745,6 +774,7 @@ impl CommonBuildConfigurationOptions {
     fn llvm_toolchain_override_settings(
         &self,
         matches: BuckArgMatches<'_>,
+        rules_rust_available: bool,
     ) -> Option<(usize, Vec<String>)> {
         if !(self.llvm || self.linux2mac || self.mac2linux) {
             return None;
@@ -755,19 +785,28 @@ impl CommonBuildConfigurationOptions {
             .filter_map(|name| Self::flag_last_index(matches, name))
             .max()?;
 
-        Some((
-            index,
-            vec![
-                Self::bazel_command_line_single_list_build_setting(
-                    "//command_line_option:extra_toolchains",
-                    LLVM_TOOLCHAIN_PATTERN,
-                ),
-                Self::bazel_command_line_bool_build_setting(LLVM_STUB_LIBGCC_S_SETTING, true),
-                // Hermetic LLVM documents this setting for Rust interop where
-                // unmanaged build scripts link against host system libraries.
-                Self::bazel_command_line_bool_build_setting(LLVM_EMPTY_SYSROOT_SETTING, false),
-            ],
-        ))
+        let mut settings = vec![
+            Self::bazel_command_line_single_list_build_setting(
+                "//command_line_option:extra_toolchains",
+                LLVM_TOOLCHAIN_PATTERN,
+            ),
+            Self::bazel_command_line_bool_build_setting(LLVM_STUB_LIBGCC_S_SETTING, true),
+            // Hermetic LLVM documents this setting for Rust interop where
+            // unmanaged build scripts link against host system libraries.
+            Self::bazel_command_line_bool_build_setting(LLVM_EMPTY_SYSROOT_SETTING, false),
+            Self::bazel_command_line_bool_build_setting(
+                RULES_CC_USE_LIBTOOL_ON_MACOS_SETTING,
+                false,
+            ),
+        ];
+        if rules_rust_available {
+            settings.push(Self::bazel_command_line_bool_build_setting(
+                RULES_RUST_SH_BOOTSTRAP_PROCESS_WRAPPER_SETTING,
+                true,
+            ));
+        }
+
+        Some((index, settings))
     }
 
     fn llvm_bzlmod_dep_override(
@@ -812,6 +851,35 @@ impl CommonBuildConfigurationOptions {
                 ),
                 config_type: ConfigType::Value as i32,
             },
+        ))
+    }
+
+    fn llvm_cargo_cc_rs_action_env_settings(
+        &self,
+        matches: BuckArgMatches<'_>,
+    ) -> Option<(usize, Vec<String>)> {
+        if !self.linux2mac {
+            return None;
+        }
+
+        let index = Self::flag_last_index(matches, "linux2mac")?;
+
+        Some((
+            index,
+            vec![
+                Self::bazel_command_line_single_list_build_setting(
+                    BAZEL_ACTION_ENV,
+                    &format!(
+                        "{LLVM_MACOS_AARCH64_CFLAGS_ENV}={LLVM_CARGO_CC_RS_LINKER_FLAG}"
+                    ),
+                ),
+                Self::bazel_command_line_single_list_build_setting(
+                    BAZEL_ACTION_ENV,
+                    &format!(
+                        "{LLVM_MACOS_AARCH64_CXXFLAGS_ENV}={LLVM_CARGO_CC_RS_LINKER_FLAG}"
+                    ),
+                ),
+            ],
         ))
     }
 
@@ -889,6 +957,13 @@ impl CommonBuildConfigurationOptions {
                 .map(|value| value.to_owned())
                 .collect(),
         )
+    }
+
+    fn cwd_alias_available(
+        immediate_ctx: &ImmediateConfigContext<'_>,
+        alias: &str,
+    ) -> bool {
+        immediate_ctx.resolve_alias_to_path_in_cwd(alias).is_ok()
     }
 
     /// Produces a single, ordered list of config overrides. A `ConfigOverride`
@@ -1089,7 +1164,15 @@ impl CommonBuildConfigurationOptions {
             }),
         );
 
-        if let Some(settings) = self.llvm_toolchain_override_settings(matches) {
+        let rules_rust_available = if self.llvm || self.linux2mac || self.mac2linux {
+            Self::cwd_alias_available(immediate_ctx, "rules_rust")
+        } else {
+            false
+        };
+
+        if let Some(settings) =
+            self.llvm_toolchain_override_settings(matches, rules_rust_available)
+        {
             bazel_command_line_build_setting_args.push(settings);
         }
 
@@ -1098,6 +1181,10 @@ impl CommonBuildConfigurationOptions {
         }
 
         if let Some(settings) = self.llvm_cross_platform_settings(matches) {
+            bazel_command_line_build_setting_args.push(settings);
+        }
+
+        if let Some(settings) = self.llvm_cargo_cc_rs_action_env_settings(matches) {
             bazel_command_line_build_setting_args.push(settings);
         }
 
@@ -1125,6 +1212,37 @@ impl CommonBuildConfigurationOptions {
                     )
                 },
             ),
+        );
+
+        bazel_command_line_build_setting_args.extend(
+            with_indices(&self.bazel_action_env, "bazel_action_env", matches)?.map(
+                |(index, env)| {
+                    (
+                        index,
+                        vec![Self::bazel_command_line_single_list_build_setting(
+                            BAZEL_ACTION_ENV,
+                            env,
+                        )],
+                    )
+                },
+            ),
+        );
+
+        bazel_command_line_build_setting_args.extend(
+            with_indices(
+                &self.bazel_host_action_env,
+                "bazel_host_action_env",
+                matches,
+            )?
+            .map(|(index, env)| {
+                (
+                    index,
+                    vec![Self::bazel_command_line_single_list_build_setting(
+                        BAZEL_HOST_ACTION_ENV,
+                        env,
+                    )],
+                )
+            }),
         );
 
         bazel_command_line_build_setting_args.extend(
@@ -1308,6 +1426,8 @@ impl CommonBuildConfigurationOptions {
             bazel_compilation_mode: vec![],
             bazel_linkopt: vec![],
             bazel_host_linkopt: vec![],
+            bazel_action_env: vec![],
+            bazel_host_action_env: vec![],
             bazel_java_language_version: vec![],
             bazel_java_runtime_version: vec![],
             bazel_tool_java_language_version: vec![],
@@ -1341,6 +1461,8 @@ impl CommonBuildConfigurationOptions {
             bazel_compilation_mode: vec![],
             bazel_linkopt: vec![],
             bazel_host_linkopt: vec![],
+            bazel_action_env: vec![],
+            bazel_host_action_env: vec![],
             bazel_java_language_version: vec![],
             bazel_java_runtime_version: vec![],
             bazel_tool_java_language_version: vec![],
@@ -1899,7 +2021,7 @@ mod tests {
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
         assert_eq!(override_values.len(), 2);
-        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.4"));
+        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5"));
         let build_settings = override_values
             .iter()
             .find(|value| value.starts_with("bazel.command_line_build_settings="))
@@ -1910,12 +2032,36 @@ mod tests {
         );
         assert!(build_settings.contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue"));
         assert!(build_settings.contains("bool\t@llvm//config:empty_sysroot\tfalse"));
+        assert!(build_settings.contains(
+            "bool\t@@rules_cc+//cc/toolchains/args/archiver_flags:use_libtool_on_macos\tfalse"
+        ));
+        assert!(!build_settings.contains("@@rules_rust+//rust/settings"));
         if cfg!(target_os = "linux") {
             assert!(build_settings.contains("list\t//command_line_option:linkopt\t-no-pie"));
         } else {
             assert!(!build_settings.contains("//command_line_option:linkopt"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_llvm_flag_adds_rules_rust_setting_when_rules_rust_is_available() {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--llvm"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+
+        let build_settings = opts
+            .config
+            .llvm_toolchain_override_settings(matches, true)
+            .unwrap()
+            .1
+            .join("\n");
+        assert!(build_settings.contains(
+            "bool\t@@rules_rust+//rust/settings:experimental_use_sh_toolchain_for_bootstrap_process_wrapper\ttrue"
+        ));
     }
 
     #[test]
@@ -1938,7 +2084,7 @@ mod tests {
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
         assert_eq!(override_values.len(), 4);
-        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.4"));
+        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5"));
         let macos_frameworks_repo_env =
             format!("bazel.repo_env=BAZEL_MACOS_FRAMEWORKS={LLVM_MACOS_FRAMEWORKS}");
         assert!(override_values.contains(&macos_frameworks_repo_env.as_str()));
@@ -1954,6 +2100,9 @@ mod tests {
         );
         assert!(build_settings.contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue"));
         assert!(build_settings.contains("bool\t@llvm//config:empty_sysroot\tfalse"));
+        assert!(build_settings.contains(
+            "bool\t@@rules_cc+//cc/toolchains/args/archiver_flags:use_libtool_on_macos\tfalse"
+        ));
         assert!(build_settings.contains("list\t//command_line_option:linkopt\t-no-pie"));
         assert!(override_values.contains(
             &"bazel.host_platform_constraints=@platforms//cpu:x86_64\n@platforms//os:linux"
@@ -1992,7 +2141,7 @@ mod tests {
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
         assert_eq!(override_values.len(), 3);
-        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.4"));
+        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5"));
 
         let build_settings = override_values
             .iter()
@@ -2006,12 +2155,21 @@ mod tests {
         );
         assert!(build_settings.contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue"));
         assert!(build_settings.contains("bool\t@llvm//config:empty_sysroot\tfalse"));
+        assert!(build_settings.contains(
+            "bool\t@@rules_cc+//cc/toolchains/args/archiver_flags:use_libtool_on_macos\tfalse"
+        ));
         assert!(
             build_settings
                 .contains("list\t//command_line_option:platforms\t@llvm//platforms:macos_aarch64")
         );
         assert!(build_settings.contains(
             "list\t//command_line_option:extra_execution_platforms\t@llvm//platforms:linux_x86_64"
+        ));
+        assert!(build_settings.contains(
+            "list\t//command_line_option:action_env\tCFLAGS_aarch64_apple_darwin=-fuse-ld=lld"
+        ));
+        assert!(build_settings.contains(
+            "list\t//command_line_option:action_env\tCXXFLAGS_aarch64_apple_darwin=-fuse-ld=lld"
         ));
         assert!(override_values.contains(
             &"bazel.host_platform_constraints=@platforms//cpu:x86_64\n@platforms//os:linux"
@@ -2050,7 +2208,7 @@ mod tests {
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
         assert_eq!(override_values.len(), 3);
-        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.4"));
+        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5"));
 
         let build_settings = override_values
             .iter()
@@ -2064,6 +2222,9 @@ mod tests {
         );
         assert!(build_settings.contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue"));
         assert!(build_settings.contains("bool\t@llvm//config:empty_sysroot\tfalse"));
+        assert!(build_settings.contains(
+            "bool\t@@rules_cc+//cc/toolchains/args/archiver_flags:use_libtool_on_macos\tfalse"
+        ));
         assert!(
             build_settings
                 .contains("list\t//command_line_option:platforms\t@llvm//platforms:linux_x86_64")

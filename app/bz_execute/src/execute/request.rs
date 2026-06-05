@@ -89,6 +89,10 @@ pub struct ActionMetadataBlob {
 
 pub enum CommandExecutionInput {
     Artifact(Box<dyn ArtifactGroupValuesDyn>),
+    ArtifactWithExecutableOverrides {
+        group: Box<dyn ArtifactGroupValuesDyn>,
+        executable_paths: Arc<[ProjectRelativePathBuf]>,
+    },
     ArtifactPathAlias {
         source_path: ProjectRelativePathBuf,
         source_requires_materialization: bool,

@@ -68,6 +68,13 @@ fn push_bazel_build_setting(
     }
 }
 
+fn bazel_starlark_label_to_build_setting_key(key: &str) -> Option<String> {
+    let key = key.strip_prefix("@@")?;
+    let (repo, target) = key.split_once("//")?;
+    let cell = if repo.is_empty() { "root" } else { repo };
+    Some(format!("{cell}//{target}"))
+}
+
 async fn bazel_command_line_build_settings(
     ctx: &mut DiceComputations<'_>,
 ) -> bz_error::Result<BTreeMap<String, BazelBuildSettingValue>> {
@@ -99,6 +106,8 @@ async fn bazel_command_line_build_settings(
         })?;
         let key = if raw_key.starts_with("//command_line_option:") {
             raw_key.to_owned()
+        } else if let Some(key) = bazel_starlark_label_to_build_setting_key(raw_key) {
+            key
         } else {
             ProvidersLabel::parse(raw_key, root_cell, &cell_resolver, &cell_alias_resolver)
                 .with_buck_error_context(|| {
@@ -276,4 +285,30 @@ pub(crate) async fn apply_bazel_exec_command_line_build_settings(
     let settings = bazel_command_line_build_settings(ctx).await?;
     let settings = exec_bazel_command_line_build_settings(settings, execution_platform_cfg)?;
     apply_bazel_command_line_build_settings_impl(cfg, settings).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bazel_starlark_label_keys_are_normalized_to_internal_build_setting_keys() {
+        assert_eq!(
+            bazel_starlark_label_to_build_setting_key("@@//toolchain:runtime_stage").as_deref(),
+            Some("root//toolchain:runtime_stage")
+        );
+        assert_eq!(
+            bazel_starlark_label_to_build_setting_key(
+                "@@rules_cc+//cc/toolchains/args/archiver_flags:use_libtool_on_macos"
+            )
+            .as_deref(),
+            Some("rules_cc+//cc/toolchains/args/archiver_flags:use_libtool_on_macos")
+        );
+        assert_eq!(
+            bazel_starlark_label_to_build_setting_key(
+                "@rules_cc//cc/toolchains/args/archiver_flags:use_libtool_on_macos"
+            ),
+            None
+        );
+    }
 }

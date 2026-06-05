@@ -168,6 +168,30 @@ impl ArtifactValue {
         &self.entry
     }
 
+    pub fn with_executable_bit(&self, executable: bool) -> Self {
+        let entry = match &self.entry {
+            ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(file)) => {
+                ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(
+                    file.dupe().with_executable(executable),
+                ))
+            }
+            ActionDirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(file)) => {
+                let mut contents_proxy = (*file.contents_proxy).clone();
+                contents_proxy.is_executable = executable;
+                ActionDirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(
+                    SourceFileMetadata::new(contents_proxy),
+                ))
+            }
+            _ => self.entry.dupe(),
+        };
+
+        Self {
+            entry,
+            deps: self.deps.dupe(),
+            content_based_path_hash: self.content_based_path_hash.dupe(),
+        }
+    }
+
     pub fn deps(&self) -> Option<&ActionSharedDirectory> {
         self.deps.as_ref()
     }

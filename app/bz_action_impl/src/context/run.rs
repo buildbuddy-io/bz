@@ -637,6 +637,7 @@ fn register_bazel_run_action<'v>(
     inputs: Value<'v>,
     tools: Value<'v>,
     bazel_inputs: Option<StarlarkCmdArgs<'v>>,
+    bazel_executable: Option<Value<'v>>,
     bazel_executable_runfiles: Option<Value<'v>>,
     outputs: impl IntoIterator<Item = ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
     env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
@@ -709,6 +710,7 @@ fn register_bazel_run_action<'v>(
         exe: eval.heap().alloc_typed(exe),
         args: eval.heap().alloc_typed(args),
         bazel_inputs: Some(eval.heap().alloc_typed(bazel_inputs)),
+        bazel_executable,
         bazel_executable_runfiles,
         bazel_tool_runfiles: bazel_tool_runfiles(this, tools, eval)?,
         bazel_cc_command_line,
@@ -794,6 +796,7 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
         Value::new_none(),
         Value::new_none(),
         Some(action.inputs),
+        Some(executable),
         bazel_executable_runfiles,
         action.outputs,
         None,
@@ -823,7 +826,7 @@ pub(crate) fn register_bazel_java_run_action<'v>(
         .map(ValueTyped::<StarlarkDeclaredArtifact>::new_err)
         .collect::<starlark::Result<Vec<_>>>()?;
 
-    let (exe, args, worker, remote_worker, bazel_executable_runfiles) =
+    let (exe, args, worker, remote_worker, bazel_executable, bazel_executable_runfiles) =
         if let Some(worker_executable) = action.worker_executable {
             let worker_run = ValueOf::<&WorkerRunInfo>::unpack_value_err(worker_executable)?;
             let worker = worker_run.typed.worker();
@@ -831,7 +834,7 @@ pub(crate) fn register_bazel_java_run_action<'v>(
             let worker_exe = worker_run.typed.exe();
             let exe = StarlarkCmdArgs::try_from_value(worker_exe.to_value())?;
             let args = StarlarkCmdArgs::from_values([action.arguments.to_value()])?;
-            (exe, args, worker, remote_worker, None)
+            (exe, args, worker, remote_worker, None, None)
         } else {
             let executable_value = action.executable;
             let executable =
@@ -844,7 +847,14 @@ pub(crate) fn register_bazel_java_run_action<'v>(
             )?;
             let exe = StarlarkCmdArgs::from_values([executable])?;
             let args = StarlarkCmdArgs::from_values([action.arguments.to_value()])?;
-            (exe, args, None, None, bazel_executable_runfiles)
+            (
+                exe,
+                args,
+                None,
+                None,
+                Some(executable),
+                bazel_executable_runfiles,
+            )
         };
 
     register_bazel_run_action(
@@ -854,6 +864,7 @@ pub(crate) fn register_bazel_java_run_action<'v>(
         inputs,
         Value::new_none(),
         None,
+        bazel_executable,
         bazel_executable_runfiles,
         outputs,
         None,
@@ -915,6 +926,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             args,
             inputs,
             tools,
+            None,
             None,
             None,
             outputs,
@@ -1145,6 +1157,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                     tools,
                     None,
                     None,
+                    None,
                     outputs,
                     env,
                     worker,
@@ -1182,6 +1195,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                 inputs,
                 tools,
                 None,
+                Some(executable),
                 bazel_executable_runfiles,
                 outputs,
                 env,
@@ -1459,6 +1473,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             exe: heap.alloc_typed(starlark_exe),
             args: heap.alloc_typed(starlark_args),
             bazel_inputs: None,
+            bazel_executable: None,
             bazel_executable_runfiles: None,
             bazel_tool_runfiles: None,
             bazel_cc_command_line: None,

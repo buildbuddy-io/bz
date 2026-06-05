@@ -14,11 +14,13 @@ use bz_common::file_ops::metadata::FileMetadata;
 use bz_common::file_ops::metadata::Symlink;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
 use bz_directory::directory::entry::DirectoryEntry;
 use bz_error::BuckErrorContext;
 use bz_fs::paths::RelativePath;
 use dupe::Dupe;
 
+use crate::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
 use crate::artifact_value::ArtifactValue;
 use crate::digest_config::DigestConfig;
 use crate::directory::ActionDirectoryBuilder;
@@ -45,7 +47,23 @@ pub fn inputs_directory(
     for input in inputs {
         match input {
             CommandExecutionInput::Artifact(group) => {
-                group.add_to_directory_for_execution(
+                add_artifact_group_to_directory_for_execution(
+                    group.as_ref(),
+                    None,
+                    &mut builder,
+                    fs,
+                    digest_config,
+                    &mut external_symlink_upload_paths,
+                    &mut resolved_symlink_upload_paths,
+                )?;
+            }
+            CommandExecutionInput::ArtifactWithExecutableOverrides {
+                group,
+                executable_paths,
+            } => {
+                add_artifact_group_to_directory_for_execution(
+                    group.as_ref(),
+                    Some(executable_paths),
                     &mut builder,
                     fs,
                     digest_config,
@@ -112,6 +130,55 @@ pub fn inputs_directory(
         external_symlink_upload_paths,
         resolved_symlink_upload_paths,
     ))
+}
+
+fn add_artifact_group_to_directory_for_execution(
+    group: &dyn ArtifactGroupValuesDyn,
+    executable_paths: Option<&[ProjectRelativePathBuf]>,
+    builder: &mut LazyActionDirectoryBuilder,
+    fs: &ArtifactFs,
+    digest_config: DigestConfig,
+    external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
+    resolved_symlink_upload_paths: &mut Vec<ResolvedSymlinkUploadPath>,
+) -> bz_error::Result<()> {
+    let Some(executable_paths) = executable_paths else {
+        return group.add_to_directory_for_execution(
+            builder,
+            fs,
+            digest_config,
+            external_symlink_upload_paths,
+            resolved_symlink_upload_paths,
+        );
+    };
+
+    for (artifact, value) in group.iter() {
+        let projrel_path = artifact.resolve_path(
+            fs,
+            if artifact.has_content_based_path() {
+                Some(value.content_based_path_hash())
+            } else {
+                None
+            }
+            .as_ref(),
+        )?;
+        let abs_path = fs.fs().resolve(&projrel_path);
+        let value = value.resolve_source_file_proxy(abs_path.as_abs_path(), digest_config)?;
+        let value = if executable_paths.iter().any(|path| path == &projrel_path) {
+            value.with_executable_bit(true)
+        } else {
+            value
+        };
+        insert_artifact_lazy_for_execution(
+            builder,
+            projrel_path,
+            &value,
+            digest_config,
+            external_symlink_upload_paths,
+            resolved_symlink_upload_paths,
+        )?;
+    }
+
+    Ok(())
 }
 
 fn rebase_target_file_symlink_alias(

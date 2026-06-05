@@ -10,6 +10,7 @@
 
 use std::cell::RefCell;
 use std::cell::RefMut;
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Formatter;
@@ -1938,6 +1939,72 @@ fn bazel_command_line_option_values(
     }
 }
 
+const BAZEL_ACTION_ENV: &str = "//command_line_option:action_env";
+const BAZEL_HOST_ACTION_ENV: &str = "//command_line_option:host_action_env";
+const BAZEL_STRICT_ACTION_ENV: &str = "//command_line_option:incompatible_strict_action_env";
+
+fn bazel_command_line_option_bool(
+    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
+    key: &str,
+    default: bool,
+) -> bool {
+    let Some(label) = label else {
+        return default;
+    };
+    let Ok(data) = label.label().target().cfg().data() else {
+        return default;
+    };
+    match data.build_settings.get(key) {
+        Some(BazelBuildSettingValue::Bool(value)) => *value,
+        Some(BazelBuildSettingValue::String(value)) => {
+            matches!(value.as_str(), "true" | "True" | "1")
+        }
+        _ => default,
+    }
+}
+
+fn bazel_default_shell_env<'v>(
+    label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
+    heap: Heap<'v>,
+) -> Value<'v> {
+    let strict_action_env = bazel_command_line_option_bool(label, BAZEL_STRICT_ACTION_ENV, true);
+    let mut env = BTreeMap::new();
+
+    if strict_action_env {
+        if cfg!(windows) {
+            env.insert("PATH".to_owned(), "c:/msys64/usr/bin".to_owned());
+        } else {
+            env.insert(
+                "PATH".to_owned(),
+                "/bin:/usr/bin:/sbin:/usr/sbin".to_owned(),
+            );
+        }
+    }
+
+    env.insert("LC_CTYPE".to_owned(), "C.UTF-8".to_owned());
+
+    let action_env_key = if bazel_is_exec_configuration(label) {
+        BAZEL_HOST_ACTION_ENV
+    } else {
+        BAZEL_ACTION_ENV
+    };
+    for entry in bazel_command_line_option_values(label, action_env_key) {
+        if let Some(name) = entry.strip_prefix('=') {
+            env.remove(name);
+        } else if let Some((name, value)) = entry.split_once('=') {
+            env.insert(name.to_owned(), value.to_owned());
+        } else {
+            env.remove(entry.as_str());
+        }
+    }
+
+    heap.alloc(AllocDict(
+        env.into_iter()
+            .map(|(key, value)| (key, heap.alloc_str(&value).to_value()))
+            .collect::<Vec<_>>(),
+    ))
+}
+
 fn bazel_cpp_linkopts(
     label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
     options: &BazelCppOptions,
@@ -2027,7 +2094,7 @@ fn analysis_configuration<'v>(
             "host_path_separator",
             heap.alloc_str(host_path_separator).to_value(),
         ),
-        ("default_shell_env", heap.alloc(AllocDict::EMPTY)),
+        ("default_shell_env", bazel_default_shell_env(label, heap)),
         ("test_env", heap.alloc(AllocDict::EMPTY)),
         ("coverage_enabled", Value::new_bool(false)),
         ("short_id", heap.alloc_str("buck2").to_value()),

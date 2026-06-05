@@ -495,6 +495,32 @@ fn bazel_shared_action_input_key(
             entries.sort();
             Some(format!("artifact_group:{}", entries.join("\0")))
         }
+        CommandExecutionInput::ArtifactWithExecutableOverrides {
+            group,
+            executable_paths,
+        } => {
+            let mut entries = Vec::new();
+            for (artifact, value) in group.iter() {
+                let content_hash = artifact
+                    .has_content_based_path()
+                    .then(|| value.content_based_path_hash());
+                let path = artifact
+                    .resolve_path(artifact_fs, content_hash.as_ref())
+                    .ok()?;
+                entries.push(format!(
+                    "artifact:{}",
+                    bazel_shared_action_path_key(path.as_ref())
+                ));
+            }
+            for executable_path in executable_paths.iter() {
+                entries.push(format!(
+                    "executable:{}",
+                    bazel_shared_action_path_key(executable_path.as_ref())
+                ));
+            }
+            entries.sort();
+            Some(format!("artifact_group:{}", entries.join("\0")))
+        }
         CommandExecutionInput::ArtifactPathAlias {
             source_requires_materialization,
             path,
@@ -3939,6 +3965,40 @@ pub async fn materialize_inputs(
                     }
                 }
             }
+            CommandExecutionInput::ArtifactWithExecutableOverrides { group, .. } => {
+                for (artifact, artifact_value) in group.iter() {
+                    if artifact.requires_materialization(artifact_fs) {
+                        let configuration_hash_path =
+                            artifact.resolve_configuration_hash_path(artifact_fs)?;
+
+                        if artifact.has_content_based_path() {
+                            let content_based_path = artifact.resolve_path(
+                                artifact_fs,
+                                Some(&artifact_value.content_based_path_hash()),
+                            )?;
+
+                            // TODO(ianc) We want to also create symlinks here for projected artifacts.
+                            if artifact.is_projected() {
+                                paths.push(content_based_path);
+                            } else {
+                                let mut builder =
+                                    ArtifactValueBuilder::new(artifact_fs.fs(), digest_config);
+                                builder.add_symlinked(
+                                    artifact_value,
+                                    content_based_path,
+                                    &configuration_hash_path,
+                                )?;
+                                let symlink_value = builder.build(&configuration_hash_path)?;
+                                configuration_path_to_content_based_path_symlinks
+                                    .push((configuration_hash_path.clone(), symlink_value));
+                                paths.push(configuration_hash_path);
+                            }
+                        } else {
+                            paths.push(configuration_hash_path);
+                        }
+                    }
+                }
+            }
             CommandExecutionInput::ArtifactPathAlias {
                 source_path,
                 source_requires_materialization,
@@ -4139,6 +4199,30 @@ async fn check_inputs(
             for input in request.inputs() {
                 match input {
                     CommandExecutionInput::Artifact(group) => {
+                        for (artifact, artifact_value) in group.iter() {
+                            if artifact.requires_materialization(artifact_fs) {
+                                let path = artifact.resolve_path(artifact_fs,
+                                    if artifact.has_content_based_path() {
+                                        Some(artifact_value.content_based_path_hash())
+                                    } else {
+                                        None
+                                    }.as_ref())?;
+                                let abs_path = artifact_fs.fs().resolve(&path);
+
+                                // We ignore the result here because while we want to tag it, we'd
+                                // prefer to just show the normal error to the user, so we don't
+                                // want to propagate it.
+                                let _ignored = tag_result!(
+                                    "missing_local_inputs",
+                                    fs_util::symlink_metadata(&abs_path).categorize_internal().buck_error_context("Missing input"),
+                                    quiet: true,
+                                    task: false,
+                                    daemon_materializer_state_is_corrupted: true
+                                );
+                            }
+                        }
+                    }
+                    CommandExecutionInput::ArtifactWithExecutableOverrides { group, .. } => {
                         for (artifact, artifact_value) in group.iter() {
                             if artifact.requires_materialization(artifact_fs) {
                                 let path = artifact.resolve_path(artifact_fs,

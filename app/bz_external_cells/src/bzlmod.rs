@@ -596,11 +596,6 @@ struct BzlmodGeneratedHttpArchiveIoRequest {
     dest: ProjectRelativePathBuf,
 }
 
-struct BzlmodGeneratedNormalizeIoRequest {
-    canonical_repo_name: Arc<str>,
-    dest: ProjectRelativePathBuf,
-}
-
 impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
     fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         let archive = project_fs.resolve(&self.archive);
@@ -626,16 +621,8 @@ impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
         };
         extract_archive(&extract_setup, &archive, &temp)?;
         copy_dir_contents(&temp, &dest)?;
-        normalize_generated_repository(&self.setup.repo_name, &dest)?;
         write_generated_module_file(&dest, &self.setup.repo_name)?;
         Ok(())
-    }
-}
-
-impl IoRequest for BzlmodGeneratedNormalizeIoRequest {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
-        let dest = project_fs.resolve(&self.dest);
-        normalize_generated_repository(&self.canonical_repo_name, &dest)
     }
 }
 
@@ -1013,6 +1000,37 @@ toolchain(
         assert_eq!(
             "[package]\n",
             fs_util::read_to_string(&copied_link).categorize_internal()?
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn copy_dir_contents_preserves_hardlinks() -> bz_error::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+
+        let project_root = ProjectRootTemp::new()?;
+        let from = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("from")?);
+        let to = project_root.path().resolve(ProjectRelativePath::new("to")?);
+        let original = from.join(ForwardRelativePath::new("lib/libSystem.B.tbd")?);
+        let hardlink = from.join(ForwardRelativePath::new("lib/libproc.tbd")?);
+        fs_util::create_dir_all(original.parent().expect("original has parent"))?;
+        fs_util::write(&original, "--- !tapi-tbd\n").categorize_internal()?;
+        fs::hard_link(original.as_path(), hardlink.as_path()).categorize_internal()?;
+
+        copy_dir_contents(&from, &to)?;
+
+        let copied_original = to.join(ForwardRelativePath::new("lib/libSystem.B.tbd")?);
+        let copied_hardlink = to.join(ForwardRelativePath::new("lib/libproc.tbd")?);
+        assert_eq!(
+            fs::metadata(copied_original.as_path())
+                .categorize_internal()?
+                .ino(),
+            fs::metadata(copied_hardlink.as_path())
+                .categorize_internal()?
+                .ino()
         );
         Ok(())
     }
@@ -1460,27 +1478,6 @@ fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> bz_error::Result<(
             Ok(())
         }
     }
-}
-
-fn normalize_generated_repository(repo_name: &str, dest: &AbsNormPath) -> bz_error::Result<()> {
-    if repo_name.contains("macos_sdk") {
-        normalize_macos_sdk_archive(dest)?;
-    }
-    Ok(())
-}
-
-fn normalize_macos_sdk_archive(dest: &AbsNormPath) -> bz_error::Result<()> {
-    let usr_lib = dest.join(ForwardRelativePath::new("sysroot/usr/lib")?);
-    let libproc = usr_lib.join(ForwardRelativePath::new("libproc.tbd")?);
-    if libproc.exists() {
-        return Ok(());
-    }
-
-    let libsystem = usr_lib.join(ForwardRelativePath::new("libSystem.B.tbd")?);
-    if libsystem.exists() {
-        link_or_copy_file(&libsystem, &libproc)?;
-    }
-    Ok(())
 }
 
 fn checksum_from_integrity(integrity: &str) -> bz_error::Result<Checksum> {
@@ -2220,7 +2217,6 @@ fn bzlmod_generated_repo_contents_cache_key(setup: &BzlmodGeneratedCellSetup) ->
         }
         BzlmodGeneratedCellGenerator::HttpArchive(setup) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "http_archive");
-            update_bzlmod_repo_contents_cache_key(&mut hasher, "normalization_v2");
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.repo_name);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.url);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.sha256);
@@ -2241,7 +2237,6 @@ fn bzlmod_generated_repo_contents_cache_key(setup: &BzlmodGeneratedCellSetup) ->
         BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(setup) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "repository_rule_invocation");
             update_bzlmod_repo_contents_cache_key(&mut hasher, "build_bazel_mirror_v2");
-            update_bzlmod_repo_contents_cache_key(&mut hasher, "normalization_v2");
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.repo_name);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_bzl_cell);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_bzl_path);
@@ -4984,28 +4979,10 @@ async fn materialize_generated(
                 )
                 .await?;
             materialize_generated_contents(ctx, path, setup, cancellations).await?;
-            normalize_materialized_generated_repo(ctx, path, setup, cancellations).await?;
             write_bzlmod_generated_materialization_stamp(ctx, path, setup).await?;
             write_new_bzlmod_generated_materialization_value_stamp(ctx, path, setup).await?;
             bzlmod_generated_materialization_value(ctx, path, setup, &stamp_content).await
         })
-        .await
-}
-
-async fn normalize_materialized_generated_repo(
-    ctx: &mut DiceComputations<'_>,
-    path: &ProjectRelativePath,
-    setup: &BzlmodGeneratedCellSetup,
-    cancellations: &CancellationContext,
-) -> bz_error::Result<()> {
-    ctx.get_blocking_executor()
-        .execute_io(
-            Box::new(BzlmodGeneratedNormalizeIoRequest {
-                canonical_repo_name: setup.canonical_repo_name.dupe(),
-                dest: path.to_owned(),
-            }),
-            cancellations,
-        )
         .await
 }
 
@@ -5126,7 +5103,6 @@ async fn materialize_generated_with_repo_contents_cache(
         )
         .await?
     {
-        normalize_materialized_generated_repo(ctx, path, setup, cancellations).await?;
         write_new_bzlmod_generated_materialization_value_stamp(ctx, path, setup).await?;
         return bzlmod_generated_materialization_value(ctx, path, setup, &stamp_content).await;
     }
@@ -5145,7 +5121,6 @@ async fn materialize_generated_with_repo_contents_cache(
                 .await?;
 
             let result = materialize_generated_contents(ctx, path, setup, cancellations).await?;
-            normalize_materialized_generated_repo(ctx, path, setup, cancellations).await?;
             if result.cacheable && !cache_info.local {
                 if !promote_current_bzlmod_generated_repo_to_cache(ctx, cache_info, path, setup)
                     .await?

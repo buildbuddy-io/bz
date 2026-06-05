@@ -10,6 +10,7 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -77,6 +78,7 @@ use bz_common::io::trace::TracingIoProvider;
 use bz_core::category::Category;
 use bz_core::category::CategoryRef;
 use bz_core::cells::cell_path::CellPathRef;
+use bz_core::configuration::data::BazelBuildSettingValue;
 use bz_core::content_hash::ContentBasedPathHash;
 use bz_core::deferred::base_deferred_key::BaseDeferredKey;
 use bz_core::deferred::key::DeferredHolderKey;
@@ -334,6 +336,7 @@ pub(crate) struct StarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) bazel_inputs: Option<ValueTyped<'v, StarlarkCmdArgs<'v>>>,
+    pub(crate) bazel_executable: Option<Value<'v>>,
     pub(crate) bazel_executable_runfiles: Option<Value<'v>>,
     pub(crate) bazel_tool_runfiles: Option<Value<'v>>,
     pub(crate) bazel_cc_command_line: Option<ValueTyped<'v, BazelCcCompileCommandLine<'v>>>,
@@ -359,6 +362,7 @@ pub(crate) struct FrozenStarlarkRunActionValues {
     pub(crate) exe: FrozenValueTyped<'static, FrozenStarlarkCmdArgs>,
     pub(crate) args: FrozenValueTyped<'static, FrozenStarlarkCmdArgs>,
     pub(crate) bazel_inputs: Option<FrozenValueTyped<'static, FrozenStarlarkCmdArgs>>,
+    pub(crate) bazel_executable: Option<FrozenValue>,
     pub(crate) bazel_executable_runfiles: Option<FrozenValue>,
     pub(crate) bazel_tool_runfiles: Option<FrozenValue>,
     pub(crate) bazel_cc_command_line:
@@ -388,6 +392,7 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
             exe,
             args,
             bazel_inputs,
+            bazel_executable,
             bazel_executable_runfiles,
             bazel_tool_runfiles,
             bazel_cc_command_line,
@@ -402,6 +407,7 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
             exe: exe.freeze(freezer)?,
             args: args.freeze(freezer)?,
             bazel_inputs: bazel_inputs.freeze(freezer)?,
+            bazel_executable: bazel_executable.freeze(freezer)?,
             bazel_executable_runfiles: bazel_executable_runfiles.freeze(freezer)?,
             bazel_tool_runfiles: bazel_tool_runfiles.freeze(freezer)?,
             bazel_cc_command_line: bazel_cc_command_line.freeze(freezer)?,
@@ -462,6 +468,7 @@ struct UnpackedRunActionValues<'v> {
     exe: &'v dyn CommandLineArgLike<'v>,
     args: &'v dyn CommandLineArgLike<'v>,
     bazel_inputs: Option<&'v dyn CommandLineArgLike<'v>>,
+    bazel_executable: Option<Value<'v>>,
     bazel_executable_runfiles: Option<Value<'v>>,
     bazel_tool_runfiles: Option<Value<'v>>,
     bazel_cc_command_line: Option<&'v FrozenBazelCcCompileCommandLine>,
@@ -1600,6 +1607,83 @@ fn bazel_normalize_command_env(env: &mut SortedVectorMap<String, String>, path_m
     }
 }
 
+const BAZEL_ACTION_ENV: &str = "//command_line_option:action_env";
+const BAZEL_HOST_ACTION_ENV: &str = "//command_line_option:host_action_env";
+const BAZEL_STRICT_ACTION_ENV: &str = "//command_line_option:incompatible_strict_action_env";
+
+fn bazel_action_env_values(target: &ActionExecutionTarget<'_>, key: &str) -> Vec<String> {
+    let Some(label) = target.owner().configured_label() else {
+        return Vec::new();
+    };
+    let Ok(data) = label.cfg().data() else {
+        return Vec::new();
+    };
+    match data.build_settings.get(key) {
+        Some(BazelBuildSettingValue::String(value)) => vec![value.clone()],
+        Some(BazelBuildSettingValue::StringList(values)) => values.clone(),
+        _ => Vec::new(),
+    }
+}
+
+fn bazel_action_env_bool(target: &ActionExecutionTarget<'_>, key: &str, default: bool) -> bool {
+    let Some(label) = target.owner().configured_label() else {
+        return default;
+    };
+    let Ok(data) = label.cfg().data() else {
+        return default;
+    };
+    match data.build_settings.get(key) {
+        Some(BazelBuildSettingValue::Bool(value)) => *value,
+        Some(BazelBuildSettingValue::String(value)) => {
+            matches!(value.as_str(), "true" | "True" | "1")
+        }
+        _ => default,
+    }
+}
+
+fn bazel_action_uses_exec_configuration(target: &ActionExecutionTarget<'_>) -> bool {
+    target
+        .owner()
+        .configured_label()
+        .and_then(|label| label.cfg().label().ok().map(str::to_owned))
+        .is_some_and(|label| label.starts_with("bazeltr-"))
+}
+
+fn bazel_fixed_default_shell_env(
+    target: ActionExecutionTarget<'_>,
+) -> SortedVectorMap<String, String> {
+    let strict_action_env = bazel_action_env_bool(&target, BAZEL_STRICT_ACTION_ENV, true);
+    let mut env = BTreeMap::new();
+    if strict_action_env {
+        if cfg!(windows) {
+            env.insert("PATH".to_owned(), "c:/msys64/usr/bin".to_owned());
+        } else {
+            env.insert(
+                "PATH".to_owned(),
+                "/bin:/usr/bin:/sbin:/usr/sbin".to_owned(),
+            );
+        }
+    }
+    env.insert("LC_CTYPE".to_owned(), "C.UTF-8".to_owned());
+
+    let key = if bazel_action_uses_exec_configuration(&target) {
+        BAZEL_HOST_ACTION_ENV
+    } else {
+        BAZEL_ACTION_ENV
+    };
+    for entry in bazel_action_env_values(&target, key) {
+        if let Some(name) = entry.strip_prefix('=') {
+            env.remove(name);
+        } else if let Some((name, value)) = entry.split_once('=') {
+            env.insert(name.to_owned(), value.to_owned());
+        } else {
+            env.remove(entry.as_str());
+        }
+    }
+
+    env.into_iter().collect()
+}
+
 pub(crate) fn action_cache_add_bytes(fingerprint: &mut DataDigester, bytes: &[u8]) {
     fingerprint.update(&(bytes.len() as u64).to_le_bytes());
     fingerprint.update(bytes);
@@ -1712,15 +1796,19 @@ pub(crate) fn fingerprint_artifact_group_values(
     fingerprint: &mut DataDigester,
     fs: &ArtifactFs,
     values: &dyn ArtifactGroupValuesDyn,
+    executable_paths: Option<&[ProjectRelativePathBuf]>,
 ) -> bz_error::Result<()> {
-    if let Some(bytes) = values.action_cache_fingerprint() {
+    if executable_paths.is_none()
+        && let Some(bytes) = values.action_cache_fingerprint()
+    {
         fingerprint.update(bytes);
         return Ok(());
     }
 
     action_cache_add_str(fingerprint, "artifact_group");
-    if let Some((directory_fingerprint, directory_size)) =
-        values.directory_fingerprint_for_action_cache()
+    if executable_paths.is_none()
+        && let Some((directory_fingerprint, directory_size)) =
+            values.directory_fingerprint_for_action_cache()
     {
         action_cache_add_str(fingerprint, "directory");
         action_cache_add_tracked_file_digest(fingerprint, directory_fingerprint);
@@ -1738,7 +1826,14 @@ pub(crate) fn fingerprint_artifact_group_values(
             .as_ref(),
         )?;
         action_cache_add_str(fingerprint, path.as_str());
-        value.hash_action_cache_fingerprint(fingerprint);
+        if executable_paths.is_some_and(|paths| paths.iter().any(|executable| executable == &path))
+        {
+            value
+                .with_executable_bit(true)
+                .hash_action_cache_fingerprint(fingerprint);
+        } else {
+            value.hash_action_cache_fingerprint(fingerprint);
+        }
     }
     Ok(())
 }
@@ -1750,7 +1845,18 @@ fn fingerprint_command_execution_input(
 ) -> bz_error::Result<()> {
     match input {
         CommandExecutionInput::Artifact(values) => {
-            fingerprint_artifact_group_values(fingerprint, fs, values.as_ref())?;
+            fingerprint_artifact_group_values(fingerprint, fs, values.as_ref(), None)?;
+        }
+        CommandExecutionInput::ArtifactWithExecutableOverrides {
+            group,
+            executable_paths,
+        } => {
+            fingerprint_artifact_group_values(
+                fingerprint,
+                fs,
+                group.as_ref(),
+                Some(executable_paths),
+            )?;
         }
         CommandExecutionInput::ArtifactPathAlias {
             source_path,
@@ -2368,6 +2474,9 @@ impl RunAction {
                 .bazel_inputs
                 .as_ref()
                 .map(|bazel_inputs| &**bazel_inputs as &dyn CommandLineArgLike),
+            bazel_executable: values
+                .bazel_executable
+                .map(|executable: FrozenValue| executable.to_value()),
             bazel_executable_runfiles: values
                 .bazel_executable_runfiles
                 .map(|runfiles: FrozenValue| runfiles.to_value()),
@@ -2561,7 +2670,7 @@ impl RunAction {
             visit_bazel_tool_runfiles_artifacts(tool_runfiles, artifact_visitor)?;
         }
 
-        let cli_env: bz_error::Result<SortedVectorMap<_, _>> = values
+        let explicit_cli_env: bz_error::Result<SortedVectorMap<_, _>> = values
             .env
             .into_iter()
             .map(|(k, v)| {
@@ -2584,7 +2693,12 @@ impl RunAction {
                 Ok((k.to_owned(), env))
             })
             .collect();
-        let mut cli_env = cli_env?;
+        let mut cli_env = if self.inner.bazel_use_default_shell_env == Some(true) {
+            bazel_fixed_default_shell_env(action_execution_ctx.target())
+        } else {
+            SortedVectorMap::new()
+        };
+        cli_env.extend(explicit_cli_env?);
         if let Some((_, env)) = &bazel_cc_command_line {
             for (key, value) in env {
                 cli_env.insert(key.to_owned(), value.to_owned());
@@ -3053,11 +3167,16 @@ impl RunAction {
             visit_bazel_tool_runfiles_artifacts(tool_runfiles, artifact_visitor)?;
         }
 
+        let default_shell_env_len = if self.inner.bazel_use_default_shell_env == Some(true) {
+            bazel_fixed_default_shell_env(action_execution_ctx.target()).len()
+        } else {
+            0
+        };
         let bazel_cc_env_len = bazel_cc_command_line
             .as_ref()
             .map_or(0, |(_, env)| env.len());
-        let env_len = values.env.len() + bazel_cc_env_len;
-        let cli_env: bz_error::Result<SortedVectorMap<_, _>> = values
+        let env_len = default_shell_env_len + values.env.len() + bazel_cc_env_len;
+        let explicit_cli_env: bz_error::Result<SortedVectorMap<_, _>> = values
             .env
             .into_iter()
             .map(|(k, v)| {
@@ -3099,7 +3218,12 @@ impl RunAction {
                 Ok((k.to_owned(), env))
             })
             .collect();
-        let mut cli_env = cli_env?;
+        let mut cli_env = if self.inner.bazel_use_default_shell_env == Some(true) {
+            bazel_fixed_default_shell_env(action_execution_ctx.target())
+        } else {
+            SortedVectorMap::new()
+        };
+        cli_env.extend(explicit_cli_env?);
         if let Some((_, env)) = &bazel_cc_command_line {
             for (key, value) in env {
                 cli_env.insert(key.to_owned(), value.to_owned());
@@ -3461,6 +3585,7 @@ impl RunAction {
         artifact_fs: &ArtifactFs,
         bazel_execroot: Option<&ProjectRelativePath>,
         stage_bazel_path_mapping_aliases: bool,
+        executable_paths: Option<&[ProjectRelativePathBuf]>,
     ) -> bz_error::Result<()> {
         let Some(bazel_execroot) = bazel_execroot else {
             return Ok(());
@@ -3480,22 +3605,32 @@ impl RunAction {
                 ));
                 let bazel_alias = Self::bazel_execroot_path(bazel_execroot, bazel_path.clone())?;
                 if aliases.insert(bazel_alias.clone()) && source_path != bazel_alias {
+                    let value = Self::bazel_executable_artifact_value(
+                        source_path.as_ref(),
+                        value,
+                        executable_paths,
+                    );
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
                         path: bazel_alias,
-                        value: value.dupe(),
+                        value,
                     });
                 }
 
                 let source_alias =
                     Self::bazel_execroot_path(bazel_execroot, source_path.as_str().to_owned())?;
                 if aliases.insert(source_alias.clone()) && source_path != source_alias {
+                    let value = Self::bazel_executable_artifact_value(
+                        source_path.as_ref(),
+                        value,
+                        executable_paths,
+                    );
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
                         path: source_alias,
-                        value: value.dupe(),
+                        value,
                     });
                 }
 
@@ -3506,11 +3641,16 @@ impl RunAction {
                 if aliases.insert(normalized_source_alias.clone())
                     && source_path != normalized_source_alias
                 {
+                    let value = Self::bazel_executable_artifact_value(
+                        source_path.as_ref(),
+                        value,
+                        executable_paths,
+                    );
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
                         path: normalized_source_alias,
-                        value: value.dupe(),
+                        value,
                     });
                 }
 
@@ -3525,11 +3665,16 @@ impl RunAction {
                     if aliases.insert(mapped_bazel_alias.clone())
                         && source_path != mapped_bazel_alias
                     {
+                        let value = Self::bazel_executable_artifact_value(
+                            source_path.as_ref(),
+                            value,
+                            executable_paths,
+                        );
                         inputs.push(CommandExecutionInput::ArtifactPathAlias {
                             source_path: source_path.clone(),
                             source_requires_materialization,
                             path: mapped_bazel_alias,
-                            value: value.dupe(),
+                            value,
                         });
                     }
 
@@ -3540,11 +3685,16 @@ impl RunAction {
                     if aliases.insert(mapped_normalized_source_alias.clone())
                         && source_path != mapped_normalized_source_alias
                     {
+                        let value = Self::bazel_executable_artifact_value(
+                            source_path.as_ref(),
+                            value,
+                            executable_paths,
+                        );
                         inputs.push(CommandExecutionInput::ArtifactPathAlias {
                             source_path: source_path.clone(),
                             source_requires_materialization,
                             path: mapped_normalized_source_alias,
-                            value: value.dupe(),
+                            value,
                         });
                     }
                 }
@@ -3558,6 +3708,150 @@ impl RunAction {
         artifact_inputs: &[&ArtifactGroupValues],
     ) -> Vec<CommandExecutionInput> {
         artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())))
+    }
+
+    fn artifact_inputs_as_command_execution_inputs_with_executable_overrides(
+        artifact_inputs: &[&ArtifactGroupValues],
+        artifact_fs: &ArtifactFs,
+        executable_paths: Option<Arc<[ProjectRelativePathBuf]>>,
+    ) -> bz_error::Result<Vec<CommandExecutionInput>> {
+        let Some(executable_paths) = executable_paths else {
+            return Ok(Self::artifact_inputs_as_command_execution_inputs(
+                artifact_inputs,
+            ));
+        };
+
+        let mut inputs = Vec::with_capacity(artifact_inputs.len());
+        for artifact_group_values in artifact_inputs {
+            if Self::artifact_group_contains_executable_path(
+                artifact_group_values,
+                artifact_fs,
+                &executable_paths,
+            )? {
+                inputs.push(CommandExecutionInput::ArtifactWithExecutableOverrides {
+                    group: Box::new((*artifact_group_values).dupe()),
+                    executable_paths: executable_paths.dupe(),
+                });
+            } else {
+                inputs.push(CommandExecutionInput::Artifact(Box::new(
+                    (*artifact_group_values).dupe(),
+                )));
+            }
+        }
+        Ok(inputs)
+    }
+
+    fn artifact_group_contains_executable_path(
+        artifact_group_values: &ArtifactGroupValues,
+        artifact_fs: &ArtifactFs,
+        executable_paths: &[ProjectRelativePathBuf],
+    ) -> bz_error::Result<bool> {
+        for (artifact, value) in artifact_group_values.iter() {
+            let path = artifact.resolve_path(
+                artifact_fs,
+                if artifact.path_resolution_requires_artifact_value() {
+                    Some(value.content_based_path_hash())
+                } else {
+                    None
+                }
+                .as_ref(),
+            )?;
+            if Self::is_bazel_executable_override_path(&path, executable_paths) {
+                return Ok(true);
+            }
+            let alias_source_path =
+                Self::bazel_artifact_alias_source_path(artifact, value, artifact_fs)?;
+            if Self::is_bazel_executable_override_path(&alias_source_path, executable_paths) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn is_bazel_executable_override_path(
+        path: &ProjectRelativePath,
+        executable_paths: &[ProjectRelativePathBuf],
+    ) -> bool {
+        executable_paths
+            .iter()
+            .any(|executable_path| executable_path == path)
+    }
+
+    fn bazel_executable_artifact_value(
+        path: &ProjectRelativePath,
+        value: &ArtifactValue,
+        executable_paths: Option<&[ProjectRelativePathBuf]>,
+    ) -> ArtifactValue {
+        if executable_paths
+            .is_some_and(|paths| Self::is_bazel_executable_override_path(path, paths))
+        {
+            value.with_executable_bit(true)
+        } else {
+            value.dupe()
+        }
+    }
+
+    fn add_bazel_executable_override_paths_for_value(
+        paths: &mut BuckIndexSet<ProjectRelativePathBuf>,
+        ctx: &dyn ActionExecutionCtx,
+        artifact_fs: &ArtifactFs,
+        executable: Value<'_>,
+    ) -> bz_error::Result<()> {
+        let Some(executable) = ValueAsInputArtifactLike::unpack_value(executable)? else {
+            return Ok(());
+        };
+        let artifact_group = executable.0.get_artifact_group()?;
+        let artifact_group_values = ctx.artifact_values(&artifact_group);
+        for (artifact, value) in artifact_group_values.iter() {
+            let path = artifact.resolve_path(
+                artifact_fs,
+                if artifact.path_resolution_requires_artifact_value() {
+                    Some(value.content_based_path_hash())
+                } else {
+                    None
+                }
+                .as_ref(),
+            )?;
+            paths.insert(path);
+            paths.insert(Self::bazel_artifact_alias_source_path(
+                artifact,
+                value,
+                artifact_fs,
+            )?);
+        }
+        Ok(())
+    }
+
+    fn bazel_executable_override_paths(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        artifact_fs: &ArtifactFs,
+        values: &UnpackedRunActionValues<'_>,
+    ) -> bz_error::Result<Option<Arc<[ProjectRelativePathBuf]>>> {
+        let mut paths = BuckIndexSet::new();
+        if let Some(executable) = values.bazel_executable {
+            Self::add_bazel_executable_override_paths_for_value(
+                &mut paths,
+                ctx,
+                artifact_fs,
+                executable,
+            )?;
+        }
+        if let Some(tool_runfiles) = values.bazel_tool_runfiles {
+            for tool in bazel_tool_runfiles(tool_runfiles)? {
+                Self::add_bazel_executable_override_paths_for_value(
+                    &mut paths,
+                    ctx,
+                    artifact_fs,
+                    tool?.executable,
+                )?;
+            }
+        }
+        if paths.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(paths.into_iter().collect::<Vec<_>>().into()))
+        }
     }
 
     fn command_execution_inputs_with_bazel_execroot_aliases(
@@ -3574,6 +3868,7 @@ impl RunAction {
             artifact_fs,
             bazel_execroot,
             stage_bazel_path_mapping_aliases,
+            None,
         )?;
         Ok(inputs)
     }
@@ -3785,6 +4080,7 @@ impl RunAction {
         bazel_execroot: Option<&ProjectRelativePath>,
         executable_path: Option<&str>,
         runfiles: Option<Value<'_>>,
+        executable_paths: Option<&[ProjectRelativePathBuf]>,
     ) -> bz_error::Result<()> {
         let (Some(bazel_execroot), Some(executable_path), Some(runfiles)) =
             (bazel_execroot, executable_path, runfiles)
@@ -3823,11 +4119,16 @@ impl RunAction {
                 if source_path == alias {
                     continue;
                 }
+                let value = Self::bazel_executable_artifact_value(
+                    source_path.as_ref(),
+                    value,
+                    executable_paths,
+                );
                 inputs.push(CommandExecutionInput::ArtifactPathAlias {
                     source_path,
                     source_requires_materialization,
                     path: alias,
-                    value: value.dupe(),
+                    value,
                 });
             }
         }
@@ -3851,6 +4152,7 @@ impl RunAction {
         artifact_fs: &ArtifactFs,
         bazel_execroot: Option<&ProjectRelativePath>,
         tool_runfiles: Option<Value<'_>>,
+        executable_paths: Option<&[ProjectRelativePathBuf]>,
     ) -> bz_error::Result<()> {
         let (Some(bazel_execroot), Some(tool_runfiles)) = (bazel_execroot, tool_runfiles) else {
             return Ok(());
@@ -3871,6 +4173,7 @@ impl RunAction {
                 Some(bazel_execroot),
                 Some(&executable_path),
                 Some(tool.runfiles),
+                executable_paths,
             )?;
         }
         Ok(())
@@ -3923,14 +4226,15 @@ impl RunAction {
             }
         };
 
-        let executor_fs = ctx.executor_fs();
-        let fs = executor_fs.fs();
+        let artifact_fs = ctx.fs().clone();
+        let fs = &artifact_fs;
         let bazel_paths = self.uses_bazel_execroot_paths();
         let bazel_path_mapping =
             bazel_path_mapping_enabled_value(bazel_paths, self.inner.supports_bazel_path_mapping);
         let mut local_action_cache_extra_inputs: Vec<CommandExecutionInput> = Vec::with_capacity(2);
 
         let mut extra_env = Vec::new();
+        let executor_fs = ctx.executor_fs();
         let cli_ctx = DefaultCommandLineContext::new(&executor_fs);
         let mut ignored_inputs = Vec::new();
         let mut ignored_pending_action_metadata_writes = Vec::new();
@@ -4029,8 +4333,8 @@ impl RunAction {
             true,
         )?;
 
-        let executor_fs = ctx.executor_fs();
-        let fs = executor_fs.fs();
+        let artifact_fs = ctx.fs().clone();
+        let fs = &artifact_fs;
 
         let bazel_paths = self.uses_bazel_execroot_paths();
         let bazel_path_mapping =
@@ -4049,10 +4353,26 @@ impl RunAction {
                 .collect()
         };
 
+        let (bazel_executable_override_paths, bazel_executable_runfiles, bazel_tool_runfiles) = {
+            let values = Self::unpack(&self.starlark_values)?;
+            (
+                self.bazel_executable_override_paths(ctx, fs, &values)?,
+                values.bazel_executable_runfiles,
+                values.bazel_tool_runfiles,
+            )
+        };
         let mut local_action_cache_inputs: Vec<CommandExecutionInput> =
-            artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
+            Self::artifact_inputs_as_command_execution_inputs_with_executable_overrides(
+                &artifact_inputs,
+                fs,
+                bazel_executable_override_paths.dupe(),
+            )?;
         let mut inputs: Vec<CommandExecutionInput> =
-            artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
+            Self::artifact_inputs_as_command_execution_inputs_with_executable_overrides(
+                &artifact_inputs,
+                fs,
+                bazel_executable_override_paths.dupe(),
+            )?;
         let bazel_execroot = if bazel_paths {
             Some(self.bazel_action_execroot(fs, ctx.target())?)
         } else {
@@ -4064,11 +4384,8 @@ impl RunAction {
             fs,
             bazel_execroot.as_deref(),
             bazel_paths,
+            bazel_executable_override_paths.as_deref(),
         )?;
-        let bazel_executable_runfiles = {
-            let values = Self::unpack(&self.starlark_values)?;
-            values.bazel_executable_runfiles
-        };
         self.add_bazel_runfiles_path_aliases(
             &mut inputs,
             &artifact_inputs,
@@ -4076,17 +4393,15 @@ impl RunAction {
             bazel_execroot.as_deref(),
             expanded.exe.first().map(String::as_str),
             bazel_executable_runfiles,
+            bazel_executable_override_paths.as_deref(),
         )?;
-        let bazel_tool_runfiles = {
-            let values = Self::unpack(&self.starlark_values)?;
-            values.bazel_tool_runfiles
-        };
         self.add_bazel_tool_runfiles_path_aliases(
             &mut inputs,
             &artifact_inputs,
             fs,
             bazel_execroot.as_deref(),
             bazel_tool_runfiles,
+            bazel_executable_override_paths.as_deref(),
         )?;
         self.add_bazel_external_repo_path_aliases(
             &mut inputs,
@@ -4097,6 +4412,7 @@ impl RunAction {
 
         let mut extra_env = Vec::new();
         let mut pending_action_metadata_writes = Vec::new();
+        let executor_fs = ctx.executor_fs();
         let cli_ctx = DefaultCommandLineContext::new(&executor_fs);
         self.prepare_param_files(
             fs,
