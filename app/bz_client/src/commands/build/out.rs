@@ -290,8 +290,7 @@ async fn copy_file(src: &Path, dst: &Path) -> bz_error::Result<()> {
 }
 
 fn convert_broken_pipe_error(e: io::Error) -> bz_error::Error {
-    bz_error::Error::from(ClientIoError::from(e))
-        .context("Error writing build artifact to --out")
+    bz_error::Error::from(ClientIoError::from(e)).context("Error writing build artifact to --out")
 }
 
 #[cfg(test)]

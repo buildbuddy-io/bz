@@ -189,13 +189,17 @@ impl StreamingCommand for InstallCommand {
         // as otherwise we'll add the above installer options *after* the installer extra args `--` separator.
         extra_run_args.extend(self.extra_run_args.clone());
 
+        let target_cfg = self.target_cfg.target_cfg_with_default_platform(
+            self.common_opts.config_opts.implied_target_platform(),
+        );
+
         let response = buckd
             .with_flushing()
             .install(
                 InstallRequest {
                     context: Some(context),
                     target_patterns: self.patterns.clone(),
-                    target_cfg: Some(self.target_cfg.target_cfg()),
+                    target_cfg: Some(target_cfg),
                     build_opts: Some(
                         self.build_opts
                             .to_proto_with_remote_only(ctx.rbe_implies_remote_only())?,

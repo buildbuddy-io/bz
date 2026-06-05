@@ -177,40 +177,52 @@ impl StreamingCommand for ProfileSubcommand {
         let profiler = profile_mode.to_proto();
 
         let profile_opts = match &self.subcommand {
-            ProfileCommand::Loading(loading) => ProfileOpts::TargetProfile(TargetProfile {
-                target_patterns: loading.buck_opts.target_patterns.clone(),
-                action: target_profile::Action::Loading as i32,
-                target_cfg: Some(
-                    loading
-                        .profile_common_opts
-                        .target_cfg
-                        .target_cfg
-                        .target_cfg(),
-                ),
-                target_universe: loading
+            ProfileCommand::Loading(loading) => {
+                let target_cfg = loading
                     .profile_common_opts
                     .target_cfg
-                    .target_universe
-                    .clone(),
-                recursive: loading.buck_opts.recursive,
-            }),
-            ProfileCommand::Analysis(analysis) => ProfileOpts::TargetProfile(TargetProfile {
-                target_patterns: analysis.buck_opts.target_patterns.clone(),
-                action: target_profile::Action::Analysis as i32,
-                target_cfg: Some(
-                    analysis
+                    .target_cfg_with_default_platform(
+                        loading
+                            .profile_common_opts
+                            .common_opts
+                            .config_opts
+                            .implied_target_platform(),
+                    );
+                ProfileOpts::TargetProfile(TargetProfile {
+                    target_patterns: loading.buck_opts.target_patterns.clone(),
+                    action: target_profile::Action::Loading as i32,
+                    target_cfg: Some(target_cfg),
+                    target_universe: loading
                         .profile_common_opts
                         .target_cfg
-                        .target_cfg
-                        .target_cfg(),
-                ),
-                target_universe: analysis
+                        .target_universe
+                        .clone(),
+                    recursive: loading.buck_opts.recursive,
+                })
+            }
+            ProfileCommand::Analysis(analysis) => {
+                let target_cfg = analysis
                     .profile_common_opts
                     .target_cfg
-                    .target_universe
-                    .clone(),
-                recursive: analysis.buck_opts.recursive,
-            }),
+                    .target_cfg_with_default_platform(
+                        analysis
+                            .profile_common_opts
+                            .common_opts
+                            .config_opts
+                            .implied_target_platform(),
+                    );
+                ProfileOpts::TargetProfile(TargetProfile {
+                    target_patterns: analysis.buck_opts.target_patterns.clone(),
+                    action: target_profile::Action::Analysis as i32,
+                    target_cfg: Some(target_cfg),
+                    target_universe: analysis
+                        .profile_common_opts
+                        .target_cfg
+                        .target_universe
+                        .clone(),
+                    recursive: analysis.buck_opts.recursive,
+                })
+            }
             ProfileCommand::Bxl(bxl) => {
                 if !bxl
                     .profile_common_opts
@@ -224,10 +236,19 @@ impl StreamingCommand for ProfileSubcommand {
                     ))
                     .into();
                 }
+                let target_cfg = bxl
+                    .profile_common_opts
+                    .target_cfg
+                    .target_cfg_with_default_platform(
+                        bxl.profile_common_opts
+                            .common_opts
+                            .config_opts
+                            .implied_target_platform(),
+                    );
                 ProfileOpts::BxlProfile(BxlProfile {
                     bxl_label: bxl.bxl_opts.bxl_label.clone(),
                     bxl_args: bxl.bxl_opts.bxl_args.clone(),
-                    target_cfg: Some(bxl.profile_common_opts.target_cfg.target_cfg.target_cfg()),
+                    target_cfg: Some(target_cfg),
                 })
             }
         };

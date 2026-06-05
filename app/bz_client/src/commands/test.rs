@@ -333,7 +333,9 @@ impl StreamingCommand for TestCommand {
                 TestRequest {
                     context: Some(context),
                     target_patterns: self.patterns.clone(),
-                    target_cfg: Some(self.target_cfg.target_cfg()),
+                    target_cfg: Some(self.target_cfg.target_cfg_with_default_platform(
+                        self.common_opts.config_opts.implied_target_platform(),
+                    )),
                     test_executor_args: self.test_executor_args,
                     excluded_labels: self.exclude,
                     included_labels: self.include,

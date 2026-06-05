@@ -1541,6 +1541,47 @@ async fn bazel_host_platform_target(
     parse_bazel_platform_target(ctx, "platforms//host:host").await
 }
 
+fn bazel_parseable_platform_label(label: &str) -> Option<String> {
+    if !label.contains("//") {
+        return None;
+    }
+    let Some(canonical) = label.strip_prefix("@@") else {
+        return Some(label.to_owned());
+    };
+    let Some((repo, package_and_target)) = canonical.split_once("//") else {
+        return None;
+    };
+    if let Some(apparent_name) = repo.strip_suffix('+')
+        && !apparent_name.contains('+')
+    {
+        return Some(format!("@{apparent_name}//{package_and_target}"));
+    }
+    Some(format!("@{canonical}"))
+}
+
+async fn bazel_current_platform_target(
+    ctx: &mut DiceComputations<'_>,
+    cfg: &ConfigurationData,
+) -> bz_error::Result<Option<TargetLabel>> {
+    if let Ok(label) = cfg.label()
+        && let Some(label) = bazel_parseable_platform_label(label)
+        && let Ok(target) = parse_bazel_platform_target(ctx, &label).await
+    {
+        return Ok(Some(target));
+    }
+    Ok(None)
+}
+
+async fn bazel_current_or_host_platform_target(
+    ctx: &mut DiceComputations<'_>,
+    cfg: &ConfigurationData,
+) -> bz_error::Result<TargetLabel> {
+    if let Some(target) = bazel_current_platform_target(ctx, cfg).await? {
+        return Ok(target);
+    }
+    bazel_host_platform_target(ctx).await
+}
+
 async fn bazel_platform_configuration(
     ctx: &mut DiceComputations<'_>,
     target: &TargetLabel,
@@ -1563,12 +1604,15 @@ async fn apply_bazel_platform_cfg_to_bazel_rule(
     }
 
     let data = cfg.data()?.clone();
-    let mut platform_targets = match data.build_settings.get(BAZEL_PLATFORMS_OPTION) {
-        Some(platforms) => bazel_platform_targets_from_setting(ctx, platforms).await?,
-        None => Vec::new(),
+    let mut platform_targets = match bazel_current_platform_target(ctx, cfg).await? {
+        Some(target) => vec![target],
+        None => match data.build_settings.get(BAZEL_PLATFORMS_OPTION) {
+            Some(platforms) => bazel_platform_targets_from_setting(ctx, platforms).await?,
+            None => Vec::new(),
+        },
     };
     if platform_targets.is_empty() {
-        platform_targets.push(bazel_host_platform_target(ctx).await?);
+        platform_targets.push(bazel_current_or_host_platform_target(ctx, cfg).await?);
     }
     platform_targets.truncate(1);
 
@@ -1669,6 +1713,38 @@ async fn resolve_constraint_value_alias(
     resolve_bazel_alias(ctx, constraint_value).await
 }
 
+async fn platform_contains_constraint_value(
+    ctx: &mut DiceComputations<'_>,
+    platform_constraints: &std::collections::BTreeMap<
+        bz_core::configuration::constraints::ConstraintKey,
+        bz_core::configuration::constraints::ConstraintValue,
+    >,
+    constraint_value: &TargetLabel,
+) -> bz_error::Result<bool> {
+    if platform_constraints_contain_label(platform_constraints, constraint_value) {
+        return Ok(true);
+    }
+
+    let resolved_constraint_value = resolve_constraint_value_alias(ctx, constraint_value).await?;
+    if platform_constraints_contain_label(platform_constraints, &resolved_constraint_value) {
+        return Ok(true);
+    }
+
+    for actual in platform_constraints.values() {
+        let actual = actual.0.target();
+        if actual == constraint_value || actual == &resolved_constraint_value {
+            return Ok(true);
+        }
+
+        let resolved_actual = resolve_constraint_value_alias(ctx, actual).await?;
+        if &resolved_actual == constraint_value || resolved_actual == resolved_constraint_value {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 async fn resolve_registered_bazel_toolchain_node(
     ctx: &mut DiceComputations<'_>,
     node: TargetNode,
@@ -1710,12 +1786,7 @@ async fn platform_contains_constraint_values(
 
     let platform_constraints = &platform_cfg.data()?.constraints;
     for constraint_value in constraint_values {
-        if platform_constraints_contain_label(platform_constraints, constraint_value) {
-            continue;
-        }
-
-        let resolved = resolve_constraint_value_alias(ctx, constraint_value).await?;
-        if !platform_constraints_contain_label(platform_constraints, &resolved) {
+        if !platform_contains_constraint_value(ctx, platform_constraints, constraint_value).await? {
             return Ok(false);
         }
     }
@@ -1767,7 +1838,7 @@ async fn toolchain_constraints_match(
     }
 
     let target_compatible_with = target_node
-        .known_attr_or_none(TARGET_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
+        .attr_or_none(TARGET_COMPATIBLE_WITH_ATTRIBUTE.name, AttrInspectOptions::All)
         .map(|attr| attr_target_labels(&attr.value))
         .unwrap_or_default();
     if !platform_contains_constraint_values(ctx, target_cfg, &target_compatible_with).await? {
@@ -1775,7 +1846,7 @@ async fn toolchain_constraints_match(
     }
 
     let exec_compatible_with = target_node
-        .known_attr_or_none(EXEC_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
+        .attr_or_none(EXEC_COMPATIBLE_WITH_ATTRIBUTE.name, AttrInspectOptions::All)
         .map(|attr| attr_target_labels(&attr.value))
         .unwrap_or_default();
     if !platform_contains_constraint_values(ctx, exec_cfg, &exec_compatible_with).await? {
@@ -2060,6 +2131,7 @@ pub async fn resolve_bazel_declared_toolchain_deps(
     if !target_label.cfg().is_bound() || declared_toolchain_requirements.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
+    let target_cfg = apply_bazel_platform_cfg_to_bazel_rule(ctx, target_label.cfg()).await?;
 
     let mut declared_toolchains = SmallMap::new();
     for declared in declared_toolchain_requirements {
@@ -2070,18 +2142,19 @@ pub async fn resolve_bazel_declared_toolchain_deps(
             .and_modify(|(_, mandatory)| *mandatory |= declared.mandatory)
             .or_insert((resolution_key, declared.mandatory));
     }
-    let extra_toolchains = bazel_extra_toolchain_patterns_from_cfg(target_label.cfg())?;
+    let extra_toolchains = bazel_extra_toolchain_patterns_from_cfg(&target_cfg)?;
 
     let selected_toolchain_impls: Vec<(String, String, bool, Option<TargetLabel>)> = ctx
         .try_compute_join(
             declared_toolchains.iter(),
             |ctx, (declared, (resolution_key, mandatory))| {
                 let extra_toolchains = extra_toolchains.clone();
+                let target_cfg = target_cfg.dupe();
                 async move {
                     let toolchain_impl = resolve_bazel_single_toolchain(
                         ctx,
                         resolution_key.clone(),
-                        target_label.cfg().dupe(),
+                        target_cfg,
                         execution_platform_cfg.cfg().dupe(),
                         extra_toolchains,
                     )
@@ -2112,7 +2185,7 @@ pub async fn resolve_bazel_declared_toolchain_deps(
             continue;
         };
         let configured = toolchain_impl.configure_with_exec(
-            target_label.cfg().dupe(),
+            target_cfg.dupe(),
             execution_platform_cfg.cfg().dupe(),
         );
         let provider_label =
@@ -2424,6 +2497,23 @@ async fn compute_configured_target_node(
         )?);
     }
 
+    if target_node.is_bazel_rule() {
+        let cfg = apply_bazel_platform_cfg_to_bazel_rule(ctx, key.0.cfg()).await?;
+        if &cfg != key.0.cfg() {
+            let target_label_after_transition = key
+                .0
+                .unconfigured()
+                .configure_pair(Configuration::new(cfg, key.0.exec_cfg().duped()));
+            let transitioned_node = ctx
+                .get_internal_configured_target_node(&target_label_after_transition)
+                .await?;
+            return ResultMaybeCompatible::Compatible(ConfiguredTargetNode::new_forward(
+                key.0.dupe(),
+                transitioned_node,
+            )?);
+        }
+    }
+
     let transition_id = match &target_node.rule.cfg {
         RuleIncomingTransition::None => None,
         RuleIncomingTransition::Fixed(transition_id) => Some(transition_id.dupe()),
@@ -2439,23 +2529,6 @@ async fn compute_configured_target_node(
     if let Some(transition_id) = transition_id {
         compute_configured_forward_target_node(key, &target_node, &transition_id, ctx).await
     } else {
-        if target_node.is_bazel_rule() {
-            let cfg = apply_bazel_platform_cfg_to_bazel_rule(ctx, key.0.cfg()).await?;
-            if &cfg != key.0.cfg() {
-                let target_label_after_transition = key
-                    .0
-                    .unconfigured()
-                    .configure_pair(Configuration::new(cfg, key.0.exec_cfg().duped()));
-                let transitioned_node = ctx
-                    .get_internal_configured_target_node(&target_label_after_transition)
-                    .await?;
-                return ResultMaybeCompatible::Compatible(ConfiguredTargetNode::new_forward(
-                    key.0.dupe(),
-                    transitioned_node,
-                )?);
-            }
-        }
-
         // We are not caching `ConfiguredTransitionedNodeKey` because this is cheap,
         // and no need to fetch `target_node` again.
         compute_configured_target_node_no_transition(&key.0.dupe(), target_node, ctx).await

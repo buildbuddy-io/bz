@@ -51,8 +51,19 @@ pub struct TargetCfgUnusedOptions {
 
 impl TargetCfgOptions {
     pub fn target_cfg(&self) -> TargetCfg {
+        self.target_cfg_with_default_platform(None)
+    }
+
+    pub fn target_cfg_with_default_platform(
+        &self,
+        default_target_platform: Option<&str>,
+    ) -> TargetCfg {
         TargetCfg {
-            target_platform: self.target_platforms.clone().unwrap_or_default(),
+            target_platform: self
+                .target_platforms
+                .clone()
+                .or_else(|| default_target_platform.map(str::to_owned))
+                .unwrap_or_default(),
             cli_modifiers: self.cli_modifiers(),
         }
     }
@@ -81,6 +92,20 @@ pub struct TargetCfgWithUniverseOptions {
     pub target_cfg: TargetCfgOptions,
 }
 
+impl TargetCfgWithUniverseOptions {
+    pub fn target_cfg(&self) -> TargetCfg {
+        self.target_cfg.target_cfg()
+    }
+
+    pub fn target_cfg_with_default_platform(
+        &self,
+        default_target_platform: Option<&str>,
+    ) -> TargetCfg {
+        self.target_cfg
+            .target_cfg_with_default_platform(default_target_platform)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
@@ -100,6 +125,36 @@ mod tests {
         let opts = parse(&["--modifier", "value1", "--modifier", "value2"])?;
 
         assert_eq!(opts.cli_modifiers(), vec!["value1", "value2"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_platform_used_when_target_platform_absent() -> bz_error::Result<()> {
+        let opts = parse(&[])?;
+
+        assert_eq!(
+            opts.target_cfg_with_default_platform(Some("cell//platforms:default")),
+            TargetCfg {
+                target_platform: "cell//platforms:default".to_owned(),
+                cli_modifiers: Vec::new(),
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_target_platform_overrides_default() -> bz_error::Result<()> {
+        let opts = parse(&["--target-platforms=cell//platforms:explicit"])?;
+
+        assert_eq!(
+            opts.target_cfg_with_default_platform(Some("cell//platforms:default")),
+            TargetCfg {
+                target_platform: "cell//platforms:explicit".to_owned(),
+                cli_modifiers: Vec::new(),
+            }
+        );
 
         Ok(())
     }

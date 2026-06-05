@@ -330,6 +330,10 @@ impl StreamingCommand for TargetsCommand {
             .target_hash_modified_paths
             .into_try_map(|path| path.resolve(&ctx.working_dir).into_string())?;
 
+        let target_cfg = self.target_cfg.target_cfg_with_default_platform(
+            self.common_opts.config_opts.implied_target_platform(),
+        );
+
         let target_request = TargetsRequest {
             context,
             target_patterns: self.patterns,
@@ -352,7 +356,7 @@ impl StreamingCommand for TargetsCommand {
                     package_values,
                 })
             }),
-            target_cfg: Some(self.target_cfg.target_cfg()),
+            target_cfg: Some(target_cfg),
             output: self
                 .output
                 .try_map(|x| x.resolve(&ctx.working_dir).into_string())?,

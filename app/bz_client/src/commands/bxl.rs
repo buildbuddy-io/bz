@@ -104,6 +104,9 @@ impl StreamingCommand for BxlCommand {
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
         let context = ctx.client_context(matches, &self)?;
+        let target_cfg = self.target_cfg.target_cfg_with_default_platform(
+            self.common_ops.config_opts.implied_target_platform(),
+        );
         let result = buckd
             .with_flushing()
             .bxl(
@@ -116,7 +119,7 @@ impl StreamingCommand for BxlCommand {
                             .build_opts
                             .to_proto_with_remote_only(ctx.rbe_implies_remote_only())?,
                     ),
-                    target_cfg: Some(self.target_cfg.target_cfg()),
+                    target_cfg: Some(target_cfg),
                     final_artifact_materializations: self.bxl_opts.materializations.to_proto()
                         as i32,
                     final_artifact_uploads: self.bxl_opts.upload_final_artifacts.to_proto() as i32,

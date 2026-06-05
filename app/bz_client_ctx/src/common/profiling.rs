@@ -46,9 +46,7 @@ impl BuckProfileMode {
             BuckProfileMode::HeapSummaryAllocated => {
                 bz_cli_proto::ProfileMode::HeapSummaryAllocated
             }
-            BuckProfileMode::HeapSummaryRetained => {
-                bz_cli_proto::ProfileMode::HeapSummaryRetained
-            }
+            BuckProfileMode::HeapSummaryRetained => bz_cli_proto::ProfileMode::HeapSummaryRetained,
             BuckProfileMode::Statement => bz_cli_proto::ProfileMode::Statement,
             BuckProfileMode::Bytecode => bz_cli_proto::ProfileMode::Bytecode,
             BuckProfileMode::BytecodePairs => bz_cli_proto::ProfileMode::BytecodePairs,

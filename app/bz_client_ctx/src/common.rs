@@ -61,6 +61,7 @@ const LLVM_TOOLCHAIN_PATTERN: &str = "@llvm//toolchain:all";
 const LLVM_LINUX_X86_64_PLATFORM: &str = "@llvm//platforms:linux_x86_64";
 const LLVM_MACOS_AARCH64_PLATFORM: &str = "@llvm//platforms:macos_aarch64";
 const LLVM_STUB_LIBGCC_S_SETTING: &str = "@llvm//config:experimental_stub_libgcc_s";
+const LLVM_EMPTY_SYSROOT_SETTING: &str = "@llvm//config:empty_sysroot";
 const LLVM_LINUX_LINKOPT: &str = "-no-pie";
 const LLVM_MACOS_FRAMEWORKS: &str = "CoreFoundation,Foundation,Kernel,OSLog,Security,SystemConfiguration,IOKit,CoreServices,DiskArbitration,CFNetwork";
 
@@ -341,7 +342,7 @@ pub struct CommonBuildConfigurationOptions {
         value_name = "SECTION.OPTION=VALUE",
         long = "config",
         short = 'c',
-        help = "List of config options",
+        help = "List of config options, or Bazel compilation mode values: fastbuild, dbg, opt",
         // Needs to be explicitly set, otherwise will treat `-c a b c` -> [a, b, c]
         // rather than [a] and other positional arguments `b c`.
         num_args = 1
@@ -466,6 +467,16 @@ pub struct CommonBuildConfigurationOptions {
         num_args = 1
     )]
     pub bazel_extra_toolchains: Vec<String>,
+
+    /// Bazel-compatible compilation mode setting. This populates
+    /// `//command_line_option:compilation_mode`.
+    #[clap(
+        long = "compilation_mode",
+        alias = "compilation-mode",
+        value_name = "MODE",
+        num_args = 1
+    )]
+    pub bazel_compilation_mode: Vec<String>,
 
     /// Bazel-compatible C/C++ link option. This populates
     /// `//command_line_option:linkopt`.
@@ -624,6 +635,13 @@ impl CommonBuildConfigurationOptions {
         Self::bazel_command_line_build_setting_entry("list", key, value)
     }
 
+    fn bazel_compilation_mode(value: &str) -> Option<&str> {
+        match value {
+            "fastbuild" | "dbg" | "opt" => Some(value),
+            _ => None,
+        }
+    }
+
     fn bazel_cpu_from_platform(
         platform: HostPlatformOverride,
         arch: HostArchOverride,
@@ -745,6 +763,9 @@ impl CommonBuildConfigurationOptions {
                     LLVM_TOOLCHAIN_PATTERN,
                 ),
                 Self::bazel_command_line_bool_build_setting(LLVM_STUB_LIBGCC_S_SETTING, true),
+                // Hermetic LLVM documents this setting for Rust interop where
+                // unmanaged build scripts link against host system libraries.
+                Self::bazel_command_line_bool_build_setting(LLVM_EMPTY_SYSROOT_SETTING, false),
             ],
         ))
     }
@@ -918,6 +939,16 @@ impl CommonBuildConfigurationOptions {
                     Self::parse_bazel_command_line_build_settings_override(raw_arg)
             {
                 bazel_command_line_build_setting_args.push((index, settings));
+            } else if cell.is_none()
+                && let Some(compilation_mode) = Self::bazel_compilation_mode(raw_arg)
+            {
+                bazel_command_line_build_setting_args.push((
+                    index,
+                    vec![Self::bazel_command_line_string_build_setting(
+                        "//command_line_option:compilation_mode",
+                        compilation_mode,
+                    )],
+                ));
             } else {
                 config_values_args.push((
                     index,
@@ -1038,6 +1069,23 @@ impl CommonBuildConfigurationOptions {
                 } else {
                     Some((index, settings))
                 }
+            }),
+        );
+
+        bazel_command_line_build_setting_args.extend(
+            with_indices(
+                &self.bazel_compilation_mode,
+                "bazel_compilation_mode",
+                matches,
+            )?
+            .map(|(index, compilation_mode)| {
+                (
+                    index,
+                    vec![Self::bazel_command_line_string_build_setting(
+                        "//command_line_option:compilation_mode",
+                        compilation_mode,
+                    )],
+                )
             }),
         );
 
@@ -1188,6 +1236,16 @@ impl CommonBuildConfigurationOptions {
         self.host_platform_spec().platform
     }
 
+    pub fn implied_target_platform(&self) -> Option<&'static str> {
+        if self.linux2mac {
+            Some(LLVM_MACOS_AARCH64_PLATFORM)
+        } else if self.mac2linux {
+            Some(LLVM_LINUX_X86_64_PLATFORM)
+        } else {
+            None
+        }
+    }
+
     fn host_platform_spec(&self) -> PlatformSpec {
         match self.fake_host {
             Some(platform) => PlatformSpec::new(platform, self.host_arch_spec()),
@@ -1247,6 +1305,7 @@ impl CommonBuildConfigurationOptions {
             bazel_platforms: vec![],
             bazel_extra_execution_platforms: vec![],
             bazel_extra_toolchains: vec![],
+            bazel_compilation_mode: vec![],
             bazel_linkopt: vec![],
             bazel_host_linkopt: vec![],
             bazel_java_language_version: vec![],
@@ -1279,6 +1338,7 @@ impl CommonBuildConfigurationOptions {
             bazel_platforms: vec![],
             bazel_extra_execution_platforms: vec![],
             bazel_extra_toolchains: vec![],
+            bazel_compilation_mode: vec![],
             bazel_linkopt: vec![],
             bazel_host_linkopt: vec![],
             bazel_java_language_version: vec![],
@@ -1848,10 +1908,8 @@ mod tests {
             build_settings
                 .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
         );
-        assert!(
-            build_settings
-                .contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue")
-        );
+        assert!(build_settings.contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue"));
+        assert!(build_settings.contains("bool\t@llvm//config:empty_sysroot\tfalse"));
         if cfg!(target_os = "linux") {
             assert!(build_settings.contains("list\t//command_line_option:linkopt\t-no-pie"));
         } else {
@@ -1894,10 +1952,8 @@ mod tests {
             build_settings
                 .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
         );
-        assert!(
-            build_settings
-                .contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue")
-        );
+        assert!(build_settings.contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue"));
+        assert!(build_settings.contains("bool\t@llvm//config:empty_sysroot\tfalse"));
         assert!(build_settings.contains("list\t//command_line_option:linkopt\t-no-pie"));
         assert!(override_values.contains(
             &"bazel.host_platform_constraints=@platforms//cpu:x86_64\n@platforms//os:linux"
@@ -1917,6 +1973,10 @@ mod tests {
             HostPlatformOverride::Linux
         );
         assert_eq!(opts.config.host_arch_override(), HostArchOverride::X86_64);
+        assert_eq!(
+            opts.config.implied_target_platform(),
+            Some(LLVM_MACOS_AARCH64_PLATFORM)
+        );
 
         let argv = ExpandedArgvBuilder::new().build();
         let matches = BuckArgMatches::from_clap(&clap, &argv);
@@ -1944,10 +2004,8 @@ mod tests {
             build_settings
                 .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
         );
-        assert!(
-            build_settings
-                .contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue")
-        );
+        assert!(build_settings.contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue"));
+        assert!(build_settings.contains("bool\t@llvm//config:empty_sysroot\tfalse"));
         assert!(
             build_settings
                 .contains("list\t//command_line_option:platforms\t@llvm//platforms:macos_aarch64")
@@ -1973,6 +2031,10 @@ mod tests {
             HostPlatformOverride::MacOs
         );
         assert_eq!(opts.config.host_arch_override(), HostArchOverride::AArch64);
+        assert_eq!(
+            opts.config.implied_target_platform(),
+            Some(LLVM_LINUX_X86_64_PLATFORM)
+        );
 
         let argv = ExpandedArgvBuilder::new().build();
         let matches = BuckArgMatches::from_clap(&clap, &argv);
@@ -2000,10 +2062,8 @@ mod tests {
             build_settings
                 .contains("list\t//command_line_option:extra_toolchains\t@llvm//toolchain:all")
         );
-        assert!(
-            build_settings
-                .contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue")
-        );
+        assert!(build_settings.contains("bool\t@llvm//config:experimental_stub_libgcc_s\ttrue"));
+        assert!(build_settings.contains("bool\t@llvm//config:empty_sysroot\tfalse"));
         assert!(
             build_settings
                 .contains("list\t//command_line_option:platforms\t@llvm//platforms:linux_x86_64")
@@ -2162,6 +2222,31 @@ mod tests {
         assert_eq!(
             overrides[1].config_override,
             "bazel.command_line_build_settings=string\t//command_line_option:cpu\tk8\nlist\t//command_line_option:platforms\t//platforms:linux\nlist\t//command_line_option:platforms\t@platforms//cpu:x86_64\nlist\t//command_line_option:extra_execution_platforms\t@toolchains//platforms:linux_x86_64\nlist\t//command_line_option:extra_toolchains\t@toolchains//cc:linux_x86_64\nlist\t//command_line_option:linkopt\t-Wl,-z,now\nlist\t//command_line_option:host_linkopt\t-no-pie\nstring\t//command_line_option:host_cpu\tk8"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_bazel_compilation_mode_becomes_build_setting() -> bz_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "-c", "opt", "--compilation_mode=dbg"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        use crate::immediate_config::ImmediateConfigContext;
+
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        assert_eq!(overrides.len(), 1);
+        assert_eq!(
+            overrides[0].config_override,
+            "bazel.command_line_build_settings=string\t//command_line_option:compilation_mode\topt\nstring\t//command_line_option:compilation_mode\tdbg"
         );
         Ok(())
     }

@@ -106,7 +106,11 @@ fn bazel_transition_input_value<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> bz_error::Result<Value<'v>> {
     if key == BAZEL_PLATFORMS_OPTION {
-        if let Some(value) = conf.data()?.build_settings.get(key) {
+        if let Ok(label) = conf.label()
+            && let Some(label) = bazel_parseable_platform_label(label)
+        {
+            Ok(eval.heap().alloc(vec![label]).to_value())
+        } else if let Some(value) = conf.data()?.build_settings.get(key) {
             Ok(bazel_build_setting_value_to_starlark(value, eval))
         } else {
             Ok(eval.heap().alloc(Vec::<&str>::new()).to_value())
@@ -421,6 +425,47 @@ async fn bazel_host_platform_target(
     parse_bazel_platform_target(ctx, "platforms//host:host").await
 }
 
+fn bazel_parseable_platform_label(label: &str) -> Option<String> {
+    if !label.contains("//") {
+        return None;
+    }
+    let Some(canonical) = label.strip_prefix("@@") else {
+        return Some(label.to_owned());
+    };
+    let Some((repo, package_and_target)) = canonical.split_once("//") else {
+        return None;
+    };
+    if let Some(apparent_name) = repo.strip_suffix('+')
+        && !apparent_name.contains('+')
+    {
+        return Some(format!("@{apparent_name}//{package_and_target}"));
+    }
+    Some(format!("@{canonical}"))
+}
+
+async fn bazel_current_platform_target(
+    ctx: &mut DiceComputations<'_>,
+    cfg: &ConfigurationData,
+) -> bz_error::Result<Option<TargetLabel>> {
+    if let Ok(label) = cfg.label()
+        && let Some(label) = bazel_parseable_platform_label(label)
+        && let Ok(target) = parse_bazel_platform_target(ctx, &label).await
+    {
+        return Ok(Some(target));
+    }
+    Ok(None)
+}
+
+async fn bazel_current_or_host_platform_target(
+    ctx: &mut DiceComputations<'_>,
+    cfg: &ConfigurationData,
+) -> bz_error::Result<TargetLabel> {
+    if let Some(target) = bazel_current_platform_target(ctx, cfg).await? {
+        return Ok(target);
+    }
+    bazel_host_platform_target(ctx).await
+}
+
 async fn apply_bazel_platform_build_setting_to_cfg(
     ctx: &mut DiceComputations<'_>,
     cfg: ConfigurationData,
@@ -431,12 +476,15 @@ async fn apply_bazel_platform_build_setting_to_cfg(
 
     let data = cfg.data()?.clone();
 
-    let mut platform_targets = match data.build_settings.get(BAZEL_PLATFORMS_OPTION) {
-        Some(platforms) => bazel_platform_targets_from_setting(ctx, platforms).await?,
-        None => Vec::new(),
+    let mut platform_targets = match bazel_current_platform_target(ctx, &cfg).await? {
+        Some(target) => vec![target],
+        None => match data.build_settings.get(BAZEL_PLATFORMS_OPTION) {
+            Some(platforms) => bazel_platform_targets_from_setting(ctx, platforms).await?,
+            None => Vec::new(),
+        },
     };
     if platform_targets.is_empty() {
-        platform_targets.push(bazel_host_platform_target(ctx).await?);
+        platform_targets.push(bazel_current_or_host_platform_target(ctx, &cfg).await?);
     }
     platform_targets.truncate(1);
 
