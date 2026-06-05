@@ -13,6 +13,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use bz_data::CommandExecutionDetails;
@@ -60,6 +61,7 @@ use crate::subscribers::superconsole::dice::DiceComponent;
 use crate::subscribers::superconsole::header::TasksHeader;
 use crate::subscribers::superconsole::io::IoHeader;
 use crate::subscribers::superconsole::re::ReHeader;
+use crate::subscribers::superconsole::resource::ResourceHeader;
 use crate::subscribers::superconsole::session_info::SessionInfoComponent;
 use crate::subscribers::superconsole::system_warning::SystemWarningComponent;
 use crate::subscribers::superconsole::test::TestHeader;
@@ -77,6 +79,7 @@ mod header;
 pub(crate) mod io;
 mod message_renderer;
 mod re;
+mod resource;
 pub mod session_info;
 pub(crate) mod system_warning;
 pub mod timekeeper;
@@ -388,11 +391,73 @@ pub struct SuperConsoleState {
     simple_console: SimpleConsole<DebugEventObserverExtra>,
     config: SuperConsoleConfig,
     active_warnings: Option<Vec<DisplayReport>>,
+    system_resource_usage: SystemResourceUsageTracker,
 }
 
 impl SuperConsoleState {
     pub fn extra(&self) -> &DebugEventObserverExtra {
         self.simple_console.observer.extra()
+    }
+
+    pub(crate) fn system_resource_usage(&self) -> SystemResourceUsage {
+        self.system_resource_usage.current()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SystemResourceUsage {
+    pub(crate) memory_used_bytes: Option<u64>,
+    pub(crate) memory_total_bytes: Option<u64>,
+    pub(crate) disk_io: Option<bz_util::system_stats::SystemDiskIoStats>,
+}
+
+struct SystemResourceUsageTracker {
+    last_refresh: Option<Instant>,
+    current: SystemResourceUsage,
+    disk_io_collector: bz_util::system_stats::SystemDiskIoStatsCollector,
+}
+
+impl SystemResourceUsageTracker {
+    const REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+
+    fn new() -> Self {
+        let mut tracker = Self {
+            last_refresh: None,
+            current: SystemResourceUsage {
+                memory_used_bytes: None,
+                memory_total_bytes: None,
+                disk_io: None,
+            },
+            disk_io_collector: bz_util::system_stats::SystemDiskIoStatsCollector::new(),
+        };
+        tracker.refresh();
+        tracker
+    }
+
+    fn current(&self) -> SystemResourceUsage {
+        self.current
+    }
+
+    fn tick(&mut self) {
+        if self
+            .last_refresh
+            .is_none_or(|last_refresh| last_refresh.elapsed() >= Self::REFRESH_INTERVAL)
+        {
+            self.refresh();
+        }
+    }
+
+    fn refresh(&mut self) {
+        let memory = bz_util::system_stats::system_memory_stats_detailed();
+        if memory.total > 0 {
+            self.current.memory_used_bytes = Some(memory.total.saturating_sub(memory.available));
+            self.current.memory_total_bytes = Some(memory.total);
+        } else {
+            self.current.memory_used_bytes = None;
+            self.current.memory_total_bytes = None;
+        }
+        self.current.disk_io = self.disk_io_collector.refresh();
+        self.last_refresh = Some(Instant::now());
     }
 }
 
@@ -545,6 +610,14 @@ impl Component for BuckRootComponent<'_> {
         draw.draw(
             &SessionInfoComponent {
                 session_info: self.state.session_info(),
+            },
+            mode,
+        )?;
+        draw.draw(
+            &ResourceHeader {
+                state: self.state,
+                re_state: self.state.simple_console.observer.re_state(),
+                two_snapshots: self.state.simple_console.observer.two_snapshots(),
             },
             mode,
         )?;
@@ -744,6 +817,7 @@ impl SuperConsoleState {
             ),
             config,
             active_warnings: None,
+            system_resource_usage: SystemResourceUsageTracker::new(),
         })
     }
 
@@ -760,6 +834,7 @@ impl SuperConsoleState {
 
     pub fn tick(&mut self, tick: Tick) {
         self.timekeeper.tick(tick);
+        self.system_resource_usage.tick();
     }
 }
 
@@ -1329,7 +1404,7 @@ impl StatefulSuperConsoleImpl {
         }
     }
     async fn tick(&mut self, tick: &Tick) -> bz_error::Result<()> {
-        self.state.timekeeper.tick(*tick);
+        self.state.tick(*tick);
         self.try_update_active_warnings();
 
         // Tick games when active.

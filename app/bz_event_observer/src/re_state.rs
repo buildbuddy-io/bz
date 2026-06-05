@@ -170,7 +170,10 @@ impl ReState {
         Ok(Some(Line::unstyled(&line)?))
     }
 
-    fn render_detailed(&self, two_snapshots: &TwoSnapshots) -> bz_error::Result<Vec<Line>> {
+    pub fn render_detailed(
+        &self,
+        two_snapshots: &TwoSnapshots,
+    ) -> bz_error::Result<Vec<Line>> {
         let mut r = Vec::new();
         if let (Some(first), Some((_, last))) = (&self.first_snapshot, &two_snapshots.last) {
             r.extend(self.render_detailed_items(

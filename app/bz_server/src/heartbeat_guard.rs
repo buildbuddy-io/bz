@@ -27,7 +27,7 @@ impl HeartbeatGuard {
         // NOTE: This doesn't use the ambient dispatcher wrappers because we want to control the
         // exact lifetime of the dispatcher.
         let handle = tokio::spawn(bz_util::async_move_clone!(events, collector, {
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let mut interval = tokio::time::interval(Duration::from_millis(500));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 let snapshot = collector.create_snapshot().await;

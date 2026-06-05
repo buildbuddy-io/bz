@@ -14,7 +14,7 @@ use superconsole::Component;
 
 use crate::subscribers::superconsole::SuperConsoleConfig;
 
-/// Draw the test summary line above the `timed_list`
+/// Draw detailed remote execution rows below the telemetry header.
 pub(crate) struct ReHeader<'a> {
     pub(crate) super_console_config: &'a SuperConsoleConfig,
     pub(crate) re_state: &'a ReState,
@@ -27,12 +27,13 @@ impl Component for ReHeader<'_> {
     fn draw_unchecked(
         &self,
         _dimensions: superconsole::Dimensions,
-        mode: superconsole::DrawMode,
+        _mode: superconsole::DrawMode,
     ) -> bz_error::Result<superconsole::Lines> {
-        self.re_state.render(
-            self.two_snapshots,
-            self.super_console_config.enable_detailed_re,
-            mode,
-        )
+        if !self.super_console_config.enable_detailed_re {
+            return Ok(superconsole::Lines::new());
+        }
+        Ok(superconsole::Lines(
+            self.re_state.render_detailed(self.two_snapshots)?,
+        ))
     }
 }
