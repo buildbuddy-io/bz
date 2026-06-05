@@ -28,6 +28,7 @@ use superconsole::style::Stylize;
 use self::table_builder::Table;
 use crate::subscribers::dice_activity::active_dice_summary;
 use crate::subscribers::superconsole::SuperConsoleState;
+use crate::subscribers::superconsole::common::horizontal_rule;
 use crate::subscribers::superconsole::timed_list::table_builder::Row;
 use crate::subscribers::superconsole::timed_list::table_builder::TimedRow;
 
@@ -255,7 +256,7 @@ impl Component for TimedListHeader {
         dimensions: Dimensions,
         _mode: DrawMode,
     ) -> bz_error::Result<Lines> {
-        Ok(Lines(vec![Line::unstyled(&"-".repeat(dimensions.width))?]))
+        Ok(Lines(vec![horizontal_rule(dimensions.width)?]))
     }
 }
 
@@ -429,7 +430,7 @@ mod tests {
         )?;
         let expected = [
 
-            "----------------------------------------",
+            "<span fg=grey>────────────────────────────────────────</span>",
             "<span fg=dark_yellow>test -- speak of the devil</span>          <span fg=dark_yellow>3.0s</span>",
             "foo -- speak of the devil           1.0s",
         ].iter().map(|l| format!("{l}\n")).join("");
@@ -513,7 +514,7 @@ mod tests {
             DrawMode::Normal,
         )?;
         let expected = [
-            "----------------------------------------",
+            "<span fg=grey>────────────────────────────────────────</span>",
             "e1 -- speak of the devil            1.0s",
             "<span italic>... and 2 more currently executing</span>",
         ]
@@ -564,7 +565,7 @@ mod tests {
             )?;
 
             let expected = [
-                "------------------------------------------------------------",
+                "<span fg=grey>────────────────────────────────────────────────────────────</span>",
                 "<span fg=dark_red>pkg:target -- action (category identifier)</span>             <span fg=dark_red>10.0s</span>",
             ].iter().map(|l| format!("{l}\n")).join("");
 
@@ -583,7 +584,7 @@ mod tests {
             )?;
 
             let expected = [
-                "------------------------------------------------------------",
+                "<span fg=grey>────────────────────────────────────────────────────────────</span>",
                 "<span italic>... and 1 more currently executing</span>",
             ]
             .iter()
@@ -781,7 +782,7 @@ mod tests {
             DrawMode::Normal,
         )?;
         let expected = [
-            "--------------------------------------------------------------------------------",
+            "<span fg=grey>────────────────────────────────────────────────────────────────────────────────</span>",
             "<span fg=dark_red>pkg:target -- action (category identifier) [prepare 5.0s]</span>                  <span fg=dark_red>10.0s</span>",
         ].iter().map(|l| format!("{l}\n")).join("");
 
@@ -830,7 +831,7 @@ mod tests {
             DrawMode::Normal,
         )?;
         let expected = [
-            "--------------------------------------------------------------------------------",
+            "<span fg=grey>────────────────────────────────────────────────────────────────────────────────</span>",
             "<span fg=dark_red>pkg:target -- action (category identifier) [prepare 5.0s + 1]</span>              <span fg=dark_red>10.0s</span>",
         ].iter().map(|l| format!("{l}\n")).join("");
 

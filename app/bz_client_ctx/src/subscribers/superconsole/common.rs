@@ -15,10 +15,12 @@ use superconsole::Dimensions;
 use superconsole::DrawMode;
 use superconsole::Line;
 use superconsole::Lines;
+use superconsole::Span;
 use superconsole::components::Aligned;
 use superconsole::components::DrawHorizontal;
 use superconsole::components::alignment::HorizontalAlignmentKind;
 use superconsole::components::alignment::VerticalAlignmentKind;
+use superconsole::style::Color;
 
 #[derive(Debug)]
 pub(crate) struct HeaderLineComponent<A: Component, B: Component> {
@@ -68,4 +70,11 @@ impl<S: AsRef<str>> Component for StaticStringComponent<S> {
     ) -> bz_error::Result<Lines> {
         Ok(Lines(vec![Line::unstyled(self.header.as_ref())?]))
     }
+}
+
+pub(crate) fn horizontal_rule(width: usize) -> bz_error::Result<Line> {
+    Ok(Line::from_iter([Span::new_colored_lossy(
+        &"─".repeat(width),
+        Color::Grey,
+    )]))
 }

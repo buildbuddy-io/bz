@@ -21,12 +21,18 @@ use superconsole::Dimensions;
 use superconsole::DrawMode;
 use superconsole::Line;
 use superconsole::Lines;
+use superconsole::Span;
+use superconsole::style::Attribute;
+use superconsole::style::Color;
+use superconsole::style::ContentStyle;
+use superconsole::style::StyledContent;
 
 use crate::subscribers::superconsole::SuperConsoleState;
 use crate::subscribers::superconsole::common::HeaderLineComponent;
 use crate::subscribers::superconsole::common::StaticStringComponent;
 
 const PROGRESS_LABEL_WIDTH: usize = "Validated".len();
+const PROGRESS_ROW_INDENT: &str = " ";
 
 pub(crate) struct TasksHeader<'s> {
     header: &'s str,
@@ -52,7 +58,6 @@ impl Component for TasksHeader<'_> {
             }
 
             ProgressHeader {
-                header: self.header,
                 phase_stats: &phase_stats,
                 progress_stats: self.state.extra().progress_state().progress_stats(),
                 action_stats: self.state.simple_console.observer.action_stats(),
@@ -126,12 +131,12 @@ impl Component for SimpleHeader<'_> {
     }
 }
 
-fn time_elapsed(state: &SuperConsoleState) -> String {
-    fmt_duration::fmt_duration(state.timekeeper.duration_since_command_start())
-}
-
 fn format_count(count: u64) -> String {
     CommaSeparatedCount::new(count).to_string()
+}
+
+fn time_elapsed(state: &SuperConsoleState) -> String {
+    fmt_duration::fmt_duration(state.timekeeper.duration_since_command_start())
 }
 
 /// This component is used to display summary counts about the number of jobs.
@@ -183,9 +188,8 @@ impl Component for CountComponent<'_> {
             }
             DrawMode::Final => {
                 let mut lines = vec![Line::unstyled(&format!(
-                    "Jobs completed: {}. Time elapsed: {}.",
+                    "Jobs completed: {}.",
                     CommaSeparatedCount::new(self.data.finished),
-                    self.data.elapsed_str,
                 ))?];
                 if self.data.action_stats.log_stats() {
                     lines.push(Line::unstyled(&self.data.action_stats.to_string())?);
@@ -197,7 +201,6 @@ impl Component for CountComponent<'_> {
 }
 
 pub(crate) struct ProgressHeader<'s> {
-    header: &'s str,
     phase_stats: &'s BuildProgressPhaseStats,
     progress_stats: &'s BuildProgressStats,
     action_stats: &'s ActionStats,
@@ -215,7 +218,6 @@ impl Style {
     fn render(
         &self,
         mode: DrawMode,
-        header: &str,
         progress_label: &str,
         mut completed: u64,
         total: u64,
@@ -225,22 +227,32 @@ impl Style {
         if let DrawMode::Final = mode {
             completed = total;
         }
+        let executed = progress_label == "Executed";
         let mut line = match self {
-            Style::Normal(num_width) | Style::Compact(num_width) => format!(
-                "{header} {progress_label:<progress_label_width$} {completed:>num_width$}/{total:<num_width$}",
-                header = header,
-                progress_label = progress_label,
-                progress_label_width = PROGRESS_LABEL_WIDTH,
-                completed = format_count(completed),
-                total = format_count(total),
-                num_width = *num_width
-            ),
-            Style::ExtraCompact => {
+            Style::Normal(num_width) | Style::Compact(num_width) => {
+                let completed = format_count(completed);
+                let total = format_count(total);
+                let count = if executed {
+                    let tight_count = format!("[{completed} / {total}]");
+                    format!("{tight_count:^width$}", width = num_width * 2 + 5)
+                } else {
+                    format!("{completed:>num_width$} / {total:<num_width$}")
+                };
                 format!(
-                    "{header} {progress_label:<progress_label_width$} {completed}/{total}",
+                    "{PROGRESS_ROW_INDENT}{progress_label:<progress_label_width$} {count}",
+                    progress_label = progress_label,
                     progress_label_width = PROGRESS_LABEL_WIDTH,
-                    completed = format_count(completed),
-                    total = format_count(total),
+                )
+            }
+            Style::ExtraCompact => {
+                let count = if executed {
+                    format!("[{} / {}]", format_count(completed), format_count(total))
+                } else {
+                    format!("{} / {}", format_count(completed), format_count(total))
+                };
+                format!(
+                    "{PROGRESS_ROW_INDENT}{progress_label:<progress_label_width$} {count}",
+                    progress_label_width = PROGRESS_LABEL_WIDTH,
                 )
             }
         };
@@ -270,10 +282,8 @@ impl Style {
 
 impl ProgressHeader<'_> {
     fn render_loads(&self, style: Style, mode: DrawMode) -> String {
-        // Always use 20-char header for alignment with "Running validations."
         style.render(
             mode,
-            "Loading targets.    ",
             "Loaded",
             self.phase_stats.loads.finished,
             self.phase_stats.loads.started,
@@ -300,10 +310,8 @@ impl ProgressHeader<'_> {
     }
 
     fn render_analyses(&self, style: Style, mode: DrawMode) -> String {
-        // Always use 20-char header for alignment with "Running validations."
         style.render(
             mode,
-            "Analyzing targets.  ",
             "Analyzed",
             self.phase_stats.analyses.finished,
             self.phase_stats.analyses.started,
@@ -352,10 +360,8 @@ impl ProgressHeader<'_> {
             running.join(", ")
         };
 
-        // Always use 20-char header for alignment with "Running validations."
         style.render(
             mode,
-            "Executing actions.  ",
             "Executed",
             phase_stats.finished,
             phase_stats.started,
@@ -369,14 +375,12 @@ impl ProgressHeader<'_> {
         let started = self.progress_stats.remote_cache_checks_started;
         let finished = self.progress_stats.remote_cache_checks_finished;
 
-        if started == 0 || running == 0 || matches!(mode, DrawMode::Final) {
+        if started == 0 || (running == 0 && finished == 0) || matches!(mode, DrawMode::Final) {
             return None;
         }
 
-        // Always use 20-char header for alignment with "Running validations."
         Some(style.render(
             mode,
-            "Checking cache.     ",
             "Checked",
             finished,
             started,
@@ -442,7 +446,7 @@ impl ProgressHeader<'_> {
                 } else {
                     format!(
                         "{}{}",
-                        if compact { "" } else { "Finished " },
+                        if compact { "" } else { "Finished  " },
                         res_types.join(", ")
                     )
                 }
@@ -477,10 +481,8 @@ impl ProgressHeader<'_> {
     }
 
     fn render_validations(&self, style: Style, mode: DrawMode) -> String {
-        // "Running validations." is 20 chars - no padding needed
         style.render(
             mode,
-            "Running validations.",
             "Validated",
             self.phase_stats.validations.finished,
             self.phase_stats.validations.started,
@@ -517,12 +519,11 @@ impl Component for ProgressHeader<'_> {
 
         let num_width = std::cmp::max(5, count_len(max_total));
 
-        let header_width = "Executing actions.  Validated _/_ (running: _ local, _ remote)  ".len()
+        let header_width = PROGRESS_ROW_INDENT.len()
+            + "Executed [_ / _] (running: _ local, _ remote)  ".len()
             + 4 * (num_width - 1);
 
         let elapsed = format!("Time elapsed: {}", &self.time_elapsed);
-
-        // During normal drawing, the elapsed time is in the last row at the end. In the final rendering it gets its own line and is on the left.
         let inline_elapsed = match mode {
             DrawMode::Normal => &elapsed,
             DrawMode::Final => "",
@@ -541,7 +542,7 @@ impl Component for ProgressHeader<'_> {
         let mut main = Vec::new();
         let mut extra = Vec::new();
 
-        if loads.started > 0 {
+        if loads.started > 0 || matches!(mode, DrawMode::Normal) {
             main.push(self.render_loads(style, mode));
             if let Style::Normal(..) = style {
                 extra.push(self.render_loads_extra());
@@ -559,10 +560,7 @@ impl Component for ProgressHeader<'_> {
             }
         }
 
-        if actions.started == 0 {
-            main.push(self.header.to_owned());
-            extra.push(String::new());
-        } else {
+        if actions.started > 0 {
             if let Some(line) = self.render_remote_cache_checks(style, mode) {
                 main.push(line);
                 extra.push(String::new());
@@ -581,31 +579,31 @@ impl Component for ProgressHeader<'_> {
                 extra.push(String::new());
             }
 
-            // Use 20-char padding when validations are shown (to align with "Running validations.")
-            // otherwise use 18-char padding (original)
-            let header_pad = if validations.started > 0 { 20 } else { 18 };
-            main.push(format!(
-                // typically aligns this with the progress count in the line above, but a long header would push it over, which is okay
-                "{:<header_pad$} {}",
-                self.header,
-                self.render_actions_stats(if dimensions.width > 90 {
-                    Style::Normal(num_width)
-                } else {
-                    style
-                })
-            ));
-            if let Style::Normal(..) = style {
-                extra.push(self.render_actions_stats_extra());
+            let actions_stats = self.render_actions_stats(if dimensions.width > 90 {
+                Style::Normal(num_width)
             } else {
-                extra.push(String::new());
+                style
+            });
+            if !actions_stats.is_empty() {
+                main.push(format!("{PROGRESS_ROW_INDENT}{actions_stats}"));
+                if let Style::Normal(..) = style {
+                    extra.push(self.render_actions_stats_extra());
+                } else {
+                    extra.push(String::new());
+                }
             }
+        }
+
+        if main.is_empty() {
+            main.push(String::new());
+            extra.push(String::new());
         }
 
         assert!(!extra.is_empty());
         assert_eq!(main.len(), extra.len());
 
-        // We now have the "main" column and the "extra" column and we want to lay them out. In addition, we're going to insert
-        // the "Time elapsed: 12s" string at the end of the final line.
+        // We now have the "main" column and the "extra" column and we want to lay them out. In normal mode, we also
+        // insert the "Time elapsed: 12s" string at the end of the final line.
         //
         // The main column is printed on the left and then padded to align the extra column.
         // As long as there is less than `extra_preferred_width` space, the extra column will go immediately after the main column,
@@ -615,7 +613,6 @@ impl Component for ProgressHeader<'_> {
 
         let extra_preferred_width = long_middle_len + 20;
         let extra_width = extra.iter().map(String::len).max().unwrap();
-        // need to append elapsed time to the final line
         let extra_min_width = 2 + std::cmp::max(
             extra_width,
             extra.last().unwrap().len() + inline_elapsed.len() + 2,
@@ -637,7 +634,7 @@ impl Component for ProgressHeader<'_> {
         for i in 0..main.len() {
             let mut line = format!("{:<pad_to$}{}", main[i], extra[i], pad_to = pad_to);
 
-            if i == main.len() - 1 {
+            if i == main.len() - 1 && !inline_elapsed.is_empty() {
                 let wanted_len = dimensions.width.saturating_sub(inline_elapsed.len() + 2);
                 if line.len() > wanted_len {
                     // If we're going to have to truncate the extra column for the elapsed time, just drop it in this row.
@@ -653,15 +650,214 @@ impl Component for ProgressHeader<'_> {
                 line += inline_elapsed;
             }
 
-            lines.push(Line::unstyled(&line)?);
-        }
-
-        if let DrawMode::Final = mode {
-            lines.push(Line::unstyled(&elapsed)?);
+            lines.push(style_progress_header_line(&line));
         }
 
         Ok(Lines(lines))
     }
+}
+
+fn style_progress_header_line(line: &str) -> Line {
+    let mut ranges = Vec::new();
+
+    if let Some((count_start, count_end, is_executed)) = progress_count_range(line) {
+        ranges.push(StyledRange {
+            start: count_start,
+            end: count_end,
+            foreground_color: if is_executed {
+                Some(Color::DarkGreen)
+            } else {
+                None
+            },
+            bold: true,
+        });
+    }
+
+    add_progress_detail_ranges(line, &mut ranges);
+    add_progress_extra_ranges(line, &mut ranges);
+    add_action_stats_count_ranges(line, &mut ranges);
+
+    if ranges.is_empty() {
+        return Line::unstyled(line).expect("progress header line should be valid");
+    }
+
+    line_from_styled_ranges(line, ranges)
+}
+
+fn progress_count_range(line: &str) -> Option<(usize, usize, bool)> {
+    let labels = ["Loaded", "Analyzed", "Executed", "Checked", "Validated"];
+    let label = labels.iter().find(|label| line.contains(*label))?;
+    let search_start = line.find(label)? + label.len();
+    let count_start = line[search_start..]
+        .char_indices()
+        .find(|(_, ch)| ch.is_ascii_digit() || *ch == '[')?
+        .0
+        + search_start;
+    let mut count_end = line[count_start..]
+        .char_indices()
+        .find(|(_, ch)| {
+            !matches!(ch, '0'..='9' | ',' | '/' | ' ' | '[' | ']')
+        })
+        .map_or(line.len(), |(offset, _)| count_start + offset);
+    while count_end > count_start && line.as_bytes()[count_end - 1] == b' ' {
+        count_end -= 1;
+    }
+    Some((count_start, count_end, *label == "Executed"))
+}
+
+#[derive(Clone, Copy)]
+struct StyledRange {
+    start: usize,
+    end: usize,
+    foreground_color: Option<Color>,
+    bold: bool,
+}
+
+fn add_progress_detail_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
+    let mut search_start = 0;
+    while let Some(open_offset) = line[search_start..].find('(') {
+        let open = search_start + open_offset;
+        let Some(close_offset) = line[open..].find(')') else {
+            break;
+        };
+        let close = open + close_offset + 1;
+        let detail = &line[open + 1..close - 1];
+        if detail.starts_with("running:") || detail.contains("% hit") || detail.ends_with('%') {
+            ranges.push(StyledRange {
+                start: open,
+                end: close,
+                foreground_color: Some(Color::Grey),
+                bold: false,
+            });
+        }
+        search_start = close;
+    }
+}
+
+fn add_progress_extra_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
+    for label in [
+        "dirs read",
+        "targets declared",
+        "actions",
+        "artifacts declared",
+    ] {
+        let mut search_start = 0;
+        while let Some(label_offset) = line[search_start..].find(label) {
+            let label_start = search_start + label_offset;
+            let label_end = label_start + label.len();
+            if count_range_before(line, label_start).is_some() {
+                ranges.push(StyledRange {
+                    start: label_start,
+                    end: label_end,
+                    foreground_color: Some(Color::Grey),
+                    bold: false,
+                });
+                if line.as_bytes().get(label_end).is_some_and(|ch| *ch == b',') {
+                    ranges.push(StyledRange {
+                        start: label_end,
+                        end: label_end + 1,
+                        foreground_color: Some(Color::Grey),
+                        bold: false,
+                    });
+                }
+            }
+            search_start = label_end;
+        }
+    }
+}
+
+fn count_range_before(line: &str, before: usize) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let mut end = before;
+    while end > 0 && bytes[end - 1] == b' ' {
+        end -= 1;
+    }
+    if end == 0 || !bytes[end - 1].is_ascii_digit() {
+        return None;
+    }
+
+    let mut start = end;
+    while start > 0 && matches!(bytes[start - 1], b'0'..=b'9' | b',') {
+        start -= 1;
+    }
+    Some((start, end))
+}
+
+fn add_action_stats_count_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
+    let Some(finished) = line.find("Finished ") else {
+        return;
+    };
+    let stats_start = finished + "Finished ".len();
+    let stats_end = line.find("Time elapsed:").unwrap_or(line.len());
+    let mut search_start = stats_start;
+
+    while search_start < stats_end {
+        let Some(number_offset) = line[search_start..stats_end]
+            .char_indices()
+            .find(|(_, ch)| ch.is_ascii_digit())
+            .map(|(offset, _)| offset)
+        else {
+            break;
+        };
+        let start = search_start + number_offset;
+        let end = line[start..stats_end]
+            .char_indices()
+            .find(|(_, ch)| !matches!(ch, '0'..='9' | ','))
+            .map_or(stats_end, |(offset, _)| start + offset);
+        let suffix = line[end..stats_end].trim_start();
+        if suffix.starts_with("local") || suffix.starts_with("remote") {
+            ranges.push(StyledRange {
+                start,
+                end,
+                foreground_color: None,
+                bold: true,
+            });
+        }
+        search_start = end;
+    }
+}
+
+fn line_from_styled_ranges(line: &str, mut ranges: Vec<StyledRange>) -> Line {
+    ranges.sort_by_key(|range| (range.start, range.end));
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+
+    for range in ranges {
+        if range.start < cursor || range.start >= range.end {
+            continue;
+        }
+        if cursor < range.start {
+            spans.push(Span::new_unstyled_lossy(&line[cursor..range.start]));
+        }
+        spans.push(styled_span(
+            &line[range.start..range.end],
+            range.foreground_color,
+            range.bold,
+        ));
+        cursor = range.end;
+    }
+
+    if cursor < line.len() {
+        spans.push(Span::new_unstyled_lossy(&line[cursor..]));
+    }
+
+    Line::from_iter(spans)
+}
+
+fn styled_span(text: &str, foreground_color: Option<Color>, bold: bool) -> Span {
+    Span::new_styled_lossy(StyledContent::new(
+        ContentStyle {
+            foreground_color,
+            background_color: None,
+            underline_color: None,
+            attributes: if bold {
+                Attribute::Bold.into()
+            } else {
+                Default::default()
+            },
+        },
+        text.to_owned(),
+    ))
 }
 
 #[cfg(test)]
@@ -741,7 +937,6 @@ mod tests {
             excess_cache_misses: 0,
         };
         let header = ProgressHeader {
-            header: "header",
             phase_stats,
             progress_stats,
             action_stats: &action_stats,
@@ -771,7 +966,6 @@ mod tests {
         let action_stats = &action_stats();
         for i in 0..120 {
             let header = ProgressHeader {
-                header: "header",
                 phase_stats,
                 progress_stats,
                 action_stats,
@@ -806,7 +1000,6 @@ mod tests {
             phase_stats: &BuildProgressPhaseStats,
         ) -> bz_error::Result<Lines> {
             ProgressHeader {
-                header: "header",
                 phase_stats,
                 progress_stats: &progress_stats(),
                 action_stats: &action_stats(),
@@ -937,7 +1130,6 @@ mod tests {
         };
 
         let output = ProgressHeader {
-            header: "header",
             phase_stats: &stats,
             progress_stats: &progress_stats(),
             action_stats: &action_stats(),
@@ -968,7 +1160,6 @@ mod tests {
         progress_stats.running_remote_cache_checks = 30;
 
         let output = ProgressHeader {
-            header: "header",
             phase_stats: &phase_stats(),
             progress_stats: &progress_stats,
             action_stats: &action_stats(),
@@ -989,8 +1180,29 @@ mod tests {
         assert!(output.contains("100/1234"));
         assert!(output.contains("running:    30"));
 
+        progress_stats.running_remote_cache_checks = 0;
+        progress_stats.remote_cache_checks_finished = 1234;
+        let completed_output = ProgressHeader {
+            phase_stats: &phase_stats(),
+            progress_stats: &progress_stats,
+            action_stats: &action_stats(),
+            time_elapsed: "1234s".to_owned(),
+        }
+        .draw(
+            Dimensions {
+                width: 140,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?
+        .fmt_for_test()
+        .to_string();
+
+        assert!(completed_output.contains("Checking cache."));
+        assert!(completed_output.contains("1234/1234"));
+        assert!(completed_output.contains("running:     0"));
+
         let final_output = ProgressHeader {
-            header: "header",
             phase_stats: &phase_stats(),
             progress_stats: &progress_stats,
             action_stats: &action_stats(),

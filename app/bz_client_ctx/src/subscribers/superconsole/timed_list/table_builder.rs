@@ -21,12 +21,17 @@ use superconsole::DrawMode;
 use superconsole::Line;
 use superconsole::Lines;
 use superconsole::Span;
+use superconsole::style::Attribute;
+use superconsole::style::Color;
+use superconsole::style::ContentStyle;
 use superconsole::style::StyledContent;
 use superconsole::style::Stylize;
 use superconsole::style::style;
 
 use crate::subscribers::superconsole::timed_list::Cutoffs;
 use crate::subscribers::superconsole::timekeeper::Timekeeper;
+
+const TIMED_ROW_MARKER: &str = " ↳ ";
 
 #[derive(Debug, Clone, From)]
 pub(crate) enum Row {
@@ -127,27 +132,112 @@ impl TimedRow {
         age: Duration,
         cutoffs: &Cutoffs,
     ) -> bz_error::Result<Self> {
-        Self::styled(padding, style(event), style(time), age, cutoffs)
+        let mut event = semantic_event_line(&event).unwrap_or_else(|| {
+            Line::from_iter([Span::new_styled_lossy(styled_for_delay(
+                style(event),
+                age,
+                cutoffs,
+            ))])
+        });
+        add_timed_row_marker(&mut event, padding);
+
+        let time = Line::from_iter([Span::new_styled(styled_for_delay(
+            style(time),
+            age,
+            cutoffs,
+        ))?]);
+        Ok(Self { event, time })
+    }
+}
+
+fn add_timed_row_marker(event: &mut Line, padding: usize) {
+    if padding > 0 {
+        event.pad_left(padding);
+    }
+    event.push_front(styled_span(TIMED_ROW_MARKER, Some(Color::DarkGrey), false));
+}
+
+fn semantic_event_line(event: &str) -> Option<Line> {
+    let (target, status) = event.split_once(" -- ")?;
+    let mut spans = Vec::new();
+    push_target_spans(&mut spans, target);
+    spans.push(styled_span(" → ", Some(Color::Grey), false));
+    push_status_spans(&mut spans, status);
+    Some(Line::from_iter(spans))
+}
+
+fn push_target_spans(spans: &mut Vec<Span>, target: &str) {
+    let (label, suffix) = target.split_once(' ').unwrap_or((target, ""));
+    if let Some(repo_end) = label.find("//").map(|idx| idx + "//".len()) {
+        spans.push(styled_span(&label[..repo_end], Some(Color::Grey), false));
+        push_package_and_name_spans(spans, &label[repo_end..]);
+    } else {
+        push_package_and_name_spans(spans, label);
     }
 
-    pub(crate) fn styled(
-        padding: usize,
-        event: StyledContent<String>,
-        time: StyledContent<String>,
-        age: Duration,
-        cutoffs: &Cutoffs,
-    ) -> bz_error::Result<Self> {
-        let event = Span::new_styled(styled_for_delay(event, age, cutoffs))?;
-
-        let line = if padding > 0 {
-            Line::from_iter([Span::padding(padding), event])
-        } else {
-            Line::from_iter([event])
-        };
-
-        let time = Line::from_iter([Span::new_styled(styled_for_delay(time, age, cutoffs))?]);
-        Ok(Self { event: line, time })
+    if !suffix.is_empty() {
+        spans.push(styled_span(" ", Some(Color::Grey), false));
+        spans.push(styled_span(suffix, Some(Color::Grey), false));
     }
+}
+
+fn push_package_and_name_spans(spans: &mut Vec<Span>, label: &str) {
+    if let Some(colon) = label.rfind(':') {
+        if colon > 0 {
+            spans.push(styled_span(&label[..colon], Some(Color::White), false));
+        }
+        spans.push(styled_span(&label[colon..], Some(Color::White), true));
+    } else {
+        spans.push(styled_span(label, Some(Color::White), false));
+    }
+}
+
+fn push_status_spans(spans: &mut Vec<Span>, status: &str) {
+    if let Some(stage_start) = status.rfind(" [")
+        && status.ends_with(']')
+    {
+        let main = &status[..stage_start];
+        if !main.is_empty() {
+            spans.push(styled_span(main, Some(Color::Grey), false));
+        }
+        spans.push(styled_span(" [", Some(Color::Grey), false));
+        spans.push(styled_span(
+            &status[stage_start + 2..status.len() - 1],
+            Some(Color::White),
+            false,
+        ));
+        spans.push(styled_span("]", Some(Color::Grey), false));
+        return;
+    }
+
+    if let Some(detail_start) = status.rfind(" (")
+        && status.ends_with(')')
+    {
+        let main = &status[..detail_start];
+        if !main.is_empty() {
+            spans.push(styled_span(main, Some(Color::Grey), false));
+        }
+        spans.push(styled_span(&status[detail_start..], Some(Color::Grey), false));
+        return;
+    }
+
+    spans.push(styled_span(status, Some(Color::Grey), false));
+}
+
+fn styled_span(text: &str, foreground_color: Option<Color>, bold: bool) -> Span {
+    Span::new_styled_lossy(StyledContent::new(
+        ContentStyle {
+            foreground_color,
+            background_color: None,
+            underline_color: None,
+            attributes: if bold {
+                Attribute::Bold.into()
+            } else {
+                Default::default()
+            },
+        },
+        text.to_owned(),
+    ))
 }
 
 /// This component echoes the `Lines` that have been stored in it.
