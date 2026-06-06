@@ -1045,7 +1045,7 @@ impl StatefulSuperConsoleImpl {
 
     async fn handle_stderr(&mut self, msg: &str) -> bz_error::Result<()> {
         self.super_console
-            .emit(msg.lines().map(Line::sanitized).collect());
+            .emit(msg.lines().map(style_stderr_line).collect());
         Ok(())
     }
 
@@ -1619,6 +1619,45 @@ impl StatefulSuperConsoleImpl {
     }
 }
 
+fn style_stderr_line(line: &str) -> Line {
+    if is_daemon_lifecycle_timing_line(line) {
+        return style_final_parenthetical(line);
+    }
+    Line::sanitized(line)
+}
+
+fn is_daemon_lifecycle_timing_line(line: &str) -> bool {
+    line.starts_with("bz daemon constraint mismatch:")
+        || line.starts_with("Starting new bz daemon...")
+        || line.starts_with("Connected to new bz daemon")
+}
+
+fn style_final_parenthetical(line: &str) -> Line {
+    let Some(open) = line.rfind(" (") else {
+        return Line::sanitized(line);
+    };
+    let parenthetical_start = open + 1;
+    let close = if line.ends_with(").") {
+        line.len() - 1
+    } else if line.ends_with(')') {
+        line.len()
+    } else {
+        return Line::sanitized(line);
+    };
+    if parenthetical_start >= close {
+        return Line::sanitized(line);
+    }
+
+    let mut spans = vec![
+        Span::sanitized(&line[..parenthetical_start]),
+        Span::new_colored_lossy(&line[parenthetical_start..close], Color::Grey),
+    ];
+    if close < line.len() {
+        spans.push(Span::sanitized(&line[close..]));
+    }
+    Line::from_iter(spans)
+}
+
 #[async_trait]
 impl EventSubscriber for StatefulSuperConsole {
     async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> bz_error::Result<()> {
@@ -1857,6 +1896,23 @@ mod tests {
 
     use super::*;
     use crate::subscribers::superconsole::timekeeper::RealtimeClock;
+
+    #[test]
+    fn daemon_lifecycle_timing_parentheticals_are_grey() {
+        let output = Lines(vec![
+            style_stderr_line(
+                "bz daemon constraint mismatch: Version mismatch; waiting for daemon lifecycle lock... (detected in 0.1s)",
+            ),
+            style_stderr_line("Connected to new bz daemon in 5.9s (start: 0.0s, connect: 0.0s)."),
+        ])
+        .fmt_for_test()
+        .to_string();
+
+        assert_eq!(
+            output,
+            "bz daemon constraint mismatch: Version mismatch; waiting for daemon lifecycle lock... <span fg=grey>(detected in 0.1s)</span>\nConnected to new bz daemon in 5.9s <span fg=grey>(start: 0.0s, connect: 0.0s)</span>.\n"
+        );
+    }
 
     #[tokio::test]
     async fn test_transfer_state_to_simpleconsole() -> bz_error::Result<()> {

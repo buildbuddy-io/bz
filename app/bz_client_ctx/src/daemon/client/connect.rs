@@ -15,6 +15,7 @@ use std::io::BufReader;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::time::Instant;
 
 use bz_cli_proto::DaemonProcessInfo;
 use bz_cli_proto::daemon_api_client::DaemonApiClient;
@@ -34,6 +35,7 @@ use bz_error::ErrorTag;
 use bz_error::bz_error;
 use bz_error::conversion::from_any_with_tag;
 use bz_error::internal_error;
+use bz_event_observer::fmt_duration;
 use bz_events::daemon_id::DaemonId;
 use bz_fs::fs_util;
 use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
@@ -86,7 +88,7 @@ pub struct DaemonConstraintsRequest {
     pub daemon_startup_config: DaemonStartupConfig,
 }
 
-#[derive(Debug, derive_more::Display)]
+#[derive(Debug, Clone, Copy, derive_more::Display)]
 pub(crate) enum ConstraintUnsatisfiedReason {
     #[display("Version mismatch")]
     Version,
@@ -729,6 +731,10 @@ fn explain_failed_to_connect_reason(reason: bz_data::DaemonWasStartedReason) -> 
     }
 }
 
+fn format_daemon_elapsed(elapsed: Duration) -> String {
+    fmt_duration::fmt_duration(elapsed)
+}
+
 #[allow(clippy::collapsible_match)]
 async fn establish_connection_inner(
     paths: &InvocationPaths,
@@ -738,6 +744,7 @@ async fn establish_connection_inner(
 ) -> bz_error::Result<BootstrapBuckdClient> {
     let daemon_dir = paths.daemon_dir()?;
 
+    let connect_before_restart_start = Instant::now();
     let res = deadline
         .half()?
         .run("connecting to existing buck daemon", {
@@ -751,7 +758,8 @@ async fn establish_connection_inner(
             ConnectBeforeRestart::ConstraintMismatch(reason) => {
                 events_ctx
                     .eprintln(&format!(
-                        "bz daemon constraint mismatch: {reason}; waiting for daemon lifecycle lock..."
+                        "bz daemon constraint mismatch: {reason}; waiting for daemon lifecycle lock... (detected in {})",
+                        format_daemon_elapsed(connect_before_restart_start.elapsed()),
                     ))
                     .await?;
             }
@@ -760,11 +768,13 @@ async fn establish_connection_inner(
 
     // At this point, we've either failed to connect to buckd or buckd had the wrong constraints.
     // Get the lifecycle lock to ensure we don't have races with other processes as we check and change things.
+    let lifecycle_lock_wait_start = Instant::now();
     let lifecycle_lock = deadline
         .down("acquire lifecycle lock", |deadline| {
             BuckdLifecycle::lock_with_timeout(paths, deadline, &constraints)
         })
         .await?;
+    let lifecycle_lock_wait_elapsed = lifecycle_lock_wait_start.elapsed();
 
     // Even if we didn't connect before, it's possible that we just raced with another invocation
     // starting the server, so we try to connect again while holding the lock.
@@ -798,10 +808,12 @@ async fn establish_connection_inner(
 
                         events_ctx
                             .eprintln(&format!(
-                                "bz daemon constraint mismatch: {reason}; killing daemon..."
+                                "bz daemon constraint mismatch: {reason}; killing daemon... (lifecycle lock acquired in {})",
+                                format_daemon_elapsed(lifecycle_lock_wait_elapsed),
                             ))
                             .await?;
 
+                        let kill_start = Instant::now();
                         deadline
                             .run(
                                 "sending kill command to the Buck daemon",
@@ -809,7 +821,12 @@ async fn establish_connection_inner(
                             )
                             .await?;
 
-                        events_ctx.eprintln("Starting new bz daemon...").await?;
+                        events_ctx
+                            .eprintln(&format!(
+                                "Starting new bz daemon... (previous daemon killed in {})",
+                                format_daemon_elapsed(kill_start.elapsed()),
+                            ))
+                            .await?;
 
                         reason.to_daemon_was_started_reason()
                     }
@@ -882,17 +899,22 @@ async fn start_new_buckd_and_connect(
     events_ctx: &mut EventsCtx,
     daemon_was_started_reason: bz_data::DaemonWasStartedReason,
 ) -> bz_error::Result<BootstrapBuckdClient> {
+    let start_and_connect_start = Instant::now();
+
     // Daemon dir may be corrupted. Safer to delete it.
     lifecycle_lock.clean_daemon_dir()?;
 
     // Now there's definitely no server that can be connected to
+    let start_server_start = Instant::now();
     lifecycle_lock
         .start_server()
         .await
         .buck_error_context("Error starting bz daemon")?;
+    let start_server_elapsed = start_server_start.elapsed();
     // It might take a little bit for the daemon server to start up. We could wait for the buckd.info
     // file to appear, but it's just as easy to just retry the connection itself.
 
+    let connect_start = Instant::now();
     let channel = deadline
         .retrying(
             "connect to buckd after server start",
@@ -901,6 +923,7 @@ async fn start_new_buckd_and_connect(
             || async { BuckdProcessInfo::load_and_create_channel(&paths.daemon_dir()?).await },
         )
         .await?;
+    let connect_elapsed = connect_start.elapsed();
 
     let client = channel.upgrade().await?;
 
@@ -916,7 +939,12 @@ async fn start_new_buckd_and_connect(
     events_ctx.handle_daemon_started(daemon_was_started_reason);
 
     events_ctx
-        .eprintln("Connected to new bz daemon.")
+        .eprintln(&format!(
+            "Connected to new bz daemon in {} (start: {}, connect: {}).",
+            format_daemon_elapsed(start_and_connect_start.elapsed()),
+            format_daemon_elapsed(start_server_elapsed),
+            format_daemon_elapsed(connect_elapsed),
+        ))
         .await?;
 
     Ok(client)
