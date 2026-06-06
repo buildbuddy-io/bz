@@ -594,9 +594,12 @@ impl Component for ProgressHeader<'_> {
             }
         }
 
-        if main.is_empty() {
+        if main.is_empty() && matches!(mode, DrawMode::Normal) {
             main.push(String::new());
             extra.push(String::new());
+        }
+        if main.is_empty() {
+            return Ok(Lines::new());
         }
 
         assert!(!extra.is_empty());
@@ -693,16 +696,44 @@ fn progress_count_range(line: &str) -> Option<(usize, usize, bool)> {
         .find(|(_, ch)| ch.is_ascii_digit() || *ch == '[')?
         .0
         + search_start;
-    let mut count_end = line[count_start..]
-        .char_indices()
-        .find(|(_, ch)| {
-            !matches!(ch, '0'..='9' | ',' | '/' | ' ' | '[' | ']')
-        })
-        .map_or(line.len(), |(offset, _)| count_start + offset);
-    while count_end > count_start && line.as_bytes()[count_end - 1] == b' ' {
-        count_end -= 1;
+    if line.as_bytes()[count_start] == b'[' {
+        let count_end = line[count_start..]
+            .find(']')
+            .map(|offset| count_start + offset + 1)?;
+        return Some((count_start, count_end, *label == "Executed"));
     }
+    let count_end = progress_count_end(line, count_start)?;
     Some((count_start, count_end, *label == "Executed"))
+}
+
+fn progress_count_end(line: &str, count_start: usize) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let mut index = count_start;
+
+    while bytes
+        .get(index)
+        .is_some_and(|ch| matches!(*ch, b'0'..=b'9' | b','))
+    {
+        index += 1;
+    }
+    while bytes.get(index).is_some_and(|ch| *ch == b' ') {
+        index += 1;
+    }
+    if bytes.get(index) != Some(&b'/') {
+        return None;
+    }
+    index += 1;
+    while bytes.get(index).is_some_and(|ch| *ch == b' ') {
+        index += 1;
+    }
+    while bytes
+        .get(index)
+        .is_some_and(|ch| matches!(*ch, b'0'..=b'9' | b','))
+    {
+        index += 1;
+    }
+
+    Some(index)
 }
 
 #[derive(Clone, Copy)]
@@ -735,6 +766,21 @@ fn add_progress_detail_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
 }
 
 fn add_progress_extra_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
+    for label in ["exec time total", "exec time cached"] {
+        let mut search_start = 0;
+        while let Some(label_offset) = line[search_start..].find(label) {
+            let label_start = search_start + label_offset;
+            let label_end = label_start + label.len();
+            ranges.push(StyledRange {
+                start: label_start,
+                end: label_end,
+                foreground_color: Some(Color::Grey),
+                bold: false,
+            });
+            search_start = label_end;
+        }
+    }
+
     for label in [
         "dirs read",
         "targets declared",
@@ -1150,6 +1196,42 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_final_header_empty_when_no_progress_started() -> bz_error::Result<()> {
+        let output = ProgressHeader {
+            phase_stats: &BuildProgressPhaseStats::default(),
+            progress_stats: &BuildProgressStats::default(),
+            action_stats: &ActionStats::default(),
+            time_elapsed: "1234s".to_owned(),
+        }
+        .draw(
+            Dimensions {
+                width: 140,
+                height: 10,
+            },
+            DrawMode::Final,
+        )?;
+
+        assert!(output.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_progress_count_range_stops_before_extra_columns() {
+        let executed =
+            " Executed   [2,943 / 2,943]                                                       13:04.2s exec time total";
+        let (start, end, is_executed) = progress_count_range(executed).unwrap();
+        assert!(is_executed);
+        assert_eq!(&executed[start..end], "[2,943 / 2,943]");
+
+        let loaded =
+            " Loaded       217 / 217                                                           478 dirs read, 22,335 targets declared";
+        let (start, end, is_executed) = progress_count_range(loaded).unwrap();
+        assert!(!is_executed);
+        assert_eq!(&loaded[start..end], "217 / 217");
     }
 
     #[test]
