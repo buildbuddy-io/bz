@@ -33,6 +33,7 @@ use crate::subscribers::superconsole::common::StaticStringComponent;
 
 const PROGRESS_LABEL_WIDTH: usize = "Validated".len();
 const PROGRESS_ROW_INDENT: &str = " ";
+const PROGRESS_COUNT_LABEL_GAP: usize = 2;
 
 pub(crate) struct TasksHeader<'s> {
     header: &'s str,
@@ -214,7 +215,32 @@ enum Style {
     ExtraCompact,
 }
 
+#[derive(Clone, Copy)]
+enum CountColumn {
+    Right(usize),
+}
+
 impl Style {
+    fn count_column_width(num_width: usize) -> usize {
+        num_width * 2 + "[ / ]".len()
+    }
+
+    fn render_count(count: &str, column: Option<CountColumn>) -> String {
+        match column {
+            Some(CountColumn::Right(width)) => format!("{count:>width$}"),
+            None => count.to_owned(),
+        }
+    }
+
+    fn count_only_column_width(&self) -> Option<usize> {
+        match self {
+            Style::Normal(num_width) | Style::Compact(num_width) => {
+                Some(Self::count_column_width(*num_width))
+            }
+            Style::ExtraCompact => None,
+        }
+    }
+
     fn render(
         &self,
         mode: DrawMode,
@@ -222,73 +248,71 @@ impl Style {
         mut completed: u64,
         total: u64,
         running_str: &str,
-        running_num: u64,
+        count_column: Option<CountColumn>,
     ) -> String {
         if let DrawMode::Final = mode {
             completed = total;
         }
-        let executed = progress_label == "Executed";
+        let count_only = matches!(progress_label, "Loaded" | "Analyzed");
         let mut line = match self {
-            Style::Normal(num_width) | Style::Compact(num_width) => {
+            Style::Normal(_) | Style::Compact(_) => {
                 let completed = format_count(completed);
                 let total = format_count(total);
-                let count = if executed {
-                    let tight_count = format!("[{completed} / {total}]");
-                    format!("{tight_count:^width$}", width = num_width * 2 + 5)
+                let count = if count_only {
+                    completed
                 } else {
-                    format!("{completed:>num_width$} / {total:<num_width$}")
+                    format!("[{completed} / {total}]")
+                };
+                let count = if count_only {
+                    let column = count_column
+                        .or_else(|| self.count_only_column_width().map(CountColumn::Right));
+                    Self::render_count(&count, column)
+                } else {
+                    Self::render_count(&count, count_column)
                 };
                 format!(
-                    "{PROGRESS_ROW_INDENT}{progress_label:<progress_label_width$} {count}",
+                    "{PROGRESS_ROW_INDENT}{count}{gap}{progress_label:<progress_label_width$}",
+                    gap = " ".repeat(PROGRESS_COUNT_LABEL_GAP),
                     progress_label = progress_label,
                     progress_label_width = PROGRESS_LABEL_WIDTH,
                 )
             }
             Style::ExtraCompact => {
-                let count = if executed {
-                    format!("[{} / {}]", format_count(completed), format_count(total))
+                let count = if count_only {
+                    format_count(completed)
                 } else {
-                    format!("{} / {}", format_count(completed), format_count(total))
+                    format!("[{} / {}]", format_count(completed), format_count(total))
                 };
+                let count = Self::render_count(&count, count_column);
                 format!(
-                    "{PROGRESS_ROW_INDENT}{progress_label:<progress_label_width$} {count}",
+                    "{PROGRESS_ROW_INDENT}{count}{gap}{progress_label:<progress_label_width$}",
+                    gap = " ".repeat(PROGRESS_COUNT_LABEL_GAP),
                     progress_label_width = PROGRESS_LABEL_WIDTH,
                 )
             }
         };
 
         if let DrawMode::Normal = mode {
-            line += &match self {
-                Style::Normal(_) | Style::Compact(_) => {
-                    format!(" (running: {running_str})",)
-                }
-                Style::ExtraCompact => {
-                    format!(" ({})", format_count(running_num))
-                }
-            };
+            line += &format!(" ({running_str} running)");
         }
         line
-    }
-
-    fn display_num(&self, num: u64) -> String {
-        match self {
-            Style::Normal(num_width) | Style::Compact(num_width) => {
-                format!("{:>width$}", format_count(num), width = *num_width)
-            }
-            Style::ExtraCompact => format_count(num),
-        }
     }
 }
 
 impl ProgressHeader<'_> {
-    fn render_loads(&self, style: Style, mode: DrawMode) -> String {
+    fn render_loads(
+        &self,
+        style: Style,
+        mode: DrawMode,
+        count_column: Option<CountColumn>,
+    ) -> String {
         style.render(
             mode,
             "Loaded",
             self.phase_stats.loads.finished,
             self.phase_stats.loads.started,
-            &style.display_num(self.phase_stats.loads.running),
-            self.phase_stats.loads.running,
+            &format_count(self.phase_stats.loads.running),
+            count_column,
         )
     }
 
@@ -309,14 +333,19 @@ impl ProgressHeader<'_> {
         msgs.join(", ")
     }
 
-    fn render_analyses(&self, style: Style, mode: DrawMode) -> String {
+    fn render_analyses(
+        &self,
+        style: Style,
+        mode: DrawMode,
+        count_column: Option<CountColumn>,
+    ) -> String {
         style.render(
             mode,
             "Analyzed",
             self.phase_stats.analyses.finished,
             self.phase_stats.analyses.started,
-            &style.display_num(self.phase_stats.analyses.running),
-            self.phase_stats.analyses.running,
+            &format_count(self.phase_stats.analyses.running),
+            count_column,
         )
     }
 
@@ -337,25 +366,30 @@ impl ProgressHeader<'_> {
         msgs.join(", ")
     }
 
-    fn render_actions(&self, style: Style, mode: DrawMode) -> String {
+    fn render_actions(
+        &self,
+        style: Style,
+        mode: DrawMode,
+        count_column: Option<CountColumn>,
+    ) -> String {
         let phase_stats = &self.phase_stats.actions;
 
         let mut running = Vec::new();
-        if self.progress_stats.running_local > 0 || self.action_stats.local_actions > 0 {
+        if self.progress_stats.running_local > 0 {
             running.push(format!(
                 "{} local",
-                style.display_num(self.progress_stats.running_local),
+                format_count(self.progress_stats.running_local),
             ));
         }
-        if self.progress_stats.running_remote > 0 || self.action_stats.remote_actions > 0 {
+        if self.progress_stats.running_remote > 0 {
             running.push(format!(
                 "{} remote",
-                style.display_num(self.progress_stats.running_remote),
+                format_count(self.progress_stats.running_remote),
             ));
         }
 
         let running_str = if running.is_empty() {
-            style.display_num(0)
+            format_count(0)
         } else {
             running.join(", ")
         };
@@ -366,11 +400,16 @@ impl ProgressHeader<'_> {
             phase_stats.finished,
             phase_stats.started,
             &running_str,
-            phase_stats.running,
+            count_column,
         )
     }
 
-    fn render_remote_cache_checks(&self, style: Style, mode: DrawMode) -> Option<String> {
+    fn render_remote_cache_checks(
+        &self,
+        style: Style,
+        mode: DrawMode,
+        count_column: Option<CountColumn>,
+    ) -> Option<String> {
         let running = self.progress_stats.running_remote_cache_checks;
         let started = self.progress_stats.remote_cache_checks_started;
         let finished = self.progress_stats.remote_cache_checks_finished;
@@ -384,21 +423,9 @@ impl ProgressHeader<'_> {
             "Checked",
             finished,
             started,
-            &style.display_num(running),
-            running,
+            &format_count(running),
+            count_column,
         ))
-    }
-
-    fn render_actions_extra(&self) -> String {
-        let exec_time_ms = self.progress_stats.exec_time_ms;
-        if exec_time_ms > 0 {
-            format!(
-                "{} exec time total",
-                fmt_duration::fmt_duration(Duration::from_millis(exec_time_ms)),
-            )
-        } else {
-            String::new()
-        }
     }
 
     fn render_actions_stats(&self, style: Style) -> String {
@@ -444,11 +471,7 @@ impl ProgressHeader<'_> {
                 if res_types.is_empty() {
                     String::new()
                 } else {
-                    format!(
-                        "{}{}",
-                        if compact { "" } else { "Finished  " },
-                        res_types.join(", ")
-                    )
+                    res_types.join(", ")
                 }
             }
 
@@ -465,29 +488,47 @@ impl ProgressHeader<'_> {
         }
     }
 
-    fn render_actions_stats_extra(&self) -> String {
+    fn render_actions_extra(&self, style: Style) -> String {
+        let mut parts = Vec::new();
+        let actions_stats = self.render_actions_stats(style);
+        if !actions_stats.is_empty() {
+            parts.push(actions_stats);
+        }
+
         let exec_time_ms = self.progress_stats.exec_time_ms;
+        if exec_time_ms > 0 {
+            parts.push(format!(
+                "{} exec time total",
+                fmt_duration::fmt_duration(Duration::from_millis(exec_time_ms)),
+            ));
+        }
+
         let cached_exec_time_ms = self.progress_stats.cached_exec_time_ms;
 
         if cached_exec_time_ms > 0 {
-            format!(
+            parts.push(format!(
                 "{} exec time cached ({}%)",
                 fmt_duration::fmt_duration(Duration::from_millis(cached_exec_time_ms)),
                 cached_exec_time_ms * 100 / std::cmp::max(exec_time_ms, 1)
-            )
-        } else {
-            String::new()
+            ));
         }
+
+        parts.join("  ")
     }
 
-    fn render_validations(&self, style: Style, mode: DrawMode) -> String {
+    fn render_validations(
+        &self,
+        style: Style,
+        mode: DrawMode,
+        count_column: Option<CountColumn>,
+    ) -> String {
         style.render(
             mode,
             "Validated",
             self.phase_stats.validations.finished,
             self.phase_stats.validations.started,
-            &style.display_num(self.phase_stats.validations.running),
-            self.phase_stats.validations.running,
+            &format_count(self.phase_stats.validations.running),
+            count_column,
         )
     }
 }
@@ -499,6 +540,12 @@ impl Component for ProgressHeader<'_> {
         fn count_len(v: u64) -> usize {
             format_count(v).len()
         }
+        fn bracket_count_len(mut completed: u64, total: u64, mode: DrawMode) -> usize {
+            if let DrawMode::Final = mode {
+                completed = total;
+            }
+            format!("[{} / {}]", format_count(completed), format_count(total)).len()
+        }
 
         let loads = &self.phase_stats.loads;
         let analysis = &self.phase_stats.analyses;
@@ -506,7 +553,7 @@ impl Component for ProgressHeader<'_> {
         let validations = &self.phase_stats.validations;
         let remote_cache_checks_started = self.progress_stats.remote_cache_checks_started;
 
-        let max_total = std::cmp::max(
+        let max_count = std::cmp::max(
             std::cmp::max(
                 std::cmp::max(
                     std::cmp::max(loads.started, analysis.started),
@@ -517,11 +564,14 @@ impl Component for ProgressHeader<'_> {
             validations.started,
         );
 
-        let num_width = std::cmp::max(5, count_len(max_total));
+        let num_width = count_len(max_count);
 
         let header_width = PROGRESS_ROW_INDENT.len()
-            + "Executed [_ / _] (running: _ local, _ remote)  ".len()
-            + 4 * (num_width - 1);
+            + Style::count_column_width(num_width)
+            + PROGRESS_COUNT_LABEL_GAP
+            + PROGRESS_LABEL_WIDTH
+            + " (_ local, _ remote running)  ".len()
+            + 2 * (num_width - 1);
 
         let elapsed = format!("Time elapsed: {}", &self.time_elapsed);
         let inline_elapsed = match mode {
@@ -541,9 +591,42 @@ impl Component for ProgressHeader<'_> {
 
         let mut main = Vec::new();
         let mut extra = Vec::new();
+        let action_count_width = bracket_count_len(actions.finished, actions.started, mode);
+        let count_column = if actions.started > 0 {
+            let mut width = action_count_width;
+            if loads.started > 0 || matches!(mode, DrawMode::Normal) {
+                width = std::cmp::max(width, count_len(loads.finished));
+            }
+            if analysis.started > 0 {
+                width = std::cmp::max(width, count_len(analysis.finished));
+            }
+            if remote_cache_checks_started > 0 {
+                width = std::cmp::max(
+                    width,
+                    bracket_count_len(
+                        self.progress_stats.remote_cache_checks_finished,
+                        remote_cache_checks_started,
+                        mode,
+                    ),
+                );
+            }
+            if validations.started > 0 {
+                width = std::cmp::max(
+                    width,
+                    bracket_count_len(validations.finished, validations.started, mode),
+                );
+            }
+            Some(CountColumn::Right(width))
+        } else {
+            let mut width = count_len(loads.finished);
+            if analysis.started > 0 {
+                width = std::cmp::max(width, count_len(analysis.finished));
+            }
+            Some(CountColumn::Right(width))
+        };
 
         if loads.started > 0 || matches!(mode, DrawMode::Normal) {
-            main.push(self.render_loads(style, mode));
+            main.push(self.render_loads(style, mode, count_column));
             if let Style::Normal(..) = style {
                 extra.push(self.render_loads_extra());
             } else {
@@ -552,7 +635,7 @@ impl Component for ProgressHeader<'_> {
         }
 
         if analysis.started > 0 {
-            main.push(self.render_analyses(style, mode));
+            main.push(self.render_analyses(style, mode, count_column));
             if let Style::Normal(..) = style {
                 extra.push(self.render_analyses_extra());
             } else {
@@ -561,36 +644,26 @@ impl Component for ProgressHeader<'_> {
         }
 
         if actions.started > 0 {
-            if let Some(line) = self.render_remote_cache_checks(style, mode) {
+            if let Some(line) = self.render_remote_cache_checks(style, mode, count_column) {
                 main.push(line);
                 extra.push(String::new());
             }
 
-            main.push(self.render_actions(style, mode));
+            main.push(self.render_actions(style, mode, count_column));
             if let Style::Normal(..) = style {
-                extra.push(self.render_actions_extra());
+                extra.push(self.render_actions_extra(if dimensions.width > 90 {
+                    Style::Normal(num_width)
+                } else {
+                    style
+                }));
             } else {
                 extra.push(String::new());
             }
 
             // Show validation progress if validation has started (before the header/stats line)
             if validations.started > 0 {
-                main.push(self.render_validations(style, mode));
+                main.push(self.render_validations(style, mode, count_column));
                 extra.push(String::new());
-            }
-
-            let actions_stats = self.render_actions_stats(if dimensions.width > 90 {
-                Style::Normal(num_width)
-            } else {
-                style
-            });
-            if !actions_stats.is_empty() {
-                main.push(format!("{PROGRESS_ROW_INDENT}{actions_stats}"));
-                if let Style::Normal(..) = style {
-                    extra.push(self.render_actions_stats_extra());
-                } else {
-                    extra.push(String::new());
-                }
             }
         }
 
@@ -690,7 +763,20 @@ fn style_progress_header_line(line: &str) -> Line {
 fn progress_count_range(line: &str) -> Option<(usize, usize, bool)> {
     let labels = ["Loaded", "Analyzed", "Executed", "Checked", "Validated"];
     let label = labels.iter().find(|label| line.contains(*label))?;
-    let search_start = line.find(label)? + label.len();
+    let label_start = line.find(label)?;
+    if let Some(count_start) = line[..label_start].rfind('[') {
+        let count_end = line[count_start..]
+            .find(']')
+            .map(|offset| count_start + offset + 1)?;
+        if count_end <= label_start {
+            return Some((count_start, count_end, *label == "Executed"));
+        }
+    }
+    if let Some((count_start, count_end)) = count_range_before(line, label_start) {
+        return Some((count_start, count_end, *label == "Executed"));
+    }
+
+    let search_start = label_start + label.len();
     let count_start = line[search_start..]
         .char_indices()
         .find(|(_, ch)| ch.is_ascii_digit() || *ch == '[')?
@@ -753,7 +839,7 @@ fn add_progress_detail_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
         };
         let close = open + close_offset + 1;
         let detail = &line[open + 1..close - 1];
-        if detail.starts_with("running:") || detail.contains("% hit") || detail.ends_with('%') {
+        if detail.ends_with("running") || detail.contains("% hit") || detail.ends_with('%') {
             ranges.push(StyledRange {
                 start: open,
                 end: close,
@@ -786,6 +872,10 @@ fn add_progress_extra_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
         "targets declared",
         "actions",
         "artifacts declared",
+        "local cache",
+        "remote cache",
+        "local",
+        "remote",
     ] {
         let mut search_start = 0;
         while let Some(label_offset) = line[search_start..].find(label) {
@@ -830,10 +920,7 @@ fn count_range_before(line: &str, before: usize) -> Option<(usize, usize)> {
 }
 
 fn add_action_stats_count_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
-    let Some(finished) = line.find("Finished ") else {
-        return;
-    };
-    let stats_start = finished + "Finished ".len();
+    let stats_start = 0;
     let stats_end = line.find("Time elapsed:").unwrap_or(line.len());
     let mut search_start = stats_start;
 
@@ -864,7 +951,11 @@ fn add_action_stats_count_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
 }
 
 fn line_from_styled_ranges(line: &str, mut ranges: Vec<StyledRange>) -> Line {
-    ranges.sort_by_key(|range| (range.start, range.end));
+    ranges.sort_by(|left, right| {
+        left.start
+            .cmp(&right.start)
+            .then_with(|| right.end.cmp(&left.end))
+    });
     let mut spans = Vec::new();
     let mut cursor = 0;
 
@@ -1082,73 +1173,60 @@ mod tests {
 
         let expected = indoc::indoc!(
             r#"
-                Loading targets.     Loaded
-                Analyzing targets.   Analyzed
-                Executing actions.   Executed
-                Running validations. Validated
-                header     Time elapsed: 1234s
+                            111  Loaded    (11 running)
+                            222  Analyzed  (22 running)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)
+                 [444 / 4  Time elapsed: 1234s
 
-                Loading targets.     Loaded    111/11111
-                Analyzing targets.   Analyzed  222/22222
-                Executing actions.   Executed  333/33333
-                Running validations. Validated 444/44444
-                header               Time elapsed: 1234s
+                            111  Loaded    (11 running)
+                            222  Analyzed  (22 running)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)
+                 [444 / 44,444]  Va  Time elapsed: 1234s
 
-                Loading targets.     Loaded    111/11111 (11)
-                Analyzing targets.   Analyzed  222/22222 (22)
-                Executing actions.   Executed  333/33333 (100)
-                Running validations. Validated 444/44444 (44)
-                header               Cache hits 37%      Time elapsed: 1234s
+                            111  Loaded    (11 running)
+                            222  Analyzed  (22 running)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)
+                 [444 / 44,444]  Validated (44 running)  Time elapsed: 1234s
 
-                Loading targets.     Loaded    111/11111 (11)
-                Analyzing targets.   Analyzed  222/22222 (22)
-                Executing actions.   Executed  333/33333 (100)
-                Running validations. Validated 444/44444 (44)
-                header               Cache hits 37%                          Time elapsed: 1234s
+                            111  Loaded    (11 running)
+                            222  Analyzed  (22 running)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)
+                 [444 / 44,444]  Validated (44 running)                      Time elapsed: 1234s
 
-                Loading targets.     Loaded      111/11111 (running:    11)
-                Analyzing targets.   Analyzed    222/22222 (running:    22)
-                Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)
-                Running validations. Validated   444/44444 (running:    44)
-                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)         Time elapsed: 1234s
+                            111  Loaded    (11 running)
+                            222  Analyzed  (22 running)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)
+                 [444 / 44,444]  Validated (44 running)                                          Time elapsed: 1234s
 
-                Loading targets.     Loaded      111/11111 (running:    11)
-                Analyzing targets.   Analyzed    222/22222 (running:    22)
-                Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)
-                Running validations. Validated   444/44444 (running:    44)
-                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)                                      Time elapsed: 1234s
+                            111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
+                            222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit)  2:09:37.0s exec time total  11:06.0s exec time cached (8%)
+                 [444 / 44,444]  Validated (44 running)                                                                       Time elapsed: 1234s
 
-                Loading targets.     Loaded      111/11111 (running:    11)                      111 dirs read, 22222 targets declared
-                Analyzing targets.   Analyzed    222/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
-                Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
-                Running validations. Validated   444/44444 (running:    44)
-                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)                                       Time elapsed: 1234s
+                            111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
+                            222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit)  2:09:37.0s exec time total  11:06.0s exec time cached (8%)
+                 [444 / 44,444]  Validated (44 running)                                                                        Time elapsed: 1234s
 
-                Loading targets.     Loaded      111/11111 (running:    11)                      111 dirs read, 22222 targets declared
-                Analyzing targets.   Analyzed    222/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
-                Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
-                Running validations. Validated   444/44444 (running:    44)
-                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)         11:06.0s exec time cached (8%)          Time elapsed: 1234s
+                            111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
+                            222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit)  2:09:37.0s exec time total  11:06.0s exec time cached (8%)
+                 [444 / 44,444]  Validated (44 running)                                                                                  Time elapsed: 1234s
 
-                Loading targets.     Loaded      111/11111 (running:    11)                                111 dirs read, 22222 targets declared
-                Analyzing targets.   Analyzed    222/22222 (running:    22)                                3333333 actions, 4444444 artifacts declared
-                Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)            2:09:37.0s exec time total
-                Running validations. Validated   444/44444 (running:    44)
-                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)                   11:06.0s exec time cached (8%)                    Time elapsed: 1234s
+                            111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
+                            222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit)  2:09:37.0s exec time total  11:06.0s exec time cached (8%)
+                 [444 / 44,444]  Validated (44 running)                                                                                                      Time elapsed: 1234s
 
-                Loading targets.     Loaded    11111/11111
-                Analyzing targets.   Analyzed  22222/22222
-                Executing actions.   Executed  33333/33333
-                Running validations. Validated 44444/44444
-                header               Cache hits 37%
-                Time elapsed: 1234s
+                            11,111  Loaded
+                            22,222  Analyzed
+                 [33,333 / 33,333]  Executed
+                 [44,444 / 44,444]  Validated
 
-                Loading targets.     Loaded    11111/11111                                111 dirs read, 22222 targets declared
-                Analyzing targets.   Analyzed  22222/22222                                3333333 actions, 4444444 artifacts declared
-                Executing actions.   Executed  33333/33333                                2:09:37.0s exec time total
-                Running validations. Validated 44444/44444
-                header               Finished 100 local, 122 remote, 133 remote cache (37% hit)  11:06.0s exec time cached (8%)
-                Time elapsed: 1234s
+                            11,111  Loaded     111 dirs read, 22,222 targets declared
+                            22,222  Analyzed   3,333,333 actions, 4,444,444 artifacts declared
+                 [33,333 / 33,333]  Executed   100 local, 122 remote, 133 remote cache (37% hit)  2:09:37.0s exec time total  11:06.0s exec time cached (8%)
+                 [44,444 / 44,444]  Validated
 
         "#
         );
@@ -1191,7 +1269,7 @@ mod tests {
 
         let output_str = output.fmt_for_test().to_string();
         assert!(
-            !output_str.contains("Running validations."),
+            !output_str.contains("Validated"),
             "Validation line should not appear when validations haven't started:\n{output_str}"
         );
 
@@ -1220,18 +1298,155 @@ mod tests {
     }
 
     #[test]
+    fn test_initial_load_count_column_is_compact() -> bz_error::Result<()> {
+        let output = ProgressHeader {
+            phase_stats: &BuildProgressPhaseStats::default(),
+            progress_stats: &BuildProgressStats::default(),
+            action_stats: &ActionStats::default(),
+            time_elapsed: "18.4s".to_owned(),
+        }
+        .draw(
+            Dimensions {
+                width: 140,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?
+        .fmt_for_test()
+        .to_string();
+
+        assert!(
+            output.starts_with(" 0  Loaded"),
+            "Initial load row should not reserve a five-digit count column:\n{output}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pre_execution_load_and_analysis_counts_align_compactly() -> bz_error::Result<()> {
+        let stats = BuildProgressPhaseStats {
+            loads: BuildProgressPhaseStatsItem {
+                started: 1234,
+                finished: 1234,
+                running: 0,
+            },
+            analyses: BuildProgressPhaseStatsItem {
+                started: 56,
+                finished: 56,
+                running: 0,
+            },
+            actions: BuildProgressPhaseStatsItem {
+                started: 0,
+                finished: 0,
+                running: 0,
+            },
+            validations: BuildProgressPhaseStatsItem {
+                started: 0,
+                finished: 0,
+                running: 0,
+            },
+        };
+
+        let output = ProgressHeader {
+            phase_stats: &stats,
+            progress_stats: &BuildProgressStats::default(),
+            action_stats: &ActionStats::default(),
+            time_elapsed: "18.4s".to_owned(),
+        }
+        .draw(
+            Dimensions {
+                width: 140,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?
+        .fmt_for_test()
+        .to_string();
+
+        assert!(
+            output.starts_with(" 1,234  Loaded"),
+            "Loaded should use the shared compact numerator column:\n{output}"
+        );
+        assert!(
+            output.contains("\n    56  Analyzed"),
+            "Analyzed should align with Loaded before Executed is visible:\n{output}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_progress_labels_align_when_load_count_exceeds_executed_count() -> bz_error::Result<()> {
+        let stats = BuildProgressPhaseStats {
+            loads: BuildProgressPhaseStatsItem {
+                started: 1234567,
+                finished: 1234567,
+                running: 0,
+            },
+            analyses: BuildProgressPhaseStatsItem {
+                started: 0,
+                finished: 0,
+                running: 0,
+            },
+            actions: BuildProgressPhaseStatsItem {
+                started: 1,
+                finished: 1,
+                running: 0,
+            },
+            validations: BuildProgressPhaseStatsItem {
+                started: 0,
+                finished: 0,
+                running: 0,
+            },
+        };
+
+        let output = ProgressHeader {
+            phase_stats: &stats,
+            progress_stats: &BuildProgressStats::default(),
+            action_stats: &ActionStats::default(),
+            time_elapsed: "18.4s".to_owned(),
+        }
+        .draw(
+            Dimensions {
+                width: 140,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?
+        .fmt_for_test()
+        .to_string();
+
+        let loaded = output
+            .lines()
+            .find(|line| line.contains("Loaded"))
+            .expect("Loaded line should be present");
+        let executed = output
+            .lines()
+            .find(|line| line.contains("Executed"))
+            .expect("Executed line should be present");
+
+        assert_eq!(
+            loaded.find("Loaded"),
+            executed.find("Executed"),
+            "Progress labels should share a column:\n{output}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_progress_count_range_stops_before_extra_columns() {
-        let executed =
-            " Executed   [2,943 / 2,943]                                                       13:04.2s exec time total";
+        let executed = "[2,943 / 2,943]   Executed                                                       13:04.2s exec time total";
         let (start, end, is_executed) = progress_count_range(executed).unwrap();
         assert!(is_executed);
         assert_eq!(&executed[start..end], "[2,943 / 2,943]");
 
         let loaded =
-            " Loaded       217 / 217                                                           478 dirs read, 22,335 targets declared";
+            "            217  Loaded                                                       478 dirs read, 22,335 targets declared";
         let (start, end, is_executed) = progress_count_range(loaded).unwrap();
         assert!(!is_executed);
-        assert_eq!(&loaded[start..end], "217 / 217");
+        assert_eq!(&loaded[start..end], "217");
     }
 
     #[test]
@@ -1257,10 +1472,9 @@ mod tests {
         .fmt_for_test()
         .to_string();
 
-        assert!(output.contains("Checking cache."));
         assert!(output.contains("Checked"));
-        assert!(output.contains("100/1234"));
-        assert!(output.contains("running:    30"));
+        assert!(output.contains("[100 / 1,234]"));
+        assert!(output.contains("30 running"));
 
         progress_stats.running_remote_cache_checks = 0;
         progress_stats.remote_cache_checks_finished = 1234;
@@ -1280,9 +1494,8 @@ mod tests {
         .fmt_for_test()
         .to_string();
 
-        assert!(completed_output.contains("Checking cache."));
-        assert!(completed_output.contains("1234/1234"));
-        assert!(completed_output.contains("running:     0"));
+        assert!(completed_output.contains("[1,234 / 1,234]"));
+        assert!(completed_output.contains("0 running"));
 
         let final_output = ProgressHeader {
             phase_stats: &phase_stats(),
@@ -1300,7 +1513,7 @@ mod tests {
         .fmt_for_test()
         .to_string();
 
-        assert!(!final_output.contains("Checking cache."));
+        assert!(!final_output.contains("Checked"));
 
         Ok(())
     }
