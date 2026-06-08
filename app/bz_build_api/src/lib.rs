@@ -42,6 +42,7 @@ pub mod dynamic;
 pub mod dynamic_value;
 pub mod interpreter;
 pub mod keep_going;
+pub mod lost_remote;
 pub mod materialize;
 pub mod query;
 pub mod spawner;

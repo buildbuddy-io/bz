@@ -24,6 +24,7 @@ use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::fs::buck_out_path::BuckOutPathKind;
 use bz_core::fs::buck_out_path::BuildArtifactPath;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_execute::artifact::artifact_dyn::CommandExecutionInputOwner;
 use bz_execute::artifact::artifact_dyn::ArtifactDyn;
 use bz_execute::execute::request::OutputType;
 use bz_execute::path::artifact_path::ArtifactPath;
@@ -258,6 +259,15 @@ impl ArtifactDyn for Artifact {
 
     fn is_projected(&self) -> bool {
         !self.as_parts().1.is_empty()
+    }
+
+    fn input_owner(&self) -> Option<CommandExecutionInputOwner> {
+        match self.as_parts().0 {
+            BaseArtifactKind::Build(build_artifact) => Some(CommandExecutionInputOwner::new(
+                build_artifact.key().to_string(),
+            )),
+            BaseArtifactKind::Source(_) => None,
+        }
     }
 }
 

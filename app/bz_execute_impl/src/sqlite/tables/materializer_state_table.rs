@@ -32,9 +32,13 @@ use bz_execute::directory::ActionDirectoryEntry;
 use bz_execute::directory::ActionDirectoryMember;
 use bz_execute::directory::ActionSharedDirectory;
 use bz_execute::directory::INTERNER;
+use bz_execute::execute::action_digest::ActionDigest;
+use bz_execute::materialize::materializer::CasDownloadInfo;
+use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
 use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use bz_hash::StdBuckHashMap;
 use chrono::DateTime;
+use chrono::Duration as ChronoDuration;
 use chrono::TimeZone;
 use chrono::Utc;
 use gazebo::prelude::*;
@@ -109,6 +113,9 @@ struct SqliteEntry<'a> {
 struct DeclaredCasSqliteEntry<'a> {
     entry: SqliteEntry<'a>,
     re_use_case: String,
+    origin_action_digest: Option<String>,
+    origin_action_instant: Option<i64>,
+    origin_ttl_seconds: Option<i64>,
 }
 
 impl<'a> SqliteEntry<'a> {
@@ -143,6 +150,76 @@ fn digest_parts(digest: &TrackedFileDigest) -> (u64, &[u8], u8) {
         digest.raw_digest().as_bytes(),
         digest.raw_digest().algorithm() as _,
     )
+}
+
+fn remote_origin_from_sqlite(
+    action_digest: Option<String>,
+    action_instant: Option<i64>,
+    ttl_seconds: Option<i64>,
+    digest_config: DigestConfig,
+) -> bz_error::Result<Option<RemoteActionCacheOrigin>> {
+    let (action_digest, action_instant, ttl_seconds) =
+        match (action_digest, action_instant, ttl_seconds) {
+            (Some(action_digest), Some(action_instant), Some(ttl_seconds)) => {
+                (action_digest, action_instant, ttl_seconds)
+            }
+            (None, None, None) => return Ok(None),
+            _ => {
+                return Err(internal_error!(
+                    "incomplete declared CAS remote origin metadata"
+                ));
+            }
+        };
+
+    let (action_digest, _algorithm) =
+        ActionDigest::parse_digest(&action_digest, digest_config.cas_digest_config())
+            .with_buck_error_context(|| {
+                format!("parsing declared CAS remote origin digest `{action_digest}`")
+            })?;
+    let action_instant = Utc
+        .timestamp_opt(action_instant, 0)
+        .single()
+        .ok_or_else(|| {
+            internal_error!(
+                "invalid declared CAS remote origin timestamp `{}`",
+                action_instant
+            )
+        })?;
+    Ok(Some(RemoteActionCacheOrigin::new(
+        action_digest,
+        action_instant,
+        ChronoDuration::seconds(ttl_seconds),
+    )))
+}
+
+fn cas_download_info_from_sqlite(
+    re_use_case: String,
+    origin_action_digest: Option<String>,
+    origin_action_instant: Option<i64>,
+    origin_ttl_seconds: Option<i64>,
+    digest_config: DigestConfig,
+) -> bz_error::Result<CasDownloadInfo> {
+    let re_use_case = RemoteExecutorUseCase::new(re_use_case);
+    match remote_origin_from_sqlite(
+        origin_action_digest,
+        origin_action_instant,
+        origin_ttl_seconds,
+        digest_config,
+    )? {
+        Some(origin) => Ok(origin.into_cas_download_info(re_use_case, digest_config, true)),
+        None => Ok(CasDownloadInfo::new_declared(re_use_case)),
+    }
+}
+
+fn remote_origin_to_sqlite(info: &CasDownloadInfo) -> (Option<String>, Option<i64>, Option<i64>) {
+    match info.remote_origin() {
+        Some(origin) => (
+            Some(origin.action_digest().to_string()),
+            Some(origin.action_instant().timestamp()),
+            Some(origin.ttl().num_seconds()),
+        ),
+        None => (None, None, None),
+    }
 }
 
 fn convert_artifact_metadata_to_sqlite_entries<'a>(
@@ -374,14 +451,27 @@ fn convert_sqlite_entries_to_declared_cas_state(
     entries: Vec<DeclaredCasSqliteEntry>,
     digest_config: DigestConfig,
 ) -> bz_error::Result<MaterializerDeclaredCasState> {
-    let mut re_use_cases = StdBuckHashMap::default();
+    let mut cas_download_infos = StdBuckHashMap::default();
     let mut sqlite_entries = Vec::with_capacity(entries.len());
 
-    for DeclaredCasSqliteEntry { entry, re_use_case } in entries {
+    for DeclaredCasSqliteEntry {
+        entry,
+        re_use_case,
+        origin_action_digest,
+        origin_action_instant,
+        origin_ttl_seconds,
+    } in entries
+    {
         if entry.parent_path.is_none() {
-            re_use_cases.insert(
+            cas_download_infos.insert(
                 ProjectRelativePathBuf::unchecked_new(entry.path.clone().into_owned()),
-                RemoteExecutorUseCase::new(re_use_case),
+                cas_download_info_from_sqlite(
+                    re_use_case,
+                    origin_action_digest,
+                    origin_action_instant,
+                    origin_ttl_seconds,
+                    digest_config,
+                )?,
             );
         }
         sqlite_entries.push(entry);
@@ -390,13 +480,13 @@ fn convert_sqlite_entries_to_declared_cas_state(
     convert_sqlite_entries_to_materializer_state(sqlite_entries, digest_config)?
         .into_iter()
         .map(|entry| {
-            let re_use_case = re_use_cases.remove(&entry.path).ok_or_else(|| {
-                internal_error!("missing declared CAS use case for {}", entry.path)
+            let info = cas_download_infos.remove(&entry.path).ok_or_else(|| {
+                internal_error!("missing declared CAS download info for {}", entry.path)
             })?;
             Ok(MaterializerDeclaredCasStateEntry {
                 path: entry.path,
                 metadata: entry.metadata,
-                re_use_case,
+                info,
             })
         })
         .collect()
@@ -563,7 +653,10 @@ impl MaterializerStateSqliteTable {
                 symlink_target          TEXT NULL DEFAULT NULL,
                 last_access_time        INTEGER NULL DEFAULT NULL,
                 parent_path             TEXT NULL DEFAULT NULL,
-                re_use_case             TEXT NOT NULL
+                re_use_case             TEXT NOT NULL,
+                origin_action_digest    TEXT NULL,
+                origin_action_instant   INTEGER NULL,
+                origin_ttl_seconds      INTEGER NULL
             )",
         );
         tracing::trace!(sql = %*sql, "creating table");
@@ -638,13 +731,15 @@ impl MaterializerStateSqliteTable {
         &self,
         path: &ProjectRelativePath,
         metadata: &ArtifactMetadata,
-        re_use_case: RemoteExecutorUseCase,
+        info: &CasDownloadInfo,
     ) -> bz_error::Result<()> {
         let timestamp = Utc::now();
         let entries = convert_artifact_metadata_to_sqlite_entries(path, metadata, &timestamp);
+        let (origin_action_digest, origin_action_instant, origin_ttl_seconds) =
+            remote_origin_to_sqlite(info);
         static SQL: Lazy<String> = Lazy::new(|| {
             format!(
-                "INSERT INTO {DECLARED_CAS_STATE_TABLE_NAME} (path, artifact_type, digest_size, entry_hash, entry_hash_kind, file_is_executable, symlink_target, last_access_time, parent_path, re_use_case) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+                "INSERT INTO {DECLARED_CAS_STATE_TABLE_NAME} (path, artifact_type, digest_size, entry_hash, entry_hash_kind, file_is_executable, symlink_target, last_access_time, parent_path, re_use_case, origin_action_digest, origin_action_instant, origin_ttl_seconds) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
             )
         });
         static DELETE_SQL: Lazy<String> = Lazy::new(|| {
@@ -675,7 +770,10 @@ impl MaterializerStateSqliteTable {
                     entry.symlink_target,
                     entry.last_access_time,
                     entry.parent_path,
-                    re_use_case.as_str(),
+                    info.re_use_case.as_str(),
+                    origin_action_digest.as_deref(),
+                    origin_action_instant,
+                    origin_ttl_seconds,
                 ],
             )
             .with_buck_error_context(|| {
@@ -758,7 +856,7 @@ impl MaterializerStateSqliteTable {
     fn read_all_declared_cas_entries(&self) -> bz_error::Result<Vec<DeclaredCasSqliteEntry<'_>>> {
         static SQL: Lazy<String> = Lazy::new(|| {
             format!(
-                "SELECT path, artifact_type, digest_size, entry_hash, entry_hash_kind, file_is_executable, symlink_target, last_access_time, parent_path, re_use_case FROM {DECLARED_CAS_STATE_TABLE_NAME}",
+                "SELECT path, artifact_type, digest_size, entry_hash, entry_hash_kind, file_is_executable, symlink_target, last_access_time, parent_path, re_use_case, origin_action_digest, origin_action_instant, origin_ttl_seconds FROM {DECLARED_CAS_STATE_TABLE_NAME}",
             )
         });
         tracing::trace!(sql = %*SQL, "reading all from table");
@@ -778,6 +876,9 @@ impl MaterializerStateSqliteTable {
                     row.get(8)?,
                 ),
                 re_use_case: row.get(9)?,
+                origin_action_digest: row.get(10)?,
+                origin_action_instant: row.get(11)?,
+                origin_ttl_seconds: row.get(12)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()
@@ -1125,21 +1226,37 @@ mod tests {
             is_executable: true,
         }));
         let re_use_case = RemoteExecutorUseCase::new("declared-cas-test".to_owned());
+        let info = CasDownloadInfo::new_declared(re_use_case);
 
-        table.insert_declared_cas(path, &metadata, re_use_case)?;
+        table.insert_declared_cas(path, &metadata, &info)?;
 
         assert!(table.read_materializer_state(digest_config)?.is_empty());
         let state = table.read_declared_cas_state(digest_config)?;
         assert_eq!(state.len(), 1);
         assert_eq!(state[0].path, path);
-        assert_eq!(state[0].re_use_case.as_str(), "declared-cas-test");
+        assert_eq!(state[0].info.re_use_case.as_str(), "declared-cas-test");
+        assert!(state[0].info.remote_origin().is_none());
         assert!(artifact_metadata_eq(&state[0].metadata, &metadata));
 
         let rows_deleted = table.delete(vec![path.to_owned()])?;
         assert_eq!(rows_deleted, 1);
         assert!(table.read_declared_cas_state(digest_config)?.is_empty());
 
-        table.insert_declared_cas(path, &metadata, re_use_case)?;
+        let remote_origin = RemoteActionCacheOrigin::new(
+            ActionDigest::from_content(b"action", digest_config.cas_digest_config()),
+            Utc.timestamp_opt(42, 0).single().unwrap(),
+            ChronoDuration::seconds(3600),
+        );
+        let info = remote_origin.to_cas_download_info(
+            RemoteExecutorUseCase::new("declared-cas-test".to_owned()),
+            digest_config,
+            true,
+        );
+        table.insert_declared_cas(path, &metadata, &info)?;
+        let state = table.read_declared_cas_state(digest_config)?;
+        assert_eq!(state.len(), 1);
+        assert_eq!(state[0].info.remote_origin(), Some(remote_origin));
+
         assert_eq!(table.clear()?, 1);
         assert!(table.read_declared_cas_state(digest_config)?.is_empty());
 

@@ -21,6 +21,7 @@ use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
 use bz_error::BuckErrorContext;
 use bz_events::dispatch::EventDispatcher;
 use bz_events::dispatch::get_dispatcher;
+use bz_execute::execute::action_digest::ActionDigest;
 use bz_execute::materialize::materializer::DeferredMaterializerEntry;
 use bz_execute::materialize::materializer::DeferredMaterializerExtensions;
 use bz_execute::materialize::materializer::DeferredMaterializerIterItem;
@@ -223,6 +224,91 @@ impl<T: IoHandler> ExtensionCommand<T> for ClearAllArtifacts {
 
 #[derive(Derivative)]
 #[derivative(Debug)]
+struct ClearRemoteDeclaredCas {
+    #[derivative(Debug = "ignore")]
+    sender: Sender<BoxFuture<'static, bz_error::Result<()>>>,
+}
+
+impl<T: IoHandler> ExtensionCommand<T> for ClearRemoteDeclaredCas {
+    fn execute(self: Box<Self>, processor: &mut DeferredMaterializerCommandProcessor<T>) {
+        let paths = processor
+            .tree
+            .iter_with_paths()
+            .filter_map(|(path, data)| match &data.stage {
+                ArtifactMaterializationStage::Declared { method, .. } => match method.as_ref() {
+                    ArtifactMaterializationMethod::CasDownload { info }
+                        if info.remote_origin().is_some() =>
+                    {
+                        Some(ProjectRelativePathBuf::from(path))
+                    }
+                    _ => None,
+                },
+                ArtifactMaterializationStage::Materialized { .. } => None,
+            })
+            .collect::<Vec<_>>();
+
+        let invalidation = processor
+            .tree
+            .invalidate_paths_and_collect_futures(paths, processor.sqlite_db.as_mut());
+        let existing_futs = invalidation.map(|invalidation| {
+            for path in invalidation.paths {
+                processor.declared_artifact_values.remove(&path);
+            }
+            invalidation.futures
+        });
+
+        let fut = async move { join_all_existing_futs(existing_futs?).await }.boxed();
+
+        let _ignored = self.sender.send(fut);
+    }
+}
+
+#[derive(Derivative)]
+#[derivative(Debug)]
+struct ClearRemoteDeclaredCasForOrigins {
+    origin_action_digests: Vec<ActionDigest>,
+    #[derivative(Debug = "ignore")]
+    sender: Sender<BoxFuture<'static, bz_error::Result<()>>>,
+}
+
+impl<T: IoHandler> ExtensionCommand<T> for ClearRemoteDeclaredCasForOrigins {
+    fn execute(self: Box<Self>, processor: &mut DeferredMaterializerCommandProcessor<T>) {
+        let paths = processor
+            .tree
+            .iter_with_paths()
+            .filter_map(|(path, data)| match &data.stage {
+                ArtifactMaterializationStage::Declared { method, .. } => match method.as_ref() {
+                    ArtifactMaterializationMethod::CasDownload { info }
+                        if info.remote_origin().is_some_and(|origin| {
+                            self.origin_action_digests.contains(origin.action_digest())
+                        }) =>
+                    {
+                        Some(ProjectRelativePathBuf::from(path))
+                    }
+                    _ => None,
+                },
+                ArtifactMaterializationStage::Materialized { .. } => None,
+            })
+            .collect::<Vec<_>>();
+
+        let invalidation = processor
+            .tree
+            .invalidate_paths_and_collect_futures(paths, processor.sqlite_db.as_mut());
+        let existing_futs = invalidation.map(|invalidation| {
+            for path in invalidation.paths {
+                processor.declared_artifact_values.remove(&path);
+            }
+            invalidation.futures
+        });
+
+        let fut = async move { join_all_existing_futs(existing_futs?).await }.boxed();
+
+        let _ignored = self.sender.send(fut);
+    }
+}
+
+#[derive(Derivative)]
+#[derivative(Debug)]
 struct ListSubscriptions {
     #[derivative(Debug = "ignore")]
     sender: UnboundedSender<ProjectRelativePathBuf>,
@@ -403,9 +489,7 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
         Ok(UnboundedReceiverStream::new(receiver).boxed())
     }
 
-    fn list_subscriptions(
-        &self,
-    ) -> bz_error::Result<BoxStream<'static, ProjectRelativePathBuf>> {
+    fn list_subscriptions(&self) -> bz_error::Result<BoxStream<'static, ProjectRelativePathBuf>> {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.command_sender
             .send(MaterializerCommand::Extension(
@@ -480,6 +564,34 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
         self.command_sender
             .send(MaterializerCommand::Extension(Box::new(
                 ClearAllArtifacts { sender },
+            )))?;
+        recv.await
+            .buck_error_context("No response from materializer")?
+            .await
+    }
+
+    async fn clear_remote_declared_cas(&self) -> bz_error::Result<()> {
+        let (sender, recv) = oneshot::channel();
+        self.command_sender
+            .send(MaterializerCommand::Extension(Box::new(
+                ClearRemoteDeclaredCas { sender },
+            )))?;
+        recv.await
+            .buck_error_context("No response from materializer")?
+            .await
+    }
+
+    async fn clear_remote_declared_cas_for_origin_action_digests(
+        &self,
+        origin_action_digests: Vec<ActionDigest>,
+    ) -> bz_error::Result<()> {
+        let (sender, recv) = oneshot::channel();
+        self.command_sender
+            .send(MaterializerCommand::Extension(Box::new(
+                ClearRemoteDeclaredCasForOrigins {
+                    origin_action_digests,
+                    sender,
+                },
             )))?;
         recv.await
             .buck_error_context("No response from materializer")?

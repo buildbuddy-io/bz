@@ -1321,9 +1321,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
                 ValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_empty(heap)),
             ),
             _ => {
-                return Err(
-                    bz_error::Error::from(DefaultOutputError::ConflictingArguments).into(),
-                );
+                return Err(bz_error::Error::from(DefaultOutputError::ConflictingArguments).into());
             }
         };
 

@@ -14,12 +14,12 @@ use bz_common::sqlite::sqlite_db::SqliteDb;
 use bz_common::sqlite::sqlite_db::SqliteIdentity;
 use bz_common::sqlite::sqlite_db::SqliteTable;
 use bz_common::sqlite::sqlite_db::SqliteTables;
-use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use bz_core::fs::project::ProjectRoot;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
 use bz_execute::digest_config::DigestConfig;
 use bz_execute::execute::blocking::BlockingExecutor;
+use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_fs::paths::abs_norm_path::AbsNormPath;
 use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 use bz_hash::StdBuckHashMap;
@@ -35,7 +35,7 @@ use crate::sqlite::tables::materializer_state_table::MaterializerStateSqliteTabl
 /// materializer state sqlite db schema! If you forget to bump this version,
 /// then you can fix forward by bumping the `buck2.sqlite_materializer_state_version`
 /// buckconfig in the project root's .buckconfig.
-pub const MATERIALIZER_DB_SCHEMA_VERSION: u64 = 10;
+pub const MATERIALIZER_DB_SCHEMA_VERSION: u64 = 14;
 
 #[derive(Debug)]
 pub struct MaterializerStateEntry {
@@ -46,11 +46,11 @@ pub struct MaterializerStateEntry {
 
 pub type MaterializerState = Vec<MaterializerStateEntry>;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct MaterializerDeclaredCasStateEntry {
     pub path: ProjectRelativePathBuf,
     pub metadata: ArtifactMetadata,
-    pub re_use_case: RemoteExecutorUseCase,
+    pub info: CasDownloadInfo,
 }
 
 pub type MaterializerDeclaredCasState = Vec<MaterializerDeclaredCasStateEntry>;

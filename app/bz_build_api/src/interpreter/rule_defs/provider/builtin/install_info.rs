@@ -79,8 +79,7 @@ impl<'v, V: ValueLike<'v>> InstallInfoGen<V> {
 
     fn get_files_iter<'a>(
         files: &'a DictRef<'v>,
-    ) -> impl Iterator<Item = bz_error::Result<(&'v str, ValueAsInputArtifactLike<'v>)>> + 'a
-    {
+    ) -> impl Iterator<Item = bz_error::Result<(&'v str, ValueAsInputArtifactLike<'v>)>> + 'a {
         files.iter().map(|(k, v)| {
             let k = k
                 .unpack_str()

@@ -39,9 +39,8 @@ pub static AUDIT_OUTPUT: LateBinding<
         &'v CellResolver,
         &'v mut DiceComputations,
         &'v GlobalCfgOptions,
-    ) -> Pin<
-        Box<dyn Future<Output = bz_error::Result<Option<AuditOutputResult>>> + 'v>,
-    >,
+    )
+        -> Pin<Box<dyn Future<Output = bz_error::Result<Option<AuditOutputResult>>> + 'v>>,
 > = LateBinding::new("AUDIT_OUTPUT");
 
 pub async fn audit_output<'v>(

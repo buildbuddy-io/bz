@@ -863,23 +863,22 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                     Some(eval.frozen_heap().alloc(AllocDict::EMPTY))
                 } else {
                     // Dealing only with frozen values is much easier.
-                    return Err(bz_error::Error::from(
-                        ProviderCallableError::InvalidDefaultValue,
-                    )
-                    .into());
+                    return Err(
+                        bz_error::Error::from(ProviderCallableError::InvalidDefaultValue).into(),
+                    );
                 }
             }
         };
         if let Some(default) = default {
             if !ty.matches(default.to_value()) {
-                return Err(bz_error::Error::from(
-                    ProviderCallableError::InvalidDefaultValueType(
+                return Err(
+                    bz_error::Error::from(ProviderCallableError::InvalidDefaultValueType(
                         default.to_string(),
                         default.to_value().get_type(),
                         ty.as_ty().dupe(),
-                    ),
-                )
-                .into());
+                    ))
+                    .into(),
+                );
             }
         }
         Ok(UserProviderField { ty, default })
@@ -924,10 +923,8 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                     .collect();
                 if new_fields.len() != fields.items.len() {
                     return Err(
-                        bz_error::Error::from(ProviderCallableError::NonUniqueFields(
-                            fields.items,
-                        ))
-                        .into(),
+                        bz_error::Error::from(ProviderCallableError::NonUniqueFields(fields.items))
+                            .into(),
                     );
                 }
                 UserProviderSchema::Schema(new_fields)

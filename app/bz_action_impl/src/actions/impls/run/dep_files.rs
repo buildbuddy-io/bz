@@ -507,6 +507,7 @@ impl DepFileBundle {
                     timing: Default::default(),
                     input_files_bytes: None,
                     waiting_data: WaitingData::new(),
+                    remote_cache_origin: None,
                 },
             )
         });
@@ -545,6 +546,7 @@ impl DepFileBundle {
                     timing: Default::default(),
                     input_files_bytes: None,
                     waiting_data: WaitingData::new(),
+                    remote_cache_origin: None,
                 },
             )
         });

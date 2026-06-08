@@ -27,6 +27,7 @@ pub struct CacheUploadInfo<'a> {
     pub digest_config: DigestConfig,
     pub mergebase: &'a Option<String>,
     pub re_platform: &'a remote_execution::Platform,
+    pub force_reupload: bool,
 }
 
 #[async_trait]

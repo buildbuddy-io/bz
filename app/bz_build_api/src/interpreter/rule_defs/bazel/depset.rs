@@ -434,9 +434,7 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         Ok(values.into_iter().map(|value| value.value).collect())
     }
 
-    fn collect_artifact_inputs_for_cache(
-        &self,
-    ) -> bz_error::Result<Option<Box<[ArtifactGroup]>>> {
+    fn collect_artifact_inputs_for_cache(&self) -> bz_error::Result<Option<Box<[ArtifactGroup]>>> {
         let values = self.to_list_cached().map_err(command_line_depset_error)?;
         let mut inputs = Vec::with_capacity(values.len());
 
@@ -645,12 +643,10 @@ fn depset_from_value<'v>(value: Value<'v>) -> starlark::Result<&'v BazelDepset<'
     if let Some(depset) = BazelDepset::from_value(value) {
         return Ok(depset);
     }
-    Err(
-        bz_error::Error::from(BazelDepsetError::TransitiveNotDepset(
-            value.to_string_for_type_error(),
-        ))
-        .into(),
-    )
+    Err(bz_error::Error::from(BazelDepsetError::TransitiveNotDepset(
+        value.to_string_for_type_error(),
+    ))
+    .into())
 }
 
 fn bazel_depset_identity_hash<'v>(value: Value<'v>) -> Hashed<Value<'v>> {

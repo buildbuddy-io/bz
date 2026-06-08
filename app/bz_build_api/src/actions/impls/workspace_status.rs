@@ -197,6 +197,7 @@ impl Action for WorkspaceStatusAction {
                 timing: ActionExecutionTimingData { wall_time },
                 input_files_bytes: None,
                 waiting_data,
+                remote_cache_origin: None,
             },
         ))
     }

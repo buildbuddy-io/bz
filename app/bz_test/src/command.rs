@@ -1297,8 +1297,7 @@ async fn build_target_result(
         ConfiguredBuildEventVariant::MapModifiers { modifiers },
     ));
     let build_target_result = result_builder
-        .wait_for(
-            false,
+        .wait_for(false, async {
             build_configured_label(
                 &consumer,
                 ctx,
@@ -1315,8 +1314,10 @@ async fn build_target_result(
                     graph_properties: Default::default(),
                 },
                 None, // TODO: is this right?
-            ),
-        )
+            )
+            .await;
+            Ok::<_, bz_error::Error>(())
+        })
         .await?;
 
     Ok((build_target_result, providers))

@@ -38,9 +38,7 @@ pub static EVAL_ANALYSIS_QUERY: LateBinding<
         &'a str,
         HashMap<String, ConfiguredTargetNode>,
     ) -> Pin<
-        Box<
-            dyn Future<Output = bz_error::Result<TargetSet<ConfiguredGraphNodeRef>>> + Send + 'a,
-        >,
+        Box<dyn Future<Output = bz_error::Result<TargetSet<ConfiguredGraphNodeRef>>> + Send + 'a>,
     >,
 > = LateBinding::new("EVAL_ANALYSIS_QUERY");
 

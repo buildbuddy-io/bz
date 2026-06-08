@@ -273,9 +273,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkPromiseArtifact {
         Err(PromiseArtifactError::CannotProject(self.clone()).into())
     }
 
-    fn without_associated_artifacts(
-        &'v self,
-    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>> {
+    fn without_associated_artifacts(&'v self) -> bz_error::Result<EitherStarlarkInputArtifact<'v>> {
         Ok(EitherStarlarkInputArtifact::PromiseArtifact(self.clone()))
     }
 

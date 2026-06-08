@@ -140,9 +140,10 @@ impl AsyncBuildTargetResultBuilder {
     pub async fn wait_for(
         mut self,
         fail_fast: bool,
-        fut: impl Future<Output = ()>,
+        fut: impl Future<Output = bz_error::Result<()>>,
     ) -> bz_error::Result<BuildTargetResult> {
         let mut fut = pin!(fut);
+        let mut fut_result = Ok(());
         loop {
             tokio::select! {
                 event = self.event_rx.recv() => {
@@ -161,17 +162,19 @@ impl AsyncBuildTargetResultBuilder {
                         }
                     }
                 }
-                _ = &mut fut => {
+                result = &mut fut => {
                     // The future is done, but make sure to drain the queue of events.
                     // Unlike poll_recv, try_recv never spuriously returns empty.
                     while let Ok(event) = self.event_rx.try_recv() {
                         self.builder.event(event)?;
                     }
+                    fut_result = result;
                     break;
                 }
             }
         }
 
+        fut_result?;
         Ok(self.builder.build())
     }
 }

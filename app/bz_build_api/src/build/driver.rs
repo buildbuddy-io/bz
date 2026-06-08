@@ -29,6 +29,7 @@ use crate::build::completion::TargetCompletionKey;
 use crate::build::completion::emit_configured_build_event;
 use crate::build::eager::HasEagerBuildExecution;
 use crate::build::graph_properties::GraphPropertiesOptions;
+use crate::lost_remote::LostRemoteBuildRestart;
 use crate::materialize::MaterializationAndUploadContext;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
@@ -87,7 +88,9 @@ impl Key for BuildDriverKey {
                 )
             });
 
-        if let Err(e) = &result {
+        if let Err(e) = &result
+            && e.find_typed_context::<LostRemoteBuildRestart>().is_none()
+        {
             emit_configured_build_event(
                 ctx,
                 ConfiguredBuildEvent {

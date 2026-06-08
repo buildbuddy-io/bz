@@ -570,7 +570,7 @@ impl Action for CopyAction {
         ctx.insert_unprepared_action_cache_metadata(
             &local_action_cache_key,
             &buck_indexmap![local_action_cache_output => value.dupe()],
-            false,
+            None,
         )?;
 
         Ok((
@@ -580,6 +580,7 @@ impl Action for CopyAction {
                 timing: ActionExecutionTimingData::default(),
                 input_files_bytes: None,
                 waiting_data,
+                remote_cache_origin: None,
             },
         ))
     }
@@ -660,7 +661,7 @@ impl Action for SymlinkAction {
         ctx.insert_unprepared_action_cache_metadata(
             &local_action_cache_key,
             &buck_indexmap![local_action_cache_output => value.dupe()],
-            false,
+            None,
         )?;
 
         Ok((
@@ -670,6 +671,7 @@ impl Action for SymlinkAction {
                 timing: ActionExecutionTimingData::default(),
                 input_files_bytes: None,
                 waiting_data,
+                remote_cache_origin: None,
             },
         ))
     }

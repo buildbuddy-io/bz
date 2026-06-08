@@ -260,7 +260,7 @@ impl ArtifactTree {
                 let MaterializerDeclaredCasStateEntry {
                     path,
                     metadata,
-                    re_use_case,
+                    info,
                 } = entry;
                 tree.insert(
                     path.iter().map(|f| f.to_owned()),
@@ -269,7 +269,7 @@ impl ArtifactTree {
                         stage: ArtifactMaterializationStage::Declared {
                             entry: metadata,
                             method: Arc::new(ArtifactMaterializationMethod::CasDownload {
-                                info: Arc::new(CasDownloadInfo::new_declared(re_use_case)),
+                                info: Arc::new(info),
                             }),
                         },
                         processing: Processing::Done(Version(0)),

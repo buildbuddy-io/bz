@@ -8,6 +8,7 @@ use bz_common::sqlite::sqlite_db::SqliteTables;
 use bz_core::async_once_cell::AsyncOnceCell;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_error::BuckErrorContext;
+use bz_error::internal_error;
 use bz_execute::artifact_value::ArtifactValue;
 use bz_execute::digest_config::DigestConfig;
 use bz_execute::execute::action_digest::ActionDigest;
@@ -18,21 +19,25 @@ use bz_execute::execute::prepared::PreparedCommandOptionalExecutor;
 use bz_execute::execute::prepared::UnpreparedCommand;
 use bz_execute::execute::request::CommandExecutionOutput;
 use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
 use bz_fs::error::IoResultExt;
 use bz_fs::fs_util;
 use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 use bz_fs::paths::file_name::FileName;
 use bz_hash::BuckDashMap;
 use bz_hash::BuckIndexMap;
+use chrono::Duration as ChronoDuration;
+use chrono::TimeZone;
+use chrono::Utc;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
-const STATE_TABLE_NAME: &str = "local_action_cache_outputs_v2";
-const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_action_metadata_v2";
-const REMOTE_ACTION_CACHE_TABLE_NAME: &str = "local_action_cache_remote_outputs_v2";
+const STATE_TABLE_NAME: &str = "local_action_cache_outputs_v6";
+const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_action_metadata_v6";
+const REMOTE_ACTION_CACHE_TABLE_NAME: &str = "local_action_cache_remote_outputs_v6";
 const OUTPUT_VALUES_VERSION: u8 = 1;
 
 pub struct LocalActionCache {
@@ -63,6 +68,7 @@ pub struct LocalActionCacheOutputEntry {
     pub outputs_fingerprint: Arc<[u8]>,
     pub output_values: Arc<[ArtifactValue]>,
     pub remote_cache_entry: bool,
+    pub remote_cache_origin: Option<RemoteActionCacheOrigin>,
 }
 
 #[derive(Clone)]
@@ -73,13 +79,14 @@ pub struct LocalActionCacheEntry {
     pub outputs_fingerprint: Arc<[u8]>,
     pub output_values: Arc<[ArtifactValue]>,
     pub remote_cache_entry: bool,
+    pub remote_cache_origin: Option<RemoteActionCacheOrigin>,
 }
 
 #[derive(Clone)]
 struct LocalActionCacheStoredOutputEntry {
     outputs_fingerprint: Arc<[u8]>,
     output_values: Arc<LocalActionCacheStoredOutputValues>,
-    remote_cache_entry: bool,
+    remote_cache_origin: Option<RemoteActionCacheOrigin>,
 }
 
 #[derive(Clone)]
@@ -89,7 +96,7 @@ struct LocalActionCacheStoredEntry {
     action_fingerprint: Arc<[u8]>,
     outputs_fingerprint: Arc<[u8]>,
     output_values: Arc<LocalActionCacheStoredOutputValues>,
-    remote_cache_entry: bool,
+    remote_cache_origin: Option<RemoteActionCacheOrigin>,
 }
 
 struct LocalActionCacheStoredOutputValues {
@@ -131,7 +138,8 @@ impl LocalActionCacheStoredOutputEntry {
         Ok(LocalActionCacheOutputEntry {
             outputs_fingerprint: self.outputs_fingerprint.clone(),
             output_values: self.output_values.get(digest_config)?,
-            remote_cache_entry: self.remote_cache_entry,
+            remote_cache_entry: self.remote_cache_origin.is_some(),
+            remote_cache_origin: self.remote_cache_origin.clone(),
         })
     }
 }
@@ -144,7 +152,8 @@ impl LocalActionCacheStoredEntry {
             action_fingerprint: self.action_fingerprint.clone(),
             outputs_fingerprint: self.outputs_fingerprint.clone(),
             output_values: self.output_values.get(digest_config)?,
-            remote_cache_entry: self.remote_cache_entry,
+            remote_cache_entry: self.remote_cache_origin.is_some(),
+            remote_cache_origin: self.remote_cache_origin.clone(),
         })
     }
 }
@@ -185,6 +194,60 @@ pub fn deserialize_output_values(
     }
     reader.expect_eof()?;
     Ok(values)
+}
+
+fn remote_origin_from_sqlite(
+    action_digest: Option<String>,
+    action_instant: Option<i64>,
+    ttl_seconds: Option<i64>,
+    digest_config: DigestConfig,
+) -> bz_error::Result<Option<RemoteActionCacheOrigin>> {
+    let (action_digest, action_instant, ttl_seconds) =
+        match (action_digest, action_instant, ttl_seconds) {
+            (Some(action_digest), Some(action_instant), Some(ttl_seconds)) => {
+                (action_digest, action_instant, ttl_seconds)
+            }
+            (None, None, None) => return Ok(None),
+            _ => {
+                return Err(internal_error!(
+                    "incomplete remote local action cache origin metadata"
+                ));
+            }
+        };
+
+    let (action_digest, _algorithm) =
+        ActionDigest::parse_digest(&action_digest, digest_config.cas_digest_config())
+            .with_buck_error_context(|| {
+                format!("parsing remote local action cache origin digest `{action_digest}`")
+            })?;
+    let action_instant = Utc
+        .timestamp_opt(action_instant, 0)
+        .single()
+        .ok_or_else(|| {
+            internal_error!(
+                "invalid remote local action cache origin timestamp `{}`",
+                action_instant
+            )
+        })?;
+
+    Ok(Some(RemoteActionCacheOrigin::new(
+        action_digest,
+        action_instant,
+        ChronoDuration::seconds(ttl_seconds),
+    )))
+}
+
+fn remote_origin_to_sqlite(
+    remote_cache_origin: Option<&RemoteActionCacheOrigin>,
+) -> (Option<String>, Option<i64>, Option<i64>) {
+    match remote_cache_origin {
+        Some(origin) => (
+            Some(origin.action_digest().to_string()),
+            Some(origin.action_instant().timestamp()),
+            Some(origin.ttl().num_seconds()),
+        ),
+        None => (None, None, None),
+    }
 }
 
 fn write_u64(bytes: &mut Vec<u8>, value: u64) {
@@ -341,7 +404,7 @@ impl LocalActionCache {
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
     ) -> bz_error::Result<()> {
-        self.insert_impl(action_digest, outputs_fingerprint, output_values, false)
+        self.insert_impl(action_digest, outputs_fingerprint, output_values, None)
     }
 
     pub fn insert_remote(
@@ -349,8 +412,14 @@ impl LocalActionCache {
         action_digest: &ActionDigest,
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
+        remote_cache_origin: RemoteActionCacheOrigin,
     ) -> bz_error::Result<()> {
-        self.insert_impl(action_digest, outputs_fingerprint, output_values, true)
+        self.insert_impl(
+            action_digest,
+            outputs_fingerprint,
+            output_values,
+            Some(remote_cache_origin),
+        )
     }
 
     fn insert_impl(
@@ -358,7 +427,7 @@ impl LocalActionCache {
         action_digest: &ActionDigest,
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
-        remote_cache_entry: bool,
+        remote_cache_origin: Option<RemoteActionCacheOrigin>,
     ) -> bz_error::Result<()> {
         let Some(cache) = self.loaded() else {
             return Ok(());
@@ -367,7 +436,7 @@ impl LocalActionCache {
             action_digest,
             outputs_fingerprint,
             output_values,
-            remote_cache_entry,
+            remote_cache_origin,
         )
     }
 
@@ -386,7 +455,7 @@ impl LocalActionCache {
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
-        remote_cache_entry: bool,
+        remote_cache_origin: Option<RemoteActionCacheOrigin>,
     ) -> bz_error::Result<()> {
         let Some(cache) = self.loaded() else {
             return Ok(());
@@ -398,7 +467,7 @@ impl LocalActionCache {
             action_fingerprint,
             outputs_fingerprint,
             output_values,
-            remote_cache_entry,
+            remote_cache_origin,
         )
     }
 
@@ -407,6 +476,23 @@ impl LocalActionCache {
             return Ok(());
         };
         cache.remove_action_metadata(key)
+    }
+
+    pub fn remove_remote_entries(&self) -> bz_error::Result<()> {
+        let Some(cache) = self.loaded() else {
+            return Ok(());
+        };
+        cache.remove_remote_entries()
+    }
+
+    pub fn remove_remote_entries_for_origin_action_digests(
+        &self,
+        origin_action_digests: &[ActionDigest],
+    ) -> bz_error::Result<()> {
+        let Some(cache) = self.loaded() else {
+            return Ok(());
+        };
+        cache.remove_remote_entries_for_origin_action_digests(origin_action_digests)
     }
 
     pub async fn clear(&self) -> bz_error::Result<()> {
@@ -493,7 +579,7 @@ impl LoadedLocalActionCache {
         }
 
         let stored = match LocalActionCacheSqliteTable::new(self.connection.dupe())
-            .read_action_digest_entry(&key)
+            .read_action_digest_entry(&key, self.digest_config)
         {
             Ok(Some(entry)) => entry,
             Ok(None) => return None,
@@ -521,7 +607,7 @@ impl LoadedLocalActionCache {
         action_digest: &ActionDigest,
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
-        remote_cache_entry: bool,
+        remote_cache_origin: Option<RemoteActionCacheOrigin>,
     ) -> bz_error::Result<()> {
         let serialized_output_values = serialize_output_values(output_values.as_ref())?;
         let key = action_digest.to_string();
@@ -533,14 +619,14 @@ impl LoadedLocalActionCache {
                     serialized_output_values.clone(),
                     output_values,
                 )),
-                remote_cache_entry,
+                remote_cache_origin: remote_cache_origin.clone(),
             },
         );
         LocalActionCacheSqliteTable::new(self.connection.dupe()).insert_or_replace(
             key,
             outputs_fingerprint,
             serialized_output_values,
-            remote_cache_entry,
+            remote_cache_origin,
         )
     }
 
@@ -560,7 +646,7 @@ impl LoadedLocalActionCache {
         }
 
         let stored = match LocalActionCacheSqliteTable::new(self.connection.dupe())
-            .read_action_metadata_entry(key)
+            .read_action_metadata_entry(key, self.digest_config)
         {
             Ok(Some(entry)) => entry,
             Ok(None) => return None,
@@ -596,7 +682,7 @@ impl LoadedLocalActionCache {
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
         output_values: Arc<[ArtifactValue]>,
-        remote_cache_entry: bool,
+        remote_cache_origin: Option<RemoteActionCacheOrigin>,
     ) -> bz_error::Result<()> {
         let serialized_output_values = serialize_output_values(output_values.as_ref())?;
         self.action_metadata_entries.insert(
@@ -610,7 +696,7 @@ impl LoadedLocalActionCache {
                     serialized_output_values.clone(),
                     output_values,
                 )),
-                remote_cache_entry,
+                remote_cache_origin: remote_cache_origin.clone(),
             },
         );
         LocalActionCacheSqliteTable::new(self.connection.dupe()).insert_or_replace_action_metadata(
@@ -620,7 +706,7 @@ impl LoadedLocalActionCache {
             action_fingerprint,
             outputs_fingerprint,
             serialized_output_values,
-            remote_cache_entry,
+            remote_cache_origin,
         )
     }
 
@@ -642,6 +728,80 @@ impl LoadedLocalActionCache {
         self.entries.clear();
         self.action_metadata_entries.clear();
         LocalActionCacheSqliteTable::new(self.connection.dupe()).clear()
+    }
+
+    fn remove_remote_entries(&self) -> bz_error::Result<()> {
+        let remote_action_digests = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .value()
+                    .remote_cache_origin
+                    .is_some()
+                    .then(|| entry.key().to_owned())
+            })
+            .collect::<Vec<_>>();
+        for key in remote_action_digests {
+            self.entries.remove(&key);
+        }
+
+        let remote_metadata_keys = self
+            .action_metadata_entries
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .value()
+                    .remote_cache_origin
+                    .is_some()
+                    .then(|| entry.key().to_owned())
+            })
+            .collect::<Vec<_>>();
+        for key in remote_metadata_keys {
+            self.action_metadata_entries.remove(&key);
+        }
+
+        LocalActionCacheSqliteTable::new(self.connection.dupe()).delete_remote_entries()
+    }
+
+    fn remove_remote_entries_for_origin_action_digests(
+        &self,
+        origin_action_digests: &[ActionDigest],
+    ) -> bz_error::Result<()> {
+        let remote_action_digests = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .value()
+                    .remote_cache_origin
+                    .as_ref()
+                    .is_some_and(|origin| origin_action_digests.contains(origin.action_digest()))
+                    .then(|| entry.key().to_owned())
+            })
+            .collect::<Vec<_>>();
+        for key in remote_action_digests {
+            self.entries.remove(&key);
+        }
+
+        let remote_metadata_keys = self
+            .action_metadata_entries
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .value()
+                    .remote_cache_origin
+                    .as_ref()
+                    .is_some_and(|origin| origin_action_digests.contains(origin.action_digest()))
+                    .then(|| entry.key().to_owned())
+            })
+            .collect::<Vec<_>>();
+        for key in remote_metadata_keys {
+            self.action_metadata_entries.remove(&key);
+        }
+
+        LocalActionCacheSqliteTable::new(self.connection.dupe())
+            .delete_remote_entries_for_origin_action_digests(origin_action_digests)
     }
 }
 
@@ -680,7 +840,10 @@ impl LocalActionCacheSqliteTable {
                 action_fingerprint    BLOB NOT NULL,
                 outputs_fingerprint   BLOB NOT NULL,
                 output_values         BLOB NOT NULL,
-                remote_cache_entry    INTEGER NOT NULL
+                remote_cache_entry    INTEGER NOT NULL,
+                origin_action_digest  TEXT NULL,
+                origin_action_instant INTEGER NULL,
+                origin_ttl_seconds    INTEGER NULL
             )",
         );
         self.connection
@@ -691,7 +854,10 @@ impl LocalActionCacheSqliteTable {
             })?;
         let sql = format!(
             "CREATE TABLE IF NOT EXISTS {REMOTE_ACTION_CACHE_TABLE_NAME} (
-                action_digest TEXT PRIMARY KEY NOT NULL
+                action_digest          TEXT PRIMARY KEY NOT NULL,
+                origin_action_digest   TEXT NOT NULL,
+                origin_action_instant  INTEGER NOT NULL,
+                origin_ttl_seconds     INTEGER NOT NULL
             )",
         );
         self.connection
@@ -706,6 +872,7 @@ impl LocalActionCacheSqliteTable {
     fn read_action_digest_entry(
         &self,
         action_digest: &str,
+        digest_config: DigestConfig,
     ) -> bz_error::Result<Option<LocalActionCacheStoredOutputEntry>> {
         let sql = format!(
             "SELECT outputs_fingerprint, output_values FROM {STATE_TABLE_NAME} WHERE action_digest = ?1"
@@ -724,28 +891,45 @@ impl LocalActionCacheSqliteTable {
         };
         drop(stmt);
 
-        let sql =
-            format!("SELECT 1 FROM {REMOTE_ACTION_CACHE_TABLE_NAME} WHERE action_digest = ?1");
-        let remote_cache_entry = connection
-            .query_row(&sql, [action_digest], |_| Ok(()))
+        let sql = format!(
+            "SELECT origin_action_digest, origin_action_instant, origin_ttl_seconds FROM {REMOTE_ACTION_CACHE_TABLE_NAME} WHERE action_digest = ?1"
+        );
+        let remote_cache_origin = connection
+            .query_row(&sql, [action_digest], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
             .optional()?
-            .is_some();
+            .map(|(action_digest, action_instant, ttl_seconds)| {
+                remote_origin_from_sqlite(
+                    Some(action_digest),
+                    Some(action_instant),
+                    Some(ttl_seconds),
+                    digest_config,
+                )
+            })
+            .transpose()?
+            .flatten();
 
         Ok(Some(LocalActionCacheStoredOutputEntry {
             outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
             output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
                 output_values,
             )),
-            remote_cache_entry,
+            remote_cache_origin,
         }))
     }
 
     fn read_action_metadata_entry(
         &self,
         key: &str,
+        digest_config: DigestConfig,
     ) -> bz_error::Result<Option<LocalActionCacheStoredEntry>> {
         let sql = format!(
-            "SELECT action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values, remote_cache_entry FROM {ACTION_METADATA_TABLE_NAME} WHERE cache_key = ?1"
+            "SELECT action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values, remote_cache_entry, origin_action_digest, origin_action_instant, origin_ttl_seconds FROM {ACTION_METADATA_TABLE_NAME} WHERE cache_key = ?1"
         );
         let connection = self.connection.lock();
         let mut stmt = connection.prepare(&sql)?;
@@ -756,19 +940,57 @@ impl LocalActionCacheSqliteTable {
             let outputs_fingerprint = row.get::<_, Vec<u8>>(3)?;
             let output_values = row.get::<_, Vec<u8>>(4)?;
             let remote_cache_entry = row.get::<_, bool>(5)?;
-            Ok(LocalActionCacheStoredEntry {
-                action_key_digest: Arc::from(action_key_digest.as_slice()),
-                input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
-                action_fingerprint: Arc::from(action_fingerprint.as_slice()),
-                outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
-                output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
-                    output_values,
-                )),
+            let origin_action_digest = row.get::<_, Option<String>>(6)?;
+            let origin_action_instant = row.get::<_, Option<i64>>(7)?;
+            let origin_ttl_seconds = row.get::<_, Option<i64>>(8)?;
+            Ok((
+                action_key_digest,
+                input_metadata_digest,
+                action_fingerprint,
+                outputs_fingerprint,
+                output_values,
                 remote_cache_entry,
-            })
+                origin_action_digest,
+                origin_action_instant,
+                origin_ttl_seconds,
+            ))
         })?;
         match rows.next() {
-            Some(row) => Ok(Some(row?)),
+            Some(row) => {
+                let (
+                    action_key_digest,
+                    input_metadata_digest,
+                    action_fingerprint,
+                    outputs_fingerprint,
+                    output_values,
+                    remote_cache_entry,
+                    origin_action_digest,
+                    origin_action_instant,
+                    origin_ttl_seconds,
+                ) = row?;
+                let remote_cache_origin = remote_origin_from_sqlite(
+                    origin_action_digest,
+                    origin_action_instant,
+                    origin_ttl_seconds,
+                    digest_config,
+                )?;
+                if remote_cache_entry != remote_cache_origin.is_some() {
+                    return Err(internal_error!(
+                        "inconsistent remote local action cache metadata for `{}`",
+                        key
+                    ));
+                }
+                Ok(Some(LocalActionCacheStoredEntry {
+                    action_key_digest: Arc::from(action_key_digest.as_slice()),
+                    input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
+                    action_fingerprint: Arc::from(action_fingerprint.as_slice()),
+                    outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
+                    output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
+                        output_values,
+                    )),
+                    remote_cache_origin,
+                }))
+            }
             None => Ok(None),
         }
     }
@@ -778,7 +1000,7 @@ impl LocalActionCacheSqliteTable {
         action_digest: String,
         outputs_fingerprint: Vec<u8>,
         output_values: Vec<u8>,
-        remote_cache_entry: bool,
+        remote_cache_origin: Option<RemoteActionCacheOrigin>,
     ) -> bz_error::Result<()> {
         let sql = format!(
             "INSERT OR REPLACE INTO {STATE_TABLE_NAME} \
@@ -791,15 +1013,25 @@ impl LocalActionCacheSqliteTable {
             rusqlite::params![&action_digest, outputs_fingerprint, output_values],
         )
         .with_buck_error_context(|| format!("inserting into sqlite table {STATE_TABLE_NAME}"))?;
-        if remote_cache_entry {
+        if let Some(remote_cache_origin) = remote_cache_origin {
+            let (origin_action_digest, origin_action_instant, origin_ttl_seconds) =
+                remote_origin_to_sqlite(Some(&remote_cache_origin));
             let sql = format!(
                 "INSERT OR REPLACE INTO {REMOTE_ACTION_CACHE_TABLE_NAME} \
-                    (action_digest) VALUES (?1)"
+                    (action_digest, origin_action_digest, origin_action_instant, origin_ttl_seconds) VALUES (?1, ?2, ?3, ?4)"
             );
-            tx.execute(&sql, rusqlite::params![&action_digest])
-                .with_buck_error_context(|| {
-                    format!("inserting into sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME}")
-                })?;
+            tx.execute(
+                &sql,
+                rusqlite::params![
+                    &action_digest,
+                    origin_action_digest,
+                    origin_action_instant,
+                    origin_ttl_seconds,
+                ],
+            )
+            .with_buck_error_context(|| {
+                format!("inserting into sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME}")
+            })?;
         } else {
             let sql =
                 format!("DELETE FROM {REMOTE_ACTION_CACHE_TABLE_NAME} WHERE action_digest = ?1");
@@ -820,11 +1052,14 @@ impl LocalActionCacheSqliteTable {
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
         output_values: Vec<u8>,
-        remote_cache_entry: bool,
+        remote_cache_origin: Option<RemoteActionCacheOrigin>,
     ) -> bz_error::Result<()> {
+        let remote_cache_entry = remote_cache_origin.is_some();
+        let (origin_action_digest, origin_action_instant, origin_ttl_seconds) =
+            remote_origin_to_sqlite(remote_cache_origin.as_ref());
         let sql = format!(
             "INSERT OR REPLACE INTO {ACTION_METADATA_TABLE_NAME} \
-                (cache_key, action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values, remote_cache_entry) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+                (cache_key, action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values, remote_cache_entry, origin_action_digest, origin_action_instant, origin_ttl_seconds) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
         );
         self.connection
             .lock()
@@ -838,6 +1073,9 @@ impl LocalActionCacheSqliteTable {
                     outputs_fingerprint,
                     output_values,
                     remote_cache_entry,
+                    origin_action_digest,
+                    origin_action_instant,
+                    origin_ttl_seconds,
                 ],
             )
             .with_buck_error_context(|| {
@@ -888,6 +1126,83 @@ impl LocalActionCacheSqliteTable {
         tx.commit()?;
         Ok(())
     }
+
+    fn delete_remote_entries(&self) -> bz_error::Result<()> {
+        let mut connection = self.connection.lock();
+        let tx = connection.transaction()?;
+        tx.execute(
+            &format!(
+                "DELETE FROM {STATE_TABLE_NAME} WHERE action_digest IN \
+                (SELECT action_digest FROM {REMOTE_ACTION_CACHE_TABLE_NAME})"
+            ),
+            [],
+        )
+        .with_buck_error_context(|| {
+            format!("deleting remote-backed rows from sqlite table {STATE_TABLE_NAME}")
+        })?;
+        tx.execute(&format!("DELETE FROM {REMOTE_ACTION_CACHE_TABLE_NAME}"), [])
+            .with_buck_error_context(|| {
+                format!("clearing sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME}")
+            })?;
+        tx.execute(
+            &format!("DELETE FROM {ACTION_METADATA_TABLE_NAME} WHERE remote_cache_entry = 1"),
+            [],
+        )
+        .with_buck_error_context(|| {
+            format!("deleting remote-backed rows from sqlite table {ACTION_METADATA_TABLE_NAME}")
+        })?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn delete_remote_entries_for_origin_action_digests(
+        &self,
+        origin_action_digests: &[ActionDigest],
+    ) -> bz_error::Result<()> {
+        let mut connection = self.connection.lock();
+        let tx = connection.transaction()?;
+        for origin_action_digest in origin_action_digests {
+            let origin_action_digest = origin_action_digest.to_string();
+            tx.execute(
+                &format!(
+                    "DELETE FROM {STATE_TABLE_NAME} WHERE action_digest IN \
+                    (SELECT action_digest FROM {REMOTE_ACTION_CACHE_TABLE_NAME} \
+                    WHERE origin_action_digest = ?1)"
+                ),
+                rusqlite::params![&origin_action_digest],
+            )
+            .with_buck_error_context(|| {
+                format!(
+                    "deleting remote-backed rows from sqlite table {STATE_TABLE_NAME} for origin action digest"
+                )
+            })?;
+            tx.execute(
+                &format!(
+                    "DELETE FROM {REMOTE_ACTION_CACHE_TABLE_NAME} WHERE origin_action_digest = ?1"
+                ),
+                rusqlite::params![&origin_action_digest],
+            )
+            .with_buck_error_context(|| {
+                format!(
+                    "deleting rows from sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME} for origin action digest"
+                )
+            })?;
+            tx.execute(
+                &format!(
+                    "DELETE FROM {ACTION_METADATA_TABLE_NAME} \
+                    WHERE remote_cache_entry = 1 AND origin_action_digest = ?1"
+                ),
+                rusqlite::params![&origin_action_digest],
+            )
+            .with_buck_error_context(|| {
+                format!(
+                    "deleting remote-backed rows from sqlite table {ACTION_METADATA_TABLE_NAME} for origin action digest"
+                )
+            })?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 pub struct ChainedCommandOptionalExecutor {
@@ -901,17 +1216,17 @@ impl PreparedCommandOptionalExecutor for ChainedCommandOptionalExecutor {
         &self,
         local_action_cache_key: &bz_execute::execute::request::LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-        remote_cache_entry: bool,
+        remote_cache_origin: Option<RemoteActionCacheOrigin>,
     ) -> bz_error::Result<()> {
         self.first.insert_unprepared_action_cache_metadata(
             local_action_cache_key,
             outputs,
-            remote_cache_entry,
+            remote_cache_origin.clone(),
         )?;
         self.second.insert_unprepared_action_cache_metadata(
             local_action_cache_key,
             outputs,
-            remote_cache_entry,
+            remote_cache_origin,
         )
     }
 

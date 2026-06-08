@@ -84,12 +84,7 @@ pub async fn get_maybe_compatible_targets<T>(
     Vec<ErrorWithPackageLabel>,
 )>
 where
-    T: IntoIterator<
-        Item = (
-            PackageLabelWithModifiers,
-            bz_error::Result<Vec<TargetNode>>,
-        ),
-    >,
+    T: IntoIterator<Item = (PackageLabelWithModifiers, bz_error::Result<Vec<TargetNode>>)>,
 {
     let mut by_package_fns: Vec<_> = Vec::new();
     let mut package_errors = Vec::new();
@@ -169,10 +164,7 @@ pub struct ConfiguredTargetsWithErrors {
 pub async fn get_compatible_targets(
     ctx: &mut DiceComputations<'_>,
     loaded_targets: impl IntoIterator<
-        Item = (
-            PackageLabelWithModifiers,
-            bz_error::Result<Vec<TargetNode>>,
-        ),
+        Item = (PackageLabelWithModifiers, bz_error::Result<Vec<TargetNode>>),
     >,
     global_cfg_options: &GlobalCfgOptions,
     keep_going: bool,

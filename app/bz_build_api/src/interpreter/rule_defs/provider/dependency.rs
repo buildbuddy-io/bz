@@ -366,10 +366,7 @@ where
 fn dependency_methods(builder: &mut MethodsBuilder) {
     /// The label of this dependency.
     #[starlark(attribute)]
-    fn label<'v>(
-        this: &Dependency<'v>,
-        heap: Heap<'v>,
-    ) -> starlark::Result<Value<'v>> {
+    fn label<'v>(this: &Dependency<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         Ok(heap.alloc(StarlarkProvidersLabel::new(
             this.label().inner().unconfigured(),
         )))

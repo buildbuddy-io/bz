@@ -57,6 +57,7 @@ use crate::execute::request::OutputType;
 use crate::execute::request::RemoteWorkerSpec;
 use crate::execute::result::CommandExecutionMetadata;
 use crate::execute::result::CommandExecutionResult;
+use crate::materialize::materializer::RemoteActionCacheOrigin;
 use crate::re::action_identity::ReActionIdentity;
 use bz_hash::BuckIndexMap;
 use bz_hash::BuckIndexSet;
@@ -223,14 +224,14 @@ impl CommandExecutor {
         &self,
         local_action_cache_key: &LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-        remote_cache_entry: bool,
+        remote_cache_origin: Option<RemoteActionCacheOrigin>,
     ) -> bz_error::Result<()> {
         self.0
             .action_cache_checker
             .insert_unprepared_action_cache_metadata(
                 local_action_cache_key,
                 outputs,
-                remote_cache_entry,
+                remote_cache_origin,
             )
     }
 

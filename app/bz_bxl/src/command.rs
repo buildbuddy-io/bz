@@ -366,6 +366,7 @@ impl BxlServerCommand {
                     async move {
                         let res = materialize_and_upload_artifact_group(
                             ctx,
+                            dice::CancellationContext::never_cancelled(),
                             &artifact,
                             materialization_context,
                             &ctx.per_transaction_data()

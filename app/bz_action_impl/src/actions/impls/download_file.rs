@@ -220,6 +220,7 @@ impl DownloadFileAction {
                 timing: ActionExecutionTimingData::default(),
                 input_files_bytes: None,
                 waiting_data: WaitingData::new(),
+                remote_cache_origin: None,
             },
         ))
     }
@@ -369,6 +370,7 @@ impl Action for DownloadFileAction {
                 timing: ActionExecutionTimingData::default(),
                 input_files_bytes: None,
                 waiting_data,
+                remote_cache_origin: None,
             },
         ))
     }

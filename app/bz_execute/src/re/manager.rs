@@ -389,6 +389,7 @@ impl ManagedRemoteExecutionClient {
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
         deduplicate_get_digests_ttl_calls: bool,
+        force_reupload: bool,
     ) -> bz_error::Result<UploadStats> {
         self.lock()?
             .get()
@@ -404,6 +405,7 @@ impl ManagedRemoteExecutionClient {
                 identity,
                 digest_config,
                 deduplicate_get_digests_ttl_calls,
+                force_reupload,
             )
             .await
     }
@@ -413,6 +415,7 @@ impl ManagedRemoteExecutionClient {
         files_with_digest: Vec<NamedDigest>,
         directories: Vec<remote_execution::Path>,
         inlined_blobs_with_digest: Vec<InlinedBlobWithDigest>,
+        force_reupload: bool,
     ) -> bz_error::Result<()> {
         self.lock()?
             .get()
@@ -422,6 +425,7 @@ impl ManagedRemoteExecutionClient {
                 directories,
                 inlined_blobs_with_digest,
                 self.use_case,
+                force_reupload,
             )
             .await
     }

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_trait::async_trait;
 use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::TrackedFileDigest;
 use bz_core::bz_env;
 use bz_core::fs::project::ProjectRoot;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -520,7 +521,7 @@ pub(super) fn create_ttl_refresh(
     min_ttl: Duration,
     digest_config: DigestConfig,
 ) -> Option<impl Future<Output = bz_error::Result<()>> + use<>> {
-    let mut digests_to_refresh = StdBuckHashMap::<_, StdBuckHashSet<_>>::new();
+    let mut digests_to_refresh = StdBuckHashMap::<_, StdBuckHashSet<TrackedFileDigest>>::new();
 
     let ttl_deadline = Utc::now() + min_ttl;
 

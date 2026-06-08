@@ -32,12 +32,15 @@ use bz_execute::execute::prepared::PreparedCommandOptionalExecutor;
 use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::knobs::ExecutorGlobalKnobs;
 use bz_execute::materialize::materializer::Materializer;
+use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
 use bz_execute::re::action_identity::ReActionIdentity;
 use bz_execute::re::manager::ManagedRemoteExecutionClient;
 use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
 use bz_execute::re::remote_action_result::ActionCacheResult;
 use bz_hash::StdBuckHashMap;
 use bz_util::time_span::TimeSpan;
+use chrono::Duration as ChronoDuration;
+use chrono::Utc;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
@@ -257,6 +260,7 @@ async fn query_action_cache_and_download_result(
                 Some(&identity),
                 digest_config,
                 deduplicate_get_digests_ttl_calls,
+                false,
             )
             .await
         {
@@ -356,6 +360,12 @@ async fn query_action_cache_and_download_result(
         DownloadResult::Result(res) => res,
         DownloadResult::CacheMiss(manager) => return ControlFlow::Continue(manager),
     };
+    let remote_cache_origin = RemoteActionCacheOrigin::new(
+        action_digest.dupe(),
+        Utc::now(),
+        ChronoDuration::seconds(response.0.ttl),
+    );
+    res.remote_cache_origin = Some(remote_cache_origin.clone());
     match &cache_type {
         CacheType::RemoteDepFileCache(key) => {
             tracing::trace!(
@@ -384,6 +394,7 @@ async fn query_action_cache_and_download_result(
                     action_digest,
                     outputs_fingerprint,
                     res.outputs.values().cloned().collect::<Vec<_>>().into(),
+                    remote_cache_origin,
                 ) {
                     let _unused = soft_error!("local_action_cache_insert_failed", e);
                 }

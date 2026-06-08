@@ -373,10 +373,7 @@ impl PartialEq for StarlarkActionSubError {
 impl Eq for StarlarkActionSubError {}
 
 impl StarlarkActionSubError {
-    pub(crate) fn from_errorformat_entry(
-        entry: bz_errorformat::Entry,
-        category: String,
-    ) -> Self {
+    pub(crate) fn from_errorformat_entry(entry: bz_errorformat::Entry, category: String) -> Self {
         StarlarkActionSubError {
             category: RefCell::new(category),
             message: entry.message,

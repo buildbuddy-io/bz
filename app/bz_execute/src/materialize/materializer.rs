@@ -14,6 +14,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_trait::async_trait;
 use bz_common::file_ops::metadata::FileMetadata;
+use bz_common::file_ops::metadata::TrackedFileDigest;
 use bz_core::deferred::base_deferred_key::BaseDeferredKey;
 use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
@@ -32,13 +33,135 @@ use dupe::Dupe;
 use futures::stream::BoxStream;
 use futures::stream::TryStreamExt;
 
+use crate::artifact::artifact_dyn::CommandExecutionInputOwner;
 use crate::artifact_value::ArtifactValue;
+use crate::digest_config::DigestConfig;
 use crate::directory::ActionDirectoryEntry;
 use crate::directory::ActionDirectoryMember;
 use crate::directory::ActionImmutableDirectory;
 use crate::directory::ActionSharedDirectory;
+use crate::execute::action_digest::ActionDigest;
 use crate::execute::action_digest::TrackedActionDigest;
 use crate::materialize::http::Checksum;
+
+#[derive(Debug, Clone, Allocative)]
+pub struct LostRemoteCasArtifact {
+    pub path: Arc<ProjectRelativePathBuf>,
+    pub owner: Option<CommandExecutionInputOwner>,
+    #[allocative(skip)]
+    pub missing_digests: Arc<[TrackedFileDigest]>,
+    pub producer_path_hint: Option<Arc<ProjectRelativePathBuf>>,
+    #[allocative(skip)]
+    pub origin: RemoteActionCacheOrigin,
+}
+
+#[derive(Debug, Clone, Allocative)]
+pub struct LostRemoteCasArtifacts {
+    pub artifacts: Arc<[LostRemoteCasArtifact]>,
+}
+
+impl LostRemoteCasArtifacts {
+    pub fn new(artifacts: Vec<LostRemoteCasArtifact>) -> Self {
+        Self {
+            artifacts: Arc::from(artifacts),
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &LostRemoteCasArtifact> {
+        self.artifacts.iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.artifacts.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.artifacts.is_empty()
+    }
+
+    pub fn display_summary(&self) -> String {
+        display_lost_remote_cas_artifacts(self.iter())
+    }
+}
+
+impl bz_error::TypedContext for LostRemoteCasArtifacts {
+    fn eq(&self, other: &dyn bz_error::TypedContext) -> bool {
+        let Some(other) = (other as &dyn std::any::Any).downcast_ref::<Self>() else {
+            return false;
+        };
+        self.artifacts.len() == other.artifacts.len()
+            && self
+                .artifacts
+                .iter()
+                .zip(other.artifacts.iter())
+                .all(|(this, other)| lost_remote_cas_artifact_eq(this, other))
+    }
+
+    fn display(&self) -> Option<String> {
+        Some(self.display_summary())
+    }
+}
+
+fn lost_remote_cas_artifact_eq(
+    this: &LostRemoteCasArtifact,
+    other: &LostRemoteCasArtifact,
+) -> bool {
+    this.path == other.path
+        && this.owner == other.owner
+        && this.missing_digests == other.missing_digests
+        && this.producer_path_hint == other.producer_path_hint
+        && this.origin == other.origin
+}
+
+fn display_lost_remote_cas_artifacts<'a>(
+    artifacts: impl Iterator<Item = &'a LostRemoteCasArtifact>,
+) -> String {
+    let artifacts: Vec<_> = artifacts.collect();
+    let mut message = format!(
+        "{} remote-backed CAS artifact{} missing",
+        artifacts.len(),
+        if artifacts.len() == 1 { " is" } else { "s are" },
+    );
+    for artifact in artifacts {
+        message.push_str(&format!(
+            "\n  `{}` for action `{}`",
+            artifact.path,
+            artifact.origin.action_digest(),
+        ));
+        if let Some(path) = &artifact.producer_path_hint {
+            message.push_str(&format!(", producer path hint `{path}`"));
+        }
+        if let Some(owner) = &artifact.owner {
+            message.push_str(&format!(", owner `{owner}`"));
+        }
+        if !artifact.missing_digests.is_empty() {
+            message.push_str(&format!(
+                ", missing digests `{}`",
+                artifact
+                    .missing_digests
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    message
+}
+
+fn directory_entry_file_digests(
+    directory: &ActionDirectoryEntry<ActionSharedDirectory>,
+) -> Vec<TrackedFileDigest> {
+    let mut digests = Vec::new();
+    let mut walk = ordered_entry_walk(directory.as_ref()).filter_map(|entry| match entry {
+        DirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => Some(f.digest.dupe()),
+        _ => None,
+    });
+    while let Some((_path, digest)) = walk.next() {
+        digests.push(digest);
+    }
+    digests
+}
 
 /// Opaque guard returned by `Materializer::register_eager_paths`.
 /// Dropping this guard releases the eager path registrations and cancels
@@ -110,6 +233,12 @@ pub struct CasNotFoundError {
     pub directory: ActionDirectoryEntry<ActionSharedDirectory>,
     #[source]
     pub error: Arc<bz_error::Error>,
+}
+
+impl CasNotFoundError {
+    pub fn missing_file_digests(&self) -> Vec<TrackedFileDigest> {
+        directory_entry_file_digests(&self.directory)
+    }
 }
 
 #[derive(bz_error::Error, Debug)]
@@ -308,6 +437,15 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
         artifact_path: ProjectRelativePathBuf,
     ) -> bz_error::Result<bool>;
 
+    async fn try_materialize_final_artifact_with_errors(
+        &self,
+        artifact_path: ProjectRelativePathBuf,
+    ) -> bz_error::Result<Result<bool, MaterializationError>> {
+        self.try_materialize_final_artifact(artifact_path)
+            .await
+            .map(Ok)
+    }
+
     /// Given a `file_path` whose contents we are interested in, *tries* to
     /// find a materialized path with the same contents. It returns [`None`] if
     /// the path leads to a file that needs to be fetched from the CAS.
@@ -500,6 +638,69 @@ impl CopiedArtifact {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteActionCacheOrigin {
+    action_digest: ActionDigest,
+    action_instant: DateTime<Utc>,
+    ttl: Duration,
+}
+
+impl RemoteActionCacheOrigin {
+    pub fn new(action_digest: ActionDigest, action_instant: DateTime<Utc>, ttl: Duration) -> Self {
+        Self {
+            action_digest,
+            action_instant,
+            ttl,
+        }
+    }
+
+    pub fn action_digest(&self) -> &ActionDigest {
+        &self.action_digest
+    }
+
+    pub fn action_instant(&self) -> DateTime<Utc> {
+        self.action_instant
+    }
+
+    pub fn ttl(&self) -> Duration {
+        self.ttl
+    }
+
+    pub fn expires(&self) -> DateTime<Utc> {
+        self.action_instant + self.ttl
+    }
+
+    pub fn into_cas_download_info(
+        self,
+        re_use_case: RemoteExecutorUseCase,
+        digest_config: DigestConfig,
+        persist_declared_cas: bool,
+    ) -> CasDownloadInfo {
+        let expires = self.expires();
+        CasDownloadInfo::new_execution_with_persistence(
+            TrackedActionDigest::new_expires(
+                self.action_digest,
+                expires,
+                digest_config.cas_digest_config(),
+            ),
+            re_use_case,
+            self.action_instant,
+            self.ttl,
+            persist_declared_cas,
+        )
+    }
+
+    pub fn to_cas_download_info(
+        &self,
+        re_use_case: RemoteExecutorUseCase,
+        digest_config: DigestConfig,
+        persist_declared_cas: bool,
+    ) -> CasDownloadInfo {
+        self.clone()
+            .into_cas_download_info(re_use_case, digest_config, persist_declared_cas)
+    }
+}
+
 #[derive(Debug)]
 pub enum CasDownloadInfoOrigin {
     /// Declared by an action that executed on RE.
@@ -612,6 +813,16 @@ impl CasDownloadInfo {
         action_instant: DateTime<Utc>,
         ttl: Duration,
     ) -> Self {
+        Self::new_execution_with_persistence(action_digest, re_use_case, action_instant, ttl, true)
+    }
+
+    pub fn new_execution_with_persistence(
+        action_digest: TrackedActionDigest,
+        re_use_case: RemoteExecutorUseCase,
+        action_instant: DateTime<Utc>,
+        ttl: Duration,
+        persist_declared_cas: bool,
+    ) -> Self {
         Self {
             origin: CasDownloadInfoOrigin::Execution(ActionExecutionOrigin {
                 action_digest,
@@ -619,7 +830,7 @@ impl CasDownloadInfo {
                 ttl,
             }),
             re_use_case,
-            persist_declared_cas: true,
+            persist_declared_cas,
         }
     }
 
@@ -649,6 +860,17 @@ impl CasDownloadInfo {
     pub fn action_digest(&self) -> Option<&TrackedActionDigest> {
         match &self.origin {
             CasDownloadInfoOrigin::Execution(execution) => Some(&execution.action_digest),
+            CasDownloadInfoOrigin::Declared => None,
+        }
+    }
+
+    pub fn remote_origin(&self) -> Option<RemoteActionCacheOrigin> {
+        match &self.origin {
+            CasDownloadInfoOrigin::Execution(execution) => Some(RemoteActionCacheOrigin::new(
+                execution.action_digest.data().dupe(),
+                execution.action_instant,
+                execution.ttl,
+            )),
             CasDownloadInfoOrigin::Declared => None,
         }
     }
@@ -762,8 +984,7 @@ pub trait DeferredMaterializerSubscription: Send + Sync {
 pub trait DeferredMaterializerExtensions: Send + Sync {
     fn iterate(&self) -> bz_error::Result<BoxStream<'static, DeferredMaterializerIterItem>>;
 
-    fn list_subscriptions(&self)
-    -> bz_error::Result<BoxStream<'static, ProjectRelativePathBuf>>;
+    fn list_subscriptions(&self) -> bz_error::Result<BoxStream<'static, ProjectRelativePathBuf>>;
 
     /// Obtain a list of files that don't match their in-memory representation. This may not catch
     /// all discrepancies.
@@ -783,6 +1004,13 @@ pub trait DeferredMaterializerExtensions: Send + Sync {
     ) -> bz_error::Result<bz_cli_proto::CleanStaleResponse>;
 
     async fn clear_all_artifacts(&self) -> bz_error::Result<()>;
+
+    async fn clear_remote_declared_cas(&self) -> bz_error::Result<()>;
+
+    async fn clear_remote_declared_cas_for_origin_action_digests(
+        &self,
+        origin_action_digests: Vec<ActionDigest>,
+    ) -> bz_error::Result<()>;
 
     async fn test_iter(&self, count: usize) -> bz_error::Result<String>;
     async fn flush_all_access_times(&self) -> bz_error::Result<String>;

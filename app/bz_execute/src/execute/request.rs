@@ -45,6 +45,7 @@ use sorted_vector_map::SortedVectorMap;
 use starlark_map::sorted_set::SortedSet;
 
 use super::dep_file_digest::DepFileDigest;
+use crate::artifact::artifact_dyn::CommandExecutionInputOwner;
 use crate::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
 use crate::artifact_value::ArtifactValue;
 use crate::digest_config::DigestConfig;
@@ -96,6 +97,7 @@ pub enum CommandExecutionInput {
     ArtifactPathAlias {
         source_path: ProjectRelativePathBuf,
         source_requires_materialization: bool,
+        owner: Option<CommandExecutionInputOwner>,
         path: ProjectRelativePathBuf,
         value: ArtifactValue,
     },
@@ -506,6 +508,8 @@ pub struct CommandExecutionRequest {
     /// ownerless primary output, not by every input path.
     bazel_shared_action_primary_output: Option<ProjectRelativePathBuf>,
     local_action_cache_key: Option<LocalActionCacheKey>,
+    /// Whether RE input upload should bypass TTL/missing checks and re-upload every digest.
+    force_remote_input_reupload: bool,
 
     is_test: bool,
     /// Whether to skip resource control (cgroup) for this command.
@@ -551,6 +555,7 @@ impl CommandExecutionRequest {
             run_action_key: None,
             bazel_shared_action_primary_output: None,
             local_action_cache_key: None,
+            force_remote_input_reupload: false,
             is_test: false,
             skip_resource_control: false,
             network_access: None,
@@ -849,6 +854,15 @@ impl CommandExecutionRequest {
 
     pub fn local_action_cache_key(&self) -> Option<&LocalActionCacheKey> {
         self.local_action_cache_key.as_ref()
+    }
+
+    pub fn with_force_remote_input_reupload(mut self, force_remote_input_reupload: bool) -> Self {
+        self.force_remote_input_reupload = force_remote_input_reupload;
+        self
+    }
+
+    pub fn force_remote_input_reupload(&self) -> bool {
+        self.force_remote_input_reupload
     }
 
     pub fn with_is_test(mut self) -> Self {

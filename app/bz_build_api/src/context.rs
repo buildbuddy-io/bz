@@ -33,10 +33,7 @@ pub trait HasBuildContextData {
 }
 
 pub trait SetBuildContextData {
-    fn set_buck_out_path(
-        &mut self,
-        path: Option<ProjectRelativePathBuf>,
-    ) -> bz_error::Result<()>;
+    fn set_buck_out_path(&mut self, path: Option<ProjectRelativePathBuf>) -> bz_error::Result<()>;
 }
 
 #[derive(PartialEq, Eq, Allocative, Pagable)]
@@ -70,10 +67,7 @@ impl HasBuildContextData for DiceComputations<'_> {
 }
 
 impl SetBuildContextData for DiceTransactionUpdater {
-    fn set_buck_out_path(
-        &mut self,
-        path: Option<ProjectRelativePathBuf>,
-    ) -> bz_error::Result<()> {
+    fn set_buck_out_path(&mut self, path: Option<ProjectRelativePathBuf>) -> bz_error::Result<()> {
         let buck_out_path =
             path.unwrap_or_else(|| ProjectRelativePathBuf::unchecked_new("buck-out/v2".to_owned()));
         register_bazel_artifact_buck_out_path(buck_out_path.clone());

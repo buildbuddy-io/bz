@@ -8,9 +8,34 @@
  * above-listed licenses.
  */
 
+use std::fmt;
+use std::sync::Arc;
+
+use allocative::Allocative;
 use bz_core::content_hash::ContentBasedPathHash;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Allocative)]
+pub struct CommandExecutionInputOwner {
+    id: Arc<str>,
+}
+
+impl CommandExecutionInputOwner {
+    pub fn new(id: impl Into<Arc<str>>) -> Self {
+        Self { id: id.into() }
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+impl fmt::Display for CommandExecutionInputOwner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.id.fmt(f)
+    }
+}
 
 pub trait ArtifactDyn: Send + Sync + 'static {
     /// Returns the project relative path of the artifact.
@@ -36,4 +61,8 @@ pub trait ArtifactDyn: Send + Sync + 'static {
     fn has_content_based_path(&self) -> bool;
 
     fn is_projected(&self) -> bool;
+
+    fn input_owner(&self) -> Option<CommandExecutionInputOwner> {
+        None
+    }
 }

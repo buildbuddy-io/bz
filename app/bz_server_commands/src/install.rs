@@ -875,6 +875,7 @@ async fn build_launch_installer(
                 async move {
                     materialize_and_upload_artifact_group(
                         ctx,
+                        dice::CancellationContext::never_cancelled(),
                         &input,
                         MaterializationAndUploadContext::materialize(),
                         &ctx.per_transaction_data()
@@ -1008,6 +1009,7 @@ async fn build_files(
                             async move {
                                 materialize_and_upload_artifact_group(
                                     ctx,
+                                    dice::CancellationContext::never_cancelled(),
                                     &artifact,
                                     MaterializationAndUploadContext::materialize(),
                                     &ctx.per_transaction_data()

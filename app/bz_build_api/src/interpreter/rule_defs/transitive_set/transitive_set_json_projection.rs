@@ -104,9 +104,7 @@ impl<'v, V: ValueLike<'v>> TransitiveSetJsonProjectionGen<V> {
 }
 
 impl<'v, V: ValueLike<'v>> TransitiveSetJsonProjectionGen<V> {
-    pub fn iter_values<'a>(
-        &'a self,
-    ) -> bz_error::Result<Box<dyn Iterator<Item = Value<'v>> + 'a>>
+    pub fn iter_values<'a>(&'a self) -> bz_error::Result<Box<dyn Iterator<Item = Value<'v>> + 'a>>
     where
         'v: 'a,
     {

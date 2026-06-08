@@ -63,6 +63,7 @@ use bz_execute::execute::request::ExecutorPreference;
 use bz_execute::execute::request::LocalActionCacheKey;
 use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::materialize::materializer::Materializer;
+use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
 use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
 use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
 use bz_file_watcher::mergebase::Mergebase;
@@ -326,7 +327,7 @@ pub trait ActionExecutionCtx: Send + Sync {
         &mut self,
         _local_action_cache_key: &LocalActionCacheKey,
         _outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-        _remote_cache_entry: bool,
+        _remote_cache_origin: Option<RemoteActionCacheOrigin>,
     ) -> bz_error::Result<()> {
         Ok(())
     }
@@ -378,6 +379,10 @@ pub trait ActionExecutionCtx: Send + Sync {
     /// Digest of the DICE-computed action input set that should be used when forming a
     /// persistent local action-cache key.
     fn local_action_cache_input_set_digest(&self) -> &[u8];
+
+    fn force_remote_input_reupload(&self) -> bool {
+        false
+    }
 
     fn artifact_path_mapping(
         &self,

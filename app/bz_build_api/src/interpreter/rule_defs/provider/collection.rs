@@ -544,13 +544,13 @@ where
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         match self.get_impl(index, GetOp::At)? {
             Either::Left(v) => Ok(v),
-            Either::Right(provider_id) => Err(bz_error::Error::from(
-                ProviderCollectionError::AtNotFound(
+            Either::Right(provider_id) => {
+                Err(bz_error::Error::from(ProviderCollectionError::AtNotFound(
                     provider_id.name.clone(),
                     self.providers.keys().map(|k| k.name.clone()).collect(),
-                ),
-            )
-            .into()),
+                ))
+                .into())
+            }
         }
     }
 
@@ -588,9 +588,7 @@ impl<'v> Freeze for ProviderCollection<'v> {
 }
 
 impl FrozenProviderCollection {
-    pub fn default_info<'a>(
-        &'a self,
-    ) -> bz_error::Result<FrozenValueTyped<'a, FrozenDefaultInfo>> {
+    pub fn default_info<'a>(&'a self) -> bz_error::Result<FrozenValueTyped<'a, FrozenDefaultInfo>> {
         self.builtin_provider().ok_or_else(|| {
             internal_error!(
                 "DefaultInfo should always be set for providers returned from rule function"

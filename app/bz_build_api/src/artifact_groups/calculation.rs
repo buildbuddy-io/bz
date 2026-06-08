@@ -271,7 +271,7 @@ impl EnsureArtifactGroupReady {
 #[display("ARTIFACT({})", _0)]
 #[repr(transparent)]
 #[pagable_typetag(dice::DiceKeyDyn)]
-struct EnsureArtifactGroupValuesKey(Artifact);
+pub struct EnsureArtifactGroupValuesKey(pub Artifact);
 
 #[async_trait]
 impl Key for EnsureArtifactGroupValuesKey {
@@ -601,7 +601,7 @@ enum ProjectedArtifactError {
 )]
 #[repr(transparent)]
 #[pagable_typetag(dice::DiceKeyDyn)]
-pub struct EnsureProjectedArtifactKey(pub(crate) ArtifactKind);
+pub struct EnsureProjectedArtifactKey(pub ArtifactKind);
 
 #[async_trait]
 impl Key for EnsureProjectedArtifactKey {

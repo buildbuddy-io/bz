@@ -34,6 +34,7 @@ use crate::execute::kind::CommandExecutionKind;
 use crate::execute::output::CommandStdStreams;
 use crate::execute::request::CommandExecutionOutput;
 use crate::execute::request::ResolvedCommandExecutionOutput;
+use crate::materialize::materializer::RemoteActionCacheOrigin;
 use crate::output_size::OutputSize;
 use crate::re::remote_action_result::ReMetadataTiming;
 
@@ -249,6 +250,8 @@ pub struct CommandExecutionResult {
     /// to be re-used when uploading the remote dep file.
     #[derivative(Debug = "ignore")]
     pub action_result: Option<TActionResult2>,
+    /// Remote action-cache origin guaranteeing remotely-backed output CAS blobs, if any.
+    pub remote_cache_origin: Option<RemoteActionCacheOrigin>,
     /// Description of how local or remote execution were scheduled (currently only set by hybrid executor)
     pub scheduling_mode: Option<SchedulingMode>,
 

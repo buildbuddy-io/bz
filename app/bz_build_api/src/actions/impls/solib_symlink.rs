@@ -105,9 +105,10 @@ impl Action for SolibSymlinkAction {
         waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
         let input_values = ctx.artifact_values(&self.src);
-        let (input, src_value) = input_values.iter().into_singleton().ok_or_else(|| {
-            bz_error::Error::from(SolibSymlinkActionError::WrongNumberOfInputs)
-        })?;
+        let (input, src_value) = input_values
+            .iter()
+            .into_singleton()
+            .ok_or_else(|| bz_error::Error::from(SolibSymlinkActionError::WrongNumberOfInputs))?;
         let input = input.dupe();
         let src_value = src_value.dupe();
 
@@ -165,6 +166,7 @@ impl Action for SolibSymlinkAction {
                 timing: ActionExecutionTimingData::default(),
                 input_files_bytes: None,
                 waiting_data,
+                remote_cache_origin: None,
             },
         ))
     }

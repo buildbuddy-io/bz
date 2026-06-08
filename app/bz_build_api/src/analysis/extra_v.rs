@@ -97,8 +97,7 @@ impl<'v> AnalysisExtraValue<'v> {
 impl FrozenAnalysisExtraValue {
     pub fn get(
         module: &FrozenModule,
-    ) -> bz_error::Result<OwnedFrozenValueTyped<StarlarkAnyComplex<FrozenAnalysisExtraValue>>>
-    {
+    ) -> bz_error::Result<OwnedFrozenValueTyped<StarlarkAnyComplex<FrozenAnalysisExtraValue>>> {
         Ok(module
             .owned_extra_value()
             .ok_or_else(|| internal_error!("extra_value not set"))?

@@ -237,8 +237,7 @@ impl AggregatedBuildMetrics {
         if let BuiltWhen::ThisBuild = when {
             // Accumulate metrics associated with costs during this build.
             match ev.execution_kind {
-                bz_data::ActionExecutionKind::Local
-                | bz_data::ActionExecutionKind::LocalWorker => {
+                bz_data::ActionExecutionKind::Local | bz_data::ActionExecutionKind::LocalWorker => {
                     self.local_execution_time_ms += factor * (ev.execution_time_ms as f64);
                     self.local_executions += factor;
                 }

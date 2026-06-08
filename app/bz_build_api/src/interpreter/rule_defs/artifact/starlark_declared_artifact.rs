@@ -246,9 +246,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
         ))
     }
 
-    fn without_associated_artifacts(
-        &'v self,
-    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>> {
+    fn without_associated_artifacts(&'v self) -> bz_error::Result<EitherStarlarkInputArtifact<'v>> {
         Ok(EitherStarlarkInputArtifact::DeclaredArtifact(
             StarlarkDeclaredArtifact {
                 declaration_location: self.declaration_location.dupe(),

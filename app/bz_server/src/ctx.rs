@@ -20,6 +20,7 @@ use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use bz_build_api::actions::calculation::HasLostRemoteRewindTracker;
 use bz_build_api::actions::execute::dice_data::SetCommandExecutor;
 use bz_build_api::actions::execute::dice_data::SetReClient;
 use bz_build_api::actions::execute::dice_data::set_fallback_executor_config;
@@ -36,6 +37,8 @@ use bz_build_api::build_signals::create_build_signals;
 use bz_build_api::context::SetBuildContextData;
 use bz_build_api::keep_going::HasKeepGoing;
 use bz_build_api::materialize::HasMaterializationQueueTracker;
+use bz_build_api::materialize::RemoteCacheInvalidator;
+use bz_build_api::materialize::SetRemoteCacheInvalidator;
 use bz_build_api::spawner::BuckSpawner;
 use bz_build_signals::env::CriticalPathBackendName;
 use bz_build_signals::env::EarlyCommandTimingBuilder;
@@ -95,11 +98,13 @@ use bz_events::schedule_type::SandcastleScheduleType;
 use bz_execute::execute::blocking::SetBlockingExecutor;
 use bz_execute::knobs::ExecutorGlobalKnobs;
 use bz_execute::materialize::materializer::Materializer;
+use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
 use bz_execute::materialize::materializer::SetMaterializer;
 use bz_execute::re::client::RemoteExecutionClient;
 use bz_execute::re::manager::ReConnectionHandle;
 use bz_execute::re::manager::ReConnectionObserver;
 use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
+use bz_execute_impl::executors::local_action_cache::LocalActionCache;
 use bz_execute_impl::executors::worker::WorkerPool;
 use bz_execute_impl::low_pass_filter::LowPassFilter;
 use bz_file_watcher::mergebase::SetMergebase;
@@ -187,6 +192,40 @@ const DEFAULT_REMOTE_METADATA_PARALLELISM: usize =
     DEFAULT_BAZEL_REMOTE_MAX_CONNECTIONS * DEFAULT_BAZEL_REMOTE_MAX_CONCURRENCY_PER_CONNECTION;
 const DEFAULT_REMOTE_ACTION_CACHE_PARALLELISM_PER_ACTION: usize = 16;
 const DEFAULT_REMOTE_ACTION_CACHE_MAX_PARALLELISM: usize = 256;
+
+struct BuildRemoteCacheInvalidator {
+    materializer: Arc<dyn Materializer>,
+    local_action_cache: Arc<LocalActionCache>,
+}
+
+#[async_trait]
+impl RemoteCacheInvalidator for BuildRemoteCacheInvalidator {
+    async fn purge_remote_cache_metadata(&self) -> bz_error::Result<()> {
+        self.local_action_cache.remove_remote_entries()?;
+        if let Some(extension) = self.materializer.as_deferred_materializer_extension() {
+            extension.clear_remote_declared_cas().await?;
+        }
+        Ok(())
+    }
+
+    async fn purge_remote_cache_metadata_for_origins(
+        &self,
+        origins: Vec<RemoteActionCacheOrigin>,
+    ) -> bz_error::Result<()> {
+        let origin_action_digests = origins
+            .iter()
+            .map(|origin| origin.action_digest().dupe())
+            .collect::<Vec<_>>();
+        self.local_action_cache
+            .remove_remote_entries_for_origin_action_digests(&origin_action_digests)?;
+        if let Some(extension) = self.materializer.as_deferred_materializer_extension() {
+            extension
+                .clear_remote_declared_cas_for_origin_action_digests(origin_action_digests)
+                .await?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy)]
 enum ActionConcurrencySource {
@@ -1232,8 +1271,7 @@ impl DiceCommandUpdater<'_, '_> {
                 property: "deduplicate_get_digests_ttl_calls",
             })?
         {
-            run_action_knobs.deduplicate_get_digests_ttl_calls =
-                deduplicate_get_digests_ttl_calls;
+            run_action_knobs.deduplicate_get_digests_ttl_calls = deduplicate_get_digests_ttl_calls;
         }
 
         let output_trees_download_semaphore_size = root_config.parse::<u32>(BuckconfigKeyRef {
@@ -1336,10 +1374,15 @@ impl DiceCommandUpdater<'_, '_> {
         data.set_blocking_executor(self.cmd_ctx.base_context.daemon.blocking_executor.dupe());
         data.set_http_client(self.cmd_ctx.base_context.daemon.http_client.dupe());
         data.set_materializer(self.cmd_ctx.base_context.daemon.materializer.dupe());
+        data.set_remote_cache_invalidator(Arc::new(BuildRemoteCacheInvalidator {
+            materializer: self.cmd_ctx.base_context.daemon.materializer.dupe(),
+            local_action_cache: self.cmd_ctx.base_context.daemon.local_action_cache.dupe(),
+        }));
         data.init_materialization_queue_tracker();
         data.init_build_event_sink();
         data.init_eager_build_execution();
         data.init_build_overlap_tracker();
+        data.init_lost_remote_rewind_tracker();
         data.set_build_signals(self.build_signals.build_signals.dupe());
         data.set_run_action_knobs(run_action_knobs);
         data.set_create_unhashed_symlink_lock(
@@ -1682,10 +1725,9 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
             value: format!("{pat}"),
         });
 
-        self.events()
-            .instant_event(bz_data::ParsedTargetPatterns {
-                target_patterns: patterns,
-            })
+        self.events().instant_event(bz_data::ParsedTargetPatterns {
+            target_patterns: patterns,
+        })
     }
 
     fn log_target_pattern_with_modifiers(
@@ -1703,10 +1745,9 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
             .map(|pat| bz_data::TargetPattern { value: pat })
             .collect();
 
-        self.events()
-            .instant_event(bz_data::ParsedTargetPatterns {
-                target_patterns: patterns,
-            })
+        self.events().instant_event(bz_data::ParsedTargetPatterns {
+            target_patterns: patterns,
+        })
     }
 
     fn cancellation_context(&self) -> &CancellationContext {

@@ -589,11 +589,25 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         &self,
         artifact_path: ProjectRelativePathBuf,
     ) -> bz_error::Result<bool> {
+        Ok(self
+            .try_materialize_final_artifact_with_errors(artifact_path)
+            .await??)
+    }
+
+    async fn try_materialize_final_artifact_with_errors(
+        &self,
+        artifact_path: ProjectRelativePathBuf,
+    ) -> bz_error::Result<Result<bool, MaterializationError>> {
         if self.remote_download_outputs.materializes_final_artifacts() {
-            self.ensure_materialized(vec![artifact_path]).await?;
-            Ok(true)
+            let mut stream = self.materialize_many(vec![artifact_path]).await?;
+            while let Some(result) = futures::StreamExt::next(&mut stream).await {
+                if let Err(error) = result {
+                    return Ok(Err(error));
+                }
+            }
+            Ok(Ok(true))
         } else {
-            Ok(false)
+            Ok(Ok(false))
         }
     }
 

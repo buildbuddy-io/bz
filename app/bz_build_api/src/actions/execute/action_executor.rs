@@ -60,6 +60,7 @@ use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::execute::result::CommandExecutionStatus;
 use bz_execute::materialize::materializer::HasMaterializer;
 use bz_execute::materialize::materializer::Materializer;
+use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
 use bz_execute::output_size::OutputCountAndBytes;
 use bz_execute::output_size::OutputSize;
 use bz_execute::path::artifact_path::ArtifactPath;
@@ -134,6 +135,7 @@ pub struct ActionExecutionValue(Arc<ActionExecutionValueData>);
 #[derive(Debug, PartialEq, Eq, Allocative)]
 struct ActionExecutionValueData {
     outputs: ActionOutputs,
+    remote_backed: bool,
 }
 
 impl OutputSize for ActionExecutionValue {
@@ -149,6 +151,7 @@ pub struct ActionExecutionMetadata {
     pub timing: ActionExecutionTimingData,
     pub input_files_bytes: Option<u64>,
     pub waiting_data: WaitingData,
+    pub remote_cache_origin: Option<RemoteActionCacheOrigin>,
 }
 
 /// The *way* that a particular action was executed.
@@ -272,11 +275,22 @@ impl ActionOutputs {
 
 impl ActionExecutionValue {
     pub fn new(outputs: ActionOutputs) -> Self {
-        Self(Arc::new(ActionExecutionValueData { outputs }))
+        Self::new_with_remote_backed(outputs, false)
+    }
+
+    pub fn new_with_remote_backed(outputs: ActionOutputs, remote_backed: bool) -> Self {
+        Self(Arc::new(ActionExecutionValueData {
+            outputs,
+            remote_backed,
+        }))
     }
 
     pub fn outputs(&self) -> &ActionOutputs {
         &self.0.outputs
+    }
+
+    pub fn is_remote_backed(&self) -> bool {
+        self.0.remote_backed
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&BuildArtifactPath, &ArtifactValue)> {
@@ -417,6 +431,8 @@ struct BuckActionExecutionContext<'a> {
     outputs: &'a [BuildArtifact],
     command_reports: &'a mut Vec<CommandExecutionReport>,
     cancellations: &'a CancellationContext,
+    force_skip_action_cache: bool,
+    force_remote_input_reupload: bool,
 }
 
 #[async_trait]
@@ -456,6 +472,10 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
 
     fn local_action_cache_input_set_digest(&self) -> &[u8] {
         &self.local_action_cache_input_set_digest
+    }
+
+    fn force_remote_input_reupload(&self) -> bool {
+        self.force_remote_input_reupload
     }
 
     fn artifact_path_mapping(
@@ -524,6 +544,10 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         request: &CommandExecutionRequest,
         prepared_action: &PreparedAction,
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        if self.force_skip_action_cache {
+            return ControlFlow::Continue(manager);
+        }
+
         let action = self.target();
         self.executor
             .command_executor
@@ -546,6 +570,10 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         local_action_cache_key: &LocalActionCacheKey,
         outputs: &BuckIndexSet<CommandExecutionOutput>,
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        if self.force_skip_action_cache {
+            return ControlFlow::Continue(manager);
+        }
+
         let action = self.target();
         self.executor
             .command_executor
@@ -566,6 +594,10 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         local_action_cache_key: &LocalActionCacheKey,
         outputs: &BuckIndexSet<CommandExecutionOutput>,
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        if self.force_skip_action_cache {
+            return ControlFlow::Continue(manager);
+        }
+
         let action = self.target();
         self.executor
             .command_executor
@@ -584,14 +616,14 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         &mut self,
         local_action_cache_key: &LocalActionCacheKey,
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-        remote_cache_entry: bool,
+        remote_cache_origin: Option<RemoteActionCacheOrigin>,
     ) -> bz_error::Result<()> {
         self.executor
             .command_executor
             .insert_unprepared_action_cache_metadata(
                 local_action_cache_key,
                 outputs,
-                remote_cache_entry,
+                remote_cache_origin,
             )
     }
 
@@ -601,6 +633,10 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
         request: &CommandExecutionRequest,
         prepared_action: &PreparedAction,
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        if self.force_skip_action_cache {
+            return ControlFlow::Continue(manager);
+        }
+
         let action = self.target();
         self.executor
             .command_executor
@@ -636,6 +672,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
             eligible_for_full_hybrid,
             scheduling_mode,
             waiting_data,
+            remote_cache_origin,
             ..
         } = result;
 
@@ -669,6 +706,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
                         timing: report.timing.into(),
                         input_files_bytes,
                         waiting_data,
+                        remote_cache_origin,
                     },
                 );
                 Ok(result)
@@ -730,6 +768,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
                     digest_config: self.digest_config(),
                     mergebase: self.mergebase().0.as_ref(),
                     re_platform: self.re_platform(),
+                    force_reupload: request.force_remote_input_reupload(),
                 },
                 execution_result,
                 re_result,
@@ -803,6 +842,54 @@ impl BuckActionExecutor {
         Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>,
         Vec<CommandExecutionReport>,
     ) {
+        self.execute_impl(
+            waiting_data,
+            inputs,
+            local_action_cache_input_set_digest,
+            action,
+            cancellations,
+            false,
+            false,
+        )
+        .await
+    }
+
+    pub(crate) async fn execute_bypassing_action_cache(
+        &self,
+        waiting_data: WaitingData,
+        inputs: Arc<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>>,
+        local_action_cache_input_set_digest: Arc<[u8]>,
+        action: &RegisteredAction,
+        cancellations: &CancellationContext,
+    ) -> (
+        Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>,
+        Vec<CommandExecutionReport>,
+    ) {
+        self.execute_impl(
+            waiting_data,
+            inputs,
+            local_action_cache_input_set_digest,
+            action,
+            cancellations,
+            true,
+            true,
+        )
+        .await
+    }
+
+    async fn execute_impl(
+        &self,
+        waiting_data: WaitingData,
+        inputs: Arc<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>>,
+        local_action_cache_input_set_digest: Arc<[u8]>,
+        action: &RegisteredAction,
+        cancellations: &CancellationContext,
+        force_skip_action_cache: bool,
+        force_remote_input_reupload: bool,
+    ) -> (
+        Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>,
+        Vec<CommandExecutionReport>,
+    ) {
         let mut command_reports = Vec::new();
 
         let res = async {
@@ -816,6 +903,8 @@ impl BuckActionExecutor {
                 outputs: outputs.as_ref(),
                 command_reports: &mut command_reports,
                 cancellations,
+                force_skip_action_cache,
+                force_remote_input_reupload,
             };
 
             let (result, metadata) = action.execute(&mut ctx, waiting_data).await?;
@@ -939,6 +1028,8 @@ impl BuckActionExecutor {
                 outputs: outputs.as_ref(),
                 command_reports: &mut command_reports,
                 cancellations,
+                force_skip_action_cache: false,
+                force_remote_input_reupload: false,
             };
 
             action
@@ -1204,6 +1295,7 @@ mod tests {
                         timing: ActionExecutionTimingData::default(),
                         input_files_bytes: None,
                         waiting_data: WaitingData::new(),
+                        remote_cache_origin: None,
                     },
                 ))
             }

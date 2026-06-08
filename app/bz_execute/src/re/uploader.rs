@@ -223,10 +223,44 @@ impl Uploader {
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
         deduplicate_get_digests_ttl_calls: bool,
+        force_reupload: bool,
     ) -> bz_error::Result<(
         Vec<InlinedBlobWithDigest>,
         StdBuckHashSet<&'a TrackedCasDigest<FileDigestKind>>,
     )> {
+        // See if anything needs uploading
+        let mut input_digests = blobs.keys().collect::<StdBuckHashSet<_>>();
+
+        if force_reupload {
+            for entry in input_dir.unordered_walk().without_paths() {
+                let digest = match entry {
+                    DirectoryEntry::Dir(d) => d.as_fingerprinted_dyn().fingerprint(),
+                    DirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => &f.digest,
+                    DirectoryEntry::Leaf(..) => continue,
+                };
+                input_digests.insert(digest);
+            }
+            input_digests.insert(input_dir.fingerprint());
+
+            let mut upload_blobs = Vec::new();
+            let mut missing_digests = StdBuckHashSet::default();
+            for digest in input_digests {
+                match blobs.get(digest) {
+                    Some(blob) => {
+                        upload_blobs.push(InlinedBlobWithDigest {
+                            blob: blob.clone().0,
+                            digest: digest.to_re(),
+                            ..Default::default()
+                        });
+                    }
+                    None => {
+                        missing_digests.insert(digest);
+                    }
+                }
+            }
+            return Ok((upload_blobs, missing_digests));
+        }
+
         // RE mentions they usually take 5-10 minutes of leeway so we mirror this here.
         let now = Utc::now();
         let ttl_wanted = if bz_core::is_open_source() {
@@ -236,8 +270,6 @@ impl Uploader {
         };
         let ttl_deadline = now + Duration::seconds(ttl_wanted);
 
-        // See if anything needs uploading
-        let mut input_digests = blobs.keys().collect::<StdBuckHashSet<_>>();
         {
             // Collect the digests we need to upload
             for entry in input_dir.unordered_walk().without_paths() {
@@ -370,6 +402,7 @@ impl Uploader {
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
         deduplicate_get_digests_ttl_calls: bool,
+        force_reupload: bool,
     ) -> bz_error::Result<UploadStats> {
         let (mut upload_blobs, mut missing_digests) = Self::find_missing(
             client,
@@ -379,6 +412,7 @@ impl Uploader {
             identity,
             digest_config,
             deduplicate_get_digests_ttl_calls,
+            force_reupload,
         )
         .await?;
 

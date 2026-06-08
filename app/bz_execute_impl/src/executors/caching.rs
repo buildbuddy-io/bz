@@ -146,6 +146,7 @@ impl CacheUploader {
                             vec![],
                             vec![],
                             action_digest_and_blobs.blobs.to_inlined_blobs(),
+                            info.force_reupload,
                         )
                         .await?;
 
@@ -156,6 +157,7 @@ impl CacheUploader {
                             &mut file_digests,
                             &mut tree_digests,
                             info.digest_config,
+                            info.force_reupload,
                         )
                         .await?
                     {
@@ -264,6 +266,7 @@ impl CacheUploader {
                             vec![],
                             vec![],
                             remote_dep_file_action.blobs.to_inlined_blobs(),
+                            info.force_reupload,
                         )
                         .await?;
 
@@ -324,6 +327,7 @@ impl CacheUploader {
         file_digests: &mut Vec<TrackedFileDigest>,
         tree_digests: &mut Vec<TrackedFileDigest>,
         digest_config: DigestConfig,
+        force_reupload: bool,
     ) -> bz_error::Result<Result<TActionResult2, CacheUploadRejectionReason>> {
         let mut upload_futs = vec![];
         let mut output_files: Vec<TFile> = Vec::new();
@@ -366,6 +370,7 @@ impl CacheUploader {
                                 }],
                                 vec![],
                                 vec![],
+                                force_reupload,
                             )
                             .await
                     };
@@ -399,6 +404,7 @@ impl CacheUploader {
                                 identity,
                                 digest_config,
                                 self.deduplicate_get_digests_ttl_calls,
+                                force_reupload,
                             )
                             .await
                             .map(|_| ())

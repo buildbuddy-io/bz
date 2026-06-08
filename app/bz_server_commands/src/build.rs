@@ -14,6 +14,11 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::actions::calculation::ActionInputSetKey;
+use bz_build_api::actions::calculation::BuildKey;
+use bz_build_api::artifact_groups::calculation::EnsureArtifactGroupValuesKey;
+use bz_build_api::artifact_groups::calculation::EnsureProjectedArtifactKey;
+use bz_build_api::artifact_groups::calculation::EnsureTransitiveSetProjectionKey;
 use bz_build_api::build;
 use bz_build_api::build::AsyncBuildTargetResultBuilder;
 use bz_build_api::build::BuildEvent;
@@ -34,6 +39,7 @@ use bz_build_api::build::detailed_aggregated_metrics::types::DetailedAggregatedM
 use bz_build_api::build::eager::HasEagerBuildExecution;
 use bz_build_api::build::graph_properties::GraphPropertiesOptions;
 use bz_build_api::build::overlap::HasBuildOverlapTracker;
+use bz_build_api::lost_remote::LostRemoteBuildRestart;
 use bz_build_api::materialize::MaterializationAndUploadContext;
 use bz_cli_proto::CommonBuildOptions;
 use bz_cli_proto::build_request::BuildProviders;
@@ -155,6 +161,8 @@ fn expect_build_opts(req: &bz_cli_proto::BuildRequest) -> &CommonBuildOptions {
 )]
 struct RunArgsMissingSeparator;
 
+const MAX_LOST_REMOTE_BUILD_RESTARTS: usize = 20;
+
 async fn build(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
@@ -170,6 +178,116 @@ async fn build(
         )?;
     }
 
+    let mut lost_remote_restarts = 0;
+    loop {
+        match build_once(server_ctx, ctx.clone(), request).await {
+            Ok(response) => return Ok(response),
+            Err(error) => {
+                let Some(restart) = error.find_typed_context::<LostRemoteBuildRestart>() else {
+                    return Err(error);
+                };
+
+                lost_remote_restarts += 1;
+                if lost_remote_restarts > MAX_LOST_REMOTE_BUILD_RESTARTS {
+                    return Err(error.context(format!(
+                        "Exceeded {MAX_LOST_REMOTE_BUILD_RESTARTS} lost remote CAS build restarts"
+                    )));
+                }
+
+                let graph = restart.graph();
+                if graph.is_empty() {
+                    return Err(error.context(
+                        "Lost remote CAS build restart did not include any DICE keys to invalidate",
+                    ));
+                }
+
+                tracing::warn!(
+                    "Restarting build after lost remote CAS artifacts (attempt {lost_remote_restarts}/{MAX_LOST_REMOTE_BUILD_RESTARTS}): {}",
+                    restart.reason(),
+                );
+
+                let mut updater = ctx.into_updater();
+                if !graph.action_keys().is_empty() {
+                    updater
+                        .changed(
+                            graph
+                                .action_keys()
+                                .iter()
+                                .cloned()
+                                .map(BuildKey)
+                                .collect::<Vec<_>>(),
+                        )
+                        .buck_error_context(
+                            "Failed to invalidate actions for lost remote CAS build restart",
+                        )?;
+                }
+                if !graph.artifacts().is_empty() {
+                    updater
+                        .changed(
+                            graph
+                                .artifacts()
+                                .iter()
+                                .cloned()
+                                .map(EnsureArtifactGroupValuesKey)
+                                .collect::<Vec<_>>(),
+                        )
+                        .buck_error_context(
+                            "Failed to invalidate artifacts for lost remote CAS build restart",
+                        )?;
+                }
+                if !graph.projected_artifacts().is_empty() {
+                    updater
+                        .changed(
+                            graph
+                                .projected_artifacts()
+                                .iter()
+                                .cloned()
+                                .map(EnsureProjectedArtifactKey)
+                                .collect::<Vec<_>>(),
+                        )
+                        .buck_error_context(
+                            "Failed to invalidate projected artifacts for lost remote CAS build restart",
+                        )?;
+                }
+                if !graph.transitive_set_projections().is_empty() {
+                    updater
+                        .changed(
+                            graph
+                                .transitive_set_projections()
+                                .iter()
+                                .cloned()
+                                .map(EnsureTransitiveSetProjectionKey)
+                                .collect::<Vec<_>>(),
+                        )
+                        .buck_error_context(
+                            "Failed to invalidate transitive set projections for lost remote CAS build restart",
+                        )?;
+                }
+                if !graph.action_input_sets().is_empty() {
+                    updater
+                        .changed(
+                            graph
+                                .action_input_sets()
+                                .iter()
+                                .cloned()
+                                .map(ActionInputSetKey)
+                                .collect::<Vec<_>>(),
+                        )
+                        .buck_error_context(
+                            "Failed to invalidate action input sets for lost remote CAS build restart",
+                        )?;
+                }
+                ctx = updater.commit().await;
+            }
+        }
+    }
+}
+
+async fn build_once(
+    server_ctx: &dyn ServerCommandContextTrait,
+    mut ctx: DiceTransaction,
+    request: &bz_cli_proto::BuildRequest,
+) -> bz_error::Result<bz_cli_proto::BuildResponse> {
     let cwd = server_ctx.working_dir();
 
     let build_opts: &CommonBuildOptions = expect_build_opts(request);
@@ -703,7 +821,7 @@ async fn request_build_driver(
     providers_to_build: &ProvidersToBuild,
     opts: build::BuildConfiguredLabelOptions,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
-) {
+) -> bz_error::Result<()> {
     let key = build::BuildDriverKey::new(
         providers_label.dupe(),
         providers_to_build.clone(),
@@ -712,7 +830,13 @@ async fn request_build_driver(
         opts.skippable,
     );
 
-    let build = async { ctx.compute(&key).await };
+    let build = async {
+        match ctx.compute(&key).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(e) => Err(e.into()),
+        }
+    };
     let error_label = providers_label.dupe();
 
     match timeout_observer {
@@ -727,6 +851,9 @@ async fn request_build_driver(
                     event_consumer.consume(BuildEvent::new_configured(providers_label, timeout));
                 }
                 futures::future::Either::Right((Err(e), _alive)) => {
+                    if e.find_typed_context::<LostRemoteBuildRestart>().is_some() {
+                        return Err(e);
+                    }
                     event_consumer.consume(BuildEvent::new_configured(
                         error_label,
                         ConfiguredBuildEventVariant::Error { err: e.into() },
@@ -737,6 +864,9 @@ async fn request_build_driver(
         }
         None => {
             if let Err(e) = build.await {
+                if e.find_typed_context::<LostRemoteBuildRestart>().is_some() {
+                    return Err(e);
+                }
                 event_consumer.consume(BuildEvent::new_configured(
                     error_label,
                     ConfiguredBuildEventVariant::Error { err: e.into() },
@@ -744,6 +874,8 @@ async fn request_build_driver(
             }
         }
     }
+
+    Ok(())
 }
 
 fn maybe_report_analysis_execution_overlap(ctx: &DiceTransaction) {
@@ -788,7 +920,7 @@ async fn build_targets_in_universe(
     materialization_and_upload: MaterializationAndUploadContext,
     graph_properties: GraphPropertiesOptions,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
-) {
+) -> bz_error::Result<()> {
     let providers_to_build = build_providers_to_providers_to_build(&build_providers);
     let provider_labels = universe.get_provider_labels(&spec);
     if provider_labels.is_empty() {
@@ -798,7 +930,7 @@ async fn build_targets_in_universe(
         );
     }
     let providers_to_build = &providers_to_build;
-    ctx.compute_join(provider_labels, |ctx, p| {
+    ctx.try_compute_join(provider_labels, |ctx, p| {
         async move {
             request_build_driver(
                 event_consumer,
@@ -816,7 +948,8 @@ async fn build_targets_in_universe(
         }
         .boxed()
     })
-    .await;
+    .await?;
+    Ok(())
 }
 
 async fn build_targets_with_global_target_platform<'a>(
@@ -830,10 +963,10 @@ async fn build_targets_with_global_target_platform<'a>(
     skip_incompatible_targets: bool,
     graph_properties: GraphPropertiesOptions,
     timeout_observer: Option<&'a Arc<dyn LivelinessObserver>>,
-) {
+) -> bz_error::Result<()> {
     let global_cfg_options = &global_cfg_options;
     let build_providers = &build_providers;
-    ctx.compute_join(spec.specs, |ctx, (package_with_modifiers, spec)| {
+    ctx.try_compute_join(spec.specs, |ctx, (package_with_modifiers, spec)| {
         async move {
             build_targets_for_spec(
                 event_consumer,
@@ -852,7 +985,8 @@ async fn build_targets_with_global_target_platform<'a>(
         }
         .boxed()
     })
-    .await;
+    .await?;
+    Ok(())
 }
 
 struct TargetBuildSpec {
@@ -897,7 +1031,7 @@ async fn build_targets_for_spec(
     skip_incompatible_targets: bool,
     graph_properties: GraphPropertiesOptions,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
-) {
+) -> bz_error::Result<()> {
     let skippable = match spec {
         PackageSpec::Targets(..) => skip_incompatible_targets,
         PackageSpec::All() => true,
@@ -930,7 +1064,7 @@ async fn build_targets_for_spec(
                     err: e.dupe(),
                 });
             }
-            return;
+            return Ok(());
         }
     };
     let (targets, missing) = res.apply_spec(spec);
@@ -967,7 +1101,7 @@ async fn build_targets_for_spec(
     let providers_to_build = build_providers_to_providers_to_build(&build_providers);
 
     let providers_to_build = &providers_to_build;
-    ctx.compute_join(todo_targets, |ctx, build_spec| {
+    ctx.try_compute_join(todo_targets, |ctx, build_spec| {
         async move {
             build_target(
                 event_consumer,
@@ -981,7 +1115,8 @@ async fn build_targets_for_spec(
         }
         .boxed()
     })
-    .await;
+    .await?;
+    Ok(())
 }
 
 async fn build_target(
@@ -991,7 +1126,7 @@ async fn build_target(
     providers_to_build: &ProvidersToBuild,
     materialization_and_upload: MaterializationAndUploadContext,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
-) {
+) -> bz_error::Result<()> {
     let local_cfg_options = match spec.modifiers.as_slice() {
         None => spec.global_cfg_options.dupe(),
         Some(modifiers) => GlobalCfgOptions {
@@ -1017,7 +1152,7 @@ async fn build_target(
                 label: Some(spec.target.dupe()),
                 err: e,
             });
-            return;
+            return Ok(());
         }
     };
 
@@ -1033,5 +1168,5 @@ async fn build_target(
         },
         timeout_observer,
     )
-    .await;
+    .await
 }

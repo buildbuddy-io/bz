@@ -634,9 +634,7 @@ pub trait StarlarkInputArtifactLike<'v>: StarlarkArtifactLike<'v> {
         hide_prefix: bool,
     ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>>;
 
-    fn without_associated_artifacts(
-        &'v self,
-    ) -> bz_error::Result<EitherStarlarkInputArtifact<'v>>;
+    fn without_associated_artifacts(&'v self) -> bz_error::Result<EitherStarlarkInputArtifact<'v>>;
 
     fn with_associated_artifacts(
         &'v self,

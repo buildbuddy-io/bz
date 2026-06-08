@@ -1123,11 +1123,10 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         if let ArtifactMaterializationMethod::CasDownload { info } = method.as_ref()
             && info.persist_declared_cas
             && let Some(sqlite_db) = self.sqlite_db.as_mut()
-            && let Err(e) = sqlite_db.materializer_state_table().insert_declared_cas(
-                path,
-                value.entry(),
-                info.re_use_case,
-            )
+            && let Err(e) =
+                sqlite_db
+                    .materializer_state_table()
+                    .insert_declared_cas(path, value.entry(), info)
         {
             let _unused = soft_error!("materializer_declared_cas_insert_error", e, quiet: true);
         }

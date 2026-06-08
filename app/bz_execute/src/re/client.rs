@@ -301,6 +301,7 @@ impl RemoteExecutionClient {
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
         deduplicate_get_digests_ttl_calls: bool,
+        force_reupload: bool,
     ) -> bz_error::Result<UploadStats> {
         // Bazel limits remote action building/input upload setup to CPU count.
         let _remote_action_building = self
@@ -333,6 +334,7 @@ impl RemoteExecutionClient {
                     identity,
                     digest_config,
                     deduplicate_get_digests_ttl_calls,
+                    force_reupload || attempt > 0,
                 ))
                 .await;
 
@@ -361,6 +363,7 @@ impl RemoteExecutionClient {
         directories: Vec<remote_execution::Path>,
         inlined_blobs_with_digest: Vec<InlinedBlobWithDigest>,
         use_case: RemoteExecutorUseCase,
+        force_reupload: bool,
     ) -> bz_error::Result<()> {
         self.data
             .uploads
@@ -369,6 +372,7 @@ impl RemoteExecutionClient {
                 directories,
                 inlined_blobs_with_digest,
                 use_case,
+                force_reupload,
             ))
             .await
     }
@@ -1179,6 +1183,7 @@ impl RemoteExecutionClientImpl {
         directories: Vec<remote_execution::Path>,
         inlined_blobs_with_digest: Vec<InlinedBlobWithDigest>,
         use_case: RemoteExecutorUseCase,
+        force_reupload: bool,
     ) -> bz_error::Result<()> {
         with_error_handler(
             "upload_files_and_directories",
@@ -1191,7 +1196,7 @@ impl RemoteExecutionClientImpl {
                         files_with_digest: Some(files_with_digest),
                         inlined_blobs_with_digest: Some(inlined_blobs_with_digest),
                         directories: Some(directories),
-                        upload_only_missing: true,
+                        upload_only_missing: !force_reupload,
                         ..Default::default()
                     },
                 )

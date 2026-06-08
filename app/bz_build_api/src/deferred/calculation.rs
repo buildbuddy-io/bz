@@ -41,8 +41,7 @@ pub static EVAL_ANON_TARGET: LateBinding<
     for<'c> fn(
         &'c mut DiceComputations,
         Arc<dyn BaseDeferredKeyDyn>,
-    )
-        -> Pin<Box<dyn Future<Output = bz_error::Result<AnalysisResult>> + Send + 'c>>,
+    ) -> Pin<Box<dyn Future<Output = bz_error::Result<AnalysisResult>> + Send + 'c>>,
 > = LateBinding::new("EVAL_ANON_TARGET");
 
 pub static GET_PROMISED_ARTIFACT: LateBinding<

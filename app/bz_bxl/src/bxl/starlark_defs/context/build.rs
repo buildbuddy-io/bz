@@ -232,7 +232,7 @@ pub(crate) fn build<'v>(
                             }
                             .boxed()
                         })
-                        .map(|_| ()),
+                        .map(|_| Ok::<_, bz_error::Error>(())),
                     )
                     .await
             }

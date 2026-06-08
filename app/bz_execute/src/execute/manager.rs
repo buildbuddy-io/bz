@@ -204,6 +204,7 @@ impl CommandExecutionManagerLike for CommandExecutionManager {
             eligible_for_full_hybrid: false,
             dep_file_metadata: None,
             action_result: None,
+            remote_cache_origin: None,
             scheduling_mode: None,
             waiting_data: self.inner.waiting_data,
         }
@@ -299,6 +300,7 @@ impl CommandExecutionManagerLike for CommandExecutionManagerWithClaim {
             eligible_for_full_hybrid: false,
             dep_file_metadata: None,
             action_result: None,
+            remote_cache_origin: None,
             scheduling_mode: None,
             waiting_data: self.inner.waiting_data,
         }

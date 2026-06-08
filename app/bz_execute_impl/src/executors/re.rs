@@ -41,6 +41,7 @@ use bz_execute::execute::result::CommandExecutionMetadata;
 use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::knobs::ExecutorGlobalKnobs;
 use bz_execute::materialize::materializer::Materializer;
+use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
 use bz_execute::re::action_identity::ReActionIdentity;
 use bz_execute::re::client::CancellationReason;
 use bz_execute::re::client::ExecuteResponseOrCancelled;
@@ -52,6 +53,8 @@ use bz_execute::re::remote_action_result::ExecuteResponseWithQueueStats;
 use bz_execute::re::remote_action_result::RemoteActionResult;
 use bz_hash::BuckIndexMap;
 use bz_util::time_span::TimeSpan;
+use chrono::Duration as ChronoDuration;
+use chrono::Utc;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -109,6 +112,7 @@ impl ReExecutor {
         blobs: &ActionBlobs,
         paths: &CommandExecutionPaths,
         digest_config: DigestConfig,
+        force_reupload: bool,
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
         let re_client = &self.re_client;
 
@@ -124,6 +128,7 @@ impl ReExecutor {
                     Some(identity),
                     digest_config,
                     self.deduplicate_get_digests_ttl_calls,
+                    force_reupload,
                 )
                 .await;
             match res {
@@ -439,6 +444,7 @@ impl PreparedCommandExecutor for ReExecutor {
                 &action_and_blobs.blobs,
                 request.paths(),
                 *digest_config,
+                request.force_remote_input_reupload(),
             )
             .await?;
 
@@ -451,6 +457,7 @@ impl PreparedCommandExecutor for ReExecutor {
                 &worker_tool_init_action.blobs,
                 &worker.input_paths,
                 *digest_config,
+                request.force_remote_input_reupload(),
             )
             .await?
         } else {
@@ -605,6 +612,11 @@ impl PreparedCommandExecutor for ReExecutor {
                 }
             }
         };
+        res.remote_cache_origin = Some(RemoteActionCacheOrigin::new(
+            command.prepared_action.digest().dupe(),
+            Utc::now(),
+            ChronoDuration::seconds(response.ttl()),
+        ));
         res.action_result = Some(response.execute_response.action_result);
 
         if let Some(run_action_key) = request.run_action_key()

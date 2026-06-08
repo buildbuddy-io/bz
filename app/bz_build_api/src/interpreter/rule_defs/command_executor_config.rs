@@ -357,8 +357,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                         // FIXME: We need a migration flip the default for remote_cache_enabled to
                         // remote_enabled first.
                         re_properties: re_properties.unwrap_or_default(),
-                        re_use_case: re_use_case
-                            .unwrap_or_else(RemoteExecutorUseCase::bz_default),
+                        re_use_case: re_use_case.unwrap_or_else(RemoteExecutorUseCase::bz_default),
                         re_action_key,
                         cache_upload_behavior,
                         remote_cache_enabled: true,
@@ -410,10 +409,7 @@ pub fn parse_custom_re_image(
         return Ok(None);
     }
 
-    fn dict_ref<'v>(
-        field_name: &'static str,
-        value: Value<'v>,
-    ) -> bz_error::Result<DictRef<'v>> {
+    fn dict_ref<'v>(field_name: &'static str, value: Value<'v>) -> bz_error::Result<DictRef<'v>> {
         match DictRef::from_value(value) {
             Some(dict_ref) => Ok(dict_ref),
             None => Err(CommandExecutorConfigErrors::InvalidField(field_name).into()),
@@ -482,9 +478,7 @@ pub fn parse_custom_re_image(
     })))
 }
 
-fn parse_remote_execution_policy(
-    policy: Option<Value>,
-) -> bz_error::Result<RemoteExecutionPolicy> {
+fn parse_remote_execution_policy(policy: Option<Value>) -> bz_error::Result<RemoteExecutionPolicy> {
     match policy {
         None => Ok(RemoteExecutionPolicy::default()),
         Some(policy) => {
@@ -590,9 +584,7 @@ pub fn parse_meta_internal_extra_params<'v>(
         Ok(Arc::new(result))
     }
 }
-fn parse_remote_execution_gang<'v>(
-    gang: Option<DictRef<'v>>,
-) -> bz_error::Result<Option<ReGang>> {
+fn parse_remote_execution_gang<'v>(gang: Option<DictRef<'v>>) -> bz_error::Result<Option<ReGang>> {
     let Some(gang) = gang else {
         return Ok(None);
     };

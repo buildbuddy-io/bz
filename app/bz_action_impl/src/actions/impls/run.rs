@@ -1863,6 +1863,7 @@ fn fingerprint_command_execution_input(
             source_requires_materialization,
             path,
             value,
+            ..
         } => {
             action_cache_add_str(fingerprint, "artifact_path_alias");
             action_cache_add_str(fingerprint, source_path.as_str());
@@ -3613,6 +3614,7 @@ impl RunAction {
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
+                        owner: artifact.input_owner(),
                         path: bazel_alias,
                         value,
                     });
@@ -3629,6 +3631,7 @@ impl RunAction {
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
+                        owner: artifact.input_owner(),
                         path: source_alias,
                         value,
                     });
@@ -3649,6 +3652,7 @@ impl RunAction {
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
+                        owner: artifact.input_owner(),
                         path: normalized_source_alias,
                         value,
                     });
@@ -3673,6 +3677,7 @@ impl RunAction {
                         inputs.push(CommandExecutionInput::ArtifactPathAlias {
                             source_path: source_path.clone(),
                             source_requires_materialization,
+                            owner: artifact.input_owner(),
                             path: mapped_bazel_alias,
                             value,
                         });
@@ -3693,6 +3698,7 @@ impl RunAction {
                         inputs.push(CommandExecutionInput::ArtifactPathAlias {
                             source_path: source_path.clone(),
                             source_requires_materialization,
+                            owner: artifact.input_owner(),
                             path: mapped_normalized_source_alias,
                             value,
                         });
@@ -3970,6 +3976,7 @@ impl RunAction {
         inputs.push(CommandExecutionInput::ArtifactPathAlias {
             source_path,
             source_requires_materialization: false,
+            owner: None,
             path: alias_path,
             value: ArtifactValue::external_symlink(Arc::new(ExternalSymlink::new(
                 source_abs_path,
@@ -4127,6 +4134,7 @@ impl RunAction {
                 inputs.push(CommandExecutionInput::ArtifactPathAlias {
                     source_path,
                     source_requires_materialization,
+                    owner: artifact.input_owner(),
                     path: alias,
                     value,
                 });
@@ -4586,6 +4594,7 @@ impl RunAction {
                 inputs.push(CommandExecutionInput::ArtifactPathAlias {
                     source_path: project_rel_path,
                     source_requires_materialization: true,
+                    owner: None,
                     path: Self::bazel_execroot_path(bazel_execroot, bazel_exec_path.clone())?,
                     value: ArtifactValue::file(FileMetadata {
                         digest: param_file.digest.dupe(),
@@ -5136,6 +5145,7 @@ impl RunAction {
                 self.inner.remote_execution_custom_image.clone().map(|s| *s),
             )
             .with_meta_internal_extra_params(self.inner.meta_internal_extra_params.clone())
+            .with_force_remote_input_reupload(ctx.force_remote_input_reupload())
             .with_outputs_for_error_handler(outputs_for_error_handler);
 
         if self.uses_bazel_execroot_paths() {
@@ -5378,6 +5388,7 @@ impl RunAction {
                     timing: ActionExecutionTimingData::default(),
                     input_files_bytes: None,
                     waiting_data: WaitingData::new(),
+                    remote_cache_origin: None,
                 },
             ))),
             Err(_) => {
@@ -5650,11 +5661,12 @@ impl Action for RunAction {
         if result.was_success()
             && !result.was_locally_executed()
             && let Some(local_action_cache_key) = request.local_action_cache_key()
+            && let Some(remote_cache_origin) = result.remote_cache_origin.clone()
         {
             ctx.insert_unprepared_action_cache_metadata(
                 local_action_cache_key,
                 &result.outputs,
-                true,
+                Some(remote_cache_origin),
             )
             .buck_error_context(
                 "Failed to persist remote output metadata in the local action cache",
