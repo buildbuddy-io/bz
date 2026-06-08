@@ -404,30 +404,6 @@ impl ProgressHeader<'_> {
         )
     }
 
-    fn render_remote_cache_checks(
-        &self,
-        style: Style,
-        mode: DrawMode,
-        count_column: Option<CountColumn>,
-    ) -> Option<String> {
-        let running = self.progress_stats.running_remote_cache_checks;
-        let started = self.progress_stats.remote_cache_checks_started;
-        let finished = self.progress_stats.remote_cache_checks_finished;
-
-        if started == 0 || (running == 0 && finished == 0) || matches!(mode, DrawMode::Final) {
-            return None;
-        }
-
-        Some(style.render(
-            mode,
-            "Checked",
-            finished,
-            started,
-            &format_count(running),
-            count_column,
-        ))
-    }
-
     fn render_actions_stats(&self, style: Style) -> String {
         match style {
             Style::Normal(_) | Style::Compact(_) => {
@@ -513,7 +489,7 @@ impl ProgressHeader<'_> {
             ));
         }
 
-        parts.join("  ")
+        parts.join(", ")
     }
 
     fn render_validations(
@@ -551,14 +527,10 @@ impl Component for ProgressHeader<'_> {
         let analysis = &self.phase_stats.analyses;
         let actions = &self.phase_stats.actions;
         let validations = &self.phase_stats.validations;
-        let remote_cache_checks_started = self.progress_stats.remote_cache_checks_started;
 
         let max_count = std::cmp::max(
             std::cmp::max(
-                std::cmp::max(
-                    std::cmp::max(loads.started, analysis.started),
-                    remote_cache_checks_started,
-                ),
+                std::cmp::max(loads.started, analysis.started),
                 actions.started,
             ),
             validations.started,
@@ -600,16 +572,6 @@ impl Component for ProgressHeader<'_> {
             if analysis.started > 0 {
                 width = std::cmp::max(width, count_len(analysis.finished));
             }
-            if remote_cache_checks_started > 0 {
-                width = std::cmp::max(
-                    width,
-                    bracket_count_len(
-                        self.progress_stats.remote_cache_checks_finished,
-                        remote_cache_checks_started,
-                        mode,
-                    ),
-                );
-            }
             if validations.started > 0 {
                 width = std::cmp::max(
                     width,
@@ -644,11 +606,6 @@ impl Component for ProgressHeader<'_> {
         }
 
         if actions.started > 0 {
-            if let Some(line) = self.render_remote_cache_checks(style, mode, count_column) {
-                main.push(line);
-                extra.push(String::new());
-            }
-
             main.push(self.render_actions(style, mode, count_column));
             if let Style::Normal(..) = style {
                 extra.push(self.render_actions_extra(if dimensions.width > 90 {
@@ -761,7 +718,7 @@ fn style_progress_header_line(line: &str) -> Line {
 }
 
 fn progress_count_range(line: &str) -> Option<(usize, usize, bool)> {
-    let labels = ["Loaded", "Analyzed", "Executed", "Checked", "Validated"];
+    let labels = ["Loaded", "Analyzed", "Executed", "Validated"];
     let label = labels.iter().find(|label| line.contains(*label))?;
     let label_start = line.find(label)?;
     if let Some(count_start) = line[..label_start].rfind('[') {
@@ -1097,6 +1054,46 @@ mod tests {
     }
 
     #[test]
+    fn test_action_summary_exec_time_comma() -> bz_error::Result<()> {
+        let mut phase_stats = phase_stats();
+        phase_stats.actions.started = 29;
+        phase_stats.actions.finished = 16;
+        let mut progress_stats = progress_stats();
+        progress_stats.exec_time_ms = 32800;
+        progress_stats.cached_exec_time_ms = 0;
+        let action_stats = ActionStats {
+            local_actions: 8,
+            remote_actions: 0,
+            cached_actions: 0,
+            local_cached_actions: 0,
+            fallback_actions: 0,
+            remote_dep_file_cached_actions: 0,
+            excess_cache_misses: 0,
+        };
+        let header = ProgressHeader {
+            phase_stats: &phase_stats,
+            progress_stats: &progress_stats,
+            action_stats: &action_stats,
+            time_elapsed: "41.0s".to_owned(),
+        };
+
+        let output = header
+            .draw(
+                Dimensions {
+                    width: 160,
+                    height: 10,
+                },
+                DrawMode::Normal,
+            )?
+            .fmt_for_test()
+            .to_string();
+
+        assert!(output.contains("8 local, 32.8s exec time total"));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_different_sizes_dont_fail() -> bz_error::Result<()> {
         let phase_stats = &phase_stats();
         let progress_stats = &progress_stats();
@@ -1200,22 +1197,22 @@ mod tests {
 
                             111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
                             222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
-                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit)  2:09:37.0s exec time total  11:06.0s exec time cached (8%)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit), 2:09:37.0s exec time total, 11:06.0s exec time cached (8%)
                  [444 / 44,444]  Validated (44 running)                                                                       Time elapsed: 1234s
 
                             111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
                             222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
-                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit)  2:09:37.0s exec time total  11:06.0s exec time cached (8%)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit), 2:09:37.0s exec time total, 11:06.0s exec time cached (8%)
                  [444 / 44,444]  Validated (44 running)                                                                        Time elapsed: 1234s
 
                             111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
                             222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
-                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit)  2:09:37.0s exec time total  11:06.0s exec time cached (8%)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit), 2:09:37.0s exec time total, 11:06.0s exec time cached (8%)
                  [444 / 44,444]  Validated (44 running)                                                                                  Time elapsed: 1234s
 
                             111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
                             222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
-                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit)  2:09:37.0s exec time total  11:06.0s exec time cached (8%)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit), 2:09:37.0s exec time total, 11:06.0s exec time cached (8%)
                  [444 / 44,444]  Validated (44 running)                                                                                                      Time elapsed: 1234s
 
                             11,111  Loaded
@@ -1225,7 +1222,7 @@ mod tests {
 
                             11,111  Loaded     111 dirs read, 22,222 targets declared
                             22,222  Analyzed   3,333,333 actions, 4,444,444 artifacts declared
-                 [33,333 / 33,333]  Executed   100 local, 122 remote, 133 remote cache (37% hit)  2:09:37.0s exec time total  11:06.0s exec time cached (8%)
+                 [33,333 / 33,333]  Executed   100 local, 122 remote, 133 remote cache (37% hit), 2:09:37.0s exec time total, 11:06.0s exec time cached (8%)
                  [44,444 / 44,444]  Validated
 
         "#
@@ -1450,7 +1447,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remote_cache_check_line() -> bz_error::Result<()> {
+    fn test_remote_cache_check_line_hidden() -> bz_error::Result<()> {
         let mut progress_stats = progress_stats();
         progress_stats.remote_cache_checks_started = 1234;
         progress_stats.remote_cache_checks_finished = 100;
@@ -1472,9 +1469,8 @@ mod tests {
         .fmt_for_test()
         .to_string();
 
-        assert!(output.contains("Checked"));
-        assert!(output.contains("[100 / 1,234]"));
-        assert!(output.contains("30 running"));
+        assert!(!output.contains("Checked"));
+        assert!(!output.contains("[100 / 1,234]"));
 
         progress_stats.running_remote_cache_checks = 0;
         progress_stats.remote_cache_checks_finished = 1234;
@@ -1494,8 +1490,8 @@ mod tests {
         .fmt_for_test()
         .to_string();
 
-        assert!(completed_output.contains("[1,234 / 1,234]"));
-        assert!(completed_output.contains("0 running"));
+        assert!(!completed_output.contains("Checked"));
+        assert!(!completed_output.contains("[1,234 / 1,234]"));
 
         let final_output = ProgressHeader {
             phase_stats: &phase_stats(),
