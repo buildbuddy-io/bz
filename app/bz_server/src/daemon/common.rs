@@ -432,37 +432,42 @@ impl HasCommandExecutor for CommandExecutorFactory {
             self.executor_config_with_bazel_remote_endpoint_overrides(executor_config);
 
         let local_executor_new =
-            |options: &LocalExecutorOptions, local_action_cache_re_use_case: RemoteExecutorUseCase| {
-            let worker_pool = if options.use_persistent_workers {
-                Some(self.worker_pool.dupe())
-            } else {
-                None
+            |options: &LocalExecutorOptions,
+             local_action_cache_re_use_case: RemoteExecutorUseCase,
+             local_action_cache_re_client: Option<ManagedRemoteExecutionClient>| {
+                let worker_pool = if options.use_persistent_workers {
+                    Some(self.worker_pool.dupe())
+                } else {
+                    None
+                };
+                LocalExecutor::new(
+                    artifact_fs.clone(),
+                    self.materializer.dupe(),
+                    self.incremental_db_state.dupe(),
+                    self.local_action_cache.dupe(),
+                    local_action_cache_re_use_case,
+                    local_action_cache_re_client,
+                    self.local_executor_shared_state.clone(),
+                    self.blocking_executor.dupe(),
+                    self.host_sharing_broker.dupe(),
+                    self.project_root.root().to_owned(),
+                    self.forkserver.dupe(),
+                    self.executor_global_knobs.dupe(),
+                    worker_pool,
+                    self.memory_tracker.dupe(),
+                    self.daemon_id.dupe(),
+                )
             };
-            LocalExecutor::new(
-                artifact_fs.clone(),
-                self.materializer.dupe(),
-                self.incremental_db_state.dupe(),
-                self.local_action_cache.dupe(),
-                local_action_cache_re_use_case,
-                self.local_executor_shared_state.clone(),
-                self.blocking_executor.dupe(),
-                self.host_sharing_broker.dupe(),
-                self.project_root.root().to_owned(),
-                self.forkserver.dupe(),
-                self.executor_global_knobs.dupe(),
-                worker_pool,
-                self.memory_tracker.dupe(),
-                self.daemon_id.dupe(),
-            )
-        };
         let local_action_cache_checker_new =
-            |local_action_cache_re_use_case: RemoteExecutorUseCase|
+            |local_action_cache_re_use_case: RemoteExecutorUseCase,
+             local_action_cache_re_client: Option<ManagedRemoteExecutionClient>|
              -> Arc<dyn PreparedCommandOptionalExecutor> {
-            Arc::new(local_executor_new(
-                &LocalExecutorOptions::default(),
-                local_action_cache_re_use_case,
-            ))
-        };
+                Arc::new(local_executor_new(
+                    &LocalExecutorOptions::default(),
+                    local_action_cache_re_use_case,
+                    local_action_cache_re_client,
+                ))
+            };
 
         if !bz_core::is_open_source() && !cfg!(fbcode_build) {
             static WARN: OnceLock<()> = OnceLock::new();
@@ -477,6 +482,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
             let local_executor = Arc::new(local_executor_new(
                 &LocalExecutorOptions::default(),
                 RemoteExecutorUseCase::bz_default(),
+                None,
             ));
             return Ok(CommandExecutorResponse {
                 executor: local_executor.dupe(),
@@ -528,6 +534,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                     let local_executor = Arc::new(local_executor_new(
                         local,
                         RemoteExecutorUseCase::bz_default(),
+                        None,
                     ));
                     Some(CommandExecutorResponse {
                         executor: local_executor.dupe(),
@@ -565,10 +572,15 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 let cache_checker_new = || -> (Arc<dyn PreparedCommandOptionalExecutor>, Arc<dyn PreparedCommandOptionalExecutor>) {
                     if disable_caching {
                         return (
-                            local_action_cache_checker_new(remote_options.re_use_case),
+                            local_action_cache_checker_new(remote_options.re_use_case, None),
                             Arc::new(NoOpCommandOptionalExecutor {}) as _,
                         );
                     }
+                    let local_action_cache_re_client = || {
+                        remote_options
+                            .remote_cache_enabled
+                            .then(|| self.get_prepared_re_client(remote_options.re_use_case))
+                    };
 
                     let remote_dep_file_cache_checker: Arc<dyn PreparedCommandOptionalExecutor> =
                         if remote_options.remote_dep_file_cache_enabled {
@@ -607,13 +619,19 @@ impl HasCommandExecutor for CommandExecutorFactory {
                                 remote_action_cache_semaphore: self.remote_action_cache_semaphore.dupe(),
                                 local_action_cache: self.local_action_cache.dupe(),
                             }) as _
-                        };
+                    };
                     let action_cache_checker: Arc<dyn PreparedCommandOptionalExecutor> =
                         if only_remote_dep_file_cache {
-                            local_action_cache_checker_new(remote_options.re_use_case)
+                            local_action_cache_checker_new(
+                                remote_options.re_use_case,
+                                local_action_cache_re_client(),
+                            )
                         } else {
                             Arc::new(ChainedCommandOptionalExecutor {
-                                first: local_action_cache_checker_new(remote_options.re_use_case),
+                                first: local_action_cache_checker_new(
+                                    remote_options.re_use_case,
+                                    local_action_cache_re_client(),
+                                ),
                                 second: remote_action_cache_checker,
                             }) as _
                         };
@@ -625,7 +643,13 @@ impl HasCommandExecutor for CommandExecutorFactory {
                     match &remote_options.executor {
                         RemoteEnabledExecutor::Local(local) if !self.strategy.ban_local() => {
                             let local: Arc<dyn PreparedCommandExecutor> =
-                                Arc::new(local_executor_new(local, remote_options.re_use_case));
+                                Arc::new(local_executor_new(
+                                    local,
+                                    remote_options.re_use_case,
+                                    remote_options.remote_cache_enabled.then(|| {
+                                        self.get_prepared_re_client(remote_options.re_use_case)
+                                    }),
+                                ));
                             Some(local)
                         }
                         RemoteEnabledExecutor::Remote(remote) if !self.strategy.ban_remote() => {
@@ -647,7 +671,13 @@ impl HasCommandExecutor for CommandExecutorFactory {
                             let re_max_input_files_bytes = remote
                                 .re_max_input_files_bytes
                                 .unwrap_or(DEFAULT_RE_MAX_INPUT_FILE_BYTES);
-                            let local = local_executor_new(local, remote_options.re_use_case);
+                            let local = local_executor_new(
+                                local,
+                                remote_options.re_use_case,
+                                remote_options.remote_cache_enabled.then(|| {
+                                    self.get_prepared_re_client(remote_options.re_use_case)
+                                }),
+                            );
                             let remote = remote_executor_new(
                                 remote,
                                 &remote_options.re_use_case,

@@ -458,7 +458,7 @@ impl PreparedCommandExecutor for ReExecutor {
         };
         let worker_tool_action_digest = worker_tool_init_action.clone().map(|w| w.action);
 
-        let execution_time = TimeSpan::start_now();
+        let mut execution_time = TimeSpan::start_now();
 
         let re_gang_workers: Vec<_> = self
             .gang_workers
@@ -525,42 +525,86 @@ impl PreparedCommandExecutor for ReExecutor {
             }
         }
 
-        let exit_code = response.execute_response.action_result.exit_code;
-        let additional_message = if response.execute_response.status.message.is_empty() {
-            None
-        } else {
-            Some(response.execute_response.status.message.clone())
-        };
+        let mut retried_missing_cache_cas = false;
+        let mut res = loop {
+            let exit_code = response.execute_response.action_result.exit_code;
+            let additional_message = if response.execute_response.status.message.is_empty() {
+                None
+            } else {
+                Some(response.execute_response.status.message.clone())
+            };
+            let cached_result = response.execute_response.cached_result;
 
-        let res = download_action_results(
-            request,
-            execution_time,
-            &*self.materializer,
-            &self.re_client,
-            *digest_config,
-            manager,
-            &identity,
-            bz_data::ReStage {
-                stage: Some(bz_data::ReDownload {}.into()),
+            let download = download_action_results(
+                request,
+                execution_time,
+                &*self.materializer,
+                &self.re_client,
+                *digest_config,
+                manager,
+                &identity,
+                bz_data::ReStage {
+                    stage: Some(bz_data::ReDownload {}.into()),
+                }
+                .into(),
+                request.paths(),
+                request.outputs(),
+                details.clone(),
+                &response,
+                cached_result,
+                self.paranoid.as_ref(),
+                cancellations,
+                exit_code,
+                &self.artifact_fs,
+                self.materialize_failed_inputs,
+                self.materialize_failed_outputs,
+                additional_message,
+                &self.output_trees_download_config,
+            )
+            .boxed()
+            .await;
+
+            match download {
+                DownloadResult::Result(res) => break res,
+                DownloadResult::CacheMiss(retry_manager)
+                    if cached_result && !retried_missing_cache_cas =>
+                {
+                    tracing::debug!(
+                        "Remote execution returned cached result for `{}` with missing CAS blobs; retrying with cache lookup disabled",
+                        action_and_blobs.action,
+                    );
+                    retried_missing_cache_cas = true;
+                    execution_time = TimeSpan::start_now();
+                    let retry = self
+                        .re_execute(
+                            retry_manager,
+                            &identity,
+                            request,
+                            &action_and_blobs.action,
+                            *digest_config,
+                            platform,
+                            self.dependencies
+                                .iter()
+                                .chain(remote_execution_dependencies.iter()),
+                            &re_gang_workers,
+                            command.request.meta_internal_extra_params(),
+                            worker_tool_action_digest,
+                            true,
+                        )
+                        .await?;
+                    manager = retry.0;
+                    response = retry.1;
+                }
+                DownloadResult::CacheMiss(retry_manager) => {
+                    break retry_manager.error(
+                        "re_download",
+                        bz_error::internal_error!(
+                            "cached remote execution result referenced missing CAS blobs after retry"
+                        ),
+                    );
+                }
             }
-            .into(),
-            request.paths(),
-            request.outputs(),
-            details,
-            &response,
-            self.paranoid.as_ref(),
-            cancellations,
-            exit_code,
-            &self.artifact_fs,
-            self.materialize_failed_inputs,
-            self.materialize_failed_outputs,
-            additional_message,
-            &self.output_trees_download_config,
-        )
-        .boxed()
-        .await;
-
-        let DownloadResult::Result(mut res) = res;
+        };
         res.action_result = Some(response.execute_response.action_result);
 
         if let Some(run_action_key) = request.run_action_key()

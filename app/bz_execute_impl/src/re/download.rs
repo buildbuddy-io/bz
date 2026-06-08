@@ -23,11 +23,15 @@ use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::fs::buck_out_path::BuildArtifactPath;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
+use bz_directory::directory::directory::Directory;
+use bz_directory::directory::directory_iterator::DirectoryIterator;
 use bz_directory::directory::entry::DirectoryEntry;
+use bz_directory::directory::walk::unordered_entry_walk;
 use bz_error::BuckErrorContext;
 use bz_events::dispatch::console_message;
 use bz_execute::artifact_value::ArtifactValue;
 use bz_execute::digest::CasDigestFromReExt;
+use bz_execute::digest::CasDigestToReExt;
 use bz_execute::digest_config::DigestConfig;
 use bz_execute::directory::ActionDirectoryBuilder;
 use bz_execute::directory::ActionDirectoryMember;
@@ -103,6 +107,73 @@ pub fn missing_mandatory_output(
         .map(str::to_owned)
 }
 
+pub async fn remote_artifact_values_present(
+    re_client: &ManagedRemoteExecutionClient,
+    outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+) -> bz_error::Result<bool> {
+    remote_cache_digests_present(re_client, artifact_value_file_digests(outputs)).await
+}
+
+fn artifact_value_file_digests(
+    outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+) -> Vec<RE::TDigest> {
+    let mut digests = Vec::new();
+    for value in outputs.values() {
+        let mut walk = unordered_entry_walk(value.entry().as_ref().map_dir(Directory::as_ref));
+        while let Some((_path, entry)) = walk.next() {
+            if let DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) = entry {
+                digests.push(file.digest.to_re());
+            }
+        }
+    }
+    digests
+}
+
+async fn remote_cache_digests_present(
+    re_client: &ManagedRemoteExecutionClient,
+    digests: Vec<RE::TDigest>,
+) -> bz_error::Result<bool> {
+    let mut seen = StdBuckHashSet::default();
+    let mut unique = Vec::new();
+    for digest in digests {
+        if seen.insert(digest.clone()) {
+            unique.push(digest);
+        }
+    }
+
+    if unique.is_empty() {
+        return Ok(true);
+    }
+
+    let requested: StdBuckHashSet<_> = unique.iter().cloned().collect();
+    let expirations = match re_client.get_digest_expirations(unique).await {
+        Ok(expirations) => expirations,
+        Err(e) if is_remote_execution_not_found(&e) => return Ok(false),
+        Err(e) => return Err(e),
+    };
+
+    if expirations.len() != requested.len() {
+        return Ok(false);
+    }
+
+    let now = Utc::now();
+    let mut present = StdBuckHashSet::default();
+    for (digest, expires) in expirations {
+        if expires <= now {
+            return Ok(false);
+        }
+        present.insert(digest);
+    }
+
+    Ok(requested.iter().all(|digest| present.contains(digest)))
+}
+
+fn is_remote_execution_not_found(error: &bz_error::Error) -> bool {
+    error
+        .find_typed_context::<RemoteExecutionError>()
+        .is_some_and(|re_client_error| re_client_error.code == RE::TCode::NOT_FOUND)
+}
+
 pub async fn download_action_results<'a>(
     request: &CommandExecutionRequest,
     execution_time: TimeSpanBuilder,
@@ -116,6 +187,7 @@ pub async fn download_action_results<'a>(
     requested_outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
     details: RemoteCommandExecutionDetails,
     response: &dyn RemoteActionResult,
+    cache_hit_missing_cas_is_cache_miss: bool,
     paranoid: Option<&ParanoidDownloader>,
     cancellations: &CancellationContext,
     action_exit_code: i32,
@@ -169,6 +241,7 @@ pub async fn download_action_results<'a>(
         requested_outputs,
         response,
         &details,
+        cache_hit_missing_cas_is_cache_miss,
         cancellations,
     );
 
@@ -322,6 +395,7 @@ impl CasDownloader<'_> {
         requested_outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
         output_spec: &dyn RemoteActionResult,
         details: &RemoteCommandExecutionDetails,
+        cache_hit_missing_cas_is_cache_miss: bool,
         cancellations: &CancellationContext,
     ) -> ControlFlow<
         DownloadResult,
@@ -349,6 +423,15 @@ impl CasDownloader<'_> {
                     Err(e) => {
                         let error: bz_error::Error =
                             e.context(format!("action_digest={}", details.action_digest));
+                        if cache_hit_missing_cas_is_cache_miss
+                            && is_remote_execution_not_found(&error)
+                        {
+                            tracing::debug!(
+                                "Cached result for `{}` referenced missing CAS metadata; treating it as a cache miss",
+                                details.action_digest,
+                            );
+                            return ControlFlow::Break(DownloadResult::CacheMiss(manager));
+                        }
                         let is_storage_resource_exhausted = error
                             .find_typed_context::<RemoteExecutionError>()
                             .is_some_and(|re_client_error| {
@@ -364,6 +447,27 @@ impl CasDownloader<'_> {
                         ));
                     }
                 };
+
+            if cache_hit_missing_cas_is_cache_miss {
+                match remote_artifact_values_present(self.re_client, &artifacts.mapped_outputs)
+                    .await
+                {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        tracing::debug!(
+                            "Cached result for `{}` referenced missing output CAS blobs; treating it as a cache miss",
+                            details.action_digest,
+                        );
+                        return ControlFlow::Break(DownloadResult::CacheMiss(manager));
+                    }
+                    Err(e) => {
+                        return ControlFlow::Break(DownloadResult::Result(manager.error(
+                            "verify_cached_outputs",
+                            e.context(format!("action_digest={}", details.action_digest)),
+                        )));
+                    }
+                }
+            }
 
             let info = CasDownloadInfo::new_execution(
                 TrackedActionDigest::new_expires(
@@ -622,6 +726,9 @@ pub enum DownloadResult {
     /// Got a result: might be a success, might be a failure. Caller needs to deal with this
     /// result.
     Result(CommandExecutionResult),
+    /// A cache hit referenced missing CAS data before claiming outputs. The caller may retry the
+    /// action with cache lookup disabled.
+    CacheMiss(CommandExecutionManager),
 }
 
 impl FromResidual<ControlFlow<Self, Infallible>> for DownloadResult {

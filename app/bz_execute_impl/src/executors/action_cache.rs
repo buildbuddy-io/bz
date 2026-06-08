@@ -18,6 +18,7 @@ use bz_action_metadata_proto::RemoteDepFile;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
 use bz_core::soft_error;
+use bz_error::internal_error;
 use bz_execute::execute::action_digest::ActionDigest;
 use bz_execute::execute::action_digest::ActionDigestKind;
 use bz_execute::execute::dep_file_digest::DepFileDigest;
@@ -35,7 +36,6 @@ use bz_execute::re::action_identity::ReActionIdentity;
 use bz_execute::re::manager::ManagedRemoteExecutionClient;
 use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
 use bz_execute::re::remote_action_result::ActionCacheResult;
-use bz_error::internal_error;
 use bz_hash::StdBuckHashMap;
 use bz_util::time_span::TimeSpan;
 use dice_futures::cancellation::CancellationContext;
@@ -43,12 +43,12 @@ use dupe::Dupe;
 use once_cell::sync::Lazy;
 use prost::Message;
 use remote_execution::ActionResultResponse;
-use tokio::sync::oneshot;
 use tokio::sync::Semaphore;
+use tokio::sync::oneshot;
 
-use crate::incremental_actions_helper::save_content_based_incremental_state;
 use crate::executors::local_action_cache::LocalActionCache;
 use crate::executors::local_action_cache::local_action_cache_outputs_fingerprint;
+use crate::incremental_actions_helper::save_content_based_incremental_state;
 use crate::re::download::DownloadResult;
 use crate::re::download::download_action_results;
 use crate::re::download::missing_mandatory_output;
@@ -132,8 +132,7 @@ impl Drop for ActionCacheQueryOwner {
 
 #[derive(Default)]
 struct ActionCacheQueryDeduper {
-    in_flight:
-        StdBuckHashMap<ActionCacheQueryKey, Vec<oneshot::Sender<ActionCacheQueryResult>>>,
+    in_flight: StdBuckHashMap<ActionCacheQueryKey, Vec<oneshot::Sender<ActionCacheQueryResult>>>,
 }
 
 static ACTION_CACHE_QUERY_DEDUPER: Lazy<Mutex<ActionCacheQueryDeduper>> =
@@ -238,13 +237,11 @@ async fn query_action_cache_and_download_result(
             owner.complete(&response);
             response
         }
-        ActionCacheQueryClaim::Wait(receiver) => receiver
-            .await
-            .unwrap_or_else(|_| {
-                Err(internal_error!(
-                    "deduplicated remote action cache query was cancelled"
-                ))
-            }),
+        ActionCacheQueryClaim::Wait(receiver) => receiver.await.unwrap_or_else(|_| {
+            Err(internal_error!(
+                "deduplicated remote action cache query was cancelled"
+            ))
+        }),
     };
     let manager = manager.with_execution_kind(execution_kind);
 
@@ -343,6 +340,7 @@ async fn query_action_cache_and_download_result(
         request.outputs(),
         details,
         &response,
+        true,
         paranoid.as_ref(),
         cancellations,
         action_exit_code,
@@ -354,7 +352,10 @@ async fn query_action_cache_and_download_result(
     )
     .await;
 
-    let DownloadResult::Result(mut res) = res;
+    let mut res = match res {
+        DownloadResult::Result(res) => res,
+        DownloadResult::CacheMiss(manager) => return ControlFlow::Continue(manager),
+    };
     match &cache_type {
         CacheType::RemoteDepFileCache(key) => {
             tracing::trace!(
