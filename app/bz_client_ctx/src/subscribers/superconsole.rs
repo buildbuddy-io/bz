@@ -398,7 +398,6 @@ pub struct SuperConsoleState {
     system_resource_usage: SystemResourceUsageTracker,
     resource_lines_reserved_height: Cell<usize>,
     resource_lines_reserved_start: Cell<usize>,
-    build_output_emitted: bool,
 }
 
 impl SuperConsoleState {
@@ -408,14 +407,6 @@ impl SuperConsoleState {
 
     pub(crate) fn system_resource_usage(&self) -> SystemResourceUsage {
         self.system_resource_usage.current()
-    }
-
-    fn build_output_emitted(&self) -> bool {
-        self.build_output_emitted
-    }
-
-    fn note_build_output_emitted(&mut self) {
-        self.build_output_emitted = true;
     }
 
     fn reserve_resource_lines_height(&self, height: usize) -> usize {
@@ -742,10 +733,14 @@ impl Component for BuckRootComponent<'_> {
             },
             mode,
         )?;
-        if self.state.config.expanded_progress && self.state.build_output_emitted() {
+        let draw_expanded_progress_header =
+            self.state.config.expanded_progress && matches!(mode, DrawMode::Normal);
+        if draw_expanded_progress_header {
             draw.draw(&ProgressHeaderSpacer, mode)?;
         }
-        draw.draw(&TasksHeader::new(self.header, self.state), mode)?;
+        if draw_expanded_progress_header || !self.state.config.expanded_progress {
+            draw.draw(&TasksHeader::new(self.header, self.state), mode)?;
+        }
         draw.draw(&TimedList::new(&CUTOFFS, self.state), mode)?;
 
         let mut lines = draw.finish();
@@ -916,7 +911,6 @@ impl SuperConsoleState {
             system_resource_usage: SystemResourceUsageTracker::new(),
             resource_lines_reserved_height: Cell::new(0),
             resource_lines_reserved_start: Cell::new(0),
-            build_output_emitted: false,
         })
     }
 
@@ -941,23 +935,14 @@ pub(crate) const BUCK_NO_INTERACTIVE_CONSOLE: &str = "BUCK_NO_INTERACTIVE_CONSOL
 
 impl StatefulSuperConsoleImpl {
     fn emit_build_output(&mut self, lines: Lines) {
-        if !lines.is_empty() {
-            self.state.note_build_output_emitted();
-        }
         self.super_console.emit(lines);
     }
 
     fn emit_build_aux_output(&mut self, lines: Lines) {
-        if !lines.is_empty() {
-            self.state.note_build_output_emitted();
-        }
         self.super_console.emit_aux(lines);
     }
 
     async fn handle_build_stderr(&mut self, msg: &str) -> bz_error::Result<()> {
-        if !msg.is_empty() {
-            self.state.note_build_output_emitted();
-        }
         self.handle_stderr(msg).await
     }
 
@@ -2085,6 +2070,36 @@ mod tests {
         assert_frame_contains(&frame, "Upload:");
         assert_frame_contains(&frame, "(reSessionID-123)");
         assert_frame_contains(&frame, "Loaded");
+
+        let console = match &mut console {
+            StatefulSuperConsole::Running(c) => c,
+            StatefulSuperConsole::Finalized(_) => {
+                panic!("Console was downgraded");
+            }
+        };
+        let root = BuckRootComponent {
+            header: &console.header,
+            state: &console.state,
+            games_overlay: &console.games_overlay,
+        };
+        let normal_output = root
+            .draw(Dimensions::new(140, 40), DrawMode::Normal)?
+            .fmt_for_test()
+            .to_string();
+        let normal_lines: Vec<&str> = normal_output.lines().collect();
+        let loaded_line = normal_lines
+            .iter()
+            .position(|line| line.contains("Loaded"))
+            .ok_or_else(|| internal_error!("No Loaded line was rendered"))?;
+        assert!(loaded_line > 0);
+        assert_eq!("", normal_lines[loaded_line - 1]);
+
+        let final_output = root
+            .draw(Dimensions::new(140, 40), DrawMode::Final)?
+            .fmt_for_test()
+            .to_string();
+        assert!(!final_output.contains("Loaded"));
+        assert!(!final_output.contains("Executed"));
 
         console
             .handle_command_result(&bz_cli_proto::CommandResult { result: None })
