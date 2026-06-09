@@ -2662,6 +2662,8 @@ fn bazel_collect_location_targets<'v>(
 fn bazel_collect_location_targets_from_attrs<'v>(
     ctx: &AnalysisContext<'v>,
     short_paths: bool,
+    allow_data: bool,
+    collect_srcs: bool,
     heap: Heap<'v>,
     targets: &mut SmallMap<String, BazelLocationTarget>,
 ) -> starlark::Result<()> {
@@ -2672,10 +2674,12 @@ fn bazel_collect_location_targets_from_attrs<'v>(
         return Ok(());
     };
     for (name, value) in attrs.iter() {
-        let prefer_executable = matches!(
-            name.as_str(),
-            "deps" | "implementation_deps" | "data" | "tools" | "exec_tools" | "toolchains"
-        );
+        let prefer_executable = match name.as_str() {
+            "srcs" if collect_srcs => false,
+            "deps" | "implementation_deps" | "tools" => true,
+            "data" if allow_data => true,
+            _ => continue,
+        };
         bazel_collect_location_targets(ctx, value, short_paths, prefer_executable, heap, targets)?;
     }
     Ok(())
@@ -2710,10 +2714,19 @@ fn bazel_collect_predeclared_output_location_targets<'v>(
 fn bazel_collect_location_targets_from_rule_context<'v>(
     ctx: &AnalysisContext<'v>,
     short_paths: bool,
+    allow_data: bool,
+    collect_srcs: bool,
     heap: Heap<'v>,
     targets: &mut SmallMap<String, BazelLocationTarget>,
 ) -> starlark::Result<()> {
-    bazel_collect_location_targets_from_attrs(ctx, short_paths, heap, targets)?;
+    bazel_collect_location_targets_from_attrs(
+        ctx,
+        short_paths,
+        allow_data,
+        collect_srcs,
+        heap,
+        targets,
+    )?;
     bazel_collect_predeclared_output_location_targets(ctx, short_paths, heap, targets)
 }
 
@@ -3705,6 +3718,8 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         bazel_collect_location_targets_from_rule_context(
             this.0,
             short_paths,
+            false,
+            true,
             heap,
             &mut target_map,
         )?;
@@ -3743,7 +3758,14 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
 
         if expand_locations {
             let mut target_map = SmallMap::new();
-            bazel_collect_location_targets_from_rule_context(this.0, false, heap, &mut target_map)?;
+            bazel_collect_location_targets_from_rule_context(
+                this.0,
+                false,
+                false,
+                true,
+                heap,
+                &mut target_map,
+            )?;
             if let Some(label_dict) = label_dict.into_option() {
                 bazel_collect_location_targets_from_label_dict(
                     this.0,
