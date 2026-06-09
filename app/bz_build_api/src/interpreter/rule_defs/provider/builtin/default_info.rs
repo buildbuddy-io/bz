@@ -221,12 +221,8 @@ fn bazel_runfiles_with_file<'v>(
 }
 
 fn bazel_runfiles_empty_value<'v>(heap: Heap<'v>) -> Value<'v> {
-    heap.alloc(bazel_runfiles_from_depsets(
-        bazel_depset_empty(heap),
-        bazel_depset_empty(heap),
-        bazel_depset_empty(heap),
-        bazel_depset_empty(heap),
-    ))
+    let empty = bazel_depset_empty(heap);
+    heap.alloc(bazel_runfiles_from_depsets(empty, empty, empty, empty))
 }
 
 fn bazel_runfiles_empty_frozen_value(heap: &FrozenHeap) -> FrozenValue {
@@ -777,8 +773,7 @@ impl<'v> DefaultInfo<'v> {
         let files = ValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_empty(heap));
         let data_runfiles =
             ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
-        let default_runfiles =
-            ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
+        let default_runfiles = data_runfiles;
         let files_to_run = ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(
             heap,
             Value::new_none(),
@@ -809,8 +804,7 @@ impl<'v> DefaultInfo<'v> {
         );
         let data_runfiles =
             ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
-        let default_runfiles =
-            ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
+        let default_runfiles = data_runfiles;
         let files_to_run = ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(
             heap,
             Value::new_none(),
@@ -837,8 +831,7 @@ impl<'v> DefaultInfo<'v> {
         );
         let data_runfiles =
             ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
-        let default_runfiles =
-            ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
+        let default_runfiles = data_runfiles;
         let files_to_run = ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(
             heap,
             artifact,
@@ -1337,21 +1330,33 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             )
             .into());
         }
-        let mut valid_data_runfiles = data_runfiles
-            .map(|data_runfiles| data_runfiles.value)
-            .or_else(|| runfiles.map(|runfiles| runfiles.value))
-            .unwrap_or_else(|| bazel_runfiles_empty_value(heap));
-        let mut valid_default_runfiles = default_runfiles
-            .map(|default_runfiles| default_runfiles.value)
-            .or_else(|| runfiles.map(|runfiles| runfiles.value))
-            .unwrap_or_else(|| bazel_runfiles_empty_value(heap));
+        let has_stateless_runfiles = runfiles.is_some();
+        let runfiles_pair = if let Some(runfiles) = runfiles {
+            (runfiles.value, runfiles.value)
+        } else if no_runfiles_arguments {
+            let empty_runfiles = bazel_runfiles_empty_value(heap);
+            (empty_runfiles, empty_runfiles)
+        } else {
+            (
+                data_runfiles
+                    .map(|data_runfiles| data_runfiles.value)
+                    .unwrap_or_else(|| bazel_runfiles_empty_value(heap)),
+                default_runfiles
+                    .map(|default_runfiles| default_runfiles.value)
+                    .unwrap_or_else(|| bazel_runfiles_empty_value(heap)),
+            )
+        };
+        let (mut valid_data_runfiles, mut valid_default_runfiles) = runfiles_pair;
 
         if !executable_value.is_none() {
-            valid_default_runfiles =
-                bazel_runfiles_with_file(heap, valid_default_runfiles, executable_value)?;
-            if no_runfiles_arguments || runfiles.is_some() {
-                valid_data_runfiles =
-                    bazel_runfiles_with_file(heap, valid_data_runfiles, executable_value)?;
+            if no_runfiles_arguments || has_stateless_runfiles {
+                let runfiles_with_file =
+                    bazel_runfiles_with_file(heap, valid_default_runfiles, executable_value)?;
+                valid_data_runfiles = runfiles_with_file;
+                valid_default_runfiles = runfiles_with_file;
+            } else {
+                valid_default_runfiles =
+                    bazel_runfiles_with_file(heap, valid_default_runfiles, executable_value)?;
             }
         }
 
