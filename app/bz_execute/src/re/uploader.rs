@@ -51,8 +51,11 @@ use remote_execution::GetDigestsTtlResponse;
 use remote_execution::InlinedBlobWithDigest;
 use remote_execution::NamedDigest;
 use remote_execution::TDigest;
+use remote_execution::TCode;
+use remote_execution::TCodeReasonGroup;
 use remote_execution::UploadRequest;
 use tokio::sync::oneshot;
+use tokio::sync::Semaphore;
 
 use crate::digest::CasDigestFromReExt;
 use crate::digest::CasDigestToReExt;
@@ -68,6 +71,7 @@ use crate::materialize::materializer::CasDownloadInfo;
 use crate::materialize::materializer::Materializer;
 use crate::re::action_identity::ReActionIdentity;
 use crate::re::client::RemoteExecutionClient;
+use crate::re::error::re_error;
 use crate::re::error::with_error_handler;
 use crate::re::metadata::RemoteExecutionMetadataExt;
 
@@ -94,18 +98,35 @@ impl UploadDigestKey {
     }
 }
 
-type UploadWaiter = Shared<BoxFuture<'static, Result<(), String>>>;
-
 enum UploadClaimState {
-    Own(oneshot::Sender<Result<(), String>>),
+    Own(oneshot::Sender<bz_error::Result<()>>),
     Wait(UploadWaiter),
     Uploaded,
 }
+
+type UploadWaiter = Shared<BoxFuture<'static, bz_error::Result<()>>>;
 
 #[derive(Default)]
 struct UploadDeduper {
     in_flight: StdBuckHashMap<UploadDigestKey, UploadWaiter>,
     uploaded: StdBuckHashMap<UploadDigestKey, DateTime<Utc>>,
+}
+
+fn upload_cancelled_error() -> bz_error::Error {
+    re_error(
+        "upload",
+        "unknown",
+        "remote upload was cancelled before completion".to_owned(),
+        TCode::CANCELLED,
+        TCodeReasonGroup::UNKNOWN,
+    )
+}
+
+fn dupe_result(result: &bz_error::Result<()>) -> bz_error::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => Err(e.dupe()),
+    }
 }
 
 impl UploadDeduper {
@@ -119,13 +140,9 @@ impl UploadDeduper {
         }
 
         let (sender, receiver) = oneshot::channel();
-        let waiter = async move {
-            receiver.await.unwrap_or_else(|_| {
-                Err("remote upload was cancelled before completion".to_owned())
-            })
-        }
-        .boxed()
-        .shared();
+        let waiter = async move { receiver.await.unwrap_or_else(|_| Err(upload_cancelled_error())) }
+            .boxed()
+            .shared();
         self.in_flight.insert(key, waiter);
         UploadClaimState::Own(sender)
     }
@@ -139,9 +156,13 @@ impl UploadDeduper {
 static UPLOAD_DEDUPER: Lazy<Mutex<UploadDeduper>> =
     Lazy::new(|| Mutex::new(UploadDeduper::default()));
 
+static UPLOAD_SETUP_SEMAPHORE: Lazy<Semaphore> = Lazy::new(|| {
+    Semaphore::new(std::thread::available_parallelism().map_or(1, |value| value.get()))
+});
+
 #[derive(Default)]
 struct UploadClaim {
-    owned: Vec<(UploadDigestKey, oneshot::Sender<Result<(), String>>)>,
+    owned: Vec<(UploadDigestKey, oneshot::Sender<bz_error::Result<()>>)>,
     waiters: Vec<UploadWaiter>,
 }
 
@@ -187,29 +208,28 @@ impl UploadClaim {
 
     async fn wait_for_other_uploads(&self) -> bz_error::Result<()> {
         for waiter in &self.waiters {
-            waiter
-                .clone()
-                .await
-                .map_err(|message| {
-                    bz_error::bz_error!(
-                        bz_error::ErrorTag::ReUnknown,
-                        "Remote upload failed in another concurrent action: {}",
-                        message
-                    )
-                })?;
+            waiter.clone().await?;
         }
         Ok(())
     }
 
-    fn complete(&mut self, result: Result<(), String>) {
+    fn complete(&mut self, result: bz_error::Result<()>) {
         let now = Utc::now();
         let mut deduper = UPLOAD_DEDUPER.lock().unwrap();
         for (key, sender) in self.owned.drain(..) {
             deduper.in_flight.remove(&key);
             if result.is_ok() {
-                deduper.uploaded.insert(key, now);
+                deduper.uploaded.insert(key.clone(), now);
             }
-            let _ = sender.send(result.clone());
+            let _ = sender.send(dupe_result(&result));
+        }
+    }
+}
+
+impl Drop for UploadClaim {
+    fn drop(&mut self) {
+        if !self.owned.is_empty() {
+            self.complete(Err(upload_cancelled_error()));
         }
     }
 }
@@ -404,6 +424,16 @@ impl Uploader {
         deduplicate_get_digests_ttl_calls: bool,
         force_reupload: bool,
     ) -> bz_error::Result<UploadStats> {
+        // Bazel limits remote action building/input upload setup to CPU count.
+        // Keep this process-wide so multiple RE client instances cannot stampede
+        // get_digests_ttl/upload calls on the same daemon.
+        let _upload_setup = UPLOAD_SETUP_SEMAPHORE.acquire().await.map_err(|_| {
+            bz_error::bz_error!(
+                bz_error::ErrorTag::InternalError,
+                "remote upload setup semaphore was closed"
+            )
+        })?;
+
         let (mut upload_blobs, mut missing_digests) = Self::find_missing(
             client,
             input_dir,
@@ -743,7 +773,7 @@ impl Uploader {
         match upload_result {
             Ok(()) => upload_claim.complete(Ok(())),
             Err(e) => {
-                upload_claim.complete(Err(format!("{:#}", e)));
+                upload_claim.complete(Err(e.dupe()));
                 return Err(e);
             }
         }

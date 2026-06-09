@@ -86,6 +86,7 @@ pub mod process_context;
 const BUILDBUDDY_REMOTE_ENDPOINT: &str = "remote.buildbuddy.dev";
 const BUILDBUDDY_DEFAULT_RBE_CONTAINER_IMAGE: &str = "docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:f7db0d4791247f032fdb4451b7c3ba90e567923a341cc6dc43abfc283436791a";
 const BUILDBUDDY_API_KEY_ENV_VAR: &str = "BUILDBUDDY_API_KEY";
+const BUILDBUDDY_REMOTE_TIMEOUT_SECS: u64 = 600;
 
 fn non_empty_buildbuddy_api_key(api_key: String) -> Option<String> {
     (!api_key.trim().is_empty()).then_some(api_key)
@@ -382,6 +383,8 @@ impl BeforeSubcommandOptions {
             remote_default_exec_properties,
             remote_max_connections: self.remote_max_connections,
             remote_max_concurrency_per_connection: self.remote_max_concurrency_per_connection,
+            remote_timeout_secs: (self.rbe || self.buildbuddy)
+                .then_some(BUILDBUDDY_REMOTE_TIMEOUT_SECS),
         }
     }
 
@@ -1241,6 +1244,17 @@ mod tests {
         assert_eq!(
             remote_execution.remote_max_concurrency_per_connection,
             Some(34)
+        );
+    }
+
+    #[test]
+    fn buildbuddy_sets_longer_remote_timeout() {
+        let opts = Opt::try_parse_from(["buck2", "--bb", "build", "//:target"]).unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert_eq!(
+            remote_execution.remote_timeout_secs,
+            Some(BUILDBUDDY_REMOTE_TIMEOUT_SECS)
         );
     }
 

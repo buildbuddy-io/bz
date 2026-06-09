@@ -135,6 +135,7 @@ pub struct RemoteExecutionStartupConfig {
     pub remote_default_exec_properties: Option<Vec<RemoteDefaultExecProperty>>,
     pub remote_max_connections: Option<usize>,
     pub remote_max_concurrency_per_connection: Option<usize>,
+    pub remote_timeout_secs: Option<u64>,
 }
 
 impl RemoteExecutionStartupConfig {
@@ -163,6 +164,9 @@ impl RemoteExecutionStartupConfig {
         if overrides.remote_max_concurrency_per_connection.is_some() {
             self.remote_max_concurrency_per_connection =
                 overrides.remote_max_concurrency_per_connection;
+        }
+        if overrides.remote_timeout_secs.is_some() {
+            self.remote_timeout_secs = overrides.remote_timeout_secs;
         }
     }
 

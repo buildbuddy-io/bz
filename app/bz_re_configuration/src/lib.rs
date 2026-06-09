@@ -716,6 +716,9 @@ impl Buck2OssReConfiguration {
             self.remote_max_concurrency_per_connection =
                 config.remote_max_concurrency_per_connection;
         }
+        if config.remote_timeout_secs.is_some() {
+            self.remote_timeout_secs = config.remote_timeout_secs;
+        }
 
         Ok(())
     }
@@ -979,11 +982,13 @@ mod tests {
         config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
             remote_max_connections: Some(12),
             remote_max_concurrency_per_connection: Some(34),
+            remote_timeout_secs: Some(56),
             ..Default::default()
         })?;
 
         assert_eq!(config.remote_max_connections, Some(12));
         assert_eq!(config.remote_max_concurrency_per_connection, Some(34));
+        assert_eq!(config.remote_timeout_secs, Some(56));
 
         Ok(())
     }

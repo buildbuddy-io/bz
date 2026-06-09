@@ -72,7 +72,7 @@ impl TypedContext for RemoteExecutionError {
     }
 }
 
-fn re_error(
+pub(crate) fn re_error(
     re_action: &str,
     re_session_id: &str,
     message: String,
