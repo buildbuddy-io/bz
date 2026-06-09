@@ -561,13 +561,13 @@ pub(crate) struct StarlarkRepositoryOs {
     repo_env: Arc<BTreeMap<String, String>>,
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
-    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
 }
 
 impl StarlarkRepositoryOs {
     pub(super) fn new(
         repo_env: Arc<BTreeMap<String, String>>,
-        recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+        recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
     ) -> Self {
         Self {
             repo_env,
@@ -620,13 +620,13 @@ pub(crate) struct FrozenStarlarkRepositoryOs {
     #[allocative(skip)]
     repo_env: Arc<BTreeMap<String, String>>,
     #[allocative(skip)]
-    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
 }
 
 impl FrozenStarlarkRepositoryOs {
     pub(super) fn new(
         repo_env: Arc<BTreeMap<String, String>>,
-        recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+        recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
     ) -> Self {
         Self {
             repo_env,
@@ -710,7 +710,7 @@ pub(crate) struct StarlarkModuleExtensionContext<'v> {
     pub(super) path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
-    pub(super) recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    pub(super) recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
     pub(super) command_executor: BazelRepositoryCommandExecutor,
@@ -726,7 +726,7 @@ impl<'v> StarlarkModuleExtensionContext<'v> {
         working_dir: String,
         root_module_has_non_dev_dependency: bool,
         repo_env: Arc<BTreeMap<String, String>>,
-        recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+        recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
         command_executor: BazelRepositoryCommandExecutor,
         remote_downloader: Option<BazelRepositoryRemoteDownloaderConfig>,
     ) -> Self {
@@ -758,6 +758,8 @@ impl<'v> StarlarkModuleExtensionContext<'v> {
                 .lock()
                 .expect("module_ctx recorded inputs poisoned"),
         )
+        .into_iter()
+        .collect()
     }
 }
 
@@ -841,7 +843,7 @@ pub(crate) struct FrozenStarlarkModuleExtensionContext {
     #[allocative(skip)]
     pub(super) path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
     #[allocative(skip)]
-    pub(super) recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    pub(super) recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
     #[allocative(skip)]
     pub(super) command_executor: BazelRepositoryCommandExecutor,
     #[allocative(skip)]

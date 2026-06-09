@@ -326,13 +326,11 @@ fn record_bazel_repository_repo_mapping(
         apparent_name: apparent_name.to_owned(),
         canonical_name,
     };
-    let mut recorded_inputs = repository_context
+    repository_context
         .recorded_inputs
         .lock()
-        .expect("repository recorded inputs poisoned");
-    if !recorded_inputs.iter().any(|existing| existing == &input) {
-        recorded_inputs.push(input);
-    }
+        .expect("repository recorded inputs poisoned")
+        .insert(input);
 }
 
 fn bazel_repo_only_label(value: &str) -> Option<String> {

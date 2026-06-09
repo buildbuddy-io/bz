@@ -194,6 +194,7 @@ use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
 use crate::interpreter::build_context::BazelModuleExtensionEvaluationResult;
 use crate::interpreter::build_context::BazelRepositoryRecordedInput;
+use crate::interpreter::build_context::BazelRepositoryRecordedInputSet;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::build_context::PerFileTypeContext;
@@ -754,14 +755,14 @@ fn repository_rule_command_executor(
 
 fn repository_os_name(
     repo_env: &BTreeMap<String, String>,
-    _recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    _recorded_inputs: &Mutex<BazelRepositoryRecordedInputSet>,
 ) -> String {
     repository_os_name_value(repo_env)
 }
 
 fn repository_os_arch(
     repo_env: &BTreeMap<String, String>,
-    _recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    _recorded_inputs: &Mutex<BazelRepositoryRecordedInputSet>,
 ) -> String {
     repository_os_arch_value(repo_env)
 }
@@ -769,7 +770,7 @@ fn repository_os_arch(
 fn host_environ<'v>(
     heap: Heap<'v>,
     repo_env: &BTreeMap<String, String>,
-    _recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    _recorded_inputs: &Mutex<BazelRepositoryRecordedInputSet>,
 ) -> Value<'v> {
     heap.alloc(AllocDict(
         repo_env
@@ -815,7 +816,7 @@ mod tests {
                 "x86_64".to_owned(),
             ),
         ]);
-        let recorded_inputs = Mutex::new(Vec::new());
+        let recorded_inputs = Mutex::new(BazelRepositoryRecordedInputSet::new());
 
         assert_eq!("linux", repository_os_name(&repo_env, &recorded_inputs));
         assert_eq!("x86_64", repository_os_arch(&repo_env, &recorded_inputs));
@@ -826,7 +827,7 @@ mod tests {
     #[test]
     fn test_repository_os_defaults_to_host_without_recording_inputs() {
         let repo_env = BTreeMap::new();
-        let recorded_inputs = Mutex::new(Vec::new());
+        let recorded_inputs = Mutex::new(BazelRepositoryRecordedInputSet::new());
 
         assert_eq!(
             bazel_host_os_name(),
@@ -2719,7 +2720,7 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
     extension_usages_json: &str,
     working_dir: &str,
     repo_env: Arc<BTreeMap<String, String>>,
-    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
     globals: &Globals,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
@@ -2863,7 +2864,7 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
     invocation: &BazelRepositoryRuleInvocation,
     working_dir: &str,
     repo_env: Arc<BTreeMap<String, String>>,
-    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
     globals: &Globals,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
@@ -2962,7 +2963,7 @@ pub(crate) struct StarlarkRepositoryContext<'v> {
     path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
-    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
     command_executor: BazelRepositoryCommandExecutor,
@@ -2980,7 +2981,7 @@ impl<'v> StarlarkRepositoryContext<'v> {
         working_dir: String,
         workspace_root: String,
         repo_env: Arc<BTreeMap<String, String>>,
-        recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+        recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
         command_executor: BazelRepositoryCommandExecutor,
         remote_downloader: Option<BazelRepositoryRemoteDownloaderConfig>,
     ) -> Self {
@@ -3020,6 +3021,8 @@ impl<'v> StarlarkRepositoryContext<'v> {
                 .lock()
                 .expect("repository_ctx recorded inputs poisoned"),
         )
+        .into_iter()
+        .collect()
     }
 }
 
@@ -3111,7 +3114,7 @@ pub(crate) struct FrozenStarlarkRepositoryContext {
     #[allocative(skip)]
     path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
     #[allocative(skip)]
-    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
     #[allocative(skip)]
     command_executor: BazelRepositoryCommandExecutor,
     #[allocative(skip)]
@@ -3424,7 +3427,7 @@ fn repository_ctx_repo_env<'v>(
 
 fn repository_ctx_recorded_inputs<'v>(
     this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
-) -> Arc<Mutex<Vec<BazelRepositoryRecordedInput>>> {
+) -> Arc<Mutex<BazelRepositoryRecordedInputSet>> {
     match this.unpack() {
         either::Either::Left(ctx) => ctx.recorded_inputs.clone(),
         either::Either::Right(ctx) => ctx.recorded_inputs.clone(),
@@ -4615,7 +4618,7 @@ fn module_ctx_repo_env<'v>(
 
 fn module_ctx_recorded_inputs<'v>(
     this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
-) -> Arc<Mutex<Vec<BazelRepositoryRecordedInput>>> {
+) -> Arc<Mutex<BazelRepositoryRecordedInputSet>> {
     match this.unpack() {
         either::Either::Left(ctx) => ctx.recorded_inputs.clone(),
         either::Either::Right(ctx) => ctx.recorded_inputs.clone(),

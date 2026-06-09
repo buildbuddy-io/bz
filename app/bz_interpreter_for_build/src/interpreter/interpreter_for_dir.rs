@@ -82,6 +82,7 @@ use crate::bazel::glob::BazelPackageDataRequest;
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
 use crate::interpreter::build_context::BazelRepositoryContextForStarlark;
 use crate::interpreter::build_context::BazelRepositoryRecordedInput;
+use crate::interpreter::build_context::BazelRepositoryRecordedInputSet;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::build_context::BazelRepositoryRuleRecorder;
 use crate::interpreter::build_context::BuildContext;
@@ -1005,8 +1006,8 @@ impl InterpreterForDir {
                 extension_value,
             )?;
             let recorder = BazelRepositoryRuleRecorder::default();
-            let recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>> =
-                Arc::new(Mutex::new(Vec::new()));
+            let recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>> =
+                Arc::new(Mutex::new(BazelRepositoryRecordedInputSet::new()));
             let extra_context = PerFileTypeContext::Bzl(BzlEvalCtx::new(extension_path.clone()));
             let extra = BuildContext::new_with_bazel_repository_rule_recorder(
                 &self.cell_info,
@@ -1156,8 +1157,8 @@ impl InterpreterForDir {
                 &invocation.rule_id.name,
                 rule_value,
             )?;
-            let recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>> =
-                Arc::new(Mutex::new(Vec::new()));
+            let recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>> =
+                Arc::new(Mutex::new(BazelRepositoryRecordedInputSet::new()));
             let extra_context = PerFileTypeContext::Bzl(BzlEvalCtx::new(rule_path.clone()));
             let extra = BuildContext::new_with_bazel_repository_context(
                 &self.cell_info,

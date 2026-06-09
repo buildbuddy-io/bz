@@ -34,20 +34,18 @@ impl RepositoryPathLabelDep {
 }
 
 fn record_repository_input(
-    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    recorded_inputs: &Mutex<BazelRepositoryRecordedInputSet>,
     input: BazelRepositoryRecordedInput,
 ) {
-    let mut recorded_inputs = recorded_inputs
+    recorded_inputs
         .lock()
-        .expect("repository recorded inputs poisoned");
-    if !recorded_inputs.iter().any(|existing| existing == &input) {
-        recorded_inputs.push(input);
-    }
+        .expect("repository recorded inputs poisoned")
+        .insert(input);
 }
 
 pub(super) fn record_repository_env_var(
     repo_env: &BTreeMap<String, String>,
-    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    recorded_inputs: &Mutex<BazelRepositoryRecordedInputSet>,
     name: &str,
 ) -> Option<String> {
     let value = repo_env.get(name).cloned();
@@ -170,7 +168,7 @@ fn repository_path_is_under_working_dir(path: &Path, working_dir: &str) -> bool 
 }
 
 pub(super) fn record_repository_file_input(
-    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    recorded_inputs: &Mutex<BazelRepositoryRecordedInputSet>,
     path: &str,
     working_dir: &str,
 ) -> starlark::Result<()> {
@@ -197,7 +195,7 @@ pub(super) fn record_repository_file_input(
 }
 
 pub(super) fn record_repository_dirents_input(
-    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    recorded_inputs: &Mutex<BazelRepositoryRecordedInputSet>,
     path: &str,
     working_dir: &str,
 ) -> starlark::Result<()> {
@@ -224,7 +222,7 @@ pub(super) fn record_repository_dirents_input(
 }
 
 pub(super) fn record_repository_dir_tree_input(
-    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    recorded_inputs: &Mutex<BazelRepositoryRecordedInputSet>,
     path: &str,
     working_dir: &str,
 ) -> starlark::Result<()> {

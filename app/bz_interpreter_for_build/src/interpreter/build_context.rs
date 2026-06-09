@@ -320,6 +320,7 @@ pub struct BazelRepositoryRuleInvocation {
     Clone,
     Debug,
     Eq,
+    Hash,
     PartialEq,
     serde::Serialize,
     serde::Deserialize,
@@ -351,9 +352,14 @@ pub enum BazelRepositoryRecordedInput {
     },
 }
 
+/// Insertion-ordered set of recorded inputs. Repository rules record the same
+/// input (env var, file hash, repo mapping) many times, so membership checks
+/// must not scan a Vec linearly under the lock.
+pub type BazelRepositoryRecordedInputSet = starlark::collections::SmallSet<BazelRepositoryRecordedInput>;
+
 #[derive(Clone, Debug)]
 pub(crate) struct BazelRepositoryContextForStarlark {
-    pub(crate) recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    pub(crate) recorded_inputs: Arc<Mutex<BazelRepositoryRecordedInputSet>>,
     pub(crate) working_dir: String,
     pub(crate) command_executor: BazelRepositoryCommandExecutor,
     pub(crate) remote_downloader: Option<BazelRepositoryRemoteDownloaderConfig>,
