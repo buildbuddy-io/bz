@@ -1,7 +1,0 @@
-name: build_bootstrap
-runs:
-  using: composite
-  steps:
-  - name: Build `buck2` with `buck2`
-    run: "$RUNNER_TEMP/artifacts/buck2 build :buck2 -v 2"
-    shell: bash
