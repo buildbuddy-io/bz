@@ -1113,6 +1113,39 @@ struct BzlmodYankedVersionsKey {
     registry_url: String,
 }
 
+/// Yanked-version metadata is mutable in the registry, so unlike module files
+/// it cannot be cached forever. Registry data is already refreshed at most
+/// once per hour on a running daemon (see `set_bzlmod_registry_invalidation`),
+/// so cache fetched metadata on disk with the same freshness: a cold daemon
+/// start would otherwise issue a network request per module in the dep graph,
+/// making startup latency hostage to registry weather.
+#[derive(Serialize, Deserialize)]
+struct CachedBzlmodYankedVersions {
+    epoch_hour: u64,
+    yanked_versions: Option<BTreeMap<String, String>>,
+}
+
+fn bzlmod_yanked_versions_cache_path(registry: &str, module_name: &str) -> ProjectRelativePathBuf {
+    let mut hasher = Sha256::new();
+    for field in ["buck2-bzlmod-yanked-versions-v1", registry, module_name] {
+        hasher.update(field.len().to_string().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(field.as_bytes());
+        hasher.update(b"\0");
+    }
+    ProjectRelativePathBuf::unchecked_new(format!(
+        "buck-out/v2/cache/bzlmod_yanked_versions/{}/metadata.json",
+        hex::encode(hasher.finalize()),
+    ))
+}
+
+fn bzlmod_registry_epoch_hour() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() / 3600)
+        .unwrap_or_default()
+}
+
 #[async_trait::async_trait]
 impl Key for BzlmodYankedVersionsKey {
     type Value = bz_error::Result<Arc<BzlmodYankedVersionsValue>>;
@@ -1129,15 +1162,33 @@ impl Key for BzlmodYankedVersionsKey {
                 url: self.registry_url.clone(),
             })
             .await??;
-        let client = shared_bzlmod_http_client().await?;
+        let project_fs = ctx.global_data().get_io_provider().project_root().dupe();
+        let cache_path = bzlmod_yanked_versions_cache_path(&registry.url, &self.module_name);
+        let epoch_hour = bzlmod_registry_epoch_hour();
+        if let Ok(Some(contents)) = read_bzlmod_bcr_discovery_cache(&project_fs, &cache_path)
+            && let Ok(cached) = serde_json::from_str::<CachedBzlmodYankedVersions>(&contents)
+            && cached.epoch_hour == epoch_hour
+        {
+            return Ok(Arc::new(BzlmodYankedVersionsValue {
+                yanked_versions: cached.yanked_versions,
+            }));
+        }
         let metadata_url = format!(
             "{}/modules/{}/metadata.json",
             registry.url, self.module_name
         );
-        let yanked_versions = match http_get_text(&client, &metadata_url).await {
+        let yanked_versions = match http_get_text(&metadata_url).await {
             Ok(metadata) => bzlmod_yanked_versions_from_metadata_json(&metadata).ok(),
             Err(_) => None,
         };
+        if let Ok(contents) = serde_json::to_string(&CachedBzlmodYankedVersions {
+            epoch_hour,
+            yanked_versions: yanked_versions.clone(),
+        }) && let Err(error) =
+            write_bzlmod_bcr_discovery_cache(&project_fs, &cache_path, &contents)
+        {
+            tracing::warn!("Error writing bzlmod yanked versions cache: {}", error);
+        }
         Ok(Arc::new(BzlmodYankedVersionsValue { yanked_versions }))
     }
 
@@ -1543,7 +1594,6 @@ impl Key for BzlmodModuleFileKey {
             ));
         }
         let project_fs = ctx.global_data().get_io_provider().project_root().dupe();
-        let client = shared_bzlmod_http_client().await?;
         let archive_override = root.archive_overrides.get(&dep.name).cloned();
         let single_version_override = root.single_version_overrides.get(&dep.name).cloned();
         let repo = format!("{}@{}", dep.name, dep.version);
@@ -1556,7 +1606,6 @@ impl Key for BzlmodModuleFileKey {
                 fetch_bcr_module_file(
                     &project_fs,
                     &registry.url,
-                    client,
                     dep,
                     archive_override,
                     single_version_override,
@@ -1931,7 +1980,6 @@ impl Key for BzlmodRepoSpecKey {
             apparent_name: None,
         };
         let project_fs = ctx.global_data().get_io_provider().project_root().dupe();
-        let client = shared_bzlmod_http_client().await?;
         let repo = format!("{}@{}", dep.name, dep.version);
         let source_json_path = format!("modules/{}/{}/source.json", dep.name, dep.version);
         let source_json_url = format!("{}/{}", registry.url, source_json_path);
@@ -1943,7 +1991,6 @@ impl Key for BzlmodRepoSpecKey {
             fetch_bcr_module_source_json(
                 &project_fs,
                 &registry.url,
-                client,
                 &dep,
                 root.archive_overrides.get(&dep.name),
                 root.local_path_overrides.get(&dep.name),
@@ -4890,14 +4937,13 @@ fn write_bzlmod_bcr_discovery_cache(
 async fn fetch_bcr_module_file(
     project_fs: &ProjectRoot,
     registry: &str,
-    client: HttpClient,
     dep: BazelDep,
     archive_override: Option<BzlmodArchiveOverride>,
     single_version_override: Option<BzlmodSingleVersionOverride>,
 ) -> bz_error::Result<DiscoveredBcrModule> {
     let (source_json, mut module_text) = if let Some(archive_override) = archive_override.as_ref() {
         let source_json = bzlmod_archive_override_source_json(archive_override);
-        let module_text = fetch_archive_override_module_file(&client, archive_override)
+        let module_text = fetch_archive_override_module_file(archive_override)
             .await
             .with_buck_error_context(|| {
                 format!(
@@ -4916,7 +4962,7 @@ async fn fetch_bcr_module_file(
             if let Some(module_text) = read_bzlmod_bcr_discovery_cache(project_fs, &cache_path)? {
                 module_text
             } else {
-                let module_text = http_get_text(&client, &module_url).await?;
+                let module_text = http_get_text(&module_url).await?;
                 write_bzlmod_bcr_discovery_cache(project_fs, &cache_path, &module_text)?;
                 module_text
             };
@@ -4937,7 +4983,6 @@ async fn fetch_bcr_module_file(
 async fn fetch_bcr_module_source_json(
     project_fs: &ProjectRoot,
     registry: &str,
-    client: HttpClient,
     dep: &BazelDep,
     archive_override: Option<&BzlmodArchiveOverride>,
     local_path_override: Option<&BzlmodLocalPathOverride>,
@@ -4957,7 +5002,7 @@ async fn fetch_bcr_module_source_json(
         if let Some(source_json) = read_bzlmod_bcr_discovery_cache(project_fs, &cache_path)? {
             source_json
         } else {
-            let source_json = http_get_text(&client, &source_url).await?;
+            let source_json = http_get_text(&source_url).await?;
             write_bzlmod_bcr_discovery_cache(project_fs, &cache_path, &source_json)?;
             source_json
         };
@@ -4979,14 +5024,18 @@ fn bzlmod_yanked_versions_from_metadata_json(
     Ok(metadata.yanked_versions)
 }
 
-async fn http_get_text(client: &HttpClient, url: &str) -> bz_error::Result<String> {
-    let bytes = http_get_bytes(client, url).await?;
+async fn http_get_text(url: &str) -> bz_error::Result<String> {
+    let bytes = http_get_bytes(url).await?;
     String::from_utf8(bytes)
         .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Input))
         .with_buck_error_context(|| format!("Invalid UTF-8 response from `{url}`"))
 }
 
-async fn http_get_bytes(client: &HttpClient, url: &str) -> bz_error::Result<Vec<u8>> {
+async fn http_get_bytes(url: &str) -> bz_error::Result<Vec<u8>> {
+    // The shared client is created lazily here, at the point of the first real
+    // request: loading system TLS roots is slow, and fully disk-cached bzlmod
+    // operations should not pay for it.
+    let client = shared_bzlmod_http_client().await?;
     http_retry(
         || async {
             let response = client
@@ -5017,13 +5066,10 @@ async fn http_get_bytes(client: &HttpClient, url: &str) -> bz_error::Result<Vec<
     .map_err(bz_error::Error::from)
 }
 
-async fn http_get_bytes_from_urls(
-    client: &HttpClient,
-    urls: &[String],
-) -> bz_error::Result<(String, Vec<u8>)> {
+async fn http_get_bytes_from_urls(urls: &[String]) -> bz_error::Result<(String, Vec<u8>)> {
     let mut last_error = None;
     for url in urls {
-        match http_get_bytes(client, url).await {
+        match http_get_bytes(url).await {
             Ok(bytes) => return Ok((url.clone(), bytes)),
             Err(error) => last_error = Some(error),
         }
@@ -5039,10 +5085,9 @@ async fn http_get_bytes_from_urls(
 }
 
 async fn fetch_archive_override_module_file(
-    client: &HttpClient,
     archive_override: &BzlmodArchiveOverride,
 ) -> bz_error::Result<String> {
-    let (url, bytes) = http_get_bytes_from_urls(client, &archive_override.urls).await?;
+    let (url, bytes) = http_get_bytes_from_urls(&archive_override.urls).await?;
     verify_bzlmod_archive_integrity(&url, &archive_override.integrity, &bytes)?;
 
     let unique = SystemTime::now()

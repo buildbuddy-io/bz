@@ -18,6 +18,7 @@ use std::sync::OnceLock;
 
 use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use bz_common::cas_digest::CasDigestConfig;
+use bz_common::dice::data::HasIoProvider;
 use bz_common::file_ops::delegate::FileOpsDelegate;
 use bz_common::file_ops::dice::ReadFileProxy;
 use bz_common::file_ops::metadata::FileMetadata;
@@ -371,6 +372,20 @@ impl BundledFileOpsDelegate {
         };
 
         let project_path = self.resolve(path);
+        // Bundled contents are fixed for a given binary, but the declare runs
+        // again on every daemon start, and `declare_write` unconditionally
+        // unlinks and rewrites the destination. Reading every loaded bundled
+        // file back to disk dominated cold daemon startup, so skip the write
+        // when the previously materialized copy already matches.
+        let abs_path = ctx
+            .global_data()
+            .get_io_provider()
+            .project_root()
+            .resolve(&project_path);
+        if bundled_file_already_materialized(abs_path.as_path(), leaf.contents, leaf.is_executable)
+        {
+            return Ok(());
+        }
         let contents = leaf.contents;
         let is_executable = leaf.is_executable;
         let materializer = ctx.per_transaction_data().get_materializer();
@@ -386,6 +401,19 @@ impl BundledFileOpsDelegate {
             .await
             .map(|_| ())
     }
+}
+
+fn bundled_file_already_materialized(abs_path: &Path, contents: &[u8], executable: bool) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(abs_path) else {
+        return false;
+    };
+    if !metadata.is_file()
+        || metadata.len() != contents.len() as u64
+        || is_executable(&metadata) != executable
+    {
+        return false;
+    }
+    fs::read(abs_path).is_ok_and(|existing| existing.as_slice() == contents)
 }
 
 #[pagable_typetag]
