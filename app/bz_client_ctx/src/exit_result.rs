@@ -36,6 +36,7 @@ pub struct ExecArgs {
     argv: Vec<OsString>,
     chdir: Option<AbsPathBuf>,
     env: Vec<(String, String)>,
+    env_to_remove: Vec<String>,
 }
 
 /// ExitResult represents the outcome of a process execution where we care to return a specific
@@ -121,12 +122,23 @@ impl ExitResult {
         chdir: Option<AbsPathBuf>,
         env: Vec<(String, String)>,
     ) -> Self {
+        Self::exec_with_env(prog, argv, chdir, env, Vec::new())
+    }
+
+    pub fn exec_with_env(
+        prog: OsString,
+        argv: Vec<OsString>,
+        chdir: Option<AbsPathBuf>,
+        env: Vec<(String, String)>,
+        env_to_remove: Vec<String>,
+    ) -> Self {
         Self {
             variant: ExitResultVariant::Exec(ExecArgs {
                 prog,
                 argv,
                 chdir,
                 env,
+                env_to_remove,
             }),
             stdout: Vec::new(),
             emitted_errors: Vec::new(),
@@ -471,6 +483,10 @@ fn execv(args: ExecArgs) -> ! {
         // This is OK because we don't return from this function
         // (otherwise this would be a really bad idea, even without the promise).
         command.current_dir(dir);
+    }
+    for k in args.env_to_remove {
+        // Same as above.
+        command.env_remove(k);
     }
     for (k, v) in args.env {
         // Same as above.

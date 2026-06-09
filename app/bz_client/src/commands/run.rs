@@ -10,6 +10,8 @@
 
 use std::fs::File;
 use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use bz_cli_proto::BuildRequest;
@@ -17,6 +19,7 @@ use bz_cli_proto::build_request::BuildProviders;
 use bz_cli_proto::build_request::Materializations;
 use bz_cli_proto::build_request::Uploads;
 use bz_cli_proto::build_request::build_providers;
+use bz_cli_proto::build_target::RunSpec;
 use bz_client_ctx::client_ctx::ClientCommandContext;
 use bz_client_ctx::command_outcome::CommandOutcome;
 use bz_client_ctx::common::BuckArgMatches;
@@ -37,6 +40,7 @@ use bz_common::argv::Argv;
 use bz_common::argv::SanitizedArgv;
 use bz_error::BuckErrorContext;
 use bz_error::conversion::from_any_with_tag;
+use bz_fs::paths::abs_path::AbsPathBuf;
 use bz_hash::StdBuckHashMap;
 use bz_hash::StdBuckHashSet;
 use bz_wrapper_common::BUCK_WRAPPER_START_TIME_ENV_VAR;
@@ -49,6 +53,14 @@ use crate::commands::build::print_buck_ui_and_rating;
 use crate::commands::build::print_build_failed;
 use crate::commands::build::print_build_result;
 use crate::commands::build::print_build_succeeded;
+
+const BAZEL_RUN_ENV_VARS_TO_CLEAR: &[&str] = &[
+    "JAVA_RUNFILES",
+    "RUNFILES_DIR",
+    "RUNFILES_MANIFEST_FILE",
+    "RUNFILES_MANIFEST_ONLY",
+    "TEST_SRCDIR",
+];
 
 /// Build and run the selected target.
 ///
@@ -84,6 +96,26 @@ pub struct RunCommand {
     /// formatted for shell interpolation, use as: $(bz run --emit-shell ...)
     #[clap(long, group = "exec_options")]
     emit_shell: bool,
+
+    #[clap(
+        long = "run_in_cwd",
+        help = "Run from the current working directory instead of the executable runfiles tree"
+    )]
+    run_in_cwd: bool,
+
+    #[clap(
+        long = "run_env",
+        value_name = "VAR[=VALUE]",
+        help = "Environment variable to set or inherit when running the target"
+    )]
+    run_env: Vec<String>,
+
+    #[clap(
+        long = "run_under",
+        value_name = "COMMAND",
+        help = "Prefix the target command with another command"
+    )]
+    run_under: Option<String>,
 
     #[clap(name = "TARGET", help = "Target to build and run", value_hint = clap::ValueHint::Other)]
     target: String,
@@ -182,13 +214,29 @@ impl StreamingCommand for RunCommand {
             );
         }
 
-        // TODO(rafaelc): use absolute paths for artifacts in the cli
-        //      we should run the command from the current dir, not the project root
-        if response.build_targets.is_empty() || response.build_targets[0].run_args.is_empty() {
+        if response.build_targets.is_empty() || response.build_targets[0].run.is_none() {
             return ExitResult::err(RunCommandError::NonBinaryRule(self.target).into());
         }
-        let mut run_args = response.build_targets[0].run_args.clone();
+        let build_target = &response.build_targets[0];
+        let run_spec = build_target.run.as_ref().unwrap();
+        let mut run_args =
+            Vec::with_capacity(1 + run_spec.target_args.len() + self.extra_run_args.len());
+        run_args.push(run_spec.executable.clone());
+        run_args.extend(run_spec.target_args.iter().cloned());
+        let (resolved_executable, should_validate_executable) =
+            resolve_run_executable_path(&run_args[0], ctx)?;
+        run_args[0] = resolved_executable;
+        if should_validate_executable {
+            validate_run_executable(Path::new(&run_args[0]))?;
+        }
         run_args.extend(self.extra_run_args);
+        if let Some(run_under) = &self.run_under {
+            run_args = apply_run_under(run_under, run_args)?;
+        }
+        let project_root = ctx.paths()?.project_root().root().as_path().to_path_buf();
+        materialize_runfiles_tree(run_spec, &project_root)?;
+        let run_environment = bazel_run_environment(ctx, run_spec, &self.run_env)?;
+        let run_environment_to_clear = bazel_run_environment_to_clear(run_spec);
 
         let extra = if !self.emit_shell {
             Some(" - starting your binary")
@@ -223,7 +271,7 @@ impl StreamingCommand for RunCommand {
             let command = CommandArgsFile {
                 path: run_args[0].clone(),
                 argv: run_args,
-                envp: std::env::vars().collect(),
+                envp: command_envp(&run_environment, &run_environment_to_clear),
                 is_fix_script: false,
                 print_command: false,
             };
@@ -249,13 +297,25 @@ impl StreamingCommand for RunCommand {
             }
         }
 
-        let chdir = self.chdir.map(|chdir| chdir.resolve(&ctx.working_dir));
+        let chdir = if let Some(chdir) = self.chdir {
+            Some(chdir.resolve(&ctx.working_dir))
+        } else if self.run_in_cwd {
+            Some(ctx.working_dir.path().to_buf().into_abs_path_buf())
+        } else if run_spec.working_directory.is_empty() {
+            None
+        } else {
+            Some(resolve_run_path_to_abs(
+                &run_spec.working_directory,
+                &project_root,
+            )?)
+        };
 
-        ExitResult::exec(
+        ExitResult::exec_with_env(
             run_args[0].clone().into(),
             run_args.into_iter().map(|arg| arg.into()).collect(),
             chdir,
-            vec![("BUCK_RUN_BUILD_ID".to_owned(), ctx.trace_id.to_string())],
+            run_environment,
+            run_environment_to_clear,
         )
     }
 
@@ -296,6 +356,302 @@ struct CommandArgsFile {
     print_command: bool,
 }
 
+fn apply_run_under(run_under: &str, run_args: Vec<String>) -> bz_error::Result<Vec<String>> {
+    let mut prefix = shlex::split(run_under)
+        .ok_or_else(|| RunCommandError::InvalidRunUnder(run_under.to_owned()))?;
+    if prefix.is_empty() {
+        return Err(RunCommandError::InvalidRunUnder(run_under.to_owned()).into());
+    }
+    prefix.extend(run_args);
+    Ok(prefix)
+}
+
+fn materialize_runfiles_tree(run_spec: &RunSpec, project_root: &Path) -> bz_error::Result<()> {
+    if run_spec.runfiles_dir.is_empty() {
+        return Ok(());
+    }
+
+    let runfiles_dir = resolve_run_path_to_path_buf(&run_spec.runfiles_dir, project_root);
+    if !runfiles_dir.starts_with(project_root) {
+        return Err(RunCommandError::RunfilesDirectoryOutsideProject {
+            path: runfiles_dir.display().to_string(),
+            project_root: project_root.display().to_string(),
+        }
+        .into());
+    }
+
+    remove_path_if_exists(&runfiles_dir).with_buck_error_context(|| {
+        format!(
+            "Failed to remove existing runfiles tree `{}`",
+            runfiles_dir.display()
+        )
+    })?;
+    std::fs::create_dir_all(&runfiles_dir).with_buck_error_context(|| {
+        format!(
+            "Failed to create runfiles tree `{}`",
+            runfiles_dir.display()
+        )
+    })?;
+
+    for empty_filename in &run_spec.empty_filenames {
+        let relative_path = validate_runfiles_relative_path(empty_filename)?;
+        let path = runfiles_dir.join(relative_path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_buck_error_context(|| {
+                format!("Failed to create runfiles directory `{}`", parent.display())
+            })?;
+        }
+        remove_path_if_exists(&path).with_buck_error_context(|| {
+            format!("Failed to remove existing runfile `{}`", path.display())
+        })?;
+        File::create(&path).with_buck_error_context(|| {
+            format!("Failed to create empty runfile `{}`", path.display())
+        })?;
+    }
+
+    for runfile in &run_spec.runfiles {
+        let relative_path = validate_runfiles_relative_path(&runfile.path)?;
+        let link_path = runfiles_dir.join(relative_path);
+        let target_path = resolve_run_path_to_path_buf(&runfile.target_path, project_root);
+        if let Some(parent) = link_path.parent() {
+            std::fs::create_dir_all(parent).with_buck_error_context(|| {
+                format!("Failed to create runfiles directory `{}`", parent.display())
+            })?;
+        }
+        remove_path_if_exists(&link_path).with_buck_error_context(|| {
+            format!(
+                "Failed to remove existing runfile `{}`",
+                link_path.display()
+            )
+        })?;
+        create_runfile_link(&target_path, &link_path).with_buck_error_context(|| {
+            format!(
+                "Failed to link runfile `{}` to `{}`",
+                link_path.display(),
+                target_path.display()
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+fn validate_runfiles_relative_path(path: &str) -> bz_error::Result<&Path> {
+    let path = Path::new(path);
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::Prefix(_)
+                    | std::path::Component::RootDir
+            )
+        })
+    {
+        return Err(RunCommandError::InvalidRunfilesPath(path.display().to_string()).into());
+    }
+    Ok(path)
+}
+
+fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+}
+
+#[cfg(unix)]
+fn create_runfile_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn create_runfile_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    if target.is_dir() {
+        std::os::windows::fs::symlink_dir(target, link)
+    } else {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+}
+
+fn bazel_run_environment(
+    ctx: &ClientCommandContext<'_>,
+    run_spec: &RunSpec,
+    run_env: &[String],
+) -> bz_error::Result<Vec<(String, String)>> {
+    let paths = ctx.paths()?;
+    let mut environment = StdBuckHashMap::default();
+    environment.insert(
+        "BUILD_WORKSPACE_DIRECTORY".to_owned(),
+        paths.project_root().root().to_string(),
+    );
+    environment.insert(
+        "BUILD_WORKING_DIRECTORY".to_owned(),
+        ctx.working_dir.path().to_string(),
+    );
+    let execroot = if run_spec.execroot.is_empty() {
+        paths.project_root().root().to_string()
+    } else {
+        run_spec.execroot.clone()
+    };
+    environment.insert(
+        "BUILD_EXECROOT".to_owned(),
+        resolve_run_path_to_abs(&execroot, paths.project_root().root().as_path())?.to_string(),
+    );
+    environment.insert("BUILD_ID".to_owned(), ctx.trace_id.to_string());
+    environment.insert("BUCK_RUN_BUILD_ID".to_owned(), ctx.trace_id.to_string());
+
+    for name in &run_spec.inherited_environment {
+        if let Ok(value) = std::env::var(name) {
+            environment.insert(name.clone(), value);
+        }
+    }
+    for variable in &run_spec.environment {
+        if let Some(value) = &variable.value {
+            environment.insert(variable.name.clone(), value.clone());
+        } else {
+            environment.remove(variable.name.as_str());
+        }
+    }
+    for variable in run_env {
+        apply_run_env(variable, &mut environment)?;
+    }
+
+    let mut environment: Vec<_> = environment.into_iter().collect();
+    environment.sort_by(|(left, _), (right, _)| left.cmp(right));
+    Ok(environment)
+}
+
+fn bazel_run_environment_to_clear(run_spec: &RunSpec) -> Vec<String> {
+    let mut environment_to_clear: Vec<_> = BAZEL_RUN_ENV_VARS_TO_CLEAR
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    environment_to_clear.extend(run_spec.environment_to_clear.iter().cloned());
+    environment_to_clear.sort();
+    environment_to_clear.dedup();
+    environment_to_clear
+}
+
+fn apply_run_env(
+    variable: &str,
+    environment: &mut StdBuckHashMap<String, String>,
+) -> bz_error::Result<()> {
+    if let Some((name, value)) = variable.split_once('=') {
+        validate_env_name(name)?;
+        environment.insert(name.to_owned(), value.to_owned());
+    } else {
+        validate_env_name(variable)?;
+        match std::env::var(variable) {
+            Ok(value) => {
+                environment.insert(variable.to_owned(), value);
+            }
+            Err(_) => {
+                environment.remove(variable);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_env_name(name: &str) -> bz_error::Result<()> {
+    if name.is_empty() || name.contains('=') {
+        return Err(RunCommandError::InvalidRunEnv(name.to_owned()).into());
+    }
+    Ok(())
+}
+
+fn command_envp(
+    run_environment: &[(String, String)],
+    run_environment_to_clear: &[String],
+) -> StdBuckHashMap<String, String> {
+    let mut envp: StdBuckHashMap<_, _> = std::env::vars().collect();
+    for name in run_environment_to_clear {
+        envp.remove(name.as_str());
+    }
+    for (name, value) in run_environment {
+        envp.insert(name.clone(), value.clone());
+    }
+    envp
+}
+
+fn resolve_run_path_to_path_buf(path: &str, project_root: &Path) -> PathBuf {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        project_root.join(path)
+    }
+}
+
+fn resolve_run_path_to_abs(path: &str, project_root: &Path) -> bz_error::Result<AbsPathBuf> {
+    AbsPathBuf::new(resolve_run_path_to_path_buf(path, project_root))
+}
+
+fn resolve_run_executable_path(
+    executable: &str,
+    ctx: &ClientCommandContext<'_>,
+) -> bz_error::Result<(String, bool)> {
+    let path = Path::new(executable);
+    if path.is_absolute() {
+        return Ok((executable.to_owned(), true));
+    }
+
+    let project_relative_executable = ctx.paths()?.project_root().root().as_path().join(path);
+    if project_relative_executable.exists() || executable_contains_path_separator(executable) {
+        return Ok((
+            project_relative_executable.to_string_lossy().into_owned(),
+            true,
+        ));
+    }
+
+    Ok((executable.to_owned(), false))
+}
+
+fn executable_contains_path_separator(executable: &str) -> bool {
+    executable.contains('/') || executable.contains('\\')
+}
+
+fn validate_run_executable(path: &Path) -> bz_error::Result<()> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(
+                RunCommandError::NonExistentOrNonExecutable(path.display().to_string()).into(),
+            );
+        }
+        Err(error) => {
+            return Err(RunCommandError::ExecutableValidation {
+                path: path.display().to_string(),
+                error: error.to_string(),
+            }
+            .into());
+        }
+    };
+    if !metadata.is_file() || !metadata_is_executable(&metadata) {
+        return Err(RunCommandError::NonExistentOrNonExecutable(path.display().to_string()).into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn metadata_is_executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn metadata_is_executable(_metadata: &std::fs::Metadata) -> bool {
+    true
+}
+
 #[derive(bz_error::Error, Debug)]
 #[buck2(tag = Input)]
 pub enum RunCommandError {
@@ -307,6 +663,18 @@ pub enum RunCommandError {
     MultipleTargets,
     #[error("Target `{0}` is not found in the specified target universe")]
     TargetNotFoundInTargetUniverse(String),
+    #[error("Non-existent or non-executable `{0}`")]
+    NonExistentOrNonExecutable(String),
+    #[error("Error checking `{path}`: {error}")]
+    ExecutableValidation { path: String, error: String },
+    #[error("Invalid `--run_env` value `{0}`")]
+    InvalidRunEnv(String),
+    #[error("Invalid `--run_under` command `{0}`")]
+    InvalidRunUnder(String),
+    #[error("Invalid runfiles path `{0}`")]
+    InvalidRunfilesPath(String),
+    #[error("Refusing to materialize runfiles tree `{path}` outside project root `{project_root}`")]
+    RunfilesDirectoryOutsideProject { path: String, project_root: String },
     #[error(
         "`bz run` will require a `--` separator before target arguments in the future. \
          Please use `bz run <target> -- <args>` instead of `bz run <target> <args>`"
