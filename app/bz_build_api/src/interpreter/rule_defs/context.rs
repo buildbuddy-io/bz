@@ -693,8 +693,7 @@ pub struct AnalysisContext<'v> {
     bazel_info_file: RefCell<Option<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>>,
     bazel_version_file: RefCell<Option<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>>,
     bazel_file_structs: RefCell<Option<BazelFileStructs<'v>>>,
-    #[trace(unsafe_ignore)]
-    bazel_make_variables: RefCell<Option<OwnedFrozenValue>>,
+    bazel_make_variables: RefCell<Option<BazelMakeVariables<'v>>>,
 }
 
 #[derive(Clone, Debug, Trace, Allocative)]
@@ -702,6 +701,13 @@ struct BazelFileStructs<'v> {
     file: ValueOfUnchecked<'v, StructRef<'static>>,
     files: ValueOfUnchecked<'v, StructRef<'static>>,
     executable: ValueOfUnchecked<'v, StructRef<'static>>,
+}
+
+#[derive(Clone, Debug, Trace, Allocative)]
+struct BazelMakeVariables<'v> {
+    #[trace(unsafe_ignore)]
+    _owner: OwnedFrozenValue,
+    value: Value<'v>,
 }
 
 impl<'v> Display for AnalysisContext<'v> {
@@ -3087,26 +3093,25 @@ fn analysis_context_make_variables_dict<'v>(
     this: &AnalysisContext<'v>,
     heap: Heap<'v>,
 ) -> bz_error::Result<Value<'v>> {
-    if let Some(value) = this.bazel_make_variables.borrow().as_ref() {
-        return Ok(heap.access_owned_frozen_value(value));
+    if let Some(variables) = this.bazel_make_variables.borrow().as_ref() {
+        return Ok(variables.value);
     }
 
     let variables = analysis_context_make_variable_entries(this)?;
     let frozen_heap = FrozenHeap::new();
     let value = frozen_heap.alloc(AllocDict(variables));
-    let value = unsafe {
+    let owner = unsafe {
         OwnedFrozenValue::new(
             frozen_heap.into_ref_named(FrozenHeapName::Singleton(singleton_heap_name!())),
             value,
         )
     };
-    *this.bazel_make_variables.borrow_mut() = Some(value);
-    Ok(heap.access_owned_frozen_value(
-        this.bazel_make_variables
-            .borrow()
-            .as_ref()
-            .expect("stored ctx.var"),
-    ))
+    let value = heap.access_owned_frozen_value(&owner);
+    *this.bazel_make_variables.borrow_mut() = Some(BazelMakeVariables {
+        _owner: owner,
+        value,
+    });
+    Ok(value)
 }
 
 fn is_java_identifier_part(c: char) -> bool {
