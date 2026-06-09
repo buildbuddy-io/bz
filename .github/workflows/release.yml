@@ -18,12 +18,16 @@ jobs:
         include:
           - runner: ubuntu-24.04
             artifact: bz-linux-x86_64
+            bazel_flags: '--platforms=@toolchains_buildbuddy//platforms:linux_x86_64 --extra_execution_platforms=@toolchains_buildbuddy//platforms:linux_x86_64 --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64'
           - runner: ubuntu-24.04-arm
             artifact: bz-linux-arm64
+            bazel_flags: '--platforms=@toolchains_buildbuddy//platforms:linux_arm64 --extra_execution_platforms=@toolchains_buildbuddy//platforms:linux_arm64 --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_arm64'
           - runner: macos-15-intel
             artifact: bz-macos-x86_64
+            bazel_flags: '--platforms=@toolchains_buildbuddy//platforms:darwin_x86_64'
           - runner: macos-15
             artifact: bz-macos-arm64
+            bazel_flags: '--platforms=@toolchains_buildbuddy//platforms:darwin_arm64'
     steps:
       - uses: actions/checkout@v4
 
@@ -31,13 +35,31 @@ jobs:
 
       - name: Build binary
         shell: bash
+        env:
+          BAZEL_FLAGS: ${{ matrix.bazel_flags }}
+          BZ_BUILDBUDDY_API_KEY: ${{ secrets.BZ_BUILDBUDDY_API_KEY }}
         run: |
           set -euo pipefail
 
+          if [[ -z "${BZ_BUILDBUDDY_API_KEY:-}" ]]; then
+            echo "BZ_BUILDBUDDY_API_KEY must be configured as a GitHub Actions secret" >&2
+            exit 1
+          fi
+          echo "::add-mask::$BZ_BUILDBUDDY_API_KEY"
+
+          read -r -a bazel_flags <<< "$BAZEL_FLAGS"
+          buildbuddy_flags=(
+            "--bes_backend=grpcs://remote.buildbuddy.io"
+            "--bes_results_url=https://app.buildbuddy.io/invocation/"
+            "--remote_cache=grpcs://remote.buildbuddy.io"
+            "--remote_header=x-buildbuddy-api-key=$BZ_BUILDBUDDY_API_KEY"
+            "--remote_timeout=60"
+          )
+
           mkdir -p dist
           output="dist/${{ matrix.artifact }}"
-          bazel build //app/bz:bz -c opt
-          binary="$(bazel cquery //app/bz:bz -c opt --output=files 2>/dev/null | tail -n 1)"
+          bazel build -c opt "${bazel_flags[@]}" "${buildbuddy_flags[@]}" //app/bz:bz
+          binary="$(bazel cquery -c opt "${bazel_flags[@]}" //app/bz:bz --output=files 2>/dev/null | tail -n 1)"
           cp "$binary" "$output"
           chmod +x "$output"
 
