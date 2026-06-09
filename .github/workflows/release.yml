@@ -18,16 +18,16 @@ jobs:
         include:
           - runner: ubuntu-24.04
             artifact: bz-linux-x86_64
-            bazel_flags: '--platforms=@toolchains_buildbuddy//platforms:linux_x86_64 --extra_execution_platforms=@toolchains_buildbuddy//platforms:linux_x86_64 --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64'
+            bazel_flags: '--platforms=//toolchains/platforms:linux_x86_64 --extra_execution_platforms=//toolchains/platforms:linux_x86_64 --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64'
           - runner: ubuntu-24.04-arm
             artifact: bz-linux-arm64
-            bazel_flags: '--platforms=@toolchains_buildbuddy//platforms:linux_arm64 --extra_execution_platforms=@toolchains_buildbuddy//platforms:linux_arm64 --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_arm64'
+            bazel_flags: '--platforms=//toolchains/platforms:linux_arm64 --extra_execution_platforms=//toolchains/platforms:linux_arm64 --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_arm64'
           - runner: macos-15-intel
             artifact: bz-macos-x86_64
-            bazel_flags: '--platforms=@toolchains_buildbuddy//platforms:darwin_x86_64'
+            bazel_flags: '--platforms=//toolchains/platforms:macos_x86_64'
           - runner: macos-15
             artifact: bz-macos-arm64
-            bazel_flags: '--platforms=@toolchains_buildbuddy//platforms:darwin_arm64'
+            bazel_flags: '--platforms=//toolchains/platforms:macos_arm64'
     steps:
       - uses: actions/checkout@v4
 
