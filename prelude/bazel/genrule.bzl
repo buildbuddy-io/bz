@@ -4,6 +4,16 @@ def _collect_files(values):
         files.extend(value.files.to_list())
     return files
 
+def _dedupe_targets(values):
+    targets = []
+    seen = {}
+    for value in values:
+        if value.label in seen:
+            continue
+        seen[value.label] = None
+        targets.append(value)
+    return targets
+
 def _join_paths(files):
     return " ".join([file.path for file in files])
 
@@ -107,7 +117,9 @@ def _bazel_genrule_impl(ctx):
     command = command.replace("$$", dollar_escape_placeholder)
     command = ctx.expand_location(
         command,
-        ctx.attr.srcs + ctx.attr.tools + ctx.attr.exec_tools + ctx.attr.toolchains,
+        _dedupe_targets(
+            ctx.attr.srcs + ctx.attr.tools + ctx.attr.exec_tools + ctx.attr.toolchains,
+        ),
     )
     command = _expand_make_variables(ctx, command, srcs, outs, ctx.attr.outs)
     command = command.replace(dollar_escape_placeholder, "$")

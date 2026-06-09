@@ -11,6 +11,7 @@
 use std::cell::RefCell;
 use std::cell::RefMut;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Formatter;
@@ -20,14 +21,19 @@ use allocative::Allocative;
 use bz_core::cells::external::bazel_canonical_label_key;
 use bz_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use bz_core::cells::external::bzlmod_cell_aliases_for_cell;
+use bz_core::cells::external::bzlmod_cell_name;
+use bz_core::cells::name::CellName;
+use bz_core::cells::paths::CellRelativePathBuf;
 use bz_core::configuration::data::BazelBuildSettingValue;
 use bz_core::fs::buck_out_path::BazelOutputPathKind;
 use bz_core::fs::buck_out_path::BazelOutputRoot;
 use bz_core::fs::buck_out_path::BuckOutPathKind;
+use bz_core::package::PackageLabel;
 use bz_core::provider::label::ConfiguredProvidersLabel;
 use bz_core::provider::label::ProvidersName;
 use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 use bz_core::target::label::label::TargetLabel;
+use bz_core::target::name::TargetName;
 use bz_error::BuckErrorContext;
 use bz_error::conversion::from_any_with_tag;
 use bz_error::internal_error;
@@ -2392,155 +2398,487 @@ fn bazel_collect_runfiles_from_attrs<'v>(
 #[derive(Clone)]
 struct BazelLocationTarget {
     exec_paths: Vec<String>,
+    root_paths: Vec<String>,
     rlocation_paths: Vec<String>,
 }
 
-fn bazel_location_label_keys_for_target<'v>(
-    ctx: &AnalysisContext<'v>,
-    target: &TargetLabel,
-) -> Vec<String> {
-    let package = target.pkg();
-    let package_path = package.cell_relative_path().as_str();
-    let cell = package.cell_name().as_str();
-    let name = target.name().as_str();
-
-    bazel_location_label_keys_for_parts(ctx, cell, package_path, name)
+#[derive(Clone, Copy)]
+enum BazelLocationInsertMode {
+    Merge,
+    RejectExplicitDuplicate,
 }
 
-fn bazel_location_label_keys_for_parts<'v>(
-    ctx: &AnalysisContext<'v>,
-    cell: &str,
-    package_path: &str,
-    name: &str,
-) -> Vec<String> {
-    let mut keys = Vec::new();
-    let full = if package_path.is_empty() {
-        format!("{cell}//:{name}")
-    } else {
-        format!("{cell}//{package_path}:{name}")
-    };
-    keys.push(full.clone());
-    if let Some(root_relative) = full.strip_prefix("root") {
-        if root_relative.starts_with("//") {
-            keys.push(root_relative.to_owned());
+#[derive(Clone, Copy)]
+enum BazelLocationPathType {
+    Location,
+    Exec,
+    Rlocation,
+}
+
+#[derive(Clone, Copy)]
+struct BazelLocationFunction {
+    name: &'static str,
+    plural: bool,
+    path_type: BazelLocationPathType,
+}
+
+struct BazelLocationExpander<'a, 'v> {
+    ctx: &'a AnalysisContext<'v>,
+    exec_paths: bool,
+    allow_data: bool,
+    collect_srcs: bool,
+    heap: Heap<'v>,
+    explicit_targets: SmallMap<TargetLabel, BazelLocationTarget>,
+    location_map: Option<SmallMap<TargetLabel, BazelLocationTarget>>,
+}
+
+impl<'a, 'v> BazelLocationExpander<'a, 'v> {
+    fn new(
+        ctx: &'a AnalysisContext<'v>,
+        exec_paths: bool,
+        allow_data: bool,
+        collect_srcs: bool,
+        heap: Heap<'v>,
+        explicit_targets: SmallMap<TargetLabel, BazelLocationTarget>,
+    ) -> Self {
+        Self {
+            ctx,
+            exec_paths,
+            allow_data,
+            collect_srcs,
+            heap,
+            explicit_targets,
+            location_map: None,
         }
     }
-    if let Some(current) = ctx.label
-        && current.label().target().pkg().cell_name().as_str() == cell
-    {
-        bazel_push_repo_local_location_label_key(&mut keys, package_path, name);
+
+    fn function(&self, name: &str) -> Option<BazelLocationFunction> {
+        let (plural, path_type) = match name {
+            "location" => (
+                false,
+                if self.exec_paths {
+                    BazelLocationPathType::Exec
+                } else {
+                    BazelLocationPathType::Location
+                },
+            ),
+            "locations" => (
+                true,
+                if self.exec_paths {
+                    BazelLocationPathType::Exec
+                } else {
+                    BazelLocationPathType::Location
+                },
+            ),
+            "execpath" => (false, BazelLocationPathType::Exec),
+            "execpaths" => (true, BazelLocationPathType::Exec),
+            "rootpath" => (false, BazelLocationPathType::Location),
+            "rootpaths" => (true, BazelLocationPathType::Location),
+            "rlocationpath" => (false, BazelLocationPathType::Rlocation),
+            "rlocationpaths" => (true, BazelLocationPathType::Rlocation),
+            _ => return None,
+        };
+        Some(BazelLocationFunction {
+            name: match name {
+                "location" => "location",
+                "locations" => "locations",
+                "execpath" => "execpath",
+                "execpaths" => "execpaths",
+                "rootpath" => "rootpath",
+                "rootpaths" => "rootpaths",
+                "rlocationpath" => "rlocationpath",
+                "rlocationpaths" => "rlocationpaths",
+                _ => unreachable!("matched known location function"),
+            },
+            plural,
+            path_type,
+        })
     }
-    if cell != "root" {
-        bazel_push_external_location_label_key(
-            &mut keys,
-            &bazel_workspace_name_for_cell(cell),
-            package_path,
-            name,
+
+    fn location_map(&mut self) -> starlark::Result<&SmallMap<TargetLabel, BazelLocationTarget>> {
+        if self.location_map.is_none() {
+            let mut location_map = self.explicit_targets.clone();
+            bazel_collect_predeclared_output_location_targets(
+                self.ctx,
+                self.heap,
+                &self.workspace_runfiles_directory(),
+                &mut location_map,
+                BazelLocationInsertMode::Merge,
+            )?;
+            bazel_collect_location_targets_from_attrs(
+                self.ctx,
+                self.allow_data,
+                self.collect_srcs,
+                self.heap,
+                &self.workspace_runfiles_directory(),
+                &mut location_map,
+            )?;
+            self.location_map = Some(location_map);
+        }
+        Ok(self
+            .location_map
+            .as_ref()
+            .expect("location map initialized above"))
+    }
+
+    fn workspace_runfiles_directory(&self) -> String {
+        bazel_workspace_name_for_label(self.ctx.label)
+    }
+
+    fn expand(&mut self, input: &str) -> starlark::Result<String> {
+        let mut result = String::with_capacity(input.len());
+        let mut restart = 0;
+        loop {
+            let Some(relative_start) = input[restart..].find("$(") else {
+                result.push_str(&input[restart..]);
+                break;
+            };
+            let start = restart + relative_start;
+            let Some(relative_whitespace) = input[start..].find(' ') else {
+                result.push_str(&input[restart..start + 2]);
+                restart = start + 2;
+                continue;
+            };
+            let next_whitespace = start + relative_whitespace;
+            let fname = &input[start + 2..next_whitespace];
+            let Some(function) = self.function(fname) else {
+                result.push_str(&input[restart..start + 2]);
+                restart = start + 2;
+                continue;
+            };
+
+            result.push_str(&input[restart..start]);
+
+            let Some(relative_end) = input[next_whitespace..].find(')') else {
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
+                    "unterminated `$({})` expression",
+                    fname
+                )
+                .into());
+            };
+            let end = next_whitespace + relative_end;
+            let function_value = input[next_whitespace + 1..end].trim();
+            let replacement = self.apply(function, function_value)?;
+            result.push_str(&replacement);
+            restart = end + 1;
+        }
+        Ok(result)
+    }
+
+    fn apply(
+        &mut self,
+        function: BazelLocationFunction,
+        label_text: &str,
+    ) -> starlark::Result<String> {
+        if label_text.is_empty() {
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
+                "`$({})` requires a label",
+                function.name
+            )
+            .into());
+        }
+        let label = bazel_location_parse_label(self.ctx, label_text).map_err(|e| {
+            bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
+                "invalid label in {} expression: {}",
+                function.name,
+                e
+            )
+        })?;
+        let map = self.location_map()?;
+        let Some(target) = map.get(&label) else {
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
+                "label `{}` in {} expression is not a declared prerequisite of this rule",
+                label_text,
+                function.name
+            )
+            .into());
+        };
+        let paths = target.paths(function.path_type);
+        if paths.is_empty() {
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
+                "label `{}` in {} expression expands to no files",
+                label_text,
+                function.name
+            )
+            .into());
+        }
+        if !function.plural && paths.len() != 1 {
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
+                "label `{}` in {} expression expands to more than one file, please use `$({}s {})` instead",
+                label_text,
+                function.name,
+                function.name,
+                label_text
+            )
+            .into());
+        }
+        Ok(paths
+            .iter()
+            .map(|path| bazel_location_shell_escape(path))
+            .collect::<Vec<_>>()
+            .join(" "))
+    }
+}
+
+impl BazelLocationTarget {
+    fn paths(&self, path_type: BazelLocationPathType) -> BTreeSet<String> {
+        match path_type {
+            BazelLocationPathType::Location => self.root_paths.iter(),
+            BazelLocationPathType::Exec => self.exec_paths.iter(),
+            BazelLocationPathType::Rlocation => self.rlocation_paths.iter(),
+        }
+        .cloned()
+        .collect()
+    }
+}
+
+fn bazel_location_shell_escape(arg: &str) -> String {
+    fn safe_char(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'@' | b'%' | b'-' | b'_' | b'+' | b':' | b',' | b'.' | b'/'
+            )
+    }
+
+    if arg.is_empty() {
+        return "''".to_owned();
+    }
+    if arg.bytes().all(safe_char) {
+        return arg.to_owned();
+    }
+    if !arg.starts_with('~') && arg.bytes().all(|byte| safe_char(byte) || byte == b'~') {
+        return arg.to_owned();
+    }
+
+    let mut escaped = String::with_capacity(arg.len() + 2);
+    escaped.push('\'');
+    for ch in arg.chars() {
+        if ch == '\'' {
+            escaped.push_str("'\\''");
+        } else {
+            escaped.push(ch);
+        }
+    }
+    escaped.push('\'');
+    escaped
+}
+
+fn bazel_location_absolute_label_parts(label: &str) -> Option<(String, String)> {
+    if let Some((package, target)) = label.rsplit_once(':') {
+        if target.is_empty() {
+            None
+        } else {
+            Some((package.to_owned(), target.to_owned()))
+        }
+    } else {
+        label
+            .rsplit('/')
+            .next()
+            .filter(|target| !target.is_empty())
+            .map(|target| (label.to_owned(), target.to_owned()))
+    }
+}
+
+fn bazel_location_current_package<'v>(ctx: &AnalysisContext<'v>) -> bz_error::Result<PackageLabel> {
+    ctx.label
+        .map(|label| label.label().target().pkg())
+        .ok_or_else(|| internal_error!("Bazel location expansion requires a target label"))
+}
+
+fn bazel_location_root_cell<'v>(ctx: &AnalysisContext<'v>) -> bz_error::Result<CellName> {
+    let current = bazel_location_current_package(ctx)?.cell_name();
+    if current.as_str() == "root"
+        || bzlmod_canonical_repo_name_for_cell(current.as_str()).is_some_and(|repo| repo.is_empty())
+    {
+        Ok(current)
+    } else {
+        CellName::unchecked_new("root")
+    }
+}
+
+fn bazel_location_target_label(
+    cell_name: CellName,
+    package: String,
+    target: String,
+) -> bz_error::Result<TargetLabel> {
+    let package = PackageLabel::new(cell_name, CellRelativePathBuf::try_from(package)?.as_ref())?;
+    let target = TargetName::new_bazel(&target)?;
+    Ok(TargetLabel::new(package, target.as_ref()))
+}
+
+fn bazel_location_parse_canonical_label<'v>(
+    ctx: &AnalysisContext<'v>,
+    label: &str,
+) -> bz_error::Result<Option<TargetLabel>> {
+    let Some(label) = label.strip_prefix("@@") else {
+        return Ok(None);
+    };
+    let Some((repo, package_and_target)) = label.split_once("//") else {
+        return Ok(None);
+    };
+    let Some((package, target)) = bazel_location_absolute_label_parts(package_and_target) else {
+        return Ok(None);
+    };
+    let cell_name = if repo.is_empty() || repo == "root" {
+        bazel_location_root_cell(ctx)?
+    } else if repo == "bazel_tools" {
+        CellName::unchecked_new("bazel_tools")?
+    } else {
+        CellName::unchecked_new(&bzlmod_cell_name(repo))?
+    };
+    Ok(Some(bazel_location_target_label(
+        cell_name, package, target,
+    )?))
+}
+
+fn bazel_location_cell_for_repo<'v>(
+    ctx: &AnalysisContext<'v>,
+    repo: &str,
+) -> bz_error::Result<CellName> {
+    if repo.is_empty() || repo == "root" {
+        return bazel_location_root_cell(ctx);
+    }
+    if repo == "bazel_tools" {
+        return CellName::unchecked_new("bazel_tools");
+    }
+
+    let current_cell = bazel_location_current_package(ctx)?.cell_name();
+    for (alias, destination) in bzlmod_cell_aliases_for_cell(current_cell.as_str()) {
+        if alias == repo {
+            return CellName::unchecked_new(&destination);
+        }
+    }
+
+    CellName::unchecked_new(&bzlmod_cell_name(repo))
+}
+
+fn bazel_location_parse_absolute_label<'v>(
+    ctx: &AnalysisContext<'v>,
+    cell_name: CellName,
+    package_and_target: &str,
+) -> bz_error::Result<TargetLabel> {
+    let Some((package, target)) = bazel_location_absolute_label_parts(package_and_target) else {
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
+            "expected absolute label, got `{}`",
+            package_and_target
+        ));
+    };
+    let _ = ctx;
+    bazel_location_target_label(cell_name, package, target)
+}
+
+fn bazel_location_parse_label<'v>(
+    ctx: &AnalysisContext<'v>,
+    label: &str,
+) -> bz_error::Result<TargetLabel> {
+    if let Some(label) = bazel_location_parse_canonical_label(ctx, label)? {
+        return Ok(label);
+    }
+
+    let current_package = bazel_location_current_package(ctx)?;
+    if let Some(target) = label.strip_prefix(':') {
+        return bazel_location_target_label(
+            current_package.cell_name(),
+            current_package.cell_relative_path().as_str().to_owned(),
+            target.to_owned(),
         );
     }
 
-    if let Some(current) = ctx.label {
-        let current_cell = current.label().target().pkg().cell_name();
-        for (alias, destination) in bzlmod_cell_aliases_for_cell(current_cell.as_str()) {
-            if destination == cell {
-                bazel_push_external_location_label_key(&mut keys, &alias, package_path, name);
-            }
+    if let Some(package_and_target) = label.strip_prefix("//") {
+        return bazel_location_parse_absolute_label(
+            ctx,
+            current_package.cell_name(),
+            package_and_target,
+        );
+    }
+
+    if let Some(value) = label.strip_prefix('@') {
+        if let Some((repo, package_and_target)) = value.split_once("//") {
+            let cell_name = bazel_location_cell_for_repo(ctx, repo)?;
+            return bazel_location_parse_absolute_label(ctx, cell_name, package_and_target);
+        }
+        if !value.is_empty() && !value.starts_with('@') {
+            let cell_name = bazel_location_cell_for_repo(ctx, value)?;
+            return bazel_location_target_label(cell_name, String::new(), value.to_owned());
         }
     }
 
-    if ctx.label.is_some_and(|label| {
-        let package = label.label().target().pkg();
-        package.cell_name().as_str() == cell
-            && package.cell_relative_path().as_str() == package_path
-    }) {
-        keys.push(format!(":{name}"));
-        keys.push(name.to_owned());
+    if let Some((cell, package_and_target)) = label.split_once("//")
+        && !cell.is_empty()
+        && !cell.contains(['@', '/', ':', '[', ']'])
+    {
+        let cell_name = if cell == "root" {
+            bazel_location_root_cell(ctx)?
+        } else if cell == "bazel_tools" {
+            CellName::unchecked_new("bazel_tools")?
+        } else {
+            CellName::unchecked_new(cell)?
+        };
+        return bazel_location_parse_absolute_label(ctx, cell_name, package_and_target);
     }
 
-    keys
-}
-
-fn bazel_push_repo_local_location_label_key(
-    keys: &mut Vec<String>,
-    package_path: &str,
-    name: &str,
-) {
-    if package_path.is_empty() {
-        keys.push(format!("//:{name}"));
-    } else {
-        keys.push(format!("//{package_path}:{name}"));
-        if package_path.rsplit('/').next() == Some(name) {
-            keys.push(format!("//{package_path}"));
-        }
-    }
-}
-
-fn bazel_push_external_location_label_key(
-    keys: &mut Vec<String>,
-    repo: &str,
-    package_path: &str,
-    name: &str,
-) {
-    if package_path.is_empty() {
-        keys.push(format!("@{repo}//:{name}"));
-    } else {
-        keys.push(format!("@{repo}//{package_path}:{name}"));
-    }
+    bazel_location_target_label(
+        current_package.cell_name(),
+        current_package.cell_relative_path().as_str().to_owned(),
+        label.to_owned(),
+    )
 }
 
 fn bazel_rlocation_path_for_artifact<'v>(
     artifact: &'v dyn StarlarkArtifactLike<'v>,
-    short_paths: bool,
     heap: Heap<'v>,
+    workspace_runfiles_directory: &str,
 ) -> bz_error::Result<String> {
-    if short_paths {
-        return Ok(artifact
-            .with_bazel_short_path(&|path| heap.alloc_str(path))?
-            .as_str()
-            .to_owned());
-    }
-    let path = artifact
-        .with_bazel_path(&|path| heap.alloc_str(path))?
+    let runfiles_path = artifact
+        .with_bazel_short_path(&|path| heap.alloc_str(path))?
         .as_str()
         .to_owned();
-    if let Some(external_path) = path.strip_prefix("external/") {
+    if let Some(external_path) = runfiles_path.strip_prefix("../") {
+        Ok(external_path.to_owned())
+    } else if let Some(external_path) = runfiles_path.strip_prefix("external/") {
         Ok(external_path.to_owned())
     } else {
-        Ok(format!("{}/{}", bazel_workspace_name_for_label(None), path))
+        Ok(format!("{workspace_runfiles_directory}/{runfiles_path}"))
     }
 }
 
 fn bazel_location_target_for_artifact<'v>(
     artifact: &'v dyn StarlarkArtifactLike<'v>,
-    short_paths: bool,
     heap: Heap<'v>,
+    workspace_runfiles_directory: &str,
 ) -> bz_error::Result<BazelLocationTarget> {
-    let exec_path = if short_paths {
-        artifact
-            .with_bazel_short_path(&|path| heap.alloc_str(path))?
-            .as_str()
-            .to_owned()
-    } else {
-        artifact
-            .with_bazel_path(&|path| heap.alloc_str(path))?
-            .as_str()
-            .to_owned()
-    };
+    let exec_path = artifact
+        .with_bazel_path(&|path| heap.alloc_str(path))?
+        .as_str()
+        .to_owned();
+    let root_path = artifact
+        .with_bazel_short_path(&|path| heap.alloc_str(path))?
+        .as_str()
+        .to_owned();
     Ok(BazelLocationTarget {
         exec_paths: vec![exec_path],
+        root_paths: vec![root_path],
         rlocation_paths: vec![bazel_rlocation_path_for_artifact(
             artifact,
-            short_paths,
             heap,
+            workspace_runfiles_directory,
         )?],
     })
 }
 
 fn bazel_location_target_for_dep<'v>(
     dep: &Dependency<'v>,
-    short_paths: bool,
     prefer_executable: bool,
     heap: Heap<'v>,
+    workspace_runfiles_directory: &str,
 ) -> starlark::Result<BazelLocationTarget> {
     if prefer_executable
         && let Some(executable) = dep.files_to_run_executable()?
@@ -2548,64 +2886,94 @@ fn bazel_location_target_for_dep<'v>(
     {
         return Ok(bazel_location_target_for_artifact(
             artifact,
-            short_paths,
             heap,
+            workspace_runfiles_directory,
         )?);
     }
 
     let mut exec_paths = Vec::new();
+    let mut root_paths = Vec::new();
     let mut rlocation_paths = Vec::new();
     for output in dep.default_output_values()? {
         let Some(artifact) = <&dyn StarlarkArtifactLike<'v>>::unpack_value(output)? else {
             continue;
         };
-        let target = bazel_location_target_for_artifact(artifact, short_paths, heap)?;
+        let target =
+            bazel_location_target_for_artifact(artifact, heap, workspace_runfiles_directory)?;
         exec_paths.extend(target.exec_paths);
+        root_paths.extend(target.root_paths);
         rlocation_paths.extend(target.rlocation_paths);
     }
     Ok(BazelLocationTarget {
         exec_paths,
+        root_paths,
         rlocation_paths,
     })
 }
 
+fn bazel_insert_location_target(
+    targets: &mut SmallMap<TargetLabel, BazelLocationTarget>,
+    label: TargetLabel,
+    target: BazelLocationTarget,
+    mode: BazelLocationInsertMode,
+) -> starlark::Result<()> {
+    if let Some(existing) = targets.get_mut(&label) {
+        if matches!(mode, BazelLocationInsertMode::RejectExplicitDuplicate) {
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
+                "label `{}` provided more than once to ctx.expand_location",
+                label
+            )
+            .into());
+        }
+        existing.exec_paths.extend(target.exec_paths);
+        existing.root_paths.extend(target.root_paths);
+        existing.rlocation_paths.extend(target.rlocation_paths);
+    } else {
+        targets.insert(label, target);
+    }
+    Ok(())
+}
+
 fn bazel_collect_location_targets<'v>(
-    ctx: &AnalysisContext<'v>,
     value: Value<'v>,
-    short_paths: bool,
     prefer_executable: bool,
     heap: Heap<'v>,
-    targets: &mut SmallMap<String, BazelLocationTarget>,
+    workspace_runfiles_directory: &str,
+    targets: &mut SmallMap<TargetLabel, BazelLocationTarget>,
+    insert_mode: BazelLocationInsertMode,
 ) -> starlark::Result<()> {
     if value.is_none() {
         return Ok(());
     }
     if let Some(dep) = Dependency::from_value(value) {
-        let target = bazel_location_target_for_dep(dep, short_paths, prefer_executable, heap)?;
-        for key in
-            bazel_location_label_keys_for_target(ctx, dep.label().inner().target().unconfigured())
-        {
-            if !targets.contains_key(&key) {
-                targets.insert(key, target.clone());
-            }
-        }
+        let target = bazel_location_target_for_dep(
+            dep,
+            prefer_executable,
+            heap,
+            workspace_runfiles_directory,
+        )?;
+        bazel_insert_location_target(
+            targets,
+            dep.label().inner().target().unconfigured().dupe(),
+            target,
+            insert_mode,
+        )?;
         return Ok(());
     }
     if let Some(artifact) = <&dyn StarlarkArtifactLike<'v>>::unpack_value(value)? {
-        let target = bazel_location_target_for_artifact(artifact, short_paths, heap)?;
+        let target =
+            bazel_location_target_for_artifact(artifact, heap, workspace_runfiles_directory)?;
         if let Some(owner) = artifact.source_owner()? {
-            for key in bazel_location_label_keys_for_target(ctx, owner.target()) {
-                if !targets.contains_key(&key) {
-                    targets.insert(key, target.clone());
-                }
-            }
+            bazel_insert_location_target(targets, owner.target().dupe(), target, insert_mode)?;
         } else if let Some(owner) = artifact.owner()? {
             if let Some(owner) = owner.configured_label() {
-                for key in bazel_location_label_keys_for_target(ctx, owner.unconfigured()) {
-                    if !targets.contains_key(&key) {
-                        targets.insert(key, target.clone());
-                    }
-                }
+                bazel_insert_location_target(
+                    targets,
+                    owner.unconfigured().dupe(),
+                    target,
+                    insert_mode,
+                )?;
             }
         }
         return Ok(());
@@ -2613,12 +2981,12 @@ fn bazel_collect_location_targets<'v>(
     if let Some(list) = ListRef::from_value(value) {
         for item in list.iter() {
             bazel_collect_location_targets(
-                ctx,
                 item,
-                short_paths,
                 prefer_executable,
                 heap,
+                workspace_runfiles_directory,
                 targets,
+                insert_mode,
             )?;
         }
         return Ok(());
@@ -2626,12 +2994,12 @@ fn bazel_collect_location_targets<'v>(
     if let Some(tuple) = TupleRef::from_value(value) {
         for item in tuple.iter() {
             bazel_collect_location_targets(
-                ctx,
                 item,
-                short_paths,
                 prefer_executable,
                 heap,
+                workspace_runfiles_directory,
                 targets,
+                insert_mode,
             )?;
         }
         return Ok(());
@@ -2639,20 +3007,20 @@ fn bazel_collect_location_targets<'v>(
     if let Some(dict) = DictRef::from_value(value) {
         for (key, value) in dict.iter() {
             bazel_collect_location_targets(
-                ctx,
                 key,
-                short_paths,
                 prefer_executable,
                 heap,
+                workspace_runfiles_directory,
                 targets,
+                insert_mode,
             )?;
             bazel_collect_location_targets(
-                ctx,
                 value,
-                short_paths,
                 prefer_executable,
                 heap,
+                workspace_runfiles_directory,
                 targets,
+                insert_mode,
             )?;
         }
     }
@@ -2661,11 +3029,11 @@ fn bazel_collect_location_targets<'v>(
 
 fn bazel_collect_location_targets_from_attrs<'v>(
     ctx: &AnalysisContext<'v>,
-    short_paths: bool,
     allow_data: bool,
     collect_srcs: bool,
     heap: Heap<'v>,
-    targets: &mut SmallMap<String, BazelLocationTarget>,
+    workspace_runfiles_directory: &str,
+    targets: &mut SmallMap<TargetLabel, BazelLocationTarget>,
 ) -> starlark::Result<()> {
     let Some(attrs) = ctx.attrs.borrow().as_ref().copied() else {
         return Ok(());
@@ -2680,131 +3048,44 @@ fn bazel_collect_location_targets_from_attrs<'v>(
             "data" if allow_data => true,
             _ => continue,
         };
-        bazel_collect_location_targets(ctx, value, short_paths, prefer_executable, heap, targets)?;
+        bazel_collect_location_targets(
+            value,
+            prefer_executable,
+            heap,
+            workspace_runfiles_directory,
+            targets,
+            BazelLocationInsertMode::Merge,
+        )?;
     }
     Ok(())
 }
 
 fn bazel_collect_predeclared_output_location_targets<'v>(
     ctx: &AnalysisContext<'v>,
-    short_paths: bool,
     heap: Heap<'v>,
-    targets: &mut SmallMap<String, BazelLocationTarget>,
+    workspace_runfiles_directory: &str,
+    targets: &mut SmallMap<TargetLabel, BazelLocationTarget>,
+    insert_mode: BazelLocationInsertMode,
 ) -> starlark::Result<()> {
     let Some(current) = ctx.label else {
         return Ok(());
     };
     let package = current.label().target().pkg();
-    let cell = package.cell_name().as_str();
-    let package_path = package.cell_relative_path().as_str();
     for (output_path, output) in &ctx.predeclared_output_files {
         let Some(artifact) = <&dyn StarlarkArtifactLike<'v>>::unpack_value(*output)? else {
             continue;
         };
-        let target = bazel_location_target_for_artifact(artifact, short_paths, heap)?;
-        for key in bazel_location_label_keys_for_parts(ctx, cell, package_path, output_path) {
-            if !targets.contains_key(&key) {
-                targets.insert(key, target.clone());
-            }
-        }
+        let target =
+            bazel_location_target_for_artifact(artifact, heap, workspace_runfiles_directory)?;
+        let output_name = TargetName::new_bazel(output_path)?;
+        bazel_insert_location_target(
+            targets,
+            TargetLabel::new(package, output_name.as_ref()),
+            target,
+            insert_mode,
+        )?;
     }
     Ok(())
-}
-
-fn bazel_collect_location_targets_from_rule_context<'v>(
-    ctx: &AnalysisContext<'v>,
-    short_paths: bool,
-    allow_data: bool,
-    collect_srcs: bool,
-    heap: Heap<'v>,
-    targets: &mut SmallMap<String, BazelLocationTarget>,
-) -> starlark::Result<()> {
-    bazel_collect_location_targets_from_attrs(
-        ctx,
-        short_paths,
-        allow_data,
-        collect_srcs,
-        heap,
-        targets,
-    )?;
-    bazel_collect_predeclared_output_location_targets(ctx, short_paths, heap, targets)
-}
-
-fn bazel_expand_location_macro(
-    body: &str,
-    targets: &SmallMap<String, BazelLocationTarget>,
-) -> starlark::Result<Option<String>> {
-    let body = body.trim();
-    let mut parts = body.splitn(2, char::is_whitespace);
-    let Some(function) = parts.next() else {
-        return Ok(None);
-    };
-    let (plural, use_rlocation) = match function {
-        "location" | "execpath" | "rootpath" => (false, false),
-        "locations" | "execpaths" | "rootpaths" => (true, false),
-        "rlocationpath" => (false, true),
-        "rlocationpaths" => (true, true),
-        _ => return Ok(None),
-    };
-    let label = parts.next().map(str::trim).unwrap_or("");
-    if label.is_empty() {
-        return Err(bz_error::bz_error!(
-            bz_error::ErrorTag::Input,
-            "`$({function})` requires a label"
-        )
-        .into());
-    }
-    let Some(target) = targets.get(label) else {
-        return Err(bz_error::bz_error!(
-            bz_error::ErrorTag::Input,
-            "label `{label}` in `$({function})` was not listed in ctx.expand_location targets"
-        )
-        .into());
-    };
-    let paths = if use_rlocation {
-        &target.rlocation_paths
-    } else {
-        &target.exec_paths
-    };
-    if plural {
-        return Ok(Some(paths.join(" ")));
-    }
-    match paths.as_slice() {
-        [path] => Ok(Some(path.clone())),
-        _ => Err(bz_error::bz_error!(
-            bz_error::ErrorTag::Input,
-            "`$({function} {label})` expected exactly one file, got {}",
-            paths.len()
-        )
-        .into()),
-    }
-}
-
-fn bazel_expand_location(
-    input: &str,
-    targets: &SmallMap<String, BazelLocationTarget>,
-) -> starlark::Result<String> {
-    let mut result = String::with_capacity(input.len());
-    let mut cursor = 0;
-    while let Some(relative_start) = input[cursor..].find("$(") {
-        let start = cursor + relative_start;
-        result.push_str(&input[cursor..start]);
-        let body_start = start + 2;
-        let Some(relative_end) = input[body_start..].find(')') else {
-            result.push_str(&input[start..]);
-            return Ok(result);
-        };
-        let end = body_start + relative_end;
-        let body = &input[body_start..end];
-        if let Some(expanded) = bazel_expand_location_macro(body, targets)? {
-            result.push_str(&expanded);
-        } else {
-            result.push_str(&input[start..=end]);
-        }
-        cursor = end + 1;
-    }
-    result.push_str(&input[cursor..]);
-    Ok(result)
 }
 
 fn bazel_target_label_from_label_value(value: Value<'_>) -> Option<&TargetLabel> {
@@ -2835,31 +3116,35 @@ fn bazel_file_values_from_value<'v>(value: Value<'v>) -> starlark::Result<Vec<Va
 
 fn bazel_location_target_for_file_values<'v>(
     files: Vec<Value<'v>>,
-    short_paths: bool,
     heap: Heap<'v>,
+    workspace_runfiles_directory: &str,
 ) -> starlark::Result<BazelLocationTarget> {
     let mut exec_paths = Vec::new();
+    let mut root_paths = Vec::new();
     let mut rlocation_paths = Vec::new();
     for file in files {
         let Some(artifact) = <&dyn StarlarkArtifactLike<'v>>::unpack_value(file)? else {
             continue;
         };
-        let target = bazel_location_target_for_artifact(artifact, short_paths, heap)?;
+        let target =
+            bazel_location_target_for_artifact(artifact, heap, workspace_runfiles_directory)?;
         exec_paths.extend(target.exec_paths);
+        root_paths.extend(target.root_paths);
         rlocation_paths.extend(target.rlocation_paths);
     }
     Ok(BazelLocationTarget {
         exec_paths,
+        root_paths,
         rlocation_paths,
     })
 }
 
 fn bazel_collect_location_targets_from_label_dict<'v>(
-    ctx: &AnalysisContext<'v>,
     label_dict: DictRef<'v>,
-    short_paths: bool,
     heap: Heap<'v>,
-    targets: &mut SmallMap<String, BazelLocationTarget>,
+    workspace_runfiles_directory: &str,
+    targets: &mut SmallMap<TargetLabel, BazelLocationTarget>,
+    insert_mode: BazelLocationInsertMode,
 ) -> starlark::Result<()> {
     for (label, files) in label_dict.iter() {
         let Some(label) = bazel_target_label_from_label_value(label) else {
@@ -2867,14 +3152,10 @@ fn bazel_collect_location_targets_from_label_dict<'v>(
         };
         let target = bazel_location_target_for_file_values(
             bazel_file_values_from_value(files)?,
-            short_paths,
             heap,
+            workspace_runfiles_directory,
         )?;
-        for key in bazel_location_label_keys_for_target(ctx, label) {
-            if !targets.contains_key(&key) {
-                targets.insert(key, target.clone());
-            }
-        }
+        bazel_insert_location_target(targets, label.dupe(), target, insert_mode)?;
     }
     Ok(())
 }
@@ -3714,26 +3995,21 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] short_paths: bool,
         heap: Heap<'v>,
     ) -> starlark::Result<String> {
-        let mut target_map = SmallMap::new();
-        bazel_collect_location_targets_from_rule_context(
-            this.0,
-            short_paths,
-            false,
-            true,
-            heap,
-            &mut target_map,
-        )?;
+        let mut explicit_targets = SmallMap::new();
+        let workspace_runfiles_directory = bazel_workspace_name_for_label(this.0.label);
         for target in targets.items {
             bazel_collect_location_targets(
-                this.0,
                 target,
-                short_paths,
-                false,
+                true,
                 heap,
-                &mut target_map,
+                &workspace_runfiles_directory,
+                &mut explicit_targets,
+                BazelLocationInsertMode::RejectExplicitDuplicate,
             )?;
         }
-        bazel_expand_location(input, &target_map)
+        let mut expander =
+            BazelLocationExpander::new(this.0, !short_paths, false, true, heap, explicit_targets);
+        expander.expand(input)
     }
 
     /// Resolves a Bazel shell command into action inputs and argv.
@@ -3757,25 +4033,30 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         let mut command = command.to_owned();
 
         if expand_locations {
-            let mut target_map = SmallMap::new();
-            bazel_collect_location_targets_from_rule_context(
-                this.0,
-                false,
-                false,
-                true,
-                heap,
-                &mut target_map,
-            )?;
-            if let Some(label_dict) = label_dict.into_option() {
-                bazel_collect_location_targets_from_label_dict(
-                    this.0,
-                    label_dict,
-                    false,
+            let mut explicit_targets = SmallMap::new();
+            let workspace_runfiles_directory = bazel_workspace_name_for_label(this.0.label);
+            for tool in tools.items.iter().copied() {
+                bazel_collect_location_targets(
+                    tool,
+                    true,
                     heap,
-                    &mut target_map,
+                    &workspace_runfiles_directory,
+                    &mut explicit_targets,
+                    BazelLocationInsertMode::Merge,
                 )?;
             }
-            command = bazel_expand_location(&command, &target_map)?;
+            if let Some(label_dict) = label_dict.into_option() {
+                bazel_collect_location_targets_from_label_dict(
+                    label_dict,
+                    heap,
+                    &workspace_runfiles_directory,
+                    &mut explicit_targets,
+                    BazelLocationInsertMode::Merge,
+                )?;
+            }
+            let mut expander =
+                BazelLocationExpander::new(this.0, true, false, true, heap, explicit_targets);
+            command = expander.expand(&command)?;
         }
 
         if let Some(make_variables) = make_variables.into_option() {
