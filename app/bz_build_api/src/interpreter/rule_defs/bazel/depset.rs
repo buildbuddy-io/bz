@@ -6,7 +6,9 @@ use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 
 use allocative::Allocative;
+use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
+use starlark::singleton_heap_name;
 use starlark::coerce::Coerce;
 use starlark::collections::Hashed;
 use starlark::collections::SmallMap;
@@ -22,7 +24,9 @@ use starlark::values::Freeze;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
 use starlark::values::FrozenHeap;
+use starlark::values::FrozenHeapName;
 use starlark::values::FrozenValue;
+use starlark::values::OwnedFrozenValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
@@ -924,11 +928,15 @@ fn bazel_depset_from_direct_and_transitive_value<'v>(
 ) -> starlark::Result<Value<'v>> {
     let depset = bazel_depset_from_direct_and_transitive_values(direct, transitive, order)?;
 
-    if depset.direct.is_empty()
-        && depset.transitive.len() == 1
-        && depset_from_value(depset.transitive[0].to_value())?.order() == order
-    {
-        return Ok(depset.transitive[0].to_value());
+    if depset.direct.is_empty() {
+        if depset.transitive.is_empty() {
+            return Ok(heap.access_owned_frozen_value(interned_empty_depset(order)));
+        }
+        if depset.transitive.len() == 1
+            && depset_from_value(depset.transitive[0].to_value())?.order() == order
+        {
+            return Ok(depset.transitive[0].to_value());
+        }
     }
 
     Ok(heap.alloc(depset))
@@ -938,6 +946,9 @@ pub(crate) fn bazel_depset_from_values<'v>(
     heap: Heap<'v>,
     direct: Vec<Value<'v>>,
 ) -> starlark::Result<Value<'v>> {
+    if direct.is_empty() {
+        return Ok(bazel_depset_empty(heap));
+    }
     Ok(heap.alloc(bazel_depset_from_direct(direct)?))
 }
 
@@ -961,27 +972,63 @@ pub(crate) fn bazel_depset_from_transitive<'v>(
     bazel_depset_from_direct_and_transitive(heap, Vec::new(), transitive)
 }
 
+/// Empty depsets are interned per order, like Bazel's empty `NestedSet`s
+/// (`Order.emptySet`). Besides avoiding an allocation per empty depset, this
+/// makes empty depsets of the same order compare equal, matching Bazel.
+fn interned_empty_depsets() -> &'static [OwnedFrozenValue; 4] {
+    static EMPTY_DEPSETS: OnceLock<[OwnedFrozenValue; 4]> = OnceLock::new();
+    EMPTY_DEPSETS.get_or_init(|| {
+        let heap = FrozenHeap::new();
+        let alloc_empty = |order| {
+            heap.alloc(FrozenBazelDepset {
+                direct: Vec::new().into_boxed_slice(),
+                transitive: Vec::new().into_boxed_slice(),
+                order,
+                element_type: None,
+                hash: next_bazel_depset_hash(),
+                to_list_cache: BazelDepsetToListCache::default(),
+                artifact_inputs_cache: BazelDepsetArtifactInputsCache::default(),
+                _marker: PhantomData,
+            })
+        };
+        let values = [
+            alloc_empty(BazelDepsetOrder::Default),
+            alloc_empty(BazelDepsetOrder::Postorder),
+            alloc_empty(BazelDepsetOrder::Topological),
+            alloc_empty(BazelDepsetOrder::Preorder),
+        ];
+        let owner = heap.into_ref_named(FrozenHeapName::Singleton(singleton_heap_name!()));
+        values.map(|value| unsafe { OwnedFrozenValue::new(owner.dupe(), value) })
+    })
+}
+
+fn interned_empty_depset(order: BazelDepsetOrder) -> &'static OwnedFrozenValue {
+    let index = match order {
+        BazelDepsetOrder::Default => 0,
+        BazelDepsetOrder::Postorder => 1,
+        BazelDepsetOrder::Topological => 2,
+        BazelDepsetOrder::Preorder => 3,
+    };
+    &interned_empty_depsets()[index]
+}
+
 pub(crate) fn bazel_depset_empty<'v>(heap: Heap<'v>) -> Value<'v> {
-    heap.alloc(bazel_depset_from_direct(Vec::new()).unwrap())
+    heap.access_owned_frozen_value(interned_empty_depset(BazelDepsetOrder::Default))
 }
 
 pub(crate) fn bazel_depset_empty_frozen(heap: &FrozenHeap) -> FrozenValue {
-    heap.alloc(FrozenBazelDepset {
-        direct: Vec::new().into_boxed_slice(),
-        transitive: Vec::new().into_boxed_slice(),
-        order: BazelDepsetOrder::Default,
-        element_type: None,
-        hash: next_bazel_depset_hash(),
-        to_list_cache: BazelDepsetToListCache::default(),
-        artifact_inputs_cache: BazelDepsetArtifactInputsCache::default(),
-        _marker: PhantomData,
-    })
+    // SAFETY: `heap` takes a reference to the interned heap, so the value
+    // stays alive for as long as `heap`, as callers already assume.
+    unsafe { interned_empty_depset(BazelDepsetOrder::Default).owned_frozen_value(heap) }
 }
 
 pub(crate) fn bazel_depset_from_frozen_values(
     heap: &FrozenHeap,
     direct: Vec<FrozenValue>,
 ) -> FrozenValue {
+    if direct.is_empty() {
+        return bazel_depset_empty_frozen(heap);
+    }
     heap.alloc(FrozenBazelDepset {
         direct: direct.into_boxed_slice(),
         transitive: Vec::new().into_boxed_slice(),

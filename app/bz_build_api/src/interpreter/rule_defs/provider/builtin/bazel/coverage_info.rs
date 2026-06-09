@@ -20,7 +20,8 @@ use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneOr;
 
 use crate as bz_build_api;
-use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_direct;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_empty;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_values;
 
 #[internal_provider(instrumented_files_info_creator)]
 #[derive(Clone, Debug, Trace, Coerce, Freeze, ProvidesStaticType, Allocative)]
@@ -38,7 +39,7 @@ fn instrumented_files_info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] metadata_files: NoneOr<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<InstrumentedFilesInfo<'v>> {
-        let empty = eval.heap().alloc(bazel_depset_from_direct(Vec::new())?);
+        let empty = bazel_depset_empty(eval.heap());
         Ok(InstrumentedFilesInfo {
             instrumented_files: ValueOfUnchecked::<FrozenValue>::new(
                 instrumented_files.into_option().unwrap_or(empty),
@@ -74,10 +75,8 @@ fn coverage_common(globals: &mut GlobalsBuilder) {
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<InstrumentedFilesInfo<'v>> {
-        let instrumented_files = eval.heap().alloc(bazel_depset_from_direct(Vec::new())?);
-        let metadata_files = eval
-            .heap()
-            .alloc(bazel_depset_from_direct(metadata_files.items)?);
+        let instrumented_files = bazel_depset_empty(eval.heap());
+        let metadata_files = bazel_depset_from_values(eval.heap(), metadata_files.items)?;
         let _ = (
             ctx,
             source_attributes,
