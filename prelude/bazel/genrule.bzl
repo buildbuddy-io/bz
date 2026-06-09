@@ -1,8 +1,5 @@
 def _collect_files(values):
-    files = []
-    for value in values:
-        files.extend(value.files.to_list())
-    return files
+    return depset(transitive = [value.files for value in values])
 
 def _dedupe_targets(values):
     targets = []
@@ -113,8 +110,9 @@ def _bazel_genrule_impl(ctx):
     if ctx.attr.executable and len(outs) != 1:
         fail("genrule(executable = True) requires exactly one output")
 
-    srcs = _collect_files(ctx.attr.srcs)
-    tools = _collect_files(ctx.attr.tools) + _collect_files(ctx.attr.exec_tools) + _collect_files(ctx.attr.toolchains)
+    srcs_depset = _collect_files(ctx.attr.srcs)
+    srcs = srcs_depset.to_list()
+    tools = _collect_files(ctx.attr.tools + ctx.attr.exec_tools + ctx.attr.toolchains)
 
     command = _selected_command(ctx)
     dollar_escape_placeholder = _dollar_escape_placeholder(command)
@@ -128,14 +126,14 @@ def _bazel_genrule_impl(ctx):
     command = _expand_make_variables(ctx, command, srcs, outs, ctx.attr.outs)
     command = command.replace(dollar_escape_placeholder, "$")
 
-    inputs = srcs
+    inputs = srcs_depset
     if ctx.attr.stamp == 1:
-        inputs = inputs + [ctx.info_file, ctx.version_file]
+        inputs = depset([ctx.info_file, ctx.version_file], transitive = [srcs_depset])
 
     ctx.actions.run_shell(
         command = _GENRULE_SETUP + command,
-        inputs = depset(inputs),
-        tools = depset(tools),
+        inputs = inputs,
+        tools = tools,
         outputs = outs,
         mnemonic = "Genrule",
         progress_message = ctx.attr.message if ctx.attr.message else None,
