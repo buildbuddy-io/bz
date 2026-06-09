@@ -9,6 +9,7 @@
  */
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::AtomicBool;
@@ -176,6 +177,33 @@ fn is_transient_re_error(error: &bz_error::Error) -> bool {
                     | TCode::RESOURCE_EXHAUSTED
             )
         })
+}
+
+async fn retry_transient_re_error<F, Fut, T>(op_name: &str, mut op: F) -> bz_error::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bz_error::Result<T>>,
+{
+    let mut delay = RE_TRANSIENT_RETRY_INITIAL_DELAY;
+    for attempt in 0..=RE_TRANSIENT_RETRY_ATTEMPTS {
+        match op().await {
+            Ok(response) => return Ok(response),
+            Err(error)
+                if attempt < RE_TRANSIENT_RETRY_ATTEMPTS && is_transient_re_error(&error) =>
+            {
+                tracing::warn!(
+                    "Transient RE error in {}, retrying after {:?}: {:#}",
+                    op_name,
+                    delay,
+                    error
+                );
+                tokio::time::sleep(delay).await;
+                delay = std::cmp::min(delay * 2, RE_TRANSIENT_RETRY_MAX_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("retry loop returns on success or final error")
 }
 
 #[derive(Clone, Dupe, Allocative)]
@@ -1134,24 +1162,27 @@ impl RemoteExecutionClientImpl {
             }
         }
 
-        let res = with_error_handler(
-            "action_cache",
-            self.get_session_id(),
-            self.client()
-                .get_action_cache_client()
-                .get_action_result(
-                    RemoteExecutionMetadata {
-                        action_id: action_digest.raw_digest().to_string(),
-                        ..use_case.metadata(identity)
-                    },
-                    ActionResultRequest {
-                        digest: action_digest.to_re(),
-                        platform: Some(re_platform(platform)),
-                        ..Default::default()
-                    },
-                )
-                .await,
-        )
+        let res = retry_transient_re_error("action_cache", || async {
+            with_error_handler(
+                "action_cache",
+                self.get_session_id(),
+                self.client()
+                    .get_action_cache_client()
+                    .get_action_result(
+                        RemoteExecutionMetadata {
+                            action_id: action_digest.raw_digest().to_string(),
+                            ..use_case.metadata(identity)
+                        },
+                        ActionResultRequest {
+                            digest: action_digest.to_re(),
+                            platform: Some(re_platform(platform)),
+                            ..Default::default()
+                        },
+                    )
+                    .await,
+            )
+            .await
+        })
         .await;
 
         let res = match res {
@@ -1185,23 +1216,26 @@ impl RemoteExecutionClientImpl {
         use_case: RemoteExecutorUseCase,
         force_reupload: bool,
     ) -> bz_error::Result<()> {
-        with_error_handler(
-            "upload_files_and_directories",
-            self.get_session_id(),
-            self.client()
-                .get_cas_client()
-                .upload(
-                    use_case.metadata(None),
-                    UploadRequest {
-                        files_with_digest: Some(files_with_digest),
-                        inlined_blobs_with_digest: Some(inlined_blobs_with_digest),
-                        directories: Some(directories),
-                        upload_only_missing: !force_reupload,
-                        ..Default::default()
-                    },
-                )
-                .await,
-        )
+        retry_transient_re_error("upload_files_and_directories", || async {
+            with_error_handler(
+                "upload_files_and_directories",
+                self.get_session_id(),
+                self.client()
+                    .get_cas_client()
+                    .upload(
+                        use_case.metadata(None),
+                        UploadRequest {
+                            files_with_digest: Some(files_with_digest.clone()),
+                            inlined_blobs_with_digest: Some(inlined_blobs_with_digest.clone()),
+                            directories: Some(directories.clone()),
+                            upload_only_missing: !force_reupload,
+                            ..Default::default()
+                        },
+                    )
+                    .await,
+            )
+            .await
+        })
         .await?;
         Ok(())
     }
@@ -1821,20 +1855,23 @@ impl RemoteExecutionClientImpl {
             return Ok((Vec::new(), TLocalCacheStats::default()));
         }
         let expected_blobs = digests.len();
-        let response = with_error_handler(
-            "download_typed_blobs",
-            self.get_session_id(),
-            self.client()
-                .get_cas_client()
-                .download(
-                    use_case.metadata(identity),
-                    DownloadRequest {
-                        inlined_digests: Some(digests),
-                        ..Default::default()
-                    },
-                )
-                .await,
-        )
+        let response = retry_transient_re_error("download_typed_blobs", || async {
+            with_error_handler(
+                "download_typed_blobs",
+                self.get_session_id(),
+                self.client()
+                    .get_cas_client()
+                    .download(
+                        use_case.metadata(identity),
+                        DownloadRequest {
+                            inlined_digests: Some(digests.clone()),
+                            ..Default::default()
+                        },
+                    )
+                    .await,
+            )
+            .await
+        })
         .await?;
 
         let mut blobs: Vec<T> = Vec::with_capacity(expected_blobs);
@@ -1865,22 +1902,25 @@ impl RemoteExecutionClientImpl {
         use_case: RemoteExecutorUseCase,
     ) -> bz_error::Result<(Vec<u8>, TLocalCacheStats)> {
         let re_action = format!("download_blob for digest {digest}");
-        let response = with_error_handler(
-            re_action.as_str(),
-            self.get_session_id(),
-            self.client()
-                .get_cas_client()
-                .download(
-                    use_case.metadata(None),
-                    DownloadRequest {
-                        inlined_digests: Some(vec![digest.clone()]),
-                        ..Default::default()
-                    },
-                )
-                // boxed() to segment the future
-                .boxed()
-                .await,
-        )
+        let response = retry_transient_re_error(re_action.as_str(), || async {
+            with_error_handler(
+                re_action.as_str(),
+                self.get_session_id(),
+                self.client()
+                    .get_cas_client()
+                    .download(
+                        use_case.metadata(None),
+                        DownloadRequest {
+                            inlined_digests: Some(vec![digest.clone()]),
+                            ..Default::default()
+                        },
+                    )
+                    // boxed() to segment the future
+                    .boxed()
+                    .await,
+            )
+            .await
+        })
         .await?;
 
         response
@@ -1897,13 +1937,20 @@ impl RemoteExecutionClientImpl {
         blob: InlinedBlobWithDigest,
         use_case: RemoteExecutorUseCase,
     ) -> bz_error::Result<TDigest> {
-        with_error_handler(
-            "upload_blob",
-            self.get_session_id(),
-            self.client()
-                .upload_blob_with_digest(blob.blob, blob.digest, use_case.metadata(None))
-                .await,
-        )
+        retry_transient_re_error("upload_blob", || async {
+            with_error_handler(
+                "upload_blob",
+                self.get_session_id(),
+                self.client()
+                    .upload_blob_with_digest(
+                        blob.blob.clone(),
+                        blob.digest.clone(),
+                        use_case.metadata(None),
+                    )
+                    .await,
+            )
+            .await
+        })
         .await
     }
 
@@ -1942,20 +1989,23 @@ impl RemoteExecutionClientImpl {
                     }
                 };
 
-                let response = with_error_handler(
-                    "materialize_files",
-                    self.get_session_id(),
-                    self.client()
-                        .get_cas_client()
-                        .download(
-                            use_case.metadata(None),
-                            DownloadRequest {
-                                file_digests: Some(chunk),
-                                ..Default::default()
-                            },
-                        )
-                        .await,
-                )
+                let response = retry_transient_re_error("materialize_files", || async {
+                    with_error_handler(
+                        "materialize_files",
+                        self.get_session_id(),
+                        self.client()
+                            .get_cas_client()
+                            .download(
+                                use_case.metadata(None),
+                                DownloadRequest {
+                                    file_digests: Some(chunk.clone()),
+                                    ..Default::default()
+                                },
+                            )
+                            .await,
+                    )
+                    .await
+                })
                 .await?;
 
                 bz_error::Ok(ChunkDownloadResult::Downloaded(response.local_cache_stats))
@@ -1993,9 +2043,8 @@ impl RemoteExecutionClientImpl {
         digests: Vec<TDigest>,
         metadata: RemoteExecutionMetadata,
     ) -> bz_error::Result<GetDigestsTtlResponse> {
-        let mut delay = RE_TRANSIENT_RETRY_INITIAL_DELAY;
-        for attempt in 0..=RE_TRANSIENT_RETRY_ATTEMPTS {
-            let result = with_error_handler(
+        retry_transient_re_error("get_digests_ttl", || async {
+            with_error_handler(
                 "get_digests_ttl",
                 self.get_session_id(),
                 self.client()
@@ -2009,25 +2058,9 @@ impl RemoteExecutionClientImpl {
                     )
                     .await,
             )
-            .await;
-
-            match result {
-                Ok(response) => return Ok(response),
-                Err(error)
-                    if attempt < RE_TRANSIENT_RETRY_ATTEMPTS && is_transient_re_error(&error) =>
-                {
-                    tracing::warn!(
-                        "Transient RE error in get_digests_ttl, retrying after {:?}: {:#}",
-                        delay,
-                        error
-                    );
-                    tokio::time::sleep(delay).await;
-                    delay = std::cmp::min(delay * 2, RE_TRANSIENT_RETRY_MAX_DELAY);
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        unreachable!("retry loop returns on success or final error")
+            .await
+        })
+        .await
     }
 
     async fn extend_digest_ttl(
@@ -2038,21 +2071,24 @@ impl RemoteExecutionClientImpl {
     ) -> bz_error::Result<()> {
         let use_case = &use_case;
         // TODO(arr): use batch API from RE when it becomes available
-        with_error_handler(
-            "extend_digest_ttl",
-            self.get_session_id(),
-            self.client()
-                .get_cas_client()
-                .extend_digest_ttl(
-                    use_case.metadata(None),
-                    ExtendDigestsTtlRequest {
-                        digests,
-                        ttl: ttl.as_secs() as i64,
-                        ..Default::default()
-                    },
-                )
-                .await,
-        )
+        retry_transient_re_error("extend_digest_ttl", || async {
+            with_error_handler(
+                "extend_digest_ttl",
+                self.get_session_id(),
+                self.client()
+                    .get_cas_client()
+                    .extend_digest_ttl(
+                        use_case.metadata(None),
+                        ExtendDigestsTtlRequest {
+                            digests: digests.clone(),
+                            ttl: ttl.as_secs() as i64,
+                            ..Default::default()
+                        },
+                    )
+                    .await,
+            )
+            .await
+        })
         .await?;
         Ok(())
     }
@@ -2074,32 +2110,35 @@ impl RemoteExecutionClientImpl {
                 (None, None)
             };
 
-        let attributes =
-            BTreeMap::from([("write_type".to_owned(), write_type.as_str().to_owned())]);
-        let response = with_error_handler(
-            "write_action_result",
-            self.get_session_id(),
-            self.client()
-                .get_action_cache_client()
-                .write_action_result(
-                    RemoteExecutionMetadata {
-                        platform: Some(re_platform(platform)),
-                        action_id: digest.raw_digest().to_string(),
-                        client_context: Some(TClientContextMetadata {
-                            attributes,
+        let write_type_str = write_type.as_str();
+        let response = retry_transient_re_error("write_action_result", || async {
+            let attributes = BTreeMap::from([("write_type".to_owned(), write_type_str.to_owned())]);
+            with_error_handler(
+                "write_action_result",
+                self.get_session_id(),
+                self.client()
+                    .get_action_cache_client()
+                    .write_action_result(
+                        RemoteExecutionMetadata {
+                            platform: Some(re_platform(platform)),
+                            action_id: digest.raw_digest().to_string(),
+                            client_context: Some(TClientContextMetadata {
+                                attributes,
+                                ..Default::default()
+                            }),
+                            ..use_case.metadata(identity)
+                        },
+                        WriteActionResultRequest {
+                            action_digest: digest.to_re(),
+                            action_result: result.clone(),
+                            platform: Some(re_platform(platform)),
                             ..Default::default()
-                        }),
-                        ..use_case.metadata(identity)
-                    },
-                    WriteActionResultRequest {
-                        action_digest: digest.to_re(),
-                        action_result: result,
-                        platform: Some(re_platform(platform)),
-                        ..Default::default()
-                    },
-                )
-                .await,
-        )
+                        },
+                    )
+                    .await,
+            )
+            .await
+        })
         .await?;
 
         trace_action_digest(
