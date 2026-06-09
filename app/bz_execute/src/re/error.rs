@@ -11,9 +11,9 @@
 use allocative::Allocative;
 use bz_error::ErrorTag;
 use bz_error::TypedContext;
-use remote_execution::REClientError;
 use remote_execution::TCode;
 use remote_execution::TCodeReasonGroup;
+use remote_execution::re_client_error_from_anyhow;
 
 pub fn get_re_error_tag(tcode: &TCode) -> ErrorTag {
     match *tcode {
@@ -102,8 +102,7 @@ pub(crate) async fn with_error_handler<T>(
     match result {
         Ok(val) => Ok(val),
         Err(e) => {
-            let (code, group) = e
-                .downcast_ref::<REClientError>()
+            let (code, group) = re_client_error_from_anyhow(&e)
                 .map_or((TCode::UNKNOWN, TCodeReasonGroup::UNKNOWN), |e| {
                     (e.code, e.group)
                 });

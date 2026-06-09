@@ -13,6 +13,7 @@ use std::fmt::Display;
 
 use dupe::Dupe;
 use thiserror::Error;
+use tonic::Code;
 
 #[derive(Error, Debug, Clone, Default)]
 #[error("{}", .message)]
@@ -20,6 +21,24 @@ pub struct REClientError {
     pub message: String,
     pub code: TCode,
     pub group: TCodeReasonGroup,
+}
+
+pub fn re_client_error_from_anyhow(error: &anyhow::Error) -> Option<REClientError> {
+    for error in error.chain() {
+        if let Some(error) = error.downcast_ref::<REClientError>() {
+            return Some(error.clone());
+        }
+
+        if let Some(status) = error.downcast_ref::<tonic::Status>() {
+            return Some(REClientError {
+                message: status.message().to_owned(),
+                code: TCode::from_tonic(status.code()),
+                group: TCodeReasonGroup::UNKNOWN,
+            });
+        }
+    }
+
+    None
 }
 
 #[derive(Debug, Clone, Dupe, Default)]
@@ -52,6 +71,28 @@ impl TCode {
     pub const UNAVAILABLE: Self = TCode(14i32);
     pub const DATA_LOSS: Self = TCode(15i32);
     pub const UNAUTHENTICATED: Self = TCode(16i32);
+
+    fn from_tonic(code: Code) -> Self {
+        match code {
+            Code::Ok => TCode::OK,
+            Code::Cancelled => TCode::CANCELLED,
+            Code::Unknown => TCode::UNKNOWN,
+            Code::InvalidArgument => TCode::INVALID_ARGUMENT,
+            Code::DeadlineExceeded => TCode::DEADLINE_EXCEEDED,
+            Code::NotFound => TCode::NOT_FOUND,
+            Code::AlreadyExists => TCode::ALREADY_EXISTS,
+            Code::PermissionDenied => TCode::PERMISSION_DENIED,
+            Code::ResourceExhausted => TCode::RESOURCE_EXHAUSTED,
+            Code::FailedPrecondition => TCode::FAILED_PRECONDITION,
+            Code::Aborted => TCode::ABORTED,
+            Code::OutOfRange => TCode::OUT_OF_RANGE,
+            Code::Unimplemented => TCode::UNIMPLEMENTED,
+            Code::Internal => TCode::INTERNAL,
+            Code::Unavailable => TCode::UNAVAILABLE,
+            Code::DataLoss => TCode::DATA_LOSS,
+            Code::Unauthenticated => TCode::UNAUTHENTICATED,
+        }
+    }
 }
 
 impl Display for TCode {
