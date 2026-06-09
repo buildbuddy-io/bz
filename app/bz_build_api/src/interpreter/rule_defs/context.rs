@@ -2428,7 +2428,14 @@ struct BazelLocationExpander<'a, 'v> {
     allow_data: bool,
     collect_srcs: bool,
     heap: Heap<'v>,
-    explicit_targets: SmallMap<TargetLabel, BazelLocationTarget>,
+    /// Like Bazel's LocationTemplateContext, the location map is only built
+    /// when a location function is actually encountered, so explicit targets
+    /// stay unresolved here: computing exec/runfiles paths for every file of
+    /// every target is expensive and usually wasted (most expanded strings
+    /// contain no location expressions).
+    explicit_target_values: Vec<Value<'v>>,
+    explicit_label_dict: Option<Value<'v>>,
+    explicit_insert_mode: BazelLocationInsertMode,
     location_map: Option<SmallMap<TargetLabel, BazelLocationTarget>>,
 }
 
@@ -2439,7 +2446,9 @@ impl<'a, 'v> BazelLocationExpander<'a, 'v> {
         allow_data: bool,
         collect_srcs: bool,
         heap: Heap<'v>,
-        explicit_targets: SmallMap<TargetLabel, BazelLocationTarget>,
+        explicit_target_values: Vec<Value<'v>>,
+        explicit_label_dict: Option<Value<'v>>,
+        explicit_insert_mode: BazelLocationInsertMode,
     ) -> Self {
         Self {
             ctx,
@@ -2447,7 +2456,9 @@ impl<'a, 'v> BazelLocationExpander<'a, 'v> {
             allow_data,
             collect_srcs,
             heap,
-            explicit_targets,
+            explicit_target_values,
+            explicit_label_dict,
+            explicit_insert_mode,
             location_map: None,
         }
     }
@@ -2497,11 +2508,34 @@ impl<'a, 'v> BazelLocationExpander<'a, 'v> {
 
     fn location_map(&mut self) -> starlark::Result<&SmallMap<TargetLabel, BazelLocationTarget>> {
         if self.location_map.is_none() {
-            let mut location_map = self.explicit_targets.clone();
+            let workspace_runfiles_directory = self.workspace_runfiles_directory();
+            let mut location_map = SmallMap::new();
+            for target in &self.explicit_target_values {
+                bazel_collect_location_targets(
+                    *target,
+                    true,
+                    self.heap,
+                    &workspace_runfiles_directory,
+                    &mut location_map,
+                    self.explicit_insert_mode,
+                )?;
+            }
+            if let Some(label_dict) = self.explicit_label_dict {
+                let label_dict = DictRef::from_value(label_dict).ok_or_else(|| {
+                    bz_error::internal_error!("expander label_dict should be a dict")
+                })?;
+                bazel_collect_location_targets_from_label_dict(
+                    label_dict,
+                    self.heap,
+                    &workspace_runfiles_directory,
+                    &mut location_map,
+                    BazelLocationInsertMode::Merge,
+                )?;
+            }
             bazel_collect_predeclared_output_location_targets(
                 self.ctx,
                 self.heap,
-                &self.workspace_runfiles_directory(),
+                &workspace_runfiles_directory,
                 &mut location_map,
                 BazelLocationInsertMode::Merge,
             )?;
@@ -2510,7 +2544,7 @@ impl<'a, 'v> BazelLocationExpander<'a, 'v> {
                 self.allow_data,
                 self.collect_srcs,
                 self.heap,
-                &self.workspace_runfiles_directory(),
+                &workspace_runfiles_directory,
                 &mut location_map,
             )?;
             self.location_map = Some(location_map);
@@ -3995,20 +4029,16 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] short_paths: bool,
         heap: Heap<'v>,
     ) -> starlark::Result<String> {
-        let mut explicit_targets = SmallMap::new();
-        let workspace_runfiles_directory = bazel_workspace_name_for_label(this.0.label);
-        for target in targets.items {
-            bazel_collect_location_targets(
-                target,
-                true,
-                heap,
-                &workspace_runfiles_directory,
-                &mut explicit_targets,
-                BazelLocationInsertMode::RejectExplicitDuplicate,
-            )?;
-        }
-        let mut expander =
-            BazelLocationExpander::new(this.0, !short_paths, false, true, heap, explicit_targets);
+        let mut expander = BazelLocationExpander::new(
+            this.0,
+            !short_paths,
+            false,
+            true,
+            heap,
+            targets.items,
+            None,
+            BazelLocationInsertMode::RejectExplicitDuplicate,
+        );
         expander.expand(input)
     }
 
@@ -4023,7 +4053,9 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         >,
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         tools: UnpackListOrTuple<Value<'v>>,
-        #[starlark(require = named, default = NoneOr::None)] label_dict: NoneOr<DictRef<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] label_dict: NoneOr<
+            ValueOf<'v, DictRef<'v>>,
+        >,
         #[starlark(require = named, default = NoneOr::None)] execution_requirements: NoneOr<
             DictRef<'v>,
         >,
@@ -4033,29 +4065,16 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         let mut command = command.to_owned();
 
         if expand_locations {
-            let mut explicit_targets = SmallMap::new();
-            let workspace_runfiles_directory = bazel_workspace_name_for_label(this.0.label);
-            for tool in tools.items.iter().copied() {
-                bazel_collect_location_targets(
-                    tool,
-                    true,
-                    heap,
-                    &workspace_runfiles_directory,
-                    &mut explicit_targets,
-                    BazelLocationInsertMode::Merge,
-                )?;
-            }
-            if let Some(label_dict) = label_dict.into_option() {
-                bazel_collect_location_targets_from_label_dict(
-                    label_dict,
-                    heap,
-                    &workspace_runfiles_directory,
-                    &mut explicit_targets,
-                    BazelLocationInsertMode::Merge,
-                )?;
-            }
-            let mut expander =
-                BazelLocationExpander::new(this.0, true, false, true, heap, explicit_targets);
+            let mut expander = BazelLocationExpander::new(
+                this.0,
+                true,
+                false,
+                true,
+                heap,
+                tools.items.clone(),
+                label_dict.into_option().map(|label_dict| label_dict.value),
+                BazelLocationInsertMode::Merge,
+            );
             command = expander.expand(&command)?;
         }
 

@@ -117,12 +117,13 @@ def _bazel_genrule_impl(ctx):
     command = _selected_command(ctx)
     dollar_escape_placeholder = _dollar_escape_placeholder(command)
     command = command.replace("$$", dollar_escape_placeholder)
-    command = ctx.expand_location(
-        command,
-        _dedupe_targets(
-            ctx.attr.srcs + ctx.attr.tools + ctx.attr.exec_tools + ctx.attr.toolchains,
-        ),
-    )
+    if "$(" in command:
+        command = ctx.expand_location(
+            command,
+            _dedupe_targets(
+                ctx.attr.srcs + ctx.attr.tools + ctx.attr.exec_tools + ctx.attr.toolchains,
+            ),
+        )
     command = _expand_make_variables(ctx, command, srcs, outs, ctx.attr.outs)
     command = command.replace(dollar_escape_placeholder, "$")
 
