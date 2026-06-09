@@ -135,7 +135,6 @@ pub struct ActionExecutionValue(Arc<ActionExecutionValueData>);
 #[derive(Debug, PartialEq, Eq, Allocative)]
 struct ActionExecutionValueData {
     outputs: ActionOutputs,
-    remote_backed: bool,
 }
 
 impl OutputSize for ActionExecutionValue {
@@ -275,22 +274,11 @@ impl ActionOutputs {
 
 impl ActionExecutionValue {
     pub fn new(outputs: ActionOutputs) -> Self {
-        Self::new_with_remote_backed(outputs, false)
-    }
-
-    pub fn new_with_remote_backed(outputs: ActionOutputs, remote_backed: bool) -> Self {
-        Self(Arc::new(ActionExecutionValueData {
-            outputs,
-            remote_backed,
-        }))
+        Self(Arc::new(ActionExecutionValueData { outputs }))
     }
 
     pub fn outputs(&self) -> &ActionOutputs {
         &self.0.outputs
-    }
-
-    pub fn is_remote_backed(&self) -> bool {
-        self.0.remote_backed
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&BuildArtifactPath, &ArtifactValue)> {

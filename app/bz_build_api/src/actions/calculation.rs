@@ -1151,10 +1151,7 @@ async fn build_action_result(
 
         return (
             ActionExecutionData {
-                action_result: Ok(ActionExecutionValue::new_with_remote_backed(
-                    outputs,
-                    meta.remote_cache_origin.is_some(),
-                )),
+                action_result: Ok(ActionExecutionValue::new(outputs)),
                 wall_time,
                 queue_duration,
                 memory_peak: None,
@@ -1270,10 +1267,7 @@ async fn build_action_result(
     let error_diagnostics = match execute_result {
         Ok((outputs, meta)) => {
             output_size = outputs.calc_output_count_and_bytes(false).bytes;
-            action_result = Ok(ActionExecutionValue::new_with_remote_backed(
-                outputs,
-                meta.remote_cache_origin.is_some(),
-            ));
+            action_result = Ok(ActionExecutionValue::new(outputs));
             execution_kind = Some(meta.execution_kind.as_enum());
             wall_time = Some(meta.timing.wall_time);
             error = None;
@@ -1768,10 +1762,7 @@ impl Key for BuildKey {
         // error types and try to cache non-transient error types, but practically there
         // are too many unknowns that may cause more harm than good if we cached errors.
         // So, don't cache it for now, until someday we decide to really need to.
-        match x {
-            Ok(value) => !value.is_remote_backed(),
-            Err(_) => false,
-        }
+        x.is_ok()
     }
 
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
