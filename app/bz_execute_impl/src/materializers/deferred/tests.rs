@@ -704,6 +704,57 @@ mod state_machine {
     }
 
     #[tokio::test]
+    async fn test_materialize_directory_with_internal_symlink_dep() -> bz_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let (mut dm, _) = make_processor(Default::default());
+            let digest_config = dm.io.digest_config();
+
+            let artifact_root = make_path("foo/dir");
+            let target_path = make_path("foo/dir/target");
+            let file = FileMetadata::empty(digest_config.cas_digest_config());
+
+            let mut entry = ActionDirectoryBuilder::empty();
+            insert_file(&mut entry, make_path("target"), file.dupe())?;
+            entry.insert(
+                ForwardRelativePath::new("link").unwrap(),
+                ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(Arc::new(Symlink::new(
+                    RelativePathBuf::from_path(Path::new("target"))?,
+                )))),
+            )?;
+
+            let mut deps = ActionDirectoryBuilder::empty();
+            insert_file(&mut deps, target_path, file)?;
+
+            let value = ArtifactValue::new(
+                ActionDirectoryEntry::Dir(
+                    entry
+                        .fingerprint(digest_config.as_directory_serializer())
+                        .shared(&*INTERNER),
+                ),
+                Some(
+                    deps.fingerprint(digest_config.as_directory_serializer())
+                        .shared(&*INTERNER),
+                ),
+            );
+            dm.testing_declare(&artifact_root, value);
+            assert_eq!(dm.io.take_log(), &[(Op::Clean, artifact_root.clone())]);
+
+            let res = tokio::time::timeout(
+                TokioDuration::from_secs(1),
+                dm.materialize_artifact(&artifact_root, EventDispatcher::null())
+                    .ok_or_else(|| internal_error!("Expected a future"))?,
+            )
+            .await
+            .map_err(|_| internal_error!("materialization timed out"))?;
+            res.map_err(|_| internal_error!("error materializing"))?;
+
+            assert_eq!(dm.io.take_log(), &[(Op::Materialize, artifact_root)]);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_materialize_symlink_first_then_target() -> bz_error::Result<()> {
         ignore_stack_overflow_checks_for_future(async {
             // Materialize a symlink, then materialize the target. Test that we still

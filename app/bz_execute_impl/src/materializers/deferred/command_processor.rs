@@ -1295,14 +1295,14 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         event_dispatcher: EventDispatcher,
         priority: Priority,
     ) -> Option<MaterializingFuture> {
-        let stack = MaterializeStack::Child(&stack, path);
+        let error_stack = MaterializeStack::Child(&stack, path);
         // We only add context to outer error, because adding context to the future
         // is expensive. Errors in futures should add stack context themselves.
         match self.materialize_artifact_inner(stack, path, event_dispatcher, priority) {
             Ok(res) => res,
             Err(e) => Some(
                 future::err(SharedMaterializingError::Error(
-                    e.context(format!("materializing {stack}")),
+                    e.context(format!("materializing {error_stack}")),
                 ))
                 .boxed()
                 .shared(),
@@ -1373,6 +1373,12 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             }
             Some(x) => x,
         };
+
+        if stack.contains(path) {
+            tracing::debug!("already covered by ancestor materialization");
+            return Ok(None);
+        }
+        let stack = MaterializeStack::Child(&stack, path);
 
         let cleaning_fut = match &data.processing {
             Processing::Active {
@@ -1454,17 +1460,12 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         let method = entry_and_method.as_ref().map(|(_, m)| m.as_ref());
         // Those are special because if the artifact copies from other artifacts, we must materialize them first
         let materialize_copy_source_tasks =
-            self.materialize_copy_source_tasks(&stack, &event_dispatcher, path, method, priority);
+            self.materialize_copy_source_tasks(&stack, &event_dispatcher, method, priority);
 
         // The artifact might have symlinks pointing to other artifacts. We must
         // materialize them as well, to avoid dangling symlinks.
-        let materialize_symlink_destination_tasks = self.materialize_symlink_destination_tasks(
-            &stack,
-            &event_dispatcher,
-            path,
-            deps,
-            priority,
-        );
+        let materialize_symlink_destination_tasks =
+            self.materialize_symlink_destination_tasks(&stack, &event_dispatcher, deps, priority);
 
         let spawn_dispatcher = event_dispatcher.dupe();
         let priority_control = DynamicPriorityHandle::new(priority);
@@ -1572,7 +1573,6 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         &mut self,
         stack: &MaterializeStack,
         event_dispatcher: &EventDispatcher,
-        path: &ProjectRelativePath,
         deps: Option<ActionSharedDirectory>,
         priority: Priority,
     ) -> Vec<MaterializingFuture> {
@@ -1582,7 +1582,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 .into_iter()
                 .filter_map(|p| {
                     self.materialize_artifact_recurse(
-                        MaterializeStack::Child(stack, path),
+                        *stack,
                         p.as_ref(),
                         event_dispatcher.dupe(),
                         priority,
@@ -1598,7 +1598,6 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         &mut self,
         stack: &MaterializeStack,
         event_dispatcher: &EventDispatcher,
-        path: &ProjectRelativePath,
         method: Option<&ArtifactMaterializationMethod>,
         priority: Priority,
     ) -> Vec<MaterializingFuture> {
@@ -1607,7 +1606,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 .iter()
                 .filter_map(|a| {
                     self.materialize_artifact_recurse(
-                        MaterializeStack::Child(stack, path),
+                        *stack,
                         a.src.as_ref(),
                         event_dispatcher.dupe(),
                         priority,

@@ -21,6 +21,19 @@ pub(crate) enum MaterializeStack<'a> {
     Child(&'a MaterializeStack<'a>, &'a ProjectRelativePath),
 }
 
+impl MaterializeStack<'_> {
+    pub(crate) fn contains(&self, path: &ProjectRelativePath) -> bool {
+        let mut current = *self;
+        while let MaterializeStack::Child(parent, current_path) = current {
+            if current_path == path {
+                return true;
+            }
+            current = *parent;
+        }
+        false
+    }
+}
+
 impl Display for MaterializeStack<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if let MaterializeStack::Empty = self {
@@ -47,4 +60,7 @@ fn test_materialize_stack_display() {
     assert_eq!("foo", s.to_string());
     let s = MaterializeStack::Child(&s, ProjectRelativePath::new("bar/baz").unwrap());
     assert_eq!("foo -> bar/baz", s.to_string());
+    assert!(s.contains(ProjectRelativePath::new("foo").unwrap()));
+    assert!(s.contains(ProjectRelativePath::new("bar/baz").unwrap()));
+    assert!(!s.contains(ProjectRelativePath::new("bar").unwrap()));
 }
