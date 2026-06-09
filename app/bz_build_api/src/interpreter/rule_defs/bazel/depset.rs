@@ -831,6 +831,23 @@ pub fn bazel_depset_is_empty<'v>(value: Value<'v>) -> starlark::Result<bool> {
     Ok(depset_from_value(value)?.is_empty())
 }
 
+/// Returns the depset back when its elements can be rendered to command line
+/// arguments lazily (through `CommandLineArgLike`), producing the same args as
+/// the eager Args element conversion: strings and `File`s. `int`/`bool`
+/// elements need Bazel's scalar-to-string conversion, so they must be
+/// flattened eagerly. Empty depsets are excluded so callers keep the eager
+/// `omit_if_empty` behavior.
+pub(crate) fn bazel_depset_for_lazy_command_line<'v>(value: Value<'v>) -> Option<Value<'v>> {
+    let depset = BazelDepset::from_value(value)?;
+    if depset.is_empty() {
+        return None;
+    }
+    match depset.element_type() {
+        Some("string") | Some("File") => Some(value),
+        _ => None,
+    }
+}
+
 fn check_element_type(element_type: &mut Option<String>, value: Value) -> bz_error::Result<()> {
     let actual = value.get_type();
     match element_type {

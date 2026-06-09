@@ -76,6 +76,7 @@ use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::Starlar
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::bazel::depset::BazelDepset;
+use crate::interpreter::rule_defs::bazel::depset::bazel_depset_for_lazy_command_line;
 use crate::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
@@ -1120,6 +1121,33 @@ fn bazel_args_extend_mapped_value<'v>(
     Ok(())
 }
 
+/// Collect the values added by `Args.add_all`/`Args.add_joined`.
+///
+/// Like Bazel (StarlarkCustomCommandLine stores the NestedSet unexpanded),
+/// a depset is kept as a single lazy value whenever per-element work is not
+/// requested: its flattening and input-artifact projection are then memoized
+/// on the depset and shared by every action that adds it, instead of being
+/// re-materialized per call at analysis time.
+fn bazel_args_collect_values<'v>(
+    values: Value<'v>,
+    map_each: NoneOr<StarlarkCallable<'v>>,
+    uniquify: bool,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    if map_each.is_none() && !uniquify {
+        if let Some(lazy) = bazel_depset_for_lazy_command_line(values) {
+            return Ok(vec![lazy]);
+        }
+    }
+    let mut values = bazel_args_values(values, eval.heap())?;
+    values = bazel_args_apply_map_each(values, map_each, eval)?;
+    values = bazel_args_stringify_scalars(values, eval.heap());
+    if uniquify {
+        bazel_args_uniquify(&mut values);
+    }
+    Ok(values)
+}
+
 fn bazel_args_apply_map_each<'v>(
     values: Vec<Value<'v>>,
     map_each: NoneOr<StarlarkCallable<'v>>,
@@ -1306,14 +1334,9 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
             }
             None => (None, arg_name_or_values),
         };
-        let mut values = bazel_args_values(values, eval.heap())?;
-        values = bazel_args_apply_map_each(values, map_each, eval)?;
-        values = bazel_args_stringify_scalars(values, eval.heap());
+        let values = bazel_args_collect_values(values, map_each, uniquify, eval)?;
         if values.is_empty() && omit_if_empty {
             return Ok(this);
-        }
-        if uniquify {
-            bazel_args_uniquify(&mut values);
         }
         if let Some(arg_name) = arg_name {
             this.borrow
@@ -1366,14 +1389,9 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
             }
             None => (None, arg_name_or_values),
         };
-        let mut values = bazel_args_values(values, eval.heap())?;
-        values = bazel_args_apply_map_each(values, map_each, eval)?;
-        values = bazel_args_stringify_scalars(values, eval.heap());
+        let values = bazel_args_collect_values(values, map_each, uniquify, eval)?;
         if values.is_empty() && omit_if_empty {
             return Ok(this);
-        }
-        if uniquify {
-            bazel_args_uniquify(&mut values);
         }
         if let Some(arg_name) = arg_name {
             this.borrow
