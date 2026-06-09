@@ -1583,6 +1583,163 @@ struct BzlmodDiscoveryResult {
     discovered: DiscoveredBcrModules,
 }
 
+/// Bump when the discovery walk or `DiscoveredBcrModule` parsing changes in a
+/// way that affects the cached result.
+const BZLMOD_DISCOVERY_RESULT_CACHE_VERSION: u32 = 1;
+
+/// On-disk copy of a completed bzlmod discovery walk, so a fresh daemon can
+/// skip re-reading and re-parsing every registry MODULE.bazel file when none
+/// of the discovery inputs changed. This is the same idea as Bazel's
+/// MODULE.bazel.lock: registry module files are immutable per (name, version),
+/// so the walk is a pure function of the root module, overrides, and registry.
+#[derive(Serialize, Deserialize)]
+struct CachedBzlmodDiscoveryResult {
+    fingerprint: String,
+    modules: Vec<DiscoveredBcrModule>,
+}
+
+fn bzlmod_discovery_result_cache_path() -> ProjectRelativePathBuf {
+    ProjectRelativePathBuf::unchecked_new(
+        "buck-out/v2/cache/bzlmod_discovery/result.json".to_owned(),
+    )
+}
+
+fn bzlmod_fingerprint_str(hasher: &mut blake3::Hasher, value: &str) {
+    hasher.update(&(value.len() as u64).to_le_bytes());
+    hasher.update(value.as_bytes());
+}
+
+fn bzlmod_fingerprint_opt_str(hasher: &mut blake3::Hasher, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hasher.update(&[1]);
+            bzlmod_fingerprint_str(hasher, value);
+        }
+        None => {
+            hasher.update(&[0]);
+        }
+    }
+}
+
+fn bzlmod_fingerprint_dep(hasher: &mut blake3::Hasher, dep: &BazelDep) {
+    bzlmod_fingerprint_str(hasher, &dep.name);
+    bzlmod_fingerprint_str(hasher, &dep.version);
+    bzlmod_fingerprint_opt_str(hasher, dep.apparent_name.as_deref());
+}
+
+fn bzlmod_fingerprint_patches(hasher: &mut blake3::Hasher, patches: &[BzlmodRootPatch]) {
+    hasher.update(&(patches.len() as u64).to_le_bytes());
+    for patch in patches {
+        bzlmod_fingerprint_str(hasher, &patch.path);
+        bzlmod_fingerprint_str(hasher, &patch.content);
+    }
+}
+
+fn bzlmod_discovery_result_fingerprint(
+    root: &BzlmodRootResolutionInput,
+    registry: &BzlmodRegistryValue,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&BZLMOD_DISCOVERY_RESULT_CACHE_VERSION.to_le_bytes());
+    bzlmod_fingerprint_str(&mut hasher, &registry.url);
+    for (file, hash) in &registry.registry_file_hashes {
+        bzlmod_fingerprint_str(&mut hasher, file);
+        bzlmod_fingerprint_opt_str(&mut hasher, hash.as_deref());
+    }
+    for ((name, version), reason) in &registry.selected_yanked_versions {
+        bzlmod_fingerprint_str(&mut hasher, name);
+        bzlmod_fingerprint_str(&mut hasher, version);
+        bzlmod_fingerprint_str(&mut hasher, reason);
+    }
+    bzlmod_fingerprint_str(&mut hasher, &root.root_module.name);
+    hasher.update(&(root.root_deps.len() as u64).to_le_bytes());
+    for dep in &root.root_deps {
+        bzlmod_fingerprint_dep(&mut hasher, dep);
+    }
+    // Covers the deps of the builtin bazel_tools module, which seed the walk.
+    bzlmod_fingerprint_str(&mut hasher, BAZEL_TOOLS_MODULE_TOOLS);
+    for (name, archive_override) in &root.archive_overrides {
+        bzlmod_fingerprint_str(&mut hasher, name);
+        bzlmod_fingerprint_str(&mut hasher, &archive_override.module_name);
+        hasher.update(&(archive_override.urls.len() as u64).to_le_bytes());
+        for url in &archive_override.urls {
+            bzlmod_fingerprint_str(&mut hasher, url);
+        }
+        bzlmod_fingerprint_str(&mut hasher, &archive_override.integrity);
+        bzlmod_fingerprint_opt_str(&mut hasher, archive_override.strip_prefix.as_deref());
+        bzlmod_fingerprint_opt_str(&mut hasher, archive_override.archive_type.as_deref());
+        bzlmod_fingerprint_patches(&mut hasher, &archive_override.patches);
+        hasher.update(&archive_override.patch_strip.unwrap_or(u32::MAX).to_le_bytes());
+    }
+    for (name, single_version_override) in &root.single_version_overrides {
+        bzlmod_fingerprint_str(&mut hasher, name);
+        bzlmod_fingerprint_opt_str(&mut hasher, single_version_override.version.as_deref());
+        bzlmod_fingerprint_patches(&mut hasher, &single_version_override.patches);
+        hasher.update(
+            &single_version_override
+                .patch_strip
+                .unwrap_or(u32::MAX)
+                .to_le_bytes(),
+        );
+    }
+    for (name, local_path_override) in &root.local_path_overrides {
+        bzlmod_fingerprint_str(&mut hasher, name);
+        bzlmod_fingerprint_str(&mut hasher, &local_path_override.module_name);
+        bzlmod_fingerprint_str(&mut hasher, &local_path_override.path);
+        bzlmod_fingerprint_str(&mut hasher, &local_path_override.module_text);
+        for (include, text) in &local_path_override.included_module_texts {
+            bzlmod_fingerprint_str(&mut hasher, include);
+            bzlmod_fingerprint_str(&mut hasher, text);
+        }
+    }
+    hex::encode(blake3::Hasher::finalize(&hasher).as_bytes())
+}
+
+fn read_bzlmod_discovery_result_cache(
+    project_fs: &ProjectRoot,
+    fingerprint: &str,
+) -> Option<DiscoveredBcrModules> {
+    let contents =
+        read_bzlmod_bcr_discovery_cache(project_fs, &bzlmod_discovery_result_cache_path())
+            .ok()??;
+    let cached: CachedBzlmodDiscoveryResult = serde_json::from_str(&contents).ok()?;
+    if cached.fingerprint != fingerprint {
+        return None;
+    }
+    Some(
+        cached
+            .modules
+            .into_iter()
+            .map(|module| ((module.dep.name.clone(), module.dep.version.clone()), module))
+            .collect(),
+    )
+}
+
+fn write_bzlmod_discovery_result_cache(
+    project_fs: &ProjectRoot,
+    fingerprint: &str,
+    discovered: &DiscoveredBcrModules,
+) {
+    let cached = CachedBzlmodDiscoveryResult {
+        fingerprint: fingerprint.to_owned(),
+        modules: discovered.values().cloned().collect(),
+    };
+    let contents = match serde_json::to_string(&cached) {
+        Ok(contents) => contents,
+        Err(error) => {
+            tracing::warn!("Error serializing bzlmod discovery result cache: {}", error);
+            return;
+        }
+    };
+    if let Err(error) = write_bzlmod_bcr_discovery_cache(
+        project_fs,
+        &bzlmod_discovery_result_cache_path(),
+        &contents,
+    ) {
+        tracing::warn!("Error writing bzlmod discovery result cache: {}", error);
+    }
+}
+
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("BAZEL_DEP_GRAPH(discovery)")]
 #[pagable_typetag(dice::DiceKeyDyn)]
@@ -1598,6 +1755,12 @@ impl Key for BzlmodDiscoveryKey {
         _cancellations: &CancellationContext,
     ) -> Self::Value {
         let root = ctx.compute(&BzlmodRootModuleKey).await??;
+        let registry = ctx.compute(&bzlmod_default_registry_key()).await??;
+        let project_fs = ctx.global_data().get_io_provider().project_root().dupe();
+        let fingerprint = bzlmod_discovery_result_fingerprint(&root, &registry);
+        if let Some(discovered) = read_bzlmod_discovery_result_cache(&project_fs, &fingerprint) {
+            return Ok(Arc::new(BzlmodDiscoveryResult { discovered }));
+        }
         let mut discovered = DiscoveredBcrModules::new();
         let mut scheduled = BTreeSet::<(String, String)>::new();
         let mut frontier = Vec::new();
@@ -1646,6 +1809,7 @@ impl Key for BzlmodDiscoveryKey {
                 discovered.insert(key, (*module).clone());
             }
         }
+        write_bzlmod_discovery_result_cache(&project_fs, &fingerprint, &discovered);
         Ok(Arc::new(BzlmodDiscoveryResult { discovered }))
     }
 
