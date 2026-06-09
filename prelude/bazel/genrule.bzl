@@ -67,6 +67,10 @@ def _expand_make_variables(ctx, command, srcs, outs, output_names):
 
     return ctx.expand_make_variables("cmd", command, substitutions)
 
+# Matches the strictness that Bazel's genrule applies by sourcing
+# @bazel_tools//tools/genrule:genrule-setup.sh before every bash command.
+_GENRULE_SETUP = "set -e; set -u; set -o pipefail; "
+
 def _dollar_escape_placeholder(command):
     placeholder = "__BUCK_BAZEL_GENRULE_DOLLAR__"
     for _ in range(100):
@@ -129,7 +133,7 @@ def _bazel_genrule_impl(ctx):
         inputs = inputs + [ctx.info_file, ctx.version_file]
 
     ctx.actions.run_shell(
-        command = command,
+        command = _GENRULE_SETUP + command,
         inputs = depset(inputs),
         tools = depset(tools),
         outputs = outs,
