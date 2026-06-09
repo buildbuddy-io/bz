@@ -12,9 +12,11 @@ use starlark::values::ValueLifetimeless;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::dict::AllocDict;
+use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::AllocList;
+use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 
@@ -52,6 +54,51 @@ pub(crate) fn make_run_environment_info<'v>(
     RunEnvironmentInfo {
         environment: ValueOfUnchecked::new(environment),
         inherited_environment: ValueOfUnchecked::new(inherited_environment),
+    }
+}
+
+impl FrozenRunEnvironmentInfo {
+    pub fn environment(&self) -> bz_error::Result<Vec<(String, String)>> {
+        let environment =
+            DictRef::from_value(self.environment.get().to_value()).ok_or_else(|| {
+                bz_error::internal_error!("RunEnvironmentInfo.environment should be a dict")
+            })?;
+        environment
+            .iter()
+            .map(|(name, value)| {
+                let name = name.unpack_str().ok_or_else(|| {
+                    bz_error::internal_error!(
+                        "RunEnvironmentInfo.environment keys should be strings"
+                    )
+                })?;
+                let value = value.unpack_str().ok_or_else(|| {
+                    bz_error::internal_error!(
+                        "RunEnvironmentInfo.environment values should be strings"
+                    )
+                })?;
+                Ok((name.to_owned(), value.to_owned()))
+            })
+            .collect()
+    }
+
+    pub fn inherited_environment(&self) -> bz_error::Result<Vec<String>> {
+        let inherited_environment =
+            ListRef::from_value(self.inherited_environment.get().to_value()).ok_or_else(|| {
+                bz_error::internal_error!(
+                    "RunEnvironmentInfo.inherited_environment should be a list"
+                )
+            })?;
+        inherited_environment
+            .iter()
+            .map(|name| {
+                let name = name.unpack_str().ok_or_else(|| {
+                    bz_error::internal_error!(
+                        "RunEnvironmentInfo.inherited_environment values should be strings"
+                    )
+                })?;
+                Ok(name.to_owned())
+            })
+            .collect()
     }
 }
 

@@ -70,6 +70,7 @@ use crate::artifact_groups::ArtifactGroup;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueIsInputArtifactAnnotation;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_short_path;
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::bazel::depset::BazelDepset;
 use crate::interpreter::rule_defs::bazel::depset::FrozenBazelDepset;
@@ -80,7 +81,10 @@ use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_frozen_value
 use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_transitive;
 use crate::interpreter::rule_defs::bazel::depset::bazel_depset_from_values;
 use crate::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
+use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
+use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::context::bazel_runfiles_prefix;
 use crate::interpreter::rule_defs::provider::ProviderCollection;
@@ -719,6 +723,21 @@ pub fn bazel_files_to_run_executable<'v>(value: Value<'v>) -> Option<Value<'v>> 
     })
 }
 
+pub fn bazel_files_to_run_add_executable_to_command_line<'v>(
+    value: Value<'v>,
+    cli: &mut dyn CommandLineBuilder,
+    context: &mut dyn CommandLineContext,
+    artifact_path_mapping: &dyn ArtifactPathMapper,
+) -> bz_error::Result<bool> {
+    let Some(executable) = bazel_files_to_run_executable(value) else {
+        return Ok(false);
+    };
+    ValueAsCommandLineLike::unpack_value_err(executable)?
+        .0
+        .add_to_command_line(cli, context, artifact_path_mapping)?;
+    Ok(true)
+}
+
 pub fn bazel_files_to_run_runfiles<'v>(value: Value<'v>) -> Option<Value<'v>> {
     StructRef::from_value(value).and_then(|st| {
         st.iter().find_map(|(name, value)| {
@@ -1169,6 +1188,82 @@ impl FrozenDefaultInfo {
         }
 
         Ok(())
+    }
+
+    pub fn for_each_default_runfiles_entry(
+        &self,
+        processor: &mut dyn FnMut(String, Artifact) -> bz_error::Result<()>,
+    ) -> bz_error::Result<()> {
+        let runfiles = self.default_runfiles.get().to_value();
+        let runfiles = runfiles
+            .downcast_ref::<FrozenBazelRunfiles>()
+            .ok_or_else(|| internal_error!("DefaultInfo.default_runfiles should be runfiles"))?;
+
+        for value in bazel_depset_to_list(runfiles.files.get().to_value())? {
+            let artifact = ValueAsInputArtifactLike::unpack_value_err(value)?
+                .0
+                .get_bound_artifact()?;
+            let path =
+                bazel_runfiles_prefixed_path(&bazel_artifact_short_path(artifact.get_path()));
+            processor(path, artifact)?;
+        }
+
+        for value in bazel_depset_to_list(runfiles.symlinks.get().to_value())? {
+            let (path, target_file) = if let Some(symlink) = BazelSymlinkEntry::from_value(value) {
+                (
+                    bazel_runfiles_prefixed_path(&symlink.path),
+                    symlink.target_file.to_value(),
+                )
+            } else if let Some(symlink) = value.downcast_ref::<FrozenBazelSymlinkEntry>() {
+                (
+                    bazel_runfiles_prefixed_path(&symlink.path),
+                    symlink.target_file.to_value(),
+                )
+            } else {
+                return Err(internal_error!(
+                    "DefaultInfo.default_runfiles symlink entry should be SymlinkEntry"
+                ));
+            };
+            let artifact = ValueAsInputArtifactLike::unpack_value_err(target_file)?
+                .0
+                .get_bound_artifact()?;
+            processor(path, artifact)?;
+        }
+
+        for value in bazel_depset_to_list(runfiles.root_symlinks.get().to_value())? {
+            let (path, target_file) = if let Some(symlink) = BazelSymlinkEntry::from_value(value) {
+                (symlink.path.clone(), symlink.target_file.to_value())
+            } else if let Some(symlink) = value.downcast_ref::<FrozenBazelSymlinkEntry>() {
+                (symlink.path.clone(), symlink.target_file.to_value())
+            } else {
+                return Err(internal_error!(
+                    "DefaultInfo.default_runfiles root symlink entry should be SymlinkEntry"
+                ));
+            };
+            let artifact = ValueAsInputArtifactLike::unpack_value_err(target_file)?
+                .0
+                .get_bound_artifact()?;
+            processor(path, artifact)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn default_runfiles_empty_filenames(&self) -> bz_error::Result<Vec<String>> {
+        let runfiles = self.default_runfiles.get().to_value();
+        let runfiles = runfiles
+            .downcast_ref::<FrozenBazelRunfiles>()
+            .ok_or_else(|| internal_error!("DefaultInfo.default_runfiles should be runfiles"))?;
+
+        bazel_depset_to_list(runfiles.empty_filenames.get().to_value())?
+            .into_iter()
+            .map(|value| {
+                let path = value
+                    .unpack_str()
+                    .ok_or_else(|| internal_error!("runfiles.empty_filenames should be strings"))?;
+                Ok(bazel_runfiles_prefixed_path(path))
+            })
+            .collect()
     }
 
     pub fn for_each_output(

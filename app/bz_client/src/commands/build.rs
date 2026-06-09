@@ -796,6 +796,9 @@ mod tests {
             configuration: "cfg".to_owned(),
             configured_graph_size: None,
             target_rule_type_name: None,
+            run_environment: Vec::new(),
+            run_inherited_environment: Vec::new(),
+            run: None,
         }
     }
 

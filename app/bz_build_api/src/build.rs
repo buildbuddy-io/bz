@@ -88,6 +88,7 @@ pub struct ConfiguredBuildTargetResultGen<T> {
     pub outputs: Vec<Timed<T>>,
     pub provider_collection: Option<FrozenProviderCollectionValue>,
     pub target_rule_type_name: Option<String>,
+    pub bazel_target_args: Vec<String>,
     pub graph_properties: Option<bz_error::Result<MaybeCompatible<GraphPropertiesValues>>>,
     pub errors: Vec<Timed<bz_error::Error>>,
 }
@@ -233,6 +234,7 @@ impl BuildTargetResultBuilder {
             ConfiguredBuildEventVariant::Prepared {
                 provider_collection,
                 target_rule_type_name,
+                bazel_target_args,
             } => {
                 self.res
                     .entry(label.dupe())
@@ -240,6 +242,7 @@ impl BuildTargetResultBuilder {
                         outputs: Vec::new(),
                         provider_collection,
                         target_rule_type_name: Some(target_rule_type_name),
+                        bazel_target_args,
                         graph_properties: None,
                         errors: Vec::new(),
                     }));
@@ -307,6 +310,7 @@ impl BuildTargetResultBuilder {
                         outputs: Vec::new(),
                         provider_collection: None,
                         target_rule_type_name: None,
+                        bazel_target_args: Vec::new(),
                         graph_properties: None,
                         errors: Vec::new(),
                     }))
@@ -379,6 +383,7 @@ impl BuildTargetResultBuilder {
                         outputs,
                         provider_collection: result.provider_collection.clone(),
                         target_rule_type_name: result.target_rule_type_name.clone(),
+                        bazel_target_args: result.bazel_target_args.clone(),
                         graph_properties: result.graph_properties.clone(),
                         errors: result.errors.clone(),
                     }
@@ -463,6 +468,7 @@ pub enum ConfiguredBuildEventVariant {
     Prepared {
         provider_collection: Option<FrozenProviderCollectionValue>,
         target_rule_type_name: String,
+        bazel_target_args: Vec<String>,
     },
     Execution(ConfiguredBuildEventExecutionVariant),
     GraphProperties {

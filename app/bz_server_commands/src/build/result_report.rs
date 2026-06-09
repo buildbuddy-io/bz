@@ -22,6 +22,8 @@ use bz_build_api::build::ProviderArtifacts;
 use bz_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
 use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::run_environment_info::FrozenRunEnvironmentInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_add_executable_to_command_line;
 use bz_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
 use bz_certs::validate::CertState;
 use bz_certs::validate::check_cert_state;
@@ -45,8 +47,11 @@ use crate::build::bazel_output_symlinks::BazelOutputSymlinkPaths;
 
 mod proto {
     pub(crate) use bz_cli_proto::BuildTarget;
+    pub(crate) use bz_cli_proto::ClientEnvironmentVariable;
     pub(crate) use bz_cli_proto::build_target::BuildOutput;
+    pub(crate) use bz_cli_proto::build_target::RunSpec;
     pub(crate) use bz_cli_proto::build_target::build_output::BuildOutputProviders;
+    pub(crate) use bz_cli_proto::build_target::run_spec::Runfile;
 }
 
 /// Simple container for multiple [`bz_error::Error`]s
@@ -220,12 +225,27 @@ impl<'a> ResultReporter<'a> {
             None => None,
         };
 
-        let run_args = if let Some(providers) = result.provider_collection.as_ref() {
-            if let Some(runinfo) = providers
-                .provider_collection()
-                .builtin_provider::<FrozenRunInfo>()
-            {
-                // Produce arguments to run on a local machine.
+        let (run_args, run_environment, run_inherited_environment, run_spec) =
+            if let Some(providers) = result.provider_collection.as_ref() {
+                let provider_collection = providers.provider_collection();
+                let (run_environment, run_inherited_environment) =
+                    if let Some(run_environment_info) =
+                        provider_collection.builtin_provider::<FrozenRunEnvironmentInfo>()
+                    {
+                        (
+                            run_environment_info
+                                .environment()?
+                                .into_iter()
+                                .map(|(name, value)| proto::ClientEnvironmentVariable {
+                                    name,
+                                    value: Some(value),
+                                })
+                                .collect(),
+                            run_environment_info.inherited_environment()?,
+                        )
+                    } else {
+                        (Vec::new(), Vec::new())
+                    };
                 let path_separator = if cfg!(windows) {
                     PathSeparatorKind::Windows
                 } else {
@@ -236,12 +256,60 @@ impl<'a> ResultReporter<'a> {
                 let mut ctx = AbsCommandLineContext::new(&executor_fs);
                 let error_counting_artifact_path_mapper =
                     ErrorCountingArtifactPathMapperImpl::new(artifact_path_mapping);
-                runinfo.add_to_command_line(
-                    &mut cli,
-                    &mut ctx,
-                    &error_counting_artifact_path_mapper,
-                )?;
-                if error_counting_artifact_path_mapper
+                let mut added_bazel_files_to_run = false;
+                let mut run_spec = None;
+                if let Ok(default_info) = provider_collection.default_info() {
+                    // Bazel executable rules expose DefaultInfo.files_to_run instead of Buck RunInfo.
+                    added_bazel_files_to_run = bazel_files_to_run_add_executable_to_command_line(
+                        default_info.files_to_run_raw().to_value(),
+                        &mut cli,
+                        &mut ctx,
+                        &error_counting_artifact_path_mapper,
+                    )?;
+                    if added_bazel_files_to_run && let Some(executable) = cli.first() {
+                        let mut runfiles = Vec::new();
+                        default_info.for_each_default_runfiles_entry(&mut |path, artifact| {
+                            runfiles.push(proto::Runfile {
+                                path,
+                                target_path: artifact
+                                    .resolve_path(
+                                        self.artifact_fs,
+                                        error_counting_artifact_path_mapper.get(&artifact),
+                                    )?
+                                    .to_string(),
+                            });
+                            Ok(())
+                        })?;
+                        let runfiles_dir = format!("{executable}.runfiles");
+                        let execroot = format!(
+                            "{}/__bazel_execroot",
+                            self.artifact_fs.buck_out_path_resolver().root()
+                        );
+                        run_spec = Some(proto::RunSpec {
+                            executable: executable.clone(),
+                            target_args: result.bazel_target_args.clone(),
+                            runfiles_dir: runfiles_dir.clone(),
+                            working_directory: runfiles_dir,
+                            environment: run_environment.clone(),
+                            inherited_environment: run_inherited_environment.clone(),
+                            environment_to_clear: Vec::new(),
+                            execroot,
+                            runfiles,
+                            empty_filenames: default_info.default_runfiles_empty_filenames()?,
+                        });
+                    }
+                }
+                if !added_bazel_files_to_run
+                    && let Some(runinfo) = provider_collection.builtin_provider::<FrozenRunInfo>()
+                {
+                    // Produce arguments to run on a local machine.
+                    runinfo.add_to_command_line(
+                        &mut cli,
+                        &mut ctx,
+                        &error_counting_artifact_path_mapper,
+                    )?;
+                }
+                let run_args = if error_counting_artifact_path_mapper
                     .content_based_paths_with_no_hash
                     .get()
                     > 0
@@ -252,13 +320,16 @@ impl<'a> ResultReporter<'a> {
                     Vec::new()
                 } else {
                     cli
-                }
+                };
+                (
+                    run_args,
+                    run_environment,
+                    run_inherited_environment,
+                    run_spec,
+                )
             } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
+                (Vec::new(), Vec::new(), Vec::new(), None)
+            };
 
         match pattern_modifiers {
             Some(modifiers) => {
@@ -275,6 +346,9 @@ impl<'a> ResultReporter<'a> {
                         target_rule_type_name: result.target_rule_type_name.clone(),
                         outputs: outputs.clone(),
                         configured_graph_size,
+                        run_environment: run_environment.clone(),
+                        run_inherited_environment: run_inherited_environment.clone(),
+                        run: run_spec.clone(),
                     });
                 }
             }
@@ -285,6 +359,9 @@ impl<'a> ResultReporter<'a> {
                 target_rule_type_name: result.target_rule_type_name.clone(),
                 outputs,
                 configured_graph_size,
+                run_environment,
+                run_inherited_environment,
+                run: run_spec,
             }),
         }
         Ok(())

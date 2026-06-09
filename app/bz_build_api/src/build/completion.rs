@@ -6,6 +6,9 @@ use bz_core::configuration::compatibility::MaybeCompatible;
 use bz_core::provider::label::ConfiguredProvidersLabel;
 use bz_error::BuckErrorContext;
 use bz_events::dispatch::console_message;
+use bz_node::attrs::configured_attr::ConfiguredAttr;
+use bz_node::attrs::inspect_options::AttrInspectOptions;
+use bz_node::nodes::configured::ConfiguredTargetNode;
 use bz_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -195,6 +198,7 @@ async fn compute_target_completion(
         .get_configured_target_node(key.providers_label.target())
         .await
         .require_compatible()?;
+    let bazel_target_args = bazel_target_run_args(&node)?;
 
     ctx.top_level_target(TopLevelTargetSpec {
         label: key.providers_label.dupe(),
@@ -233,6 +237,7 @@ async fn compute_target_completion(
             variant: ConfiguredBuildEventVariant::Prepared {
                 provider_collection: provider_collection.clone(),
                 target_rule_type_name: target_rule_type_name.clone(),
+                bazel_target_args,
             },
         },
     )?;
@@ -374,6 +379,27 @@ async fn compute_target_completion(
     }
 
     Ok(MaybeCompatible::Compatible(Arc::new(TargetCompletionValue)))
+}
+
+fn bazel_target_run_args(node: &ConfiguredTargetNode) -> bz_error::Result<Vec<String>> {
+    if !node.is_bazel_rule() {
+        return Ok(Vec::new());
+    }
+    let Some(attr) = node.get("args", AttrInspectOptions::All) else {
+        return Ok(Vec::new());
+    };
+    let ConfiguredAttr::List(args) = &attr.value else {
+        return Ok(Vec::new());
+    };
+    args.iter()
+        .map(|arg| match arg {
+            ConfiguredAttr::String(value) => Ok(value.0.to_string()),
+            other => Err(bz_error::internal_error!(
+                "Bazel executable `args` attr should contain strings, got `{:?}`",
+                other
+            )),
+        })
+        .collect()
 }
 
 pub(crate) fn emit_configured_build_event(

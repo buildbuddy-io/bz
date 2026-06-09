@@ -623,6 +623,30 @@ message InstallRequest {
 message BuildTarget {
   string target = 1;
   repeated string run_args = 2;
+  message RunSpec {
+    message Runfile {
+      // Path relative to the runfiles root.
+      string path = 1;
+      // Path relative to the project root.
+      string target_path = 2;
+    }
+
+    // Path to the executable, relative to the project root unless absolute.
+    string executable = 1;
+    repeated string target_args = 2;
+    // Path to the runfiles root, relative to the project root unless absolute.
+    string runfiles_dir = 3;
+    // Path to the default working directory, relative to the project root unless absolute.
+    string working_directory = 4;
+    repeated ClientEnvironmentVariable environment = 5;
+    repeated string inherited_environment = 6;
+    repeated string environment_to_clear = 7;
+    // Path to the execroot, relative to the project root unless absolute.
+    string execroot = 8;
+    repeated Runfile runfiles = 9;
+    // Empty files to create, relative to the runfiles root.
+    repeated string empty_filenames = 10;
+  }
   message BuildOutput {
     // Path relative to the project root
     string path = 1;
@@ -643,6 +667,9 @@ message BuildTarget {
   // not skipped.
   optional uint64 configured_graph_size = 5;
   optional string target_rule_type_name = 6;
+  repeated ClientEnvironmentVariable run_environment = 7;
+  repeated string run_inherited_environment = 8;
+  optional RunSpec run = 9;
 }
 
 message BuildResponse {
