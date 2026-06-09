@@ -482,12 +482,35 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         hash_cache: &mut BazelDepsetHashCache<'v>,
         limit: usize,
     ) -> starlark::Result<()> {
+        let mut first = None;
+        self.find_unique_value_up_to(
+            count,
+            &mut first,
+            seen_values,
+            seen_depsets,
+            hash_cache,
+            limit,
+        )
+    }
+
+    fn find_unique_value_up_to(
+        &self,
+        count: &mut usize,
+        first: &mut Option<Value<'v>>,
+        seen_values: &mut SmallSet<Value<'v>>,
+        seen_depsets: &mut SmallSet<Value<'v>>,
+        hash_cache: &mut BazelDepsetHashCache<'v>,
+        limit: usize,
+    ) -> starlark::Result<()> {
         for value in &self.direct {
             let value = value.to_value();
             if seen_values.insert_hashed(Hashed::new_unchecked(
                 bazel_depset_hash(value, hash_cache)?,
                 value,
             )) {
+                if first.is_none() {
+                    *first = Some(value);
+                }
                 *count += 1;
                 if *count > limit {
                     return Ok(());
@@ -498,8 +521,9 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         for transitive in &self.transitive {
             let transitive = transitive.to_value();
             if seen_depsets.insert_hashed(bazel_depset_identity_hash(transitive)) {
-                depset_from_value(transitive)?.count_unique_values_up_to(
+                depset_from_value(transitive)?.find_unique_value_up_to(
                     count,
+                    first,
                     seen_values,
                     seen_depsets,
                     hash_cache,
@@ -779,6 +803,24 @@ pub fn bazel_depset_is_singleton<'v>(value: Value<'v>) -> starlark::Result<bool>
         1,
     )?;
     Ok(count == 1)
+}
+
+pub fn bazel_depset_get_singleton<'v>(value: Value<'v>) -> starlark::Result<Option<Value<'v>>> {
+    let mut count = 0;
+    let mut singleton = None;
+    let mut seen_values = SmallSet::new();
+    let mut seen_depsets = SmallSet::new();
+    seen_depsets.insert_hashed(bazel_depset_identity_hash(value));
+    let mut hash_cache = BazelDepsetHashCache::default();
+    depset_from_value(value)?.find_unique_value_up_to(
+        &mut count,
+        &mut singleton,
+        &mut seen_values,
+        &mut seen_depsets,
+        &mut hash_cache,
+        1,
+    )?;
+    Ok(if count == 1 { singleton } else { None })
 }
 
 pub fn bazel_depset_is_empty<'v>(value: Value<'v>) -> starlark::Result<bool> {

@@ -3,6 +3,7 @@ use std::fmt;
 
 use allocative::Allocative;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_get_singleton;
 use bz_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_is_singleton;
 use bz_build_api::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
 use bz_build_api::interpreter::rule_defs::context::bazel_analysis_context_declare_file;
@@ -69,6 +70,7 @@ impl<'v> StarlarkValue<'v> for BazelPyInternal {
             "get_current_os_name".to_owned(),
             "get_label_repo_runfiles_path".to_owned(),
             "get_legacy_external_runfiles".to_owned(),
+            "get_singleton_depset".to_owned(),
             "is_bzlmod_enabled".to_owned(),
             "is_singleton_depset".to_owned(),
             "is_tool_configuration".to_owned(),
@@ -309,6 +311,16 @@ fn bazel_py_internal_methods(builder: &mut MethodsBuilder) {
         value: Value<'v>,
     ) -> starlark::Result<bool> {
         bazel_depset_is_singleton(value)
+    }
+
+    fn get_singleton_depset<'v>(
+        #[starlark(this)] _this: &BazelPyInternal,
+        value: Value<'v>,
+    ) -> starlark::Result<NoneOr<Value<'v>>> {
+        Ok(match bazel_depset_get_singleton(value)? {
+            Some(value) => NoneOr::Other(value),
+            None => NoneOr::None,
+        })
     }
 
     fn regex_match<'v>(

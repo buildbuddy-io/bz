@@ -4,6 +4,8 @@ load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 load(":aspect_rule_attrs.bzl", "go_proto_like", "proto_like")
 load(":aspect_toolchains.bzl", "consumer", "leaf", "missing_toolchain_consumer", "required_leaf")
+load(":ctx_var.bzl", "ctx_var_mutator", "ctx_var_reader")
+load(":filegroup_check.bzl", "filegroup_executable_check")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -109,4 +111,33 @@ genrule(
     local = True,
     message = "Generating local output_to_bindir genrule",
     output_to_bindir = True,
+)
+
+ctx_var_reader(name = "ctx_var_reader")
+
+ctx_var_mutator(name = "ctx_var_mutator")
+
+filegroup(
+    name = "singleton_filegroup",
+    srcs = ["lib.go"],
+)
+
+filegroup(
+    name = "multiple_filegroup",
+    srcs = [
+        "lib.go",
+        "main.go",
+    ],
+)
+
+filegroup_executable_check(
+    name = "singleton_filegroup_executable_check",
+    dep = ":singleton_filegroup",
+    should_have_executable = True,
+)
+
+filegroup_executable_check(
+    name = "multiple_filegroup_executable_check",
+    dep = ":multiple_filegroup",
+    should_have_executable = False,
 )

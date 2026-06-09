@@ -74,3 +74,26 @@ async def test_bazel_aspect_rule_attrs_can_resolve_base_target_deps(buck: Buck) 
 @buck_test()
 async def test_bazel_genrule_local_output_to_bindir_attrs(buck: Buck) -> None:
     await buck.build("//:local_output_to_bindir_genrule")
+
+
+@buck_test()
+async def test_bazel_ctx_var_can_read_make_variables(buck: Buck) -> None:
+    await buck.build("//:ctx_var_reader")
+
+
+@buck_test()
+async def test_bazel_ctx_var_is_immutable(buck: Buck) -> None:
+    await expect_failure(
+        buck.build("//:ctx_var_mutator"),
+        stderr_regex="Immutable",
+    )
+
+
+@buck_test()
+async def test_bazel_filegroup_singleton_executable(buck: Buck) -> None:
+    await buck.build("//:singleton_filegroup_executable_check")
+
+
+@buck_test()
+async def test_bazel_filegroup_multiple_files_has_no_executable(buck: Buck) -> None:
+    await buck.build("//:multiple_filegroup_executable_check")

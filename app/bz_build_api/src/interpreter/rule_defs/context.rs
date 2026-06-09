@@ -50,10 +50,14 @@ use starlark::environment::MethodsBuilder;
 use starlark::environment::MethodsStatic;
 use starlark::eval::Arguments;
 use starlark::eval::Evaluator;
+use starlark::singleton_heap_name;
 use starlark::typing::Ty;
 use starlark::values::AllocValue;
+use starlark::values::FrozenHeap;
+use starlark::values::FrozenHeapName;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
+use starlark::values::OwnedFrozenValue;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
@@ -689,6 +693,8 @@ pub struct AnalysisContext<'v> {
     bazel_info_file: RefCell<Option<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>>,
     bazel_version_file: RefCell<Option<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>>,
     bazel_file_structs: RefCell<Option<BazelFileStructs<'v>>>,
+    #[trace(unsafe_ignore)]
+    bazel_make_variables: RefCell<Option<OwnedFrozenValue>>,
 }
 
 #[derive(Clone, Debug, Trace, Allocative)]
@@ -766,6 +772,7 @@ impl<'v> AnalysisContext<'v> {
             bazel_info_file: RefCell::new(None),
             bazel_version_file: RefCell::new(None),
             bazel_file_structs: RefCell::new(None),
+            bazel_make_variables: RefCell::new(None),
         }
     }
 
@@ -823,6 +830,7 @@ impl<'v> AnalysisContext<'v> {
         *self.attrs.borrow_mut() = Some(attrs);
         *self.actions.attributes.borrow_mut() = Some(attrs);
         *self.bazel_file_structs.borrow_mut() = None;
+        *self.bazel_make_variables.borrow_mut() = None;
     }
 
     /// Must take an `AnalysisContext` which has never had `take_state` called on it before.
@@ -3075,6 +3083,32 @@ fn analysis_context_make_variable_entries<'v>(
     Ok(variables)
 }
 
+fn analysis_context_make_variables_dict<'v>(
+    this: &AnalysisContext<'v>,
+    heap: Heap<'v>,
+) -> bz_error::Result<Value<'v>> {
+    if let Some(value) = this.bazel_make_variables.borrow().as_ref() {
+        return Ok(heap.access_owned_frozen_value(value));
+    }
+
+    let variables = analysis_context_make_variable_entries(this)?;
+    let frozen_heap = FrozenHeap::new();
+    let value = frozen_heap.alloc(AllocDict(variables));
+    let value = unsafe {
+        OwnedFrozenValue::new(
+            frozen_heap.into_ref_named(FrozenHeapName::Singleton(singleton_heap_name!())),
+            value,
+        )
+    };
+    *this.bazel_make_variables.borrow_mut() = Some(value);
+    Ok(heap.access_owned_frozen_value(
+        this.bazel_make_variables
+            .borrow()
+            .as_ref()
+            .expect("stored ctx.var"),
+    ))
+}
+
 fn is_java_identifier_part(c: char) -> bool {
     c == '_' || c == '$' || c.is_alphanumeric()
 }
@@ -3761,11 +3795,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// Bazel make-variable map for this rule.
     #[starlark(attribute)]
     fn var<'v>(this: RefAnalysisContext<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let mut variables = SmallMap::new();
-        for (key, value) in analysis_context_make_variable_entries(this.0)? {
-            variables.insert(key, value);
-        }
-        Ok(heap.alloc(AllocDict(variables)))
+        Ok(analysis_context_make_variables_dict(this.0, heap)?)
     }
 }
 
