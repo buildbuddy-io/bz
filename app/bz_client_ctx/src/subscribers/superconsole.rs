@@ -2184,6 +2184,23 @@ mod tests {
             .to_string()
             .contains("Build ID:"));
 
+        let final_output = SessionInfoComponent {
+            session_info: &info,
+            hide_build_id: false,
+        }
+        .draw_unchecked(
+            Dimensions {
+                width: 110,
+                height: 1,
+            },
+            DrawMode::Final,
+        )?
+        .fmt_for_test()
+        .to_string();
+
+        assert!(!final_output.contains("Build ID:"));
+        assert!(final_output.contains("Test UI:"));
+
         Ok(())
     }
 

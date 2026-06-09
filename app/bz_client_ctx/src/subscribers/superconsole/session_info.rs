@@ -27,11 +27,12 @@ pub struct SessionInfoComponent<'s> {
 impl Component for SessionInfoComponent<'_> {
     type Error = bz_error::Error;
 
-    fn draw_unchecked(&self, dimensions: Dimensions, _mode: DrawMode) -> bz_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         let mut headers = Lines::new();
         let mut ids = vec![];
-        if self.hide_build_id {
+        if self.hide_build_id || matches!(mode, DrawMode::Final) {
             // The build event stream prints an invocation URL for this trace id.
+            // The final build summary also reprints the build id after superconsole exits.
         } else if cfg!(fbcode_build) {
             headers.push(Line::unstyled("Buck UI:")?);
             ids.push(Span::new_unstyled(format!(
