@@ -14,6 +14,16 @@ bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4")
 
 RUST_EDITION = "2024"
 RUST_VERSION = "nightly/2026-01-18"
+SUPPORTED_RUST_PLATFORM_TRIPLES = [
+    "aarch64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "wasm32-unknown-unknown",
+    "wasm32-wasip1",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-nixos-gnu",
+]
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
@@ -88,6 +98,7 @@ crate.from_cargo(
     generate_binaries = True,
     host_tools = "@rust_host_tools_nightly//:rust_host_tools",
     manifests = ["//:Cargo.toml"],
+    supported_platform_triples = SUPPORTED_RUST_PLATFORM_TRIPLES,
 )
 use_repo(
     crate,
