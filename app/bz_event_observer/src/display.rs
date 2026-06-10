@@ -43,6 +43,7 @@ use termwiz::escape::ControlCode;
 
 use crate::action_sub_error_display::ActionSubErrorDisplay;
 use crate::fmt_duration;
+use crate::humanized::HumanizedBytes;
 use crate::verbosity::Verbosity;
 use crate::what_ran::command_to_string;
 use crate::what_ran::worker_command_as_fallback_to_string;
@@ -242,9 +243,10 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> bz_error:
                     .ok_or_else(|| bz_error::Error::from(ParseEventError::MissingArtifact))?;
 
                 let key = display_action_key(
-                    build.key.as_ref().ok_or_else(|| {
-                        bz_error::Error::from(ParseEventError::MissingActionKey)
-                    })?,
+                    build
+                        .key
+                        .as_ref()
+                        .ok_or_else(|| bz_error::Error::from(ParseEventError::MissingActionKey))?,
                     opts,
                 )?;
                 let path = {
@@ -414,7 +416,26 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> bz_error:
                 Ok(format!("Executing BXL script `{}`", execution.name))
             }
             Data::BxlDiceInvocation(..) => Ok("Waiting for graph computations".to_owned()),
-            Data::ReUpload(..) => Ok("re_upload".to_owned()),
+            Data::ReUpload(upload) => {
+                let target = if upload.target_id.is_empty() {
+                    "RE upload"
+                } else {
+                    upload.target_id.as_str()
+                };
+                let mnemonic = if upload.action_mnemonic.is_empty() {
+                    "action"
+                } else {
+                    upload.action_mnemonic.as_str()
+                };
+                let mut detail = format!(
+                    "uploading {mnemonic} inputs ({})",
+                    HumanizedBytes::new(upload.input_bytes)
+                );
+                if upload.force_reupload {
+                    detail.push_str(", force reupload");
+                }
+                Ok(format!("{target} -- {detail}"))
+            }
             Data::ConnectToInstaller(bz_data::ConnectToInstallerStart { tcp_port }) => {
                 Ok(format!("Connecting to installer on port {tcp_port}"))
             }

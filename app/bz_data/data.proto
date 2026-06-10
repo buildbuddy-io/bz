@@ -3215,7 +3215,12 @@ message DynamicLambdaEnd {}
 // traffic.
 // Eventually all the executor stage span definitions should be moved to
 // dedicated spans.
-message ReUploadStart {}
+message ReUploadStart {
+  string target_id = 1;
+  string action_mnemonic = 2;
+  uint64 input_bytes = 3;
+  bool force_reupload = 4;
+}
 
 message ReUploadMetrics {
   uint64 digests_uploaded = 1;

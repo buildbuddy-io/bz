@@ -117,33 +117,41 @@ impl ReExecutor {
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
         let re_client = &self.re_client;
 
-        let upload_response = span_async(bz_data::ReUploadStart {}, async move {
-            let res = re_client
-                .upload(
-                    &self.project_fs,
-                    &self.materializer,
-                    blobs,
-                    ProjectRelativePath::empty(),
-                    paths.input_directory(),
-                    Some(paths),
-                    Some(identity),
-                    digest_config,
-                    self.deduplicate_get_digests_ttl_calls,
-                    force_reupload,
-                )
-                .await;
-            match res {
-                Ok(stats) => (
-                    Ok(()),
-                    bz_data::ReUploadEnd {
-                        digests_uploaded: Some(stats.total.digests_uploaded),
-                        bytes_uploaded: Some(stats.total.bytes_uploaded),
-                        stats_by_extension: stats.by_extension,
-                    },
-                ),
-                Err(e) => (Err(e), bz_data::ReUploadEnd::default()),
-            }
-        })
+        let upload_response = span_async(
+            bz_data::ReUploadStart {
+                target_id: identity.target_id.clone(),
+                action_mnemonic: identity.action_mnemonic.clone(),
+                input_bytes: paths.input_files_bytes(),
+                force_reupload,
+            },
+            async move {
+                let res = re_client
+                    .upload(
+                        &self.project_fs,
+                        &self.materializer,
+                        blobs,
+                        ProjectRelativePath::empty(),
+                        paths.input_directory(),
+                        Some(paths),
+                        Some(identity),
+                        digest_config,
+                        self.deduplicate_get_digests_ttl_calls,
+                        force_reupload,
+                    )
+                    .await;
+                match res {
+                    Ok(stats) => (
+                        Ok(()),
+                        bz_data::ReUploadEnd {
+                            digests_uploaded: Some(stats.total.digests_uploaded),
+                            bytes_uploaded: Some(stats.total.bytes_uploaded),
+                            stats_by_extension: stats.by_extension,
+                        },
+                    ),
+                    Err(e) => (Err(e), bz_data::ReUploadEnd::default()),
+                }
+            },
+        )
         .await;
 
         match upload_response {

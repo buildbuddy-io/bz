@@ -104,6 +104,23 @@ impl TimedListBody<'_> {
         )?))
     }
 
+    fn active_re_transfer_row(&self) -> bz_error::Result<Option<TimedRow>> {
+        let observer = self.state.simple_console.observer();
+        let Some(transfers) = observer
+            .re_state()
+            .active_transfers(observer.two_snapshots())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(TimedRow::text(
+            0,
+            format!("RE transfers -- {}", transfers.render()),
+            String::new(),
+            Duration::ZERO,
+            self.cutoffs,
+        )?))
+    }
+
     /// Render a root  as `root [first child + remaining children]`
     fn draw_root_first_child(
         &self,
@@ -212,22 +229,32 @@ impl Component for TimedListBody<'_> {
         let mut builder = Table::new();
 
         let mut first_not_rendered = None;
+        let active_re_transfer_row = self.active_re_transfer_row()?;
+        let reserved_for_active_re_transfers = active_re_transfer_row.as_ref().map_or(0, |_| 1);
+        let mut rendered_span_row = false;
 
         for root in &mut roots {
             let rows = self.draw_root(&root)?;
 
-            if builder.len() + rows.len() >= max_lines {
+            if builder.len() + rows.len() + reserved_for_active_re_transfers >= max_lines {
                 first_not_rendered = Some(root);
                 break;
             }
 
+            rendered_span_row = true;
             builder.rows.extend(rows.into_iter().map(Row::from));
         }
 
         // Add remaining unshown tasks, if any.
         let more = roots.len() as u64 + first_not_rendered.map_or(0, |_| 1);
 
-        if more > 0 {
+        if let Some(row) = active_re_transfer_row
+            && builder.len() < max_lines
+        {
+            builder.rows.push(Row::from(row));
+        }
+
+        if more > 0 && builder.len() < max_lines {
             let remaining = format!("... and {more} more currently executing");
             builder.rows.push(
                 std::iter::once(Span::new_styled(remaining.italic())?)
@@ -235,7 +262,8 @@ impl Component for TimedListBody<'_> {
                     .into(),
             );
         }
-        if builder.len() == 0
+        if !rendered_span_row
+            && builder.len() < max_lines
             && let Some(row) = self.active_dice_fallback_row()?
         {
             builder.rows.push(Row::from(row));
@@ -251,11 +279,7 @@ struct TimedListHeader;
 impl Component for TimedListHeader {
     type Error = bz_error::Error;
 
-    fn draw_unchecked(
-        &self,
-        dimensions: Dimensions,
-        _mode: DrawMode,
-    ) -> bz_error::Result<Lines> {
+    fn draw_unchecked(&self, dimensions: Dimensions, _mode: DrawMode) -> bz_error::Result<Lines> {
         Ok(Lines(vec![horizontal_rule(dimensions.width)?]))
     }
 }
@@ -277,12 +301,16 @@ impl Component for TimedList<'_> {
     type Error = bz_error::Error;
 
     fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
-        let span_tracker: &BuckEventSpanTracker = self.state.simple_console.observer().spans();
+        let observer = self.state.simple_console.observer();
+        let span_tracker: &BuckEventSpanTracker = observer.spans();
 
         match mode {
             DrawMode::Normal
                 if !span_tracker.is_unused()
-                    || active_dice_summary(self.state.simple_console.observer().dice_state())
+                    || active_dice_summary(observer.dice_state()).is_some()
+                    || observer
+                        .re_state()
+                        .active_transfers(observer.two_snapshots())
                         .is_some() =>
             {
                 let header = TimedListHeader;
@@ -722,6 +750,70 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_active_re_transfers_render_as_progress_row() -> bz_error::Result<()> {
+        let tick = Tick::now();
+        let mut state = SuperConsoleState::new(
+            fake_timekeeper(tick),
+            TraceId::null(),
+            Verbosity::default(),
+            false,
+            SuperConsoleConfig {
+                max_lines: 5,
+                ..Default::default()
+            },
+            None,
+        )?;
+
+        state
+            .simple_console
+            .observer
+            .observe(&snapshot_event(
+                fake_time(&tick, 2),
+                bz_data::Snapshot {
+                    re_upload_bytes: 1024,
+                    re_download_bytes: 2048,
+                    ..Default::default()
+                },
+            ))
+            .await?;
+
+        state
+            .simple_console
+            .observer
+            .observe(&snapshot_event(
+                fake_time(&tick, 1),
+                bz_data::Snapshot {
+                    re_upload_bytes: 2 * 1024 * 1024 + 1024,
+                    re_download_bytes: 1024 * 1024 + 2048,
+                    re_uploads_started: 3,
+                    re_uploads_finished_successfully: 1,
+                    re_downloads_started: 4,
+                    re_downloads_finished_with_error: 1,
+                    re_materializes_started: 2,
+                    re_materializes_finished_successfully: 1,
+                    ..Default::default()
+                },
+            ))
+            .await?;
+
+        let output = TimedList::new(&CUTOFFS, &state).draw(
+            Dimensions {
+                width: 80,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?;
+
+        let output = output.fmt_for_test().to_string();
+        assert!(output.contains("transfers"));
+        assert!(output.contains("2 uploads active, 2.0MiB sent"));
+        assert!(output.contains("4 downloads active, 1.0MiB received"));
+        assert!(output.contains("Mbps"));
+
+        Ok(())
+    }
+
     #[test]
     fn test_children() -> bz_error::Result<()> {
         let tick = Tick::now();
@@ -867,6 +959,19 @@ mod tests {
                     }
                     .into(),
                 ),
+            }
+            .into(),
+        ))
+    }
+
+    fn snapshot_event(time: SystemTime, snapshot: bz_data::Snapshot) -> Arc<BuckEvent> {
+        Arc::new(BuckEvent::new(
+            time,
+            TraceId::new(),
+            None,
+            None,
+            bz_data::InstantEvent {
+                data: Some(snapshot.into()),
             }
             .into(),
         ))

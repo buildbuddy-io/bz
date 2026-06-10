@@ -22,6 +22,65 @@ pub struct ReState {
     first_snapshot: Option<bz_data::Snapshot>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActiveReTransfers {
+    pub uploads: u32,
+    pub downloads: u32,
+    pub upload_bytes: u64,
+    pub upload_bytes_per_second: u64,
+    pub download_bytes: u64,
+    pub download_bytes_per_second: u64,
+}
+
+impl ActiveReTransfers {
+    pub fn render(self) -> String {
+        let mut parts = Vec::new();
+        if self.uploads > 0 {
+            let mut upload = format!("{} {}", self.uploads, pluralize("upload", self.uploads));
+            if self.upload_bytes > 0 || self.upload_bytes_per_second > 0 {
+                upload.push_str(&format!(
+                    " active, {} sent",
+                    HumanizedBytes::new(self.upload_bytes)
+                ));
+                if self.upload_bytes_per_second > 0 {
+                    upload.push_str(&format!(
+                        " ({})",
+                        HumanizedBitsPerSecond::from_bytes_per_second(self.upload_bytes_per_second)
+                    ));
+                }
+            } else {
+                upload.push_str(" active");
+            }
+            parts.push(upload);
+        }
+        if self.downloads > 0 {
+            let mut download = format!(
+                "{} {}",
+                self.downloads,
+                pluralize("download", self.downloads)
+            );
+            if self.download_bytes > 0 || self.download_bytes_per_second > 0 {
+                download.push_str(&format!(
+                    " active, {} received",
+                    HumanizedBytes::new(self.download_bytes)
+                ));
+                if self.download_bytes_per_second > 0 {
+                    download.push_str(&format!(
+                        " ({})",
+                        HumanizedBitsPerSecond::from_bytes_per_second(
+                            self.download_bytes_per_second
+                        )
+                    ));
+                }
+            } else {
+                download.push_str(" active");
+            }
+            parts.push(download);
+        }
+        parts.join(", ")
+    }
+}
+
 impl ReState {
     pub fn new() -> Self {
         Self {
@@ -42,6 +101,54 @@ impl ReState {
 
     pub fn first_snapshot(&self) -> &Option<Snapshot> {
         &self.first_snapshot
+    }
+
+    pub fn active_transfers(&self, two_snapshots: &TwoSnapshots) -> Option<ActiveReTransfers> {
+        let (_, last) = two_snapshots.last.as_ref()?;
+        let uploads = active_count(
+            last.re_uploads_started,
+            last.re_uploads_finished_successfully,
+            last.re_uploads_finished_with_error,
+        );
+        let downloads = active_count(
+            last.re_downloads_started,
+            last.re_downloads_finished_successfully,
+            last.re_downloads_finished_with_error,
+        )
+        .saturating_add(active_count(
+            last.re_materializes_started,
+            last.re_materializes_finished_successfully,
+            last.re_materializes_finished_with_error,
+        ));
+
+        if uploads == 0 && downloads == 0 {
+            return None;
+        }
+
+        let (upload_bytes, download_bytes) = self
+            .first_snapshot
+            .as_ref()
+            .map(|first| {
+                (
+                    last.re_upload_bytes.saturating_sub(first.re_upload_bytes),
+                    last.re_download_bytes
+                        .saturating_sub(first.re_download_bytes),
+                )
+            })
+            .unwrap_or_default();
+
+        Some(ActiveReTransfers {
+            uploads,
+            downloads,
+            upload_bytes,
+            upload_bytes_per_second: two_snapshots
+                .re_upload_bytes_per_second()
+                .unwrap_or_default(),
+            download_bytes,
+            download_bytes_per_second: two_snapshots
+                .re_download_bytes_per_second()
+                .unwrap_or_default(),
+        })
     }
 
     pub fn render_header(
@@ -178,10 +285,7 @@ impl ReState {
         Ok(Some(Line::unstyled(&line)?))
     }
 
-    pub fn render_detailed(
-        &self,
-        two_snapshots: &TwoSnapshots,
-    ) -> bz_error::Result<Vec<Line>> {
+    pub fn render_detailed(&self, two_snapshots: &TwoSnapshots) -> bz_error::Result<Vec<Line>> {
         let mut r = Vec::new();
         if let (Some(first), Some((_, last))) = (&self.first_snapshot, &two_snapshots.last) {
             r.extend(self.render_detailed_items(
@@ -258,5 +362,19 @@ impl ReState {
             lines.extend(self.render_detailed(two_snapshots)?);
         }
         Ok(Lines(lines))
+    }
+}
+
+fn active_count(started: u32, finished_successfully: u32, finished_with_error: u32) -> u32 {
+    started
+        .saturating_sub(finished_successfully)
+        .saturating_sub(finished_with_error)
+}
+
+fn pluralize(word: &str, count: u32) -> String {
+    if count == 1 {
+        word.to_owned()
+    } else {
+        format!("{word}s")
     }
 }
