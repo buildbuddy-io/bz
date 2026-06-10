@@ -8,11 +8,18 @@
  * above-listed licenses.
  */
 
+use bz_test_api::data::BazelTestSpec;
 use bz_test_api::data::ExternalRunnerSpec;
 use bz_test_api::protocol::TestExecutor;
 use futures::channel::mpsc::UnboundedSender;
 
-pub type SpecSender = UnboundedSender<ExternalRunnerSpec>;
+pub type SpecSender = UnboundedSender<TestSpec>;
+
+#[derive(Debug)]
+pub enum TestSpec {
+    External(ExternalRunnerSpec),
+    Bazel(BazelTestSpec),
+}
 
 pub struct Buck2TestExecutor {
     pub sender: SpecSender,
@@ -29,7 +36,15 @@ impl TestExecutor for Buck2TestExecutor {
     async fn external_runner_spec(&self, spec: ExternalRunnerSpec) -> bz_error::Result<()> {
         self.sender
             .clone()
-            .start_send(spec)
+            .start_send(TestSpec::External(spec))
+            .expect("Sending to not fail if all core invariants are held.");
+        Ok(())
+    }
+
+    async fn bazel_test_spec(&self, spec: BazelTestSpec) -> bz_error::Result<()> {
+        self.sender
+            .clone()
+            .start_send(TestSpec::Bazel(spec))
             .expect("Sending to not fail if all core invariants are held.");
         Ok(())
     }

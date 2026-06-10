@@ -19,6 +19,8 @@ use bz_build_api::analysis::registry::AnalysisRegistry;
 use bz_build_api::analysis::registry::RecordedAnalysisValues;
 use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_short_path;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use bz_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
 use bz_build_api::interpreter::rule_defs::context::AnalysisContext;
@@ -28,6 +30,7 @@ use bz_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use bz_build_api::interpreter::rule_defs::context::analysis_actions_to_bazel_ctx_with_overrides;
 use bz_build_api::interpreter::rule_defs::context::bazel_expand_run_environment;
 use bz_build_api::interpreter::rule_defs::context::bazel_expand_target_run_args;
+use bz_build_api::interpreter::rule_defs::context::bazel_runfiles_prefix;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::FrozenBazelOutputFileInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::new_bazel_output_file_info;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::template_variable_info::FrozenTemplateVariableInfo;
@@ -111,6 +114,7 @@ use starlark::values::FrozenHeap;
 use starlark::values::FrozenValue;
 use starlark::values::FrozenValueTyped;
 use starlark::values::Heap;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
@@ -2489,6 +2493,12 @@ fn bazel_test_info<'v>(
     let Some(executable) = bazel_files_to_run_executable(files_to_run) else {
         return Ok(None);
     };
+    let executable_artifact = ValueAsInputArtifactLike::unpack_value_err(executable)?
+        .0
+        .get_bound_artifact()?;
+    let executable_short_path = bazel_artifact_short_path(executable_artifact.get_path());
+    let executable_runfiles_path =
+        bazel_prefixed_runfiles_path(bazel_runfiles_prefix(), &executable_short_path);
 
     let mut command = Vec::with_capacity(1 + target_args.len());
     command.push(executable);
@@ -2499,12 +2509,25 @@ fn bazel_test_info<'v>(
         command,
         environment.to_vec(),
         bazel_test_labels(node)?,
+        executable_runfiles_path,
         size,
         timeout_seconds,
         shard_count,
         heap,
     )?;
     Ok(Some(heap.alloc(test_info)))
+}
+
+fn bazel_prefixed_runfiles_path(prefix: &str, path: &str) -> String {
+    if let Some(external_path) = path.strip_prefix("../") {
+        external_path.to_owned()
+    } else if prefix.is_empty() {
+        path.to_owned()
+    } else if path.is_empty() {
+        prefix.to_owned()
+    } else {
+        format!("{prefix}/{path}")
+    }
 }
 
 fn bazel_test_attrs(node: ConfiguredTargetNodeRef<'_>) -> bz_error::Result<(String, i32, i32)> {

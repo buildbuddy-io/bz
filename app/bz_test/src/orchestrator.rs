@@ -288,7 +288,7 @@ impl<'a> TestInfoRef<'a> {
     fn supports_test_execution_caching(self) -> bool {
         match self {
             Self::External(info) => info.supports_test_execution_caching(),
-            Self::Bazel(_) => false,
+            Self::Bazel(_) => true,
         }
     }
 
@@ -2043,17 +2043,15 @@ fn add_bazel_test_environment(
     insert_default(env, "TEST_TMPDIR", test_tmpdir);
     insert_default(env, "RUN_UNDER_RUNFILES", "1".to_owned());
 
-    env.insert("TEST_TARGET".to_owned(), test_target.target().to_string());
-    env.insert("TEST_SIZE".to_owned(), test_info.size().to_owned());
-    env.insert(
-        "TEST_TIMEOUT".to_owned(),
-        test_info.timeout_seconds().to_string(),
-    );
-    env.insert(
-        "TEST_WORKSPACE".to_owned(),
+    insert_default(env, "TEST_TARGET", test_target.target().to_string());
+    insert_default(env, "TEST_SIZE", test_info.size().to_owned());
+    insert_default(env, "TEST_TIMEOUT", test_info.timeout_seconds().to_string());
+    insert_default(
+        env,
+        "TEST_WORKSPACE",
         test_target.target().pkg().cell_name().to_string(),
     );
-    env.insert("TEST_BINARY".to_owned(), test_binary);
+    insert_default(env, "TEST_BINARY", test_binary);
 
     if test_info.shard_count() > 0 {
         env.insert("TEST_SHARD_INDEX".to_owned(), "0".to_owned());

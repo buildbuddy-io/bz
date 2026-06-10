@@ -16,6 +16,7 @@ use bz_grpc::DuplexChannel;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 
+use crate::data::BazelTestSpec;
 use crate::data::ExternalRunnerSpec;
 use crate::grpc::TestExecutorClient;
 use crate::grpc::spawn_executor_server;
@@ -26,6 +27,10 @@ struct MockExecutor;
 #[async_trait::async_trait]
 impl TestExecutor for MockExecutor {
     async fn external_runner_spec(&self, _: ExternalRunnerSpec) -> bz_error::Result<()> {
+        Ok(())
+    }
+
+    async fn bazel_test_spec(&self, _: BazelTestSpec) -> bz_error::Result<()> {
         Ok(())
     }
 

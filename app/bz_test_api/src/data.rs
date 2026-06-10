@@ -170,6 +170,27 @@ pub struct ExternalRunnerSpec {
     pub working_dir_cell: CellName,
 }
 
+/// Native Bazel test metadata passed to the test executor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BazelTestSpec {
+    /// Target the spec belongs to.
+    pub target: ConfiguredTarget,
+    /// Base test command: executable followed by rule args.
+    pub command: Vec<ExternalRunnerSpecValue>,
+    /// Rule-specified test environment.
+    pub env: StdBuckHashMap<String, ExternalRunnerSpecValue>,
+    /// Tags defined on the rule.
+    pub labels: Vec<String>,
+    /// Bazel test size attr.
+    pub size: String,
+    /// Bazel test timeout in seconds.
+    pub timeout_seconds: u64,
+    /// Explicit shard count. Zero means unsharded.
+    pub shard_count: u32,
+    /// Test binary path as seen inside the runfiles tree.
+    pub executable_runfiles_path: String,
+}
+
 /// Command line argument or environment variable value
 ///
 /// It is either a verbatim string, or a reference to a more complex value that's opaque to the

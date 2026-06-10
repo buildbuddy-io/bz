@@ -21,6 +21,7 @@ use host_sharing::HostSharingRequirements;
 use sorted_vector_map::SortedVectorMap;
 
 use crate::data::ArgValue;
+use crate::data::BazelTestSpec;
 use crate::data::CasDigest;
 use crate::data::ConfiguredTargetHandle;
 use crate::data::DeclaredOutput;
@@ -37,6 +38,9 @@ use crate::data::TestStage;
 pub trait TestExecutor: Send + Sync {
     /// sends an external runner spec to the test executor
     async fn external_runner_spec(&self, s: ExternalRunnerSpec) -> bz_error::Result<()>;
+
+    /// sends a native Bazel test spec to the test executor
+    async fn bazel_test_spec(&self, s: BazelTestSpec) -> bz_error::Result<()>;
 
     // report that there are no more test specs to send
     async fn end_of_test_requests(&self) -> bz_error::Result<()>;

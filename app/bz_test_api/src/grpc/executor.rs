@@ -14,6 +14,7 @@ use bz_grpc::ServerHandle;
 use bz_grpc::make_channel;
 use bz_grpc::spawn_oneshot;
 use bz_grpc::to_tonic;
+use bz_test_proto::BazelTestSpecRequest;
 use bz_test_proto::Empty;
 use bz_test_proto::ExternalRunnerSpecRequest;
 use bz_test_proto::UnstableHeapDumpRequest;
@@ -24,6 +25,7 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tonic::transport::Channel;
 
+use crate::data::BazelTestSpec;
 use crate::data::ExternalRunnerSpec;
 use crate::protocol::TestExecutor;
 
@@ -52,6 +54,17 @@ impl TestExecutor for TestExecutorClient {
         self.client
             .clone()
             .external_runner_spec(ExternalRunnerSpecRequest {
+                test_spec: Some(s.try_into().buck_error_context("Invalid `test_spec`")?),
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    async fn bazel_test_spec(&self, s: BazelTestSpec) -> bz_error::Result<()> {
+        self.client
+            .clone()
+            .bazel_test_spec(BazelTestSpecRequest {
                 test_spec: Some(s.try_into().buck_error_context("Invalid `test_spec`")?),
             })
             .await?;
@@ -100,6 +113,28 @@ where
                 .external_runner_spec(test_spec)
                 .await
                 .buck_error_context("Failed to dispatch test_spec")?;
+
+            Ok(Empty {})
+        })
+        .await
+    }
+
+    async fn bazel_test_spec(
+        &self,
+        request: tonic::Request<BazelTestSpecRequest>,
+    ) -> Result<tonic::Response<Empty>, tonic::Status> {
+        to_tonic(async move {
+            let BazelTestSpecRequest { test_spec } = request.into_inner();
+
+            let test_spec = test_spec
+                .ok_or_else(|| internal_error!("Missing `test_spec`"))?
+                .try_into()
+                .buck_error_context("Invalid `test_spec`")?;
+
+            self.inner
+                .bazel_test_spec(test_spec)
+                .await
+                .buck_error_context("Failed to dispatch bazel test_spec")?;
 
             Ok(Empty {})
         })

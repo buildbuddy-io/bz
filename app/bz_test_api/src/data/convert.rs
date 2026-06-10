@@ -31,6 +31,7 @@ use crate::convert;
 use crate::data::ArgHandle;
 use crate::data::ArgValue;
 use crate::data::ArgValueContent;
+use crate::data::BazelTestSpec;
 use crate::data::ConfiguredTarget;
 use crate::data::ConfiguredTargetHandle;
 use crate::data::DeclaredOutput;
@@ -522,6 +523,75 @@ impl TryInto<bz_test_proto::ExternalRunnerSpec> for ExternalRunnerSpec {
     }
 }
 
+impl TryFrom<bz_test_proto::BazelTestSpec> for BazelTestSpec {
+    type Error = bz_error::Error;
+
+    fn try_from(s: bz_test_proto::BazelTestSpec) -> Result<Self, Self::Error> {
+        let bz_test_proto::BazelTestSpec {
+            target,
+            command,
+            env,
+            labels,
+            size,
+            timeout_seconds,
+            shard_count,
+            executable_runfiles_path,
+        } = s;
+
+        Ok(Self {
+            target: target
+                .ok_or_else(|| internal_error!("Missing `target`"))?
+                .try_into()
+                .buck_error_context("Invalid `target`")?,
+            command: command
+                .into_try_map(|x| x.try_into())
+                .buck_error_context("Invalid `command`")?,
+            env: env
+                .into_iter()
+                .map(|(k, v)| Ok((k, v.try_into().unwrap())))
+                .collect::<Result<_, Self::Error>>()?,
+            labels,
+            size,
+            timeout_seconds,
+            shard_count,
+            executable_runfiles_path,
+        })
+    }
+}
+
+impl TryInto<bz_test_proto::BazelTestSpec> for BazelTestSpec {
+    type Error = bz_error::Error;
+
+    fn try_into(self) -> Result<bz_test_proto::BazelTestSpec, Self::Error> {
+        let BazelTestSpec {
+            target,
+            command,
+            env,
+            labels,
+            size,
+            timeout_seconds,
+            shard_count,
+            executable_runfiles_path,
+        } = self;
+
+        Ok(bz_test_proto::BazelTestSpec {
+            target: Some(target.try_into().buck_error_context("Invalid `target`")?),
+            command: command
+                .into_try_map(|x| x.try_into())
+                .buck_error_context("Invalid `command`")?,
+            env: env
+                .into_iter()
+                .map(|(k, v)| Ok((k, v.try_into().unwrap())))
+                .collect::<Result<_, Self::Error>>()?,
+            labels,
+            size,
+            timeout_seconds,
+            shard_count,
+            executable_runfiles_path,
+        })
+    }
+}
+
 impl TryFrom<bz_test_proto::ExternalRunnerSpecValue> for ExternalRunnerSpecValue {
     type Error = bz_error::Error;
 
@@ -655,9 +725,7 @@ impl TryInto<bz_test_proto::ArgValue> for ArgValue {
                     .try_into()
                     .buck_error_context("Invalid `content`")?,
             ),
-            format: self
-                .format
-                .map(|f| bz_test_proto::ArgFormat { format: f }),
+            format: self.format.map(|f| bz_test_proto::ArgFormat { format: f }),
         })
     }
 }
@@ -1093,9 +1161,7 @@ impl TryInto<bz_test_proto::TestExecutable> for TestExecutable {
     }
 }
 
-impl TryInto<bz_test_proto::PrepareForLocalExecutionResponse>
-    for PrepareForLocalExecutionResult
-{
+impl TryInto<bz_test_proto::PrepareForLocalExecutionResponse> for PrepareForLocalExecutionResult {
     type Error = bz_error::Error;
 
     fn try_into(self) -> Result<bz_test_proto::PrepareForLocalExecutionResponse, Self::Error> {
@@ -1114,9 +1180,7 @@ impl TryInto<bz_test_proto::PrepareForLocalExecutionResponse>
                     .command
                     .env
                     .into_iter()
-                    .map(
-                        |(key, value)| bz_test_proto::VerbatimEnvironmentVariable { key, value },
-                    )
+                    .map(|(key, value)| bz_test_proto::VerbatimEnvironmentVariable { key, value })
                     .collect(),
             }),
             setup_local_resource_commands: self
@@ -1188,14 +1252,10 @@ impl TryFrom<bz_test_proto::SetupLocalResourceLocalExecutionCommand> for LocalEx
     }
 }
 
-impl TryFrom<bz_test_proto::PrepareForLocalExecutionResponse>
-    for PrepareForLocalExecutionResult
-{
+impl TryFrom<bz_test_proto::PrepareForLocalExecutionResponse> for PrepareForLocalExecutionResult {
     type Error = bz_error::Error;
 
-    fn try_from(
-        s: bz_test_proto::PrepareForLocalExecutionResponse,
-    ) -> Result<Self, Self::Error> {
+    fn try_from(s: bz_test_proto::PrepareForLocalExecutionResponse) -> Result<Self, Self::Error> {
         let result = s
             .result
             .ok_or_else(|| internal_error!("Missing `result`"))?;
@@ -1268,6 +1328,46 @@ mod tests {
             working_dir_cell: CellName::testing_new("qux"),
         };
         assert_roundtrips::<bz_test_proto::ExternalRunnerSpec, ExternalRunnerSpec>(&test_spec);
+    }
+
+    #[test]
+    fn bazel_test_spec_roundtrip() {
+        let test_spec = BazelTestSpec {
+            target: ConfiguredTarget {
+                handle: ConfiguredTargetHandle(1),
+                cell: "qux".into(),
+                package: "foo".into(),
+                target: "bar".into(),
+                configuration: "xxx".into(),
+                package_project_relative_path: ForwardRelativePathBuf::unchecked_new(
+                    "qux/foo".to_owned(),
+                ),
+                test_config_unification_rollout: false,
+                package_oncall: None,
+            },
+            command: vec![
+                ExternalRunnerSpecValue::Verbatim("arg".to_owned()),
+                ExternalRunnerSpecValue::ArgHandle(ArgHandle(42)),
+            ],
+            env: [
+                (
+                    "FOO".to_owned(),
+                    ExternalRunnerSpecValue::EnvHandle(EnvHandle("FOO".to_owned())),
+                ),
+                (
+                    "BAR".to_owned(),
+                    ExternalRunnerSpecValue::Verbatim("BAR".to_owned()),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            labels: vec!["label1".to_owned(), "label2".to_owned()],
+            size: "small".to_owned(),
+            timeout_seconds: 60,
+            shard_count: 2,
+            executable_runfiles_path: "qux/foo/bar".to_owned(),
+        };
+        assert_roundtrips::<bz_test_proto::BazelTestSpec, BazelTestSpec>(&test_spec);
     }
 
     #[test]

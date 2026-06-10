@@ -3296,6 +3296,7 @@ dependencies = [
  "futures 0.3.32",
  "host_sharing",
  "parking_lot 0.12.5",
+ "sorted_vector_map",
  "tokio",
 ]
 

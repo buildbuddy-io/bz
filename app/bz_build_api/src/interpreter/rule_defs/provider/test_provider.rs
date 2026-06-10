@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use bz_core::cells::name::CellName;
+use bz_test_api::data::BazelTestSpec;
 use bz_test_api::data::ConfiguredTarget;
 use bz_test_api::data::ExternalRunnerSpec;
 use bz_test_api::data::ExternalRunnerSpecValue;
@@ -131,7 +132,7 @@ impl TestProvider for FrozenBazelTestInfo {
         &self,
         target: ConfiguredTarget,
         executor: Arc<dyn TestExecutor + 'exec>,
-        working_dir_cell: CellName,
+        _working_dir_cell: CellName,
     ) -> BoxFuture<'exec, bz_error::Result<()>> {
         let mut handle_index = 0;
 
@@ -156,20 +157,19 @@ impl TestProvider for FrozenBazelTestInfo {
                 )
             })
             .collect();
-        let package_oncall = target.package_oncall.clone();
 
-        let spec = ExternalRunnerSpec {
+        let spec = BazelTestSpec {
             target,
-            test_type: "bazel".to_owned(),
             command,
             env,
             labels: self.labels().map(|l| l.to_owned()).collect(),
-            contacts: Vec::new(),
-            oncall: package_oncall,
-            working_dir_cell,
+            size: self.size().to_owned(),
+            timeout_seconds: self.timeout_seconds(),
+            shard_count: self.shard_count(),
+            executable_runfiles_path: self.executable_runfiles_path().to_owned(),
         };
 
-        async move { executor.external_runner_spec(spec).await }.boxed()
+        async move { executor.bazel_test_spec(spec).await }.boxed()
     }
 }
 

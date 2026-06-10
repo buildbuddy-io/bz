@@ -10,6 +10,7 @@ async-trait = { workspace = true }
 clap = { workspace = true }
 futures = { workspace = true }
 parking_lot = { workspace = true }
+sorted_vector_map = { workspace = true }
 tokio = { workspace = true }
 
 bz_error = { workspace = true }

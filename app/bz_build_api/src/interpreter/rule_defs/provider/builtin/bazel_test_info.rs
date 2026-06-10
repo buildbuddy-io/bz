@@ -56,6 +56,8 @@ pub struct BazelTestInfoGen<V: ValueLifetimeless> {
     env: ValueOfUncheckedGeneric<V, DictType<String, FrozenValue>>,
     /// Rule tags. These are used for test filtering and reporting.
     labels: ValueOfUncheckedGeneric<V, Vec<String>>,
+    /// Test binary path relative to the runfiles tree.
+    executable_runfiles_path: ValueOfUncheckedGeneric<V, String>,
     /// Bazel test `size` attr.
     size: ValueOfUncheckedGeneric<V, String>,
     /// Bazel test timeout in seconds.
@@ -75,6 +77,14 @@ impl FrozenBazelTestInfo {
 
     pub fn labels(&self) -> impl Iterator<Item = &str> {
         unwrap_all(iter_opt_str_list(self.labels.get().to_value(), "labels"))
+    }
+
+    pub fn executable_runfiles_path(&self) -> &str {
+        self.executable_runfiles_path
+            .to_value()
+            .get()
+            .unpack_str()
+            .unwrap()
     }
 
     pub fn size(&self) -> &str {
@@ -106,6 +116,7 @@ pub fn new_bazel_test_info<'v>(
     command: Vec<Value<'v>>,
     environment: Vec<(String, String)>,
     labels: Vec<String>,
+    executable_runfiles_path: String,
     size: String,
     timeout_seconds: i32,
     shard_count: i32,
@@ -115,6 +126,7 @@ pub fn new_bazel_test_info<'v>(
         command: ValueOfUnchecked::new(heap.alloc(AllocList(command))),
         env: ValueOfUnchecked::new(heap.alloc(AllocDict(environment))),
         labels: ValueOfUnchecked::new(heap.alloc(AllocList(labels))),
+        executable_runfiles_path: ValueOfUnchecked::new(heap.alloc(executable_runfiles_path)),
         size: ValueOfUnchecked::new(heap.alloc(size)),
         timeout_seconds: ValueOfUnchecked::new(heap.alloc(timeout_seconds)),
         shard_count: ValueOfUnchecked::new(heap.alloc(shard_count)),
@@ -140,6 +152,7 @@ fn bazel_test_info_creator(globals: &mut GlobalsBuilder) {
         #[starlark(require = named)] command: Value<'v>,
         #[starlark(require = named, default = AllocDict::EMPTY)] env: Value<'v>,
         #[starlark(require = named, default = AllocList::EMPTY)] labels: Value<'v>,
+        #[starlark(require = named, default = "")] executable_runfiles_path: &'v str,
         #[starlark(require = named, default = "medium")] size: &'v str,
         #[starlark(require = named, default = 300)] timeout_seconds: i32,
         #[starlark(require = named, default = 0)] shard_count: i32,
@@ -150,6 +163,7 @@ fn bazel_test_info_creator(globals: &mut GlobalsBuilder) {
             command: ValueOfUnchecked::new(command),
             env: ValueOfUnchecked::new(env),
             labels: ValueOfUnchecked::new(labels),
+            executable_runfiles_path: ValueOfUnchecked::new(heap.alloc(executable_runfiles_path)),
             size: ValueOfUnchecked::new(heap.alloc(size)),
             timeout_seconds: ValueOfUnchecked::new(heap.alloc(timeout_seconds)),
             shard_count: ValueOfUnchecked::new(heap.alloc(shard_count)),
