@@ -26,6 +26,7 @@ use bz_build_api::interpreter::rule_defs::context::AnalysisToolchains;
 use bz_build_api::interpreter::rule_defs::context::BazelActionsContextOverride;
 use bz_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use bz_build_api::interpreter::rule_defs::context::analysis_actions_to_bazel_ctx_with_overrides;
+use bz_build_api::interpreter::rule_defs::context::bazel_expand_target_run_args;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::FrozenBazelOutputFileInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::new_bazel_output_file_info;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::template_variable_info::FrozenTemplateVariableInfo;
@@ -2285,6 +2286,15 @@ async fn run_analysis_with_env_underlying(
         };
 
         // TODO: Convert the ValueError from `try_from_value` better than just printing its Debug
+        let bazel_target_args = if node.is_bazel_rule() {
+            let args = bazel_target_arg_values(node)?;
+            reentrant_eval.with_evaluator(|eval| {
+                bazel_expand_target_run_args(ctx.as_ref(), &args, eval.heap())
+            })?
+        } else {
+            Vec::new()
+        };
+
         let mut res_typed = reentrant_eval.with_evaluator(|eval| {
             if let Some(label_resolution_context) = &label_resolution_context {
                 eval.extra = Some(label_resolution_context);
@@ -2331,12 +2341,13 @@ async fn run_analysis_with_env_underlying(
         Ok((
             token,
             (
-                AnalysisResult::new(
+                AnalysisResult::new_with_bazel_target_args(
                     recorded_values,
                     profile_data,
                     StdBuckHashMap::default(),
                     declared_actions,
                     declared_artifacts,
+                    bazel_target_args,
                     validations,
                 ),
                 split_instants,
@@ -2366,6 +2377,24 @@ pub fn transitive_validations(
         );
         deps.into_values().next()
     }
+}
+
+fn bazel_target_arg_values(node: ConfiguredTargetNodeRef<'_>) -> bz_error::Result<Vec<String>> {
+    let Some(attr) = node.get("args", AttrInspectOptions::All) else {
+        return Ok(Vec::new());
+    };
+    let ConfiguredAttr::List(args) = &attr.value else {
+        return Ok(Vec::new());
+    };
+    args.iter()
+        .map(|arg| match arg {
+            ConfiguredAttr::String(value) => Ok(value.0.to_string()),
+            other => Err(bz_error::internal_error!(
+                "Bazel executable `args` attr should contain strings, got `{:?}`",
+                other
+            )),
+        })
+        .collect()
 }
 
 fn get_rule_callable(

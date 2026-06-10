@@ -1242,6 +1242,41 @@ pub(crate) fn bazel_shell_tokenize(option_string: &str) -> bz_error::Result<Vec<
     Ok(options)
 }
 
+pub fn bazel_expand_target_run_args<'v>(
+    ctx: &AnalysisContext<'v>,
+    args: &[String],
+    heap: Heap<'v>,
+) -> bz_error::Result<Vec<String>> {
+    if args.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut expander = BazelLocationExpander::new(
+        ctx,
+        false,
+        true,
+        true,
+        heap,
+        Vec::new(),
+        None,
+        BazelLocationInsertMode::Merge,
+    );
+    let variables = analysis_context_make_variable_entries(ctx)?;
+    let lookup = |name: &str| {
+        variables
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == name).then(|| value.clone()))
+    };
+
+    let mut result = Vec::new();
+    for arg in args {
+        let arg = expand_bazel_template_with_locations(arg, &mut expander, &lookup, 0)?;
+        result.extend(bazel_shell_tokenize(&arg)?);
+    }
+    Ok(result)
+}
+
 fn bazel_apple_platform<'v>(heap: Heap<'v>) -> Value<'v> {
     heap.alloc(AllocStruct([
         ("name", heap.alloc_str("macos").to_value()),
@@ -3549,6 +3584,74 @@ where
         };
         if value != variable {
             value = expand_bazel_make_variables_with_lookup(&value, lookup, depth + 1)?;
+        }
+        result.push_str(&value);
+    }
+    Ok(result)
+}
+
+fn expand_bazel_template_with_locations<F>(
+    expression: &str,
+    location_expander: &mut BazelLocationExpander<'_, '_>,
+    lookup: &F,
+    depth: usize,
+) -> bz_error::Result<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if !expression.contains('$') {
+        return Ok(expression.to_owned());
+    }
+    if depth > 10 {
+        return Err(make_variable_expansion_error(format!(
+            "potentially unbounded recursion during expansion of '{expression}'"
+        )));
+    }
+
+    let chars = expression.chars().collect::<Vec<_>>();
+    let mut result = String::new();
+    let mut offset = 0;
+    while offset < chars.len() {
+        let c = chars[offset];
+        if c != '$' {
+            result.push(c);
+            offset += 1;
+            continue;
+        }
+
+        offset += 1;
+        if offset >= chars.len() {
+            return Err(make_variable_expansion_error("unterminated $"));
+        }
+        if chars[offset] == '$' {
+            result.push('$');
+            offset += 1;
+            continue;
+        }
+
+        let variable = scan_bazel_make_variable(&chars, &mut offset)?;
+        if let Some((name, param)) = variable.split_once(' ')
+            && let Some(function) = location_expander.function(name)
+        {
+            result.push_str(&location_expander.apply(function, param.trim())?);
+            continue;
+        }
+
+        let Some(mut value) = lookup(&variable) else {
+            let name = variable
+                .split_once(' ')
+                .map_or(variable.as_str(), |(name, _)| name);
+            return Err(make_variable_expansion_error(format!(
+                "$({name}) not defined"
+            )));
+        };
+        if value != variable {
+            value = expand_bazel_template_with_locations(
+                &value,
+                location_expander,
+                lookup,
+                depth + 1,
+            )?;
         }
         result.push_str(&value);
     }

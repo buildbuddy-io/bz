@@ -45,6 +45,7 @@ pub struct AnalysisResult {
     promise_artifact_map: Arc<StdBuckHashMap<PromiseArtifactId, Artifact>>,
     pub num_declared_actions: u64,
     pub num_declared_artifacts: u64,
+    pub bazel_target_args: Arc<Vec<String>>,
     /// `None` means there are no `ValidationInfo` providers in transitive dependencies.
     pub validations: Option<TransitiveValidations>,
 }
@@ -59,12 +60,33 @@ impl AnalysisResult {
         num_declared_artifacts: u64,
         validations: Option<TransitiveValidations>,
     ) -> Self {
+        Self::new_with_bazel_target_args(
+            analysis_values,
+            profile_data,
+            promise_artifact_map,
+            num_declared_actions,
+            num_declared_artifacts,
+            Vec::new(),
+            validations,
+        )
+    }
+
+    pub fn new_with_bazel_target_args(
+        analysis_values: RecordedAnalysisValues,
+        profile_data: Option<Arc<StarlarkProfileDataAndStats>>,
+        promise_artifact_map: StdBuckHashMap<PromiseArtifactId, Artifact>,
+        num_declared_actions: u64,
+        num_declared_artifacts: u64,
+        bazel_target_args: Vec<String>,
+        validations: Option<TransitiveValidations>,
+    ) -> Self {
         Self {
             analysis_values: Arc::new(analysis_values),
             profile_data,
             promise_artifact_map: Arc::new(promise_artifact_map),
             num_declared_actions,
             num_declared_artifacts,
+            bazel_target_args: Arc::new(bazel_target_args),
             validations,
         }
     }
