@@ -59,6 +59,7 @@ const BAZEL_ACTION_ENV: &str = "//command_line_option:action_env";
 const BAZEL_HOST_ACTION_ENV: &str = "//command_line_option:host_action_env";
 const BAZEL_EXTRA_BZLMOD_DEPS: &str = "bazel.extra_bzlmod_deps";
 const LLVM_BZLMOD_DEP: &str = "llvm@0.8.5";
+const LLVM_BAZEL_FEATURES_BZLMOD_DEP: &str = "bazel_features@1.47.0";
 const LLVM_TOOLCHAIN_PATTERN: &str = "@llvm//toolchain:all";
 const LLVM_LINUX_X86_64_PLATFORM: &str = "@llvm//platforms:linux_x86_64";
 const LLVM_MACOS_AARCH64_PLATFORM: &str = "@llvm//platforms:macos_aarch64";
@@ -826,7 +827,9 @@ impl CommonBuildConfigurationOptions {
             index,
             ConfigOverride {
                 cell: None,
-                config_override: format!("{BAZEL_EXTRA_BZLMOD_DEPS}={LLVM_BZLMOD_DEP}"),
+                config_override: format!(
+                    "{BAZEL_EXTRA_BZLMOD_DEPS}={LLVM_BZLMOD_DEP},{LLVM_BAZEL_FEATURES_BZLMOD_DEP}"
+                ),
                 config_type: ConfigType::Value as i32,
             },
         ))
@@ -2021,7 +2024,9 @@ mod tests {
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
         assert_eq!(override_values.len(), 2);
-        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5"));
+        assert!(
+            override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5,bazel_features@1.47.0")
+        );
         let build_settings = override_values
             .iter()
             .find(|value| value.starts_with("bazel.command_line_build_settings="))
@@ -2084,7 +2089,9 @@ mod tests {
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
         assert_eq!(override_values.len(), 4);
-        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5"));
+        assert!(
+            override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5,bazel_features@1.47.0")
+        );
         let macos_frameworks_repo_env =
             format!("bazel.repo_env=BAZEL_MACOS_FRAMEWORKS={LLVM_MACOS_FRAMEWORKS}");
         assert!(override_values.contains(&macos_frameworks_repo_env.as_str()));
@@ -2141,7 +2148,9 @@ mod tests {
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
         assert_eq!(override_values.len(), 3);
-        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5"));
+        assert!(
+            override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5,bazel_features@1.47.0")
+        );
 
         let build_settings = override_values
             .iter()
@@ -2208,7 +2217,9 @@ mod tests {
             .map(|override_| override_.config_override.as_str())
             .collect::<Vec<_>>();
         assert_eq!(override_values.len(), 3);
-        assert!(override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5"));
+        assert!(
+            override_values.contains(&"bazel.extra_bzlmod_deps=llvm@0.8.5,bazel_features@1.47.0")
+        );
 
         let build_settings = override_values
             .iter()
