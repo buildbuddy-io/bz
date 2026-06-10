@@ -25,6 +25,6 @@ rust_library(
         "//bz/app/bz_fs:bz_fs",
         "//bz/app/bz_health_check_proto:bz_health_check_proto",
         "//bz/app/bz_util:bz_util",
-        "//bz/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/dupe:dupe",
     ],
 )

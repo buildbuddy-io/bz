@@ -30,7 +30,7 @@ rust_library(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         "//app/bz_error:bz_error",
-        "//shed/bz_hash:bz_hash",
+        "//deps/bz_hash:bz_hash",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

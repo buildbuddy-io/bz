@@ -37,7 +37,7 @@ rust_library(
         "//app/bz_grpc:bz_grpc",
         "//app/bz_health_check_proto:bz_health_check_proto",
         "//app/bz_util:bz_util",
-        "//gazebo/dupe:dupe",
+        "//deps/gazebo/dupe:dupe",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

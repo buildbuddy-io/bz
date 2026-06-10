@@ -33,7 +33,7 @@ rust_library(
         "//app/bz_client_ctx:bz_client_ctx",
         "//app/bz_error:bz_error",
         "//app/bz_query:bz_query",
-        "//gazebo/dupe:dupe",
+        "//deps/gazebo/dupe:dupe",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

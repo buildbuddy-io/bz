@@ -31,8 +31,8 @@ rust_library(
     deps = all_crate_deps(normal = True) + [
         "//app/bz_re_configuration:bz_re_configuration",
         "//app/bz_util:bz_util",
-        "//gazebo/dupe:dupe",
-        "//gazebo/gazebo:gazebo",
+        "//deps/gazebo/dupe:dupe",
+        "//deps/gazebo/gazebo:gazebo",
         "//remote_execution/oss/re_grpc_proto:re_grpc_proto",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],

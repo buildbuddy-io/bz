@@ -25,7 +25,7 @@ rust_library(
         "//bz/app/bz_core:bz_core",
         "//bz/app/bz_error:bz_error",
         "//bz/app/bz_fs:bz_fs",
-        "//bz/shed/bz_hash:bz_hash",
+        "//bz/deps/bz_hash:bz_hash",
     ],
 )
 

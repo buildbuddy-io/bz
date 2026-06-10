@@ -1,0 +1,42 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro")
+
+package(default_visibility = ["//visibility:public"])
+
+COMMON_RUSTC_ENV = {
+    "CARGO_MANIFEST_DIR": "deps/dice/dice_tests",
+    "CARGO_PKG_AUTHORS": "",
+    "CARGO_PKG_DESCRIPTION": "e2e tests for DICE. Live in a separate crate for faster development.",
+    "CARGO_PKG_HOMEPAGE": "",
+    "CARGO_PKG_LICENSE": "",
+    "CARGO_PKG_LICENSE_FILE": "",
+    "CARGO_PKG_NAME": "dice_tests",
+    "CARGO_PKG_README": "",
+    "CARGO_PKG_REPOSITORY": "",
+    "CARGO_PKG_VERSION": "0.0.0",
+    "CARGO_PKG_VERSION_MAJOR": "0",
+    "CARGO_PKG_VERSION_MINOR": "0",
+    "CARGO_PKG_VERSION_PATCH": "0",
+    "CARGO_PKG_VERSION_PRE": "",
+    }
+
+rust_library(
+    name = "dice_tests",
+    crate_name = "dice_tests",
+    crate_root = "src/lib.rs",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)

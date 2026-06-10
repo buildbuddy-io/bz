@@ -1,0 +1,27 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "dice_tests",
+    srcs = glob(
+        ["src/**/*.rs"],
+    ),
+    crate_root = "src/lib.rs",
+    doctests = False,
+    test_deps = [
+        "fbsource//third-party/rust:anyhow",
+        "fbsource//third-party/rust:async-trait",
+        "fbsource//third-party/rust:derive_more",
+        "fbsource//third-party/rust:futures",
+        "fbsource//third-party/rust:parking_lot",
+        "fbsource//third-party/rust:tempfile",
+        "fbsource//third-party/rust:tokio",
+        "//bz/deps/allocative/allocative:allocative",
+        "//bz/deps/dice/dice:dice",
+        "//bz/deps/dice/dice_futures:dice_futures",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/gazebo:gazebo",
+        "//bz/deps/pagable:pagable",
+    ],
+)

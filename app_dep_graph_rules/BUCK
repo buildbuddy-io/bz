@@ -1,8 +1,0 @@
-load(":test_impl.bzl", "test_bz_dep_graph")
-
-oncall("build_infra")
-
-# Note: This test is run by building this target
-test_bz_dep_graph(
-    name = "test_bz_dep_graph",
-)

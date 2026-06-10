@@ -32,7 +32,7 @@ bz_util = { workspace = true }
 bz_wrapper_common = { workspace = true }
 dupe = { workspace = true }
 
-superconsole = { version = "0.2.0", path = "../../superconsole" }
+superconsole = { version = "0.2.0", path = "../../deps/superconsole" }
 
 [lints]
 workspace = true

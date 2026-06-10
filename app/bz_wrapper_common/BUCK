@@ -15,10 +15,10 @@ rust_library(
         "fbsource//third-party/rust:shlex",
         "fbsource//third-party/rust:sysinfo",
         "fbsource//third-party/rust:uuid",
-        "//bz/allocative/allocative:allocative",
+        "//bz/deps/allocative/allocative:allocative",
         "//bz/app/bz_error:bz_error",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/shed/bz_hash:bz_hash",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/bz_hash:bz_hash",
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:linux": [

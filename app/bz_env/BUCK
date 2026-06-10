@@ -16,7 +16,7 @@ rust_library(
         "fbsource//third-party/rust:once_cell",
         "fbsource//third-party/rust:tracing",
         "//bz/app/bz_error:bz_error",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/starlark-rust/starlark_map:starlark_map",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/starlark-rust/starlark_map:starlark_map",
     ],
 )

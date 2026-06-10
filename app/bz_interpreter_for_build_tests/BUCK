@@ -22,9 +22,9 @@ rust_unittest(
         "//bz/app/bz_node:bz_node",
         "//bz/app/bz_transition:bz_transition",
         "//bz/app/bz_util:bz_util",
-        "//bz/dice/dice:dice",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/gazebo/gazebo:gazebo",
-        "//bz/starlark-rust/starlark:starlark",
+        "//bz/deps/dice/dice:dice",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/gazebo:gazebo",
+        "//bz/deps/starlark-rust/starlark:starlark",
     ],
 )

@@ -29,8 +29,8 @@ rust_library(
         "fbsource//third-party/rust:uuid",
         "//bz/app/bz_re_configuration:bz_re_configuration",
         "//bz/app/bz_util:bz_util",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/gazebo/gazebo:gazebo",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/gazebo:gazebo",
         "//bz/remote_execution/oss/re_grpc_proto:re_grpc_proto",
     ],
 )

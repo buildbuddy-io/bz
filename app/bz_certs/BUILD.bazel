@@ -31,7 +31,7 @@ rust_library(
     deps = all_crate_deps(normal = True) + [
         "//app/bz_error:bz_error",
         "//app/bz_util:bz_util",
-        "//gazebo/dupe:dupe",
+        "//deps/gazebo/dupe:dupe",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

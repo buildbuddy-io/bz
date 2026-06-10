@@ -10,7 +10,7 @@ rust_protobuf_library(
     proto_srcs = ":host_sharing.proto",
     deps = [
         "fbsource//third-party/rust:serde",
-        "//bz/allocative/allocative:allocative",
+        "//bz/deps/allocative/allocative:allocative",
     ],
 )
 

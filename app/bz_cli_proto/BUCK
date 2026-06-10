@@ -18,7 +18,7 @@ rust_protobuf_library(
         "fbsource//third-party/rust:prost-types",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:tokio-util",
-        "//bz/allocative/allocative:allocative",
+        "//bz/deps/allocative/allocative:allocative",
         "//bz/app/bz_core:bz_core",
         "//bz/app/bz_data:bz_data",
         "//bz/app/bz_error:bz_error",

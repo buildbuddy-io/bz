@@ -6,7 +6,28 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//bz/cfg/experimental:modifiers.bzl", "modifiers")
+load("@prelude//cfg/modifier:asserts.bzl", "verify_normalized_modifier", "verify_normalized_target")
+load(
+    "@prelude//cfg/modifier:types.bzl",
+    "Modifier",  # @unused Used in type annotation
+    "ModifiersMatch",
+)
+
+def _modifiers_match(
+        matcher: dict[str, Modifier]) -> ModifiersMatch:
+    for key, sub_modifier in matcher.items():
+        if key != "DEFAULT":
+            verify_normalized_target(key)
+        verify_normalized_modifier(sub_modifier)
+
+    matcher["_type"] = "ModifiersMatch"
+    return matcher
+
+modifiers = struct(
+    # modifiers.match is deprecated for modifiers.conditional
+    match = _modifiers_match,
+    conditional = _modifiers_match,
+)
 
 def bz_modifiers():
     # **WARNING**: This is not vetted for correctness and should only be used in fbcode/buck2.

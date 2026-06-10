@@ -34,7 +34,7 @@ rust_library(
         "//app/bz_error:bz_error",
         "//app/bz_fs:bz_fs",
         "//app/bz_interpreter:bz_interpreter",
-        "//starlark-rust/starlark:starlark",
+        "//deps/starlark-rust/starlark:starlark",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

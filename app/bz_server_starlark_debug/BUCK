@@ -27,8 +27,8 @@ rust_library(
         "//bz/app/bz_interpreter:bz_interpreter",
         "//bz/app/bz_server_ctx:bz_server_ctx",
         "//bz/app/bz_util:bz_util",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/shed/bz_hash:bz_hash",
-        "//bz/starlark-rust/starlark:starlark",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/bz_hash:bz_hash",
+        "//bz/deps/starlark-rust/starlark:starlark",
     ],
 )

@@ -14,11 +14,11 @@ rust_protobuf_library(
         "fbsource//third-party/rust:hex",
         "fbsource//third-party/rust:prost-types",
         "fbsource//third-party/rust:serde",
-        "//bz/allocative/allocative:allocative",
+        "//bz/deps/allocative/allocative:allocative",
         "//bz/app/bz_host_sharing_proto:bz_host_sharing_proto",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/gazebo/gazebo:gazebo",
-        "//bz/pagable:pagable",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/gazebo:gazebo",
+        "//bz/deps/pagable:pagable",
     ],
 )
 

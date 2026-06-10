@@ -32,9 +32,9 @@ rust_library(
         "//bz/app/bz_interpreter_for_build:bz_interpreter_for_build",
         "//bz/app/bz_node:bz_node",
         "//bz/app/bz_util:bz_util",
-        "//bz/dice/dice:dice",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/gazebo/gazebo:gazebo",
-        "//bz/shed/bz_hash:bz_hash",
+        "//bz/deps/dice/dice:dice",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/gazebo:gazebo",
+        "//bz/deps/bz_hash:bz_hash",
     ],
 )

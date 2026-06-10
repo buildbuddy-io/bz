@@ -14,6 +14,6 @@ rust_library(
         "//bz/app/bz_client_ctx:bz_client_ctx",
         "//bz/app/bz_error:bz_error",
         "//bz/app/bz_query:bz_query",
-        "//bz/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/dupe:dupe",
     ],
 )

@@ -17,8 +17,8 @@ rust_library(
     test_deps = [
         "//bz/app/bz_interpreter_for_build:bz_interpreter_for_build",
         "//bz/app/bz_util:bz_util",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/starlark-rust/starlark:starlark",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/starlark-rust/starlark:starlark",
     ],
     deps = [
         "fbsource//third-party/rust:base64",
@@ -29,7 +29,7 @@ rust_library(
         "//bz/app/bz_fs:bz_fs",
         "//bz/app/bz_node:bz_node",
         "//bz/app/bz_query:bz_query",
-        "//bz/shed/bz_hash:bz_hash",
+        "//bz/deps/bz_hash:bz_hash",
     ],
 )
 

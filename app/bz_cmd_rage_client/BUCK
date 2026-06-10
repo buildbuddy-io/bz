@@ -31,8 +31,8 @@ rust_library(
         "//bz/app/bz_fs:bz_fs",
         "//bz/app/bz_util:bz_util",
         "//bz/app/bz_wrapper_common:bz_wrapper_common",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/shed/bz_hash:bz_hash",
-        "//bz/superconsole:superconsole",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/bz_hash:bz_hash",
+        "//bz/deps/superconsole:superconsole",
     ],
 )

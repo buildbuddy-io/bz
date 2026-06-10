@@ -9,6 +9,6 @@ rust_library(
         "fbsource//third-party/rust:async-trait",
         "fbsource//third-party/rust:tracing",
         "//bz/app/bz_error:bz_error",
-        "//bz/shed/bz_hash:bz_hash",
+        "//bz/deps/bz_hash:bz_hash",
     ],
 )

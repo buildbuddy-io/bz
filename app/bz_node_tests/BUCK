@@ -12,6 +12,6 @@ rust_unittest(
         "//bz/app/bz_fs:bz_fs",
         "//bz/app/bz_node:bz_node",
         "//bz/app/bz_util:bz_util",
-        "//bz/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/dupe:dupe",
     ],
 )

@@ -76,7 +76,7 @@ rust_library(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":build_script",
-        "//allocative/allocative:allocative",
+        "//deps/allocative/allocative:allocative",
         "//app/bz_core:bz_core",
         "//app/bz_data:bz_data",
         "//app/bz_error:bz_error",

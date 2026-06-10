@@ -12,7 +12,7 @@ rust_library(
         "fbsource//third-party/rust:nom-language",
         "//bz/app/bz_error:bz_error",
         "//bz/app/bz_util:bz_util",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/gazebo/gazebo:gazebo",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/gazebo:gazebo",
     ],
 )

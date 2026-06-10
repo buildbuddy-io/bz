@@ -38,9 +38,9 @@ rust_library(
         "//bz/app/bz_query:bz_query",
         "//bz/app/bz_server_ctx:bz_server_ctx",
         "//bz/app/bz_util:bz_util",
-        "//bz/dice/dice:dice",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/shed/bz_hash:bz_hash",
-        "//bz/starlark-rust/starlark_map:starlark_map",
+        "//bz/deps/dice/dice:dice",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/bz_hash:bz_hash",
+        "//bz/deps/starlark-rust/starlark_map:starlark_map",
     ],
 )

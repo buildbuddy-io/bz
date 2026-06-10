@@ -8,7 +8,7 @@ rust_library(
     test_deps = [
         "fbsource//third-party/rust:maplit",
         "fbsource//third-party/rust:tempfile",
-        "//bz/shed/bz_hash:bz_hash",
+        "//bz/deps/bz_hash:bz_hash",
     ],
     deps = [
         "fbsource//third-party/rust:async-compression",
@@ -26,7 +26,7 @@ rust_library(
         "fbsource//third-party/rust:tokio-stream",
         "fbsource//third-party/rust:tokio-util",
         "fbsource//third-party/rust:tracing",
-        "//bz/allocative/allocative:allocative",
+        "//bz/deps/allocative/allocative:allocative",
         "//bz/app/bz_cli_proto:bz_cli_proto",
         "//bz/app/bz_common:bz_common",
         "//bz/app/bz_core:bz_core",
@@ -37,7 +37,7 @@ rust_library(
         "//bz/app/bz_fs:bz_fs",
         "//bz/app/bz_util:bz_util",
         "//bz/app/bz_wrapper_common:bz_wrapper_common",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/gazebo/gazebo:gazebo",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/gazebo:gazebo",
     ],
 )

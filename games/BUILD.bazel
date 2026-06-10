@@ -29,7 +29,7 @@ rust_library(
     edition = "2021",
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -52,7 +52,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -75,7 +75,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -98,7 +98,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -121,7 +121,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -144,7 +144,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -167,7 +167,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -190,7 +190,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -213,7 +213,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -236,7 +236,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -259,7 +259,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
@@ -282,7 +282,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":games",
-        "//superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

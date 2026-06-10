@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "allocative/allocative",
-    "allocative/allocative_derive",
+    "deps/allocative/allocative",
+    "deps/allocative/allocative_derive",
     "app/bz",
     "app/bz_action_impl",
     "app/bz_action_impl_tests",
@@ -95,43 +95,43 @@ members = [
     "app/bz_eden",
     "app/bz_validation",
     "app/bz_host_sharing_proto",
-    "dice/dice",
-    "dice/dice_error",
-    "dice/dice_examples",
-    "dice/dice_futures",
-    "dice/dice_tests",
-    # @oss-disable: "dice/fuzzy_dice",
-    "dice/read_dump",
-    # @oss-disable: "host_sharing",
+    "deps/dice/dice",
+    "deps/dice/dice_error",
+    "deps/dice/dice_examples",
+    "deps/dice/dice_futures",
+    "deps/dice/dice_tests",
+    # @oss-disable: "deps/dice/fuzzy_dice",
+    "deps/dice/read_dump",
+    # @oss-disable: "deps/host_sharing",
     "games",
-    "gazebo/display_container",
-    "gazebo/cmp_any",
-    "gazebo/gazebo",
-    "gazebo/gazebo_derive",
-    "gazebo/strong_hash",
-    "gazebo/strong_hash_derive",
-    "gazebo/strong_hash_tests",
+    "deps/gazebo/display_container",
+    "deps/gazebo/cmp_any",
+    "deps/gazebo/gazebo",
+    "deps/gazebo/gazebo_derive",
+    "deps/gazebo/strong_hash",
+    "deps/gazebo/strong_hash_derive",
+    "deps/gazebo/strong_hash_tests",
     "integrations/resources/rust",
     "integrations/rust-project",
-    "pagable",
-    "pagable_derive",
+    "deps/pagable",
+    "deps/pagable_derive",
     "remote_execution/oss/re_grpc",
     "remote_execution/oss/re_grpc_proto",
-    "starlark-rust/starlark",
-    "starlark-rust/starlark_bin",
-    "starlark-rust/starlark_derive",
-    "starlark-rust/starlark_lsp",
-    "starlark-rust/starlark_map",
-    "starlark-rust/starlark_syntax",
+    "deps/starlark-rust/starlark",
+    "deps/starlark-rust/starlark_bin",
+    "deps/starlark-rust/starlark_derive",
+    "deps/starlark-rust/starlark_lsp",
+    "deps/starlark-rust/starlark_map",
+    "deps/starlark-rust/starlark_syntax",
     "bz_sketches",
-    "shed/setsketch",
-    "shed/bz_hash",
-    "shed/static_interner",
-    "shed/lock_free_hashtable",
-    "shed/lock_free_vec",
-    "shed/provider",
-    "shed/three_billion_instructions",
-    "superconsole",
+    "deps/setsketch",
+    "deps/bz_hash",
+    "deps/static_interner",
+    "deps/lock_free_hashtable",
+    "deps/lock_free_vec",
+    "deps/provider",
+    "deps/three_billion_instructions",
+    "deps/superconsole",
 ]
 resolver = "2"
 
@@ -363,37 +363,37 @@ sorted_vector_map.git = "https://github.com/facebookexperimental/rust-shed" # @o
 sorted_vector_map.version = "0.2"
 
 allocative.features = ["anyhow", "bumpalo", "dashmap", "either", "futures", "hashbrown", "indexmap", "num-bigint", "once_cell", "parking_lot", "prost-types", "relative-path", "serde_json", "slab", "smallvec", "compact_str", "sorted_vector_map", "tokio", "triomphe"]
-allocative.path = "allocative/allocative"
+allocative.path = "deps/allocative/allocative"
 allocative.version = "0.3.1"
-bz_hash = { path = "shed/bz_hash" }
-cmp_any = { path = "gazebo/cmp_any" }
-dice = { path = "dice/dice" }
-dice_error = { path = "dice/dice_error" }
-dice_futures = { path = "dice/dice_futures" }
-display_container = { path = "gazebo/display_container" }
-dupe.path = "gazebo/dupe"
+bz_hash = { path = "deps/bz_hash" }
+cmp_any = { path = "deps/gazebo/cmp_any" }
+dice = { path = "deps/dice/dice" }
+dice_error = { path = "deps/dice/dice_error" }
+dice_futures = { path = "deps/dice/dice_futures" }
+display_container = { path = "deps/gazebo/display_container" }
+dupe.path = "deps/gazebo/dupe"
 dupe.version = "0.9.0"
 gazebo.features = ["str_pattern_extensions"]
-gazebo.path = "gazebo/gazebo"
+gazebo.path = "deps/gazebo/gazebo"
 gazebo.version = "0.8.1"
-host_sharing = { path = "host_sharing" }
-lock_free_hashtable = { version = "0.1.0", path = "shed/lock_free_hashtable" }
-lock_free_vec = { path = "shed/lock_free_vec" }
-pagable = { path = "pagable", features = ["tokio"] }
-pagable_derive = { path = "pagable_derive" }
-provider = { path = "shed/provider" }
+host_sharing = { path = "deps/host_sharing" }
+lock_free_hashtable = { version = "0.1.0", path = "deps/lock_free_hashtable" }
+lock_free_vec = { path = "deps/lock_free_vec" }
+pagable = { path = "deps/pagable", features = ["tokio"] }
+pagable_derive = { path = "deps/pagable_derive" }
+provider = { path = "deps/provider" }
 remote_execution = { path = "remote_execution/oss/re_grpc" }
-setsketch = { path = "shed/setsketch" }
+setsketch = { path = "deps/setsketch" }
 sled = "0.34"
-starlark = { version = "0.13.0", path = "starlark-rust/starlark" }
-starlark_lsp = { version = "0.13.0", path = "starlark-rust/starlark_lsp" }
-starlark_map = { version = "0.13.0", path = "starlark-rust/starlark_map" }
-starlark_syntax = { version = "0.13.0", path = "starlark-rust/starlark_syntax" }
-static_interner = { path = "shed/static_interner" }
+starlark = { version = "0.13.0", path = "deps/starlark-rust/starlark" }
+starlark_lsp = { version = "0.13.0", path = "deps/starlark-rust/starlark_lsp" }
+starlark_map = { version = "0.13.0", path = "deps/starlark-rust/starlark_map" }
+starlark_syntax = { version = "0.13.0", path = "deps/starlark-rust/starlark_syntax" }
+static_interner = { path = "deps/static_interner" }
 strong_hash.features = ["num-bigint", "triomphe"]
-strong_hash.path = "gazebo/strong_hash"
-strong_hash_derive = { path = "gazebo/strong_hash_derive" }
-three_billion_instructions = { path = "shed/three_billion_instructions" }
+strong_hash.path = "deps/gazebo/strong_hash"
+strong_hash_derive = { path = "deps/gazebo/strong_hash_derive" }
+three_billion_instructions = { path = "deps/three_billion_instructions" }
 
 bz_action_impl = { path = "app/bz_action_impl" }
 bz_action_metadata_proto = { path = "app/bz_action_metadata_proto" }

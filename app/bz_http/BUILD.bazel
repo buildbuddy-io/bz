@@ -29,10 +29,10 @@ rust_library(
     edition = "2024",
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
-        "//allocative/allocative:allocative",
+        "//deps/allocative/allocative:allocative",
         "//app/bz_certs:bz_certs",
         "//app/bz_error:bz_error",
-        "//gazebo/dupe:dupe",
+        "//deps/gazebo/dupe:dupe",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

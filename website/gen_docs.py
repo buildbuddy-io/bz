@@ -59,7 +59,7 @@ def copy_starlark_docs() -> None:
     base_path = Path("docs") / "developers" / "starlark"
     setup_gen_dir(base_path)
     # Copy the starlark docs over. docusaurus does not handle upward path traversal very well.
-    for x in Path("starlark-rust/docs").glob("*.md"):
+    for x in Path("deps/starlark-rust/docs").glob("*.md"):
         name = Path(x).stem
         prefix = "---\nid: " + name + "\n---\n"
         write_file(base_path / (name + ".generated.md"), prefix + read_file(x))

@@ -16,7 +16,7 @@ rust_library(
         "//bz/app/bz_error:bz_error",
         "//bz/app/bz_util:bz_util",
         # @oss-disable[end= ]: "//bz/facebook/find_certs:find_certs",
-        "//bz/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/dupe:dupe",
         # @oss-disable[end= ]: "//common/rust/cpe:cpe",
     ],
 )

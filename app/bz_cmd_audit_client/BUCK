@@ -12,6 +12,6 @@ rust_library(
         "fbsource//third-party/rust:serde_json",
         "//bz/app/bz_cli_proto:bz_cli_proto",
         "//bz/app/bz_client_ctx:bz_client_ctx",
-        "//bz/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/dupe:dupe",
     ],
 )

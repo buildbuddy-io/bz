@@ -27,5 +27,5 @@ cargo install --locked dotslash
 Build a copy of `buck2` with `buck2`:
 
 ```sh
-./bootstrap/buck2 build //:bz
+buck2 build //:bz
 ```

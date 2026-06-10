@@ -1,0 +1,18 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "static_interner",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/lib.rs",
+    deps = [
+        "fbsource//third-party/rust:equivalent",
+        "//bz/deps/allocative/allocative:allocative",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/strong_hash:strong_hash",
+        "//bz/deps/pagable:pagable",
+        "//bz/deps/bz_hash:bz_hash",
+        "//bz/deps/lock_free_hashtable:lock_free_hashtable",
+    ],
+)

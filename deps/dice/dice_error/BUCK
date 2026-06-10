@@ -1,0 +1,17 @@
+load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
+
+oncall("build_infra")
+
+rust_library(
+    name = "dice_error",
+    srcs = glob(
+        ["src/**/*.rs"],
+    ),
+    deps = [
+        "fbsource//third-party/rust:derive_more",
+        "fbsource//third-party/rust:thiserror",
+        "//bz/deps/allocative/allocative:allocative",
+        "//bz/deps/gazebo/cmp_any:cmp_any",
+        "//bz/deps/gazebo/dupe:dupe",
+    ],
+)

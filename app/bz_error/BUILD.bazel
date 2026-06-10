@@ -29,12 +29,12 @@ rust_library(
     edition = "2024",
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
-        "//allocative/allocative:allocative",
+        "//deps/allocative/allocative:allocative",
         "//app/bz_data:bz_data",
-        "//dice/dice_error:dice_error",
-        "//gazebo/dupe:dupe",
-        "//starlark-rust/starlark_syntax:starlark_syntax",
-        "//superconsole:superconsole",
+        "//deps/dice/dice_error:dice_error",
+        "//deps/gazebo/dupe:dupe",
+        "//deps/starlark-rust/starlark_syntax:starlark_syntax",
+        "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [
         "//app/bz_error_derive:bz_error_derive",

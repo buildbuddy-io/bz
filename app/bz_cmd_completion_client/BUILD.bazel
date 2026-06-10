@@ -35,7 +35,7 @@ rust_library(
         "//app/bz_core:bz_core",
         "//app/bz_error:bz_error",
         "//app/bz_fs:bz_fs",
-        "//shed/bz_hash:bz_hash",
+        "//deps/bz_hash:bz_hash",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

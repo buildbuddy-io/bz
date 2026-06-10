@@ -37,9 +37,9 @@ rust_library(
         "//bz/app/bz_fs:bz_fs",
         "//bz/app/bz_util:bz_util",
         "//bz/app/bz_wrapper_common:bz_wrapper_common",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/shed/bz_hash:bz_hash",
-        "//bz/superconsole:superconsole",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/bz_hash:bz_hash",
+        "//bz/deps/superconsole:superconsole",
         "//common/rust/shed/fbinit:fbinit",
     ] + select({
         ":bz_client_only_build": [],
@@ -104,8 +104,8 @@ buck_rust_binary(
         "//bz/app/bz_events:bz_events",
         "//bz/app/bz_fs:bz_fs",
         "//bz/app/bz_wrapper_common:bz_wrapper_common",
-        "//bz/gazebo/dupe:dupe",
-        "//bz/superconsole:superconsole",
+        "//bz/deps/gazebo/dupe:dupe",
+        "//bz/deps/superconsole:superconsole",
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:windows": [

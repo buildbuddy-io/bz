@@ -19,6 +19,6 @@ rust_library(
         "//bz/app/bz_grpc:bz_grpc",
         "//bz/app/bz_test_api:bz_test_api",
         "//bz/app/bz_test_proto:bz_test_proto",
-        "//bz/host_sharing:host_sharing",
+        "//bz/deps/host_sharing:host_sharing",
     ],
 )

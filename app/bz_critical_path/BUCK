@@ -14,6 +14,6 @@ rust_library(
         "fbsource//third-party/rust:crossbeam",
         "fbsource//third-party/rust:derive_more",
         "//bz/app/bz_error:bz_error",
-        "//bz/starlark-rust/starlark_map:starlark_map",
+        "//bz/deps/starlark-rust/starlark_map:starlark_map",
     ],
 )

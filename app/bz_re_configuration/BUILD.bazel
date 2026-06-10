@@ -29,7 +29,7 @@ rust_library(
     edition = "2024",
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
-        "//allocative/allocative:allocative",
+        "//deps/allocative/allocative:allocative",
         "//app/bz_common:bz_common",
         "//app/bz_core:bz_core",
         "//app/bz_error:bz_error",

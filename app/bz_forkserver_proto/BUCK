@@ -13,7 +13,7 @@ rust_protobuf_library(
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:prost-types",
         "//bz/app/bz_data:bz_data",
-        "//bz/gazebo/gazebo:gazebo",
+        "//bz/deps/gazebo/gazebo:gazebo",
     ],
 )
 

@@ -6,7 +6,7 @@ rust_library(
     name = "bz_re_configuration",
     srcs = glob(["src/**/*.rs"]),
     deps = [
-        "//bz/allocative/allocative:allocative",
+        "//bz/deps/allocative/allocative:allocative",
         "//bz/app/bz_common:bz_common",
         "//bz/app/bz_core:bz_core",
         "//bz/app/bz_error:bz_error",

@@ -30,8 +30,8 @@ rust_library(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         "//app/bz_error:bz_error",
-        "//gazebo/dupe:dupe",
-        "//starlark-rust/starlark_map:starlark_map",
+        "//deps/gazebo/dupe:dupe",
+        "//deps/starlark-rust/starlark_map:starlark_map",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

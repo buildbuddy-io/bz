@@ -13,7 +13,7 @@ rust_library(
         "fbsource//third-party/rust:tempfile",
         "fbsource//third-party/rust:tokio-stream",
         "//bz/app/bz_util:bz_util",
-        "//bz/gazebo/dupe:dupe",
+        "//bz/deps/gazebo/dupe:dupe",
     ],
     deps = [
         "fbsource//third-party/rust:async-trait",
@@ -43,7 +43,7 @@ rust_library(
         "ovr_config//os:windows": [
             "fbsource//third-party/rust:windows-sys",
             "//bz/app/bz_wrapper_common:bz_wrapper_common",
-            "//bz/gazebo/dupe:dupe",
+            "//bz/deps/gazebo/dupe:dupe",
         ],
     }),
 )

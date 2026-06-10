@@ -77,7 +77,7 @@ rust_library(
     deps = all_crate_deps(normal = True) + [
         ":build_script",
         "//app/bz_data:bz_data",
-        "//gazebo/gazebo:gazebo",
+        "//deps/gazebo/gazebo:gazebo",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

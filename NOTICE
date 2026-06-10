@@ -1,6 +1,6 @@
 The code in `app/bz_error_derive` is adapted from thiserror (https://github.com/dtolnay/thiserror).
 
-The code in `shed/completion_verify/src/runtime` is adapted from `complete_pty`
+The code in `deps/completion_verify/src/runtime` is adapted from `complete_pty`
 (https://crates.io/crates/completest_pty).
 
-The code in `shed/setsketch/src` is adapted from `probminhash` (https://github.com/jean-pierreBoth/probminhash).
+The code in `deps/setsketch/src` is adapted from `probminhash` (https://github.com/jean-pierreBoth/probminhash).

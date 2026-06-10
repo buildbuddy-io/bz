@@ -29,7 +29,7 @@ rust_proc_macro(
     edition = "2024",
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
-        "//gazebo/gazebo:gazebo",
+        "//deps/gazebo/gazebo:gazebo",
     ],
     rustc_env = COMMON_RUSTC_ENV,
     compile_data = glob([

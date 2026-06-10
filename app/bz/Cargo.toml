@@ -19,7 +19,7 @@ tracing = { workspace = true }
 dupe = { workspace = true }
 gazebo = { workspace = true }
 host_sharing = { workspace = true }
-superconsole = { version = "0.2.0", path = "../../superconsole" }
+superconsole = { version = "0.2.0", path = "../../deps/superconsole" }
 
 bz_action_impl = { workspace = true }
 bz_analysis = { workspace = true }
