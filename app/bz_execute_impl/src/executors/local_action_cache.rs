@@ -35,9 +35,9 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
-const STATE_TABLE_NAME: &str = "local_action_cache_outputs_v6";
-const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_action_metadata_v6";
-const REMOTE_ACTION_CACHE_TABLE_NAME: &str = "local_action_cache_remote_outputs_v6";
+const STATE_TABLE_NAME: &str = "local_action_cache_outputs_v7";
+const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_action_metadata_v7";
+const REMOTE_ACTION_CACHE_TABLE_NAME: &str = "local_action_cache_remote_outputs_v7";
 const OUTPUT_VALUES_VERSION: u8 = 1;
 
 pub struct LocalActionCache {

@@ -93,7 +93,6 @@ use bz_execute::materialize::materializer::LostRemoteCasArtifacts;
 use bz_execute::materialize::materializer::MaterializationError;
 use bz_execute::materialize::materializer::Materializer;
 use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
-use bz_execute::re::manager::ManagedRemoteExecutionClient;
 use bz_execute_local::CommandResult;
 use bz_execute_local::DefaultKillProcess;
 use bz_execute_local::GatherOutputStatus;
@@ -142,7 +141,6 @@ use crate::executors::worker::WorkerHandle;
 use crate::executors::worker::WorkerPool;
 use crate::incremental_actions_helper::get_incremental_path_map;
 use crate::incremental_actions_helper::save_content_based_incremental_state;
-use crate::re::download::remote_artifact_values_present;
 use crate::sqlite::incremental_state_db::IncrementalDbState;
 
 static ARTIFACT_PATH_ALIAS_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -586,7 +584,6 @@ pub struct LocalExecutor {
     incremental_db_state: Arc<IncrementalDbState>,
     local_action_cache: Arc<LocalActionCache>,
     local_action_cache_re_use_case: RemoteExecutorUseCase,
-    local_action_cache_re_client: Option<ManagedRemoteExecutionClient>,
     shared_state: LocalExecutorSharedState,
     blocking_executor: Arc<dyn BlockingExecutor>,
     pub(crate) host_sharing_broker: Arc<HostSharingBroker>,
@@ -606,7 +603,6 @@ impl LocalExecutor {
         incremental_db_state: Arc<IncrementalDbState>,
         local_action_cache: Arc<LocalActionCache>,
         local_action_cache_re_use_case: RemoteExecutorUseCase,
-        local_action_cache_re_client: Option<ManagedRemoteExecutionClient>,
         shared_state: LocalExecutorSharedState,
         blocking_executor: Arc<dyn BlockingExecutor>,
         host_sharing_broker: Arc<HostSharingBroker>,
@@ -623,7 +619,6 @@ impl LocalExecutor {
             incremental_db_state,
             local_action_cache,
             local_action_cache_re_use_case,
-            local_action_cache_re_client,
             shared_state,
             blocking_executor,
             host_sharing_broker,
@@ -1847,16 +1842,6 @@ impl LocalExecutor {
             .await
     }
 
-    async fn remote_local_action_cache_outputs_present(
-        &self,
-        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-    ) -> bz_error::Result<bool> {
-        let Some(re_client) = &self.local_action_cache_re_client else {
-            return Ok(false);
-        };
-        remote_artifact_values_present(re_client, outputs).await
-    }
-
     async fn transform_bazel_shared_action_outputs(
         &self,
         shared_outputs: &BuckIndexMap<String, BazelSharedActionOutput>,
@@ -2406,30 +2391,6 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         };
 
         let remote_cache_origin = entry.remote_cache_origin.clone();
-        if remote_cache_origin.is_some() {
-            match self
-                .remote_local_action_cache_outputs_present(&outputs)
-                .await
-            {
-                Ok(true) => {}
-                Ok(false) => {
-                    tracing::debug!(
-                        "local action cache metadata entry `{}` referenced missing remote CAS blobs; treating it as a cache miss",
-                        command.local_action_cache_key.key,
-                    );
-                    return self.remove_unprepared_action_metadata(
-                        &command.local_action_cache_key.key,
-                        manager,
-                    );
-                }
-                Err(e) => {
-                    return ControlFlow::Break(
-                        manager.error("local_action_cache_verify_remote_outputs_failed", e),
-                    );
-                }
-            }
-        }
-
         if !command.outputs_declared_by_action {
             let declare_result = if let Some(remote_cache_origin) = &remote_cache_origin {
                 self.declare_remote_local_action_cache_outputs(
@@ -2524,36 +2485,6 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     ) {
                         Ok(Some(outputs)) => {
                             let remote_cache_origin = entry.remote_cache_origin.clone();
-                            if remote_cache_origin.is_some() {
-                                match self
-                                    .remote_local_action_cache_outputs_present(&outputs)
-                                    .await
-                                {
-                                    Ok(true) => {}
-                                    Ok(false) => {
-                                        tracing::debug!(
-                                            "local action cache metadata entry `{}` referenced missing remote CAS blobs; treating it as a cache miss",
-                                            local_action_cache_key.key,
-                                        );
-                                        if let Err(e) = self
-                                            .local_action_cache
-                                            .remove_action_metadata(&local_action_cache_key.key)
-                                        {
-                                            return ControlFlow::Break(manager.error(
-                                                "local_action_cache_remove_metadata_failed",
-                                                e,
-                                            ));
-                                        }
-                                        return ControlFlow::Continue(manager);
-                                    }
-                                    Err(e) => {
-                                        return ControlFlow::Break(manager.error(
-                                            "local_action_cache_verify_remote_outputs_failed",
-                                            e,
-                                        ));
-                                    }
-                                }
-                            }
                             let declare_result =
                                 if let Some(remote_cache_origin) = &remote_cache_origin {
                                     self.declare_remote_local_action_cache_outputs(
@@ -2713,29 +2644,6 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             Ok(Some(outputs)) => {
                 let remote_cache_origin = cache_entry.remote_cache_origin.clone();
                 if let Some(remote_cache_origin_ref) = &remote_cache_origin {
-                    match self
-                        .remote_local_action_cache_outputs_present(&outputs)
-                        .await
-                    {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            tracing::debug!(
-                                "local action cache entry `{}` referenced missing remote CAS blobs; treating it as a cache miss",
-                                action_digest,
-                            );
-                            if let Err(e) = self.local_action_cache.remove(&action_digest) {
-                                return ControlFlow::Break(
-                                    manager.error("local_action_cache_remove_failed", e),
-                                );
-                            }
-                            return ControlFlow::Continue(manager);
-                        }
-                        Err(e) => {
-                            return ControlFlow::Break(
-                                manager.error("local_action_cache_verify_remote_outputs_failed", e),
-                            );
-                        }
-                    }
                     if let Err(e) = self
                         .declare_remote_local_action_cache_outputs(
                             &outputs,
@@ -5170,7 +5078,6 @@ mod tests {
             Arc::new(IncrementalDbState::db_disabled()),
             Arc::new(LocalActionCache::testing_new_in_memory()?),
             RemoteExecutorUseCase::bz_default(),
-            None,
             LocalExecutorSharedState::default(),
             Arc::new(DummyBlockingExecutor {
                 fs: project_fs.dupe(),
