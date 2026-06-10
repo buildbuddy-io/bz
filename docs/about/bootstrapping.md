@@ -24,13 +24,6 @@ First, install `dotslash` with `Cargo`:
 cargo install --locked dotslash
 ```
 
-Next, use `reindeer` to buckify dependencies:
-
-```sh
-cd buck2/
-./bootstrap/reindeer --third-party-dir shim/third-party/rust buckify
-```
-
 Build a copy of `buck2` with `buck2`:
 
 ```sh

@@ -1,2 +1,0 @@
-[build.env]
-passthrough = ["JEMALLOC_SYS_WITH_LG_PAGE"]

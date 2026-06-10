@@ -69,24 +69,6 @@ cd buck2/
 cargo install --path=app/bz
 ```
 
-### Using Nix
-
-Most [Nix](https://nixos.org/nix) users provision tools directly with Nix
-itself, rather than rustup. The Buck2 source ships a `flake.nix` that exposes a
-`cargo`/`rustc` development shell:
-
-```sh
-git clone https://github.com/facebook/buck2.git
-cd buck2/
-nix develop . # add 'rustc' and 'cargo' to $PATH
-cargo build --release --bin=buck2
-```
-
-A Nix package (e.g. `nix build .#buck2`) does not yet exist; see `buck2` in
-nixpkgs for inspiration for writing one. An `.envrc` using the Nix flake is
-provided for `direnv` users — `direnv allow` will give a usable development
-environment.
-
 ### `protoc` on non-Tier-1 platforms
 
 Buck2 uses Protocol Buffers extensively, both internally and to talk to remote
@@ -116,6 +98,5 @@ export BUCK2_BUILD_PROTOC_INCLUDE=/opt/protobuf/include
 See [Bootstrapping](../about/bootstrapping.md) for details. The gist:
 
 ```sh
-reindeer --third-party-dir shim/third-party/rust buckify
 buck2 build //:bz
 ```
