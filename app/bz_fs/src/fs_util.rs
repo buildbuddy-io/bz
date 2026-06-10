@@ -365,6 +365,109 @@ pub fn copy<P: AsRef<AbsPath>, Q: AsRef<AbsPath>>(from: P, to: Q) -> Result<u64,
     })
 }
 
+/// Recursively duplicates the directory tree at `from` into `to`.
+///
+/// `to` must not exist. On macOS this attempts a single `clonefile(2)` call
+/// (a recursive, copy-on-write APFS clone); when the filesystem cannot clone
+/// (cross-device, non-APFS) or on other platforms it falls back to a walk
+/// that recreates directories and hard-links regular files (copying when
+/// hard-linking fails).
+///
+/// Symlinks are reproduced verbatim in both modes: targets are never
+/// rewritten, so callers own the symlink semantics of the resulting tree.
+/// In particular, absolute targets keep pointing at their original
+/// locations and dangling links stay dangling.
+///
+/// Hard-linked files inside the tree keep their content and stay
+/// space-shared in both modes, but only the fallback walk preserves their
+/// inode identity; `clonefile` materializes each link as an independent
+/// copy-on-write clone.
+pub fn clone_tree<P: AsRef<AbsPath>, Q: AsRef<AbsPath>>(from: P, to: Q) -> Result<(), IoError> {
+    let _guard = IoCounterKey::Copy.guard();
+    let from_ref = from.as_ref();
+    let to_ref = to.as_ref();
+    clone_tree_impl(
+        from_ref.as_maybe_relativized(),
+        to_ref.as_maybe_relativized(),
+    )
+    .map_err(|e| {
+        IoError::new(e)
+            .context(format!(
+                "clone_tree(from={}, to={})",
+                from_ref.display(),
+                to_ref.display(),
+            ))
+            .check_eden(from_ref)
+            .check_eden(to_ref)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn clone_tree_impl(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let from_c = std::ffi::CString::new(from.as_os_str().as_bytes())?;
+    let to_c = std::ffi::CString::new(to.as_os_str().as_bytes())?;
+    if unsafe { libc::clonefile(from_c.as_ptr(), to_c.as_ptr(), 0) } == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    match error.raw_os_error() {
+        // Cloning requires both paths on one APFS volume; fall back to the
+        // portable walk when the filesystem cannot clone.
+        Some(libc::ENOTSUP) | Some(libc::EXDEV) => clone_tree_fallback(from, to),
+        _ => Err(error),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clone_tree_impl(from: &Path, to: &Path) -> io::Result<()> {
+    clone_tree_fallback(from, to)
+}
+
+fn clone_tree_fallback(from: &Path, to: &Path) -> io::Result<()> {
+    fs::create_dir(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let from_path = entry.path();
+        let to_path = to.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            clone_tree_fallback(&from_path, &to_path)?;
+        } else if file_type.is_symlink() {
+            let target = fs::read_link(&from_path)?;
+            clone_tree_symlink(&target, &to_path)?;
+        } else if fs::hard_link(&from_path, &to_path).is_err() {
+            fs::copy(&from_path, &to_path)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn clone_tree_symlink(target: &Path, link: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn clone_tree_symlink(target: &Path, link: &Path) -> io::Result<()> {
+    // The link is reproduced verbatim; only the dir/file flavor of the
+    // Windows symlink needs the target resolved relative to the link.
+    let resolved = if target.is_absolute() {
+        Cow::Borrowed(target)
+    } else {
+        match link.parent() {
+            Some(parent) => Cow::Owned(parent.join(target)),
+            None => Cow::Borrowed(target),
+        }
+    };
+    if resolved.is_dir() {
+        std::os::windows::fs::symlink_dir(target, link)
+    } else {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+}
+
 pub fn read_link<P: AsRef<AbsPath>>(path: P) -> Result<PathBuf, IoError> {
     let _guard = IoCounterKey::ReadLink.guard();
     with_retries(|| fs::read_link(path.as_ref().as_maybe_relativized()))
@@ -972,6 +1075,13 @@ pub mod uncategorized {
         super::copy(from, to).uncategorized()
     }
 
+    pub fn clone_tree<P: AsRef<AbsPath>, Q: AsRef<AbsPath>>(
+        from: P,
+        to: Q,
+    ) -> bz_error::Result<()> {
+        super::clone_tree(from, to).uncategorized()
+    }
+
     pub fn read_link<P: AsRef<AbsPath>>(path: P) -> bz_error::Result<PathBuf> {
         super::read_link(path).uncategorized()
     }
@@ -1128,6 +1238,132 @@ mod tests {
 
         // Clean up
         fs_util::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn clone_tree_clones_tree_and_requires_missing_destination() -> bz_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsPath::new(tempdir.path())?;
+        let from = root.join("from");
+        let to = root.join("to");
+        fs_util::create_dir_all(from.join("sub"))?;
+        fs_util::write(from.join("file"), b"contents")?;
+        fs_util::write(from.join("sub/nested"), b"nested")?;
+
+        fs_util::clone_tree(&from, &to)?;
+
+        assert_eq!("contents", fs_util::read_to_string(to.join("file"))?);
+        assert_eq!("nested", fs_util::read_to_string(to.join("sub/nested"))?);
+        // The destination must not exist; callers remove it first.
+        assert!(fs_util::clone_tree(&from, &to).is_err());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn clone_tree_clones_symlinks_verbatim() -> bz_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsPath::new(tempdir.path())?;
+        let from = root.join("from");
+        let to = root.join("to");
+        fs_util::create_dir_all(from.join("bin"))?;
+        fs_util::write(from.join("bin/tool"), b"tool")?;
+        fs_util::symlink(Path::new("tool"), from.join("bin/alias"))?;
+        // Dangling in-tree link, e.g. a minimal toolchain's `clangd -> empty`
+        // stub; it must survive cloning without being resolved.
+        fs_util::symlink(Path::new("empty"), from.join("bin/clangd"))?;
+        let external = root.join("external");
+        fs_util::write(&external, b"external")?;
+        fs_util::symlink(external.as_path(), from.join("bin/external"))?;
+
+        fs_util::clone_tree(&from, &to)?;
+
+        assert_eq!(
+            PathBuf::from("tool"),
+            fs_util::read_link(to.join("bin/alias"))?
+        );
+        assert!(fs_util::symlink_metadata(to.join("bin/clangd"))?.is_symlink());
+        assert_eq!(
+            PathBuf::from("empty"),
+            fs_util::read_link(to.join("bin/clangd"))?
+        );
+        assert_eq!(
+            external.as_path(),
+            fs_util::read_link(to.join("bin/external"))?.as_path()
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn clone_tree_duplicates_hardlinked_files() -> bz_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsPath::new(tempdir.path())?;
+        let from = root.join("from");
+        let to = root.join("to");
+        fs_util::create_dir_all(from.join("lib"))?;
+        fs_util::write(from.join("lib/libSystem.B.tbd"), b"--- !tapi-tbd\n")?;
+        fs::hard_link(
+            from.join("lib/libSystem.B.tbd").as_path(),
+            from.join("lib/libproc.tbd").as_path(),
+        )?;
+
+        fs_util::clone_tree(&from, &to)?;
+
+        // `clonefile` materializes hard links as independent copy-on-write
+        // clones, so only content (not inode identity) is guaranteed here;
+        // see `clone_tree_fallback_walk_matches_clone_semantics` for the
+        // walk's inode preservation.
+        assert_eq!(
+            "--- !tapi-tbd\n",
+            fs_util::read_to_string(to.join("lib/libSystem.B.tbd"))?
+        );
+        assert_eq!(
+            "--- !tapi-tbd\n",
+            fs_util::read_to_string(to.join("lib/libproc.tbd"))?
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn clone_tree_fallback_walk_matches_clone_semantics() -> bz_error::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsPath::new(tempdir.path())?;
+        let from = root.join("from");
+        let to = root.join("to");
+        fs_util::create_dir_all(from.join("sub"))?;
+        fs_util::write(from.join("sub/file"), b"contents")?;
+        fs::hard_link(
+            from.join("sub/file").as_path(),
+            from.join("sub/hardlink").as_path(),
+        )?;
+        fs_util::symlink(Path::new("file"), from.join("sub/alias"))?;
+        fs_util::symlink(Path::new("missing"), from.join("sub/dangling"))?;
+
+        // Exercise the portable walk directly: on macOS `clone_tree` would
+        // take the clonefile path instead.
+        crate::fs_util::clone_tree_fallback(from.as_path(), to.as_path())?;
+
+        assert_eq!("contents", fs_util::read_to_string(to.join("sub/file"))?);
+        assert_eq!(
+            fs_util::metadata(to.join("sub/file"))?.ino(),
+            fs_util::metadata(to.join("sub/hardlink"))?.ino()
+        );
+        assert_eq!(
+            PathBuf::from("file"),
+            fs_util::read_link(to.join("sub/alias"))?
+        );
+        assert!(fs_util::symlink_metadata(to.join("sub/dangling"))?.is_symlink());
+        assert_eq!(
+            PathBuf::from("missing"),
+            fs_util::read_link(to.join("sub/dangling"))?
+        );
+        // The destination must not exist; callers remove it first.
+        assert!(crate::fs_util::clone_tree_fallback(from.as_path(), to.as_path()).is_err());
         Ok(())
     }
 
