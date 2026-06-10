@@ -49,10 +49,10 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 
 use bz_common::file_ops::metadata::TrackedFileDigest;
-use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use bz_core::fs::project::ProjectRoot;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
 use bz_directory::directory::fingerprinted_directory::FingerprintedDirectory;
+use chrono::Utc;
 use dupe::Dupe;
 use remote_execution as RE;
 use remote_execution::DigestWithStatus;
@@ -66,16 +66,18 @@ use remote_execution::TStatus;
 
 use crate::digest::CasDigestToReExt;
 use crate::digest_config::DigestConfig;
+use crate::directory::ActionDirectoryBuilder;
 use crate::directory::ActionImmutableDirectory;
 use crate::directory::directory_to_re_tree;
+use crate::directory::re_tree_to_directory;
 use crate::execute::action_digest::ActionDigest;
 use crate::execute::blobs::ActionBlobs;
 use crate::execute::request::ActionMetadataBlobData;
 use crate::materialize::materializer::Materializer;
 use crate::re::action_identity::ReActionIdentity;
 use crate::re::client::ActionCacheWriteType;
-use crate::re::client::RemoteExecutionClient;
 use crate::re::error::RemoteExecutionError;
+use crate::re::manager::ManagedRemoteExecutionClient;
 
 /// The constant GUID used as the single argument of the synthetic command.
 ///
@@ -180,10 +182,9 @@ pub struct RepoContentsCacheHit {
     /// The `repo_contents` output directory of the cache entry.
     ///
     /// `repo_contents.tree_digest` points at an [`RE::Tree`] blob in CAS:
-    /// download it with
-    /// `RemoteExecutionClient::download_typed_blobs::<RE::Tree>` and convert
-    /// it with `crate::directory::re_tree_to_directory`, then materialize via
-    /// the existing output-tree download flow.
+    /// download and convert it with
+    /// [`ManagedRemoteExecutionClient::repo_contents_cache_download_tree`],
+    /// then materialize by declaring the directory to the materializer.
     pub repo_contents: TDirectory2,
     /// The TTL reported by RE for the action result, if any.
     pub ttl: i64,
@@ -203,7 +204,7 @@ fn is_re_not_found(error: &bz_error::Error) -> bool {
         .is_some_and(|error| error.code == TCode::NOT_FOUND)
 }
 
-impl RemoteExecutionClient {
+impl ManagedRemoteExecutionClient {
     /// Looks up the remote repo contents cache entry for the given
     /// predeclared input hash.
     ///
@@ -220,21 +221,15 @@ impl RemoteExecutionClient {
     pub async fn repo_contents_cache_lookup(
         &self,
         predeclared_input_hash: &str,
-        use_case: RemoteExecutorUseCase,
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
     ) -> bz_error::Result<Option<RepoContentsCacheHit>> {
         let action_digest = repo_contents_cache_action_digest(predeclared_input_hash, digest_config);
 
-        // `action_cache` already maps NOT_FOUND to `None` and retries
-        // transient errors.
+        // `action_cache` already maps NOT_FOUND (and other lookup errors) to
+        // `None` and retries transient errors.
         let response = match self
-            .action_cache(
-                action_digest,
-                use_case,
-                &RE::Platform::default(),
-                identity,
-            )
+            .action_cache(action_digest, &RE::Platform::default(), identity)
             .await?
         {
             Some(response) => response,
@@ -270,10 +265,7 @@ impl RemoteExecutionClient {
             return Ok(None);
         }
 
-        let recorded_inputs_json = match self
-            .download_blob(&marker_file.digest.digest, use_case)
-            .await
-        {
+        let recorded_inputs_json = match self.download_blob(&marker_file.digest.digest).await {
             Ok(bytes) => bytes,
             Err(error) if is_re_not_found(&error) => {
                 // The AC entry outlived its marker file blob; treat the entry
@@ -293,6 +285,34 @@ impl RemoteExecutionClient {
             repo_contents: repo_contents.clone(),
             ttl: response.ttl,
         }))
+    }
+
+    /// Downloads the [`RE::Tree`] describing the repo contents of a cache hit
+    /// and converts it into a fingerprinted directory builder of the repo
+    /// contents (the children of the `repo_contents` output directory).
+    ///
+    /// This only fetches the tree *metadata*; the file blobs themselves are
+    /// fetched when the resulting directory is declared to the materializer
+    /// and materialized.
+    pub async fn repo_contents_cache_download_tree(
+        &self,
+        hit: &RepoContentsCacheHit,
+        identity: Option<&ReActionIdentity<'_>>,
+        digest_config: DigestConfig,
+    ) -> bz_error::Result<ActionDirectoryBuilder> {
+        let expires = Utc::now() + chrono::Duration::seconds(hit.ttl.max(0));
+        let tree = self
+            .download_typed_blobs::<RE::Tree>(identity, vec![hit.tree_digest().clone()])
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                bz_error::internal_error!(
+                    "No tree returned for remotely cached repo contents digest `{}`",
+                    hit.tree_digest()
+                )
+            })?;
+        re_tree_to_directory(&tree, &expires, digest_config, /* fingerprint */ true)
     }
 
     /// Uploads a repo contents cache entry for the given predeclared input
@@ -322,7 +342,6 @@ impl RemoteExecutionClient {
         fs: &ProjectRoot,
         materializer: &Arc<dyn Materializer>,
         repo_contents_path: &ProjectRelativePath,
-        use_case: RemoteExecutorUseCase,
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
     ) -> bz_error::Result<()> {
@@ -349,7 +368,6 @@ impl RemoteExecutionClient {
             Vec::new(),
             Vec::new(),
             meta_blobs.to_inlined_blobs(),
-            use_case,
             /* force_reupload */ false,
         )
         .await?;
@@ -368,7 +386,6 @@ impl RemoteExecutionClient {
             repo_contents_path,
             repo_tree,
             /* input_paths */ None,
-            use_case,
             identity,
             digest_config,
             /* deduplicate_get_digests_ttl_calls */ true,
@@ -408,7 +425,6 @@ impl RemoteExecutionClient {
         self.write_action_result(
             action_digest,
             result,
-            use_case,
             identity,
             &RE::Platform::default(),
             ActionCacheWriteType::RepoContentsCache,

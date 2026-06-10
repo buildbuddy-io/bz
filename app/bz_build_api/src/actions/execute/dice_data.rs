@@ -119,6 +119,10 @@ pub trait SetReClient {
 
 pub trait GetReClient {
     fn get_re_client(&self) -> UnconfiguredRemoteExecutionClient;
+
+    /// Like `get_re_client`, but returns `None` instead of panicking when no
+    /// RE client was installed (commands that don't use RE may not set one).
+    fn try_get_re_client(&self) -> Option<UnconfiguredRemoteExecutionClient>;
 }
 
 impl SetReClient for UserComputationData {
@@ -133,6 +137,13 @@ impl GetReClient for UserComputationData {
             .get::<UnconfiguredRemoteExecutionClient>()
             .expect("Materializer should be set")
             .dupe()
+    }
+
+    fn try_get_re_client(&self) -> Option<UnconfiguredRemoteExecutionClient> {
+        self.data
+            .get::<UnconfiguredRemoteExecutionClient>()
+            .ok()
+            .map(|client| client.dupe())
     }
 }
 

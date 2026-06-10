@@ -16,6 +16,7 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use bz_build_api::actions::execute::dice_data::GetReClient;
 use bz_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_ARCH_ENV;
 use bz_common::bazel::bzlmod::BZLMOD_REPOSITORY_OS_NAME_ENV;
 use bz_common::bazel::bzlmod::BzlmodModuleExtensionRepoMappingBase;
@@ -72,6 +73,7 @@ use bz_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
 use bz_core::cells::external::register_external_cell_origin;
 use bz_core::cells::name::CellName;
 use bz_core::cells::paths::CellRelativePath;
+use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use bz_core::fs::buck_out_path::BuckOutPathResolver;
 use bz_core::fs::project::ProjectRoot;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
@@ -83,18 +85,22 @@ use bz_events::dispatch::span_async_simple;
 use bz_events::dispatch::span_simple;
 use bz_execute::artifact_value::ArtifactValue;
 use bz_execute::digest_config::HasDigestConfig;
+use bz_execute::directory::ActionDirectoryBuilder;
 use bz_execute::directory::ActionDirectoryEntry;
 use bz_execute::directory::ActionDirectoryMember;
 use bz_execute::directory::INTERNER;
+use bz_execute::directory::extract_artifact_value;
 use bz_execute::entry::build_entry_from_disk;
 use bz_execute::execute::blocking::HasBlockingExecutor;
 use bz_execute::execute::blocking::IoRequest;
 use bz_execute::materialize::http::Checksum;
 use bz_execute::materialize::http::bazel_repository_download_headers;
 use bz_execute::materialize::http::http_download_with_headers;
+use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_execute::materialize::materializer::DeclareArtifactPayload;
 use bz_execute::materialize::materializer::HasMaterializer;
 use bz_execute::materialize::materializer::Materializer;
+use bz_execute::re::manager::ManagedRemoteExecutionClient;
 use bz_fs::error::IoResultExt;
 use bz_fs::fs_util;
 use bz_fs::paths::abs_norm_path::AbsNormPath;
@@ -1476,6 +1482,78 @@ toolchain(
             .is_none()
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn try_get_re_client_is_a_noop_when_unset() {
+        use bz_build_api::actions::execute::dice_data::SetReClient;
+        use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
+
+        // Without an RE client in the per-transaction data, all remote repo
+        // contents cache behavior must silently no-op.
+        let mut data = dice::UserComputationData::new();
+        assert!(data.try_get_re_client().is_none());
+
+        data.set_re_client(UnconfiguredRemoteExecutionClient::testing_new_dummy());
+        assert!(data.try_get_re_client().is_some());
+    }
+
+    #[tokio::test]
+    async fn upload_fingerprint_walk_matches_directly_constructed_directory()
+    -> bz_error::Result<()> {
+        use bz_common::file_ops::metadata::FileMetadata;
+        use bz_directory::directory::fingerprinted_directory::FingerprintedDirectory;
+        use bz_execute::digest_config::DigestConfig;
+        use bz_execute::execute::blocking::testing::DummyBlockingExecutor;
+
+        let project_root = ProjectRootTemp::new()?;
+        let fs = project_root.path();
+        let entry_path = ProjectRelativePath::unchecked_new("cache/entry");
+        let entry_abs = fs.resolve(entry_path);
+        fs_util::create_dir_all(entry_abs.join(ForwardRelativePath::new("sub")?))?;
+        fs_util::write(entry_abs.join(ForwardRelativePath::new("a.txt")?), b"hello")
+            .categorize_internal()?;
+        fs_util::write(entry_abs.join(ForwardRelativePath::new("sub/b.txt")?), b"world")
+            .categorize_internal()?;
+
+        let digest_config = DigestConfig::testing_default();
+
+        // The from-disk walk used by `upload_bzlmod_generated_repo_to_remote_cache`.
+        let io = DummyBlockingExecutor { fs: fs.dupe() };
+        let entry = build_entry_from_disk(
+            fs.resolve(entry_path),
+            FileDigestConfig::build(digest_config.cas_digest_config()),
+            &io,
+            fs.root(),
+        )
+        .await?
+        .0
+        .expect("entry dir exists");
+        let ActionDirectoryEntry::Dir(tree_builder) = entry else {
+            panic!("expected a directory entry");
+        };
+        let from_disk = tree_builder.fingerprint(digest_config.as_directory_serializer());
+
+        // The same tree constructed directly from its contents.
+        let mut expected = ActionDirectoryBuilder::empty();
+        for (path, content) in [("a.txt", "hello"), ("sub/b.txt", "world")] {
+            expected
+                .insert(
+                    ProjectRelativePath::unchecked_new(path),
+                    ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(FileMetadata {
+                        digest: TrackedFileDigest::from_content(
+                            content.as_bytes(),
+                            digest_config.cas_digest_config(),
+                        ),
+                        is_executable: false,
+                    })),
+                )
+                .unwrap();
+        }
+        let expected = expected.fingerprint(digest_config.as_directory_serializer());
+
+        assert_eq!(from_disk.fingerprint(), expected.fingerprint());
         Ok(())
     }
 }
@@ -5296,18 +5374,29 @@ async fn materialize_generated(
         .await
 }
 
+/// Outcome of [`promote_current_bzlmod_generated_repo_to_cache`].
+enum BzlmodGeneratedRepoPromotion {
+    /// The materialized repo (or its recorded inputs) is missing.
+    Missing,
+    /// The repo was stamped in place: its contents are not safe to share
+    /// through the repo contents cache.
+    KeptInPlace,
+    /// The repo was renamed into the repo contents cache under this entry.
+    Promoted { entry_name: String },
+}
+
 async fn promote_current_bzlmod_generated_repo_to_cache(
     ctx: &mut DiceComputations<'_>,
     cache_info: &BazelRepositoryRuleCacheInfo,
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
-) -> bz_error::Result<bool> {
+) -> bz_error::Result<BzlmodGeneratedRepoPromotion> {
     let recorded_inputs_path = bzlmod_generated_recorded_inputs_path(setup, path);
     let Some(recorded_inputs_json) = (&*ctx.global_data().get_io_provider())
         .read_file_if_exists(recorded_inputs_path)
         .await?
     else {
-        return Ok(false);
+        return Ok(BzlmodGeneratedRepoPromotion::Missing);
     };
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let entry_name = bzlmod_generated_repo_contents_cache_new_entry_name();
@@ -5320,10 +5409,10 @@ async fn promote_current_bzlmod_generated_repo_to_cache(
     run_bzlmod_cache_io(move || {
         let path_abs = project_root.resolve(&path);
         let Some(path_metadata) = fs_util::symlink_metadata_if_exists(&path_abs)? else {
-            return Ok(false);
+            return Ok(BzlmodGeneratedRepoPromotion::Missing);
         };
         if !path_metadata.is_dir() {
-            return Ok(false);
+            return Ok(BzlmodGeneratedRepoPromotion::Missing);
         }
 
         let cache_repo_abs = project_root.resolve(&cache_repo);
@@ -5341,7 +5430,7 @@ async fn promote_current_bzlmod_generated_repo_to_cache(
                 &setup,
                 &cache_info,
             )?;
-            return Ok(true);
+            return Ok(BzlmodGeneratedRepoPromotion::KeptInPlace);
         }
         if let Some(parent) = cache_repo_abs.parent() {
             fs_util::create_dir_all(parent)?;
@@ -5374,9 +5463,191 @@ async fn promote_current_bzlmod_generated_repo_to_cache(
             &recorded_inputs_path,
             &recorded_inputs_json,
         )?;
-        Ok(true)
+        Ok(BzlmodGeneratedRepoPromotion::Promoted { entry_name })
     })
     .await
+}
+
+/// The RE client used for the remote bzlmod repo contents cache, if any.
+///
+/// Only active when a remote cache (or remote executor) is configured: the
+/// underlying client connects lazily, so gating on the configuration keeps
+/// purely local builds from attempting (and failing) a connection per repo.
+/// `None` makes all remote repo contents cache behavior a silent no-op.
+fn bzlmod_remote_repo_contents_cache_client(
+    ctx: &DiceComputations<'_>,
+) -> Option<ManagedRemoteExecutionClient> {
+    let startup_config = ctx
+        .per_transaction_data()
+        .data
+        .get::<RemoteExecutionStartupConfig>()
+        .ok()?;
+    let has_remote_backend = [
+        &startup_config.remote_cache,
+        &startup_config.remote_executor,
+    ]
+    .into_iter()
+    .any(|endpoint| {
+        endpoint
+            .as_ref()
+            .is_some_and(|endpoint| !endpoint.trim().is_empty())
+    });
+    if !has_remote_backend {
+        return None;
+    }
+    Some(
+        ctx.per_transaction_data()
+            .try_get_re_client()?
+            .with_use_case(RemoteExecutorUseCase::bz_default()),
+    )
+}
+
+/// Fetches the remotely cached repo contents for `cache_info` into a
+/// brand-new local repo contents cache entry (Plan 3 lookup path).
+///
+/// Returns `Ok(true)` if a new local candidate entry was written; the caller
+/// re-runs the local candidate preparation, which re-validates the recorded
+/// inputs and symlinks the entry. Errors are returned for the caller to
+/// downgrade to warnings: the remote cache is best effort.
+async fn fetch_bzlmod_generated_repo_from_remote_cache(
+    ctx: &mut DiceComputations<'_>,
+    cache_info: &BazelRepositoryRuleCacheInfo,
+) -> bz_error::Result<bool> {
+    let Some(client) = bzlmod_remote_repo_contents_cache_client(ctx) else {
+        return Ok(false);
+    };
+    let digest_config = ctx.global_data().get_digest_config();
+    let Some(hit) = client
+        .repo_contents_cache_lookup(&cache_info.predeclared_input_hash, None, digest_config)
+        .await?
+    else {
+        return Ok(false);
+    };
+
+    // Validate the recorded inputs before downloading the tree: repo trees
+    // can be large, and a stale entry would only be rejected after download.
+    let Ok(recorded_inputs) =
+        serde_json::from_slice::<Vec<BazelRepositoryRecordedInput>>(&hit.recorded_inputs_json)
+    else {
+        tracing::warn!(
+            predeclared_input_hash = %cache_info.predeclared_input_hash,
+            "Ignoring remotely cached bzlmod repo contents with unparseable recorded inputs"
+        );
+        return Ok(false);
+    };
+    if !bzlmod_recorded_inputs_are_current(ctx, &recorded_inputs).await? {
+        return Ok(false);
+    }
+
+    let tree = client
+        .repo_contents_cache_download_tree(&hit, None, digest_config)
+        .await?;
+
+    let entry_name = bzlmod_generated_repo_contents_cache_new_entry_name();
+    let entry_path = bzlmod_generated_repo_contents_cache_entry_path(cache_info, &entry_name);
+    let mut builder = ActionDirectoryBuilder::empty();
+    builder.insert(&entry_path, ActionDirectoryEntry::Dir(tree))?;
+    let artifact = extract_artifact_value(&builder, &entry_path, digest_config)?
+        .ok_or_else(|| internal_error!("Downloaded bzlmod repo contents tree has no value"))?;
+
+    // The repo machinery reads cache entries with std fs, so the files must
+    // be real on disk before the entry is published: declare the tree to the
+    // materializer and force materialization now.
+    let materializer = ctx.per_transaction_data().get_materializer();
+    materializer
+        .declare_cas_many(
+            Arc::new(CasDownloadInfo::new_declared_transient(
+                client.use_case.dupe(),
+            )),
+            vec![DeclareArtifactPayload {
+                path: entry_path.clone(),
+                artifact,
+                configuration_path: None,
+            }],
+        )
+        .await?;
+    materializer
+        .ensure_materialized(vec![entry_path.clone()])
+        .await?;
+
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let recorded_inputs_path =
+        bzlmod_generated_repo_contents_cache_recorded_inputs_path(cache_info, &entry_name);
+    // Written verbatim so the local entry stays byte-identical to the remote
+    // marker file.
+    let recorded_inputs_json = String::from_utf8(hit.recorded_inputs_json)
+        .buck_error_context("Remotely cached bzlmod recorded inputs are not UTF-8")?;
+    let cache_info = cache_info.clone();
+    run_bzlmod_cache_io(move || {
+        write_bzlmod_generated_recorded_inputs_json(
+            &project_root,
+            &recorded_inputs_path,
+            &recorded_inputs_json,
+        )?;
+        write_bzlmod_generated_repo_contents_cache_latest(&project_root, &cache_info, &entry_name)?;
+        Ok(())
+    })
+    .await?;
+    Ok(true)
+}
+
+/// Uploads a freshly promoted repo contents cache entry to the remote cache
+/// (Plan 3 upload path). Errors are returned for the caller to downgrade to
+/// warnings: uploads are best effort.
+async fn upload_bzlmod_generated_repo_to_remote_cache(
+    ctx: &mut DiceComputations<'_>,
+    cache_info: &BazelRepositoryRuleCacheInfo,
+    entry_name: &str,
+) -> bz_error::Result<()> {
+    let Some(client) = bzlmod_remote_repo_contents_cache_client(ctx) else {
+        return Ok(());
+    };
+    let entry_path = bzlmod_generated_repo_contents_cache_entry_path(cache_info, entry_name);
+    let recorded_inputs_path =
+        bzlmod_generated_repo_contents_cache_recorded_inputs_path(cache_info, entry_name);
+    let io_provider = ctx.global_data().get_io_provider();
+    let Some(recorded_inputs_json) = (&*io_provider)
+        .read_file_if_exists(recorded_inputs_path)
+        .await?
+    else {
+        return Err(internal_error!(
+            "Promoted bzlmod cache entry `{}` has no recorded inputs",
+            entry_path.as_str()
+        ));
+    };
+
+    let digest_config = ctx.global_data().get_digest_config();
+    let project_root = io_provider.project_root();
+    let io = ctx.get_blocking_executor();
+    let file_digest_config = FileDigestConfig::build(digest_config.cas_digest_config());
+    let abs_entry_path = project_root.root().join(&entry_path);
+    let entry = build_entry_from_disk(
+        abs_entry_path,
+        file_digest_config,
+        &*io,
+        project_root.root(),
+    )
+    .await?
+    .0
+    .ok_or(BzlmodError::NoDirectory)?;
+    let ActionDirectoryEntry::Dir(tree_builder) = entry else {
+        return Err(BzlmodError::NoDirectory.into());
+    };
+    let repo_tree = tree_builder.fingerprint(digest_config.as_directory_serializer());
+
+    let materializer = ctx.per_transaction_data().get_materializer();
+    client
+        .repo_contents_cache_upload(
+            &cache_info.predeclared_input_hash,
+            recorded_inputs_json.as_bytes(),
+            &repo_tree,
+            project_root,
+            &materializer,
+            &entry_path,
+            None,
+            digest_config,
+        )
+        .await
 }
 
 async fn materialize_generated_with_repo_contents_cache(
@@ -5407,14 +5678,36 @@ async fn materialize_generated_with_repo_contents_cache(
         return bzlmod_generated_materialization_value(ctx, path, setup, &stamp_content).await;
     }
 
-    if !cache_info.local
-        && prepare_bzlmod_generated_external_cell_root_from_repo_contents_cache(
+    if !cache_info.local {
+        let mut prepared = prepare_bzlmod_generated_external_cell_root_from_repo_contents_cache(
             ctx, cache_info, path, setup,
         )
-        .await?
-    {
-        write_new_bzlmod_generated_materialization_value_stamp(ctx, path, setup).await?;
-        return bzlmod_generated_materialization_value(ctx, path, setup, &stamp_content).await;
+        .await?;
+        if !prepared {
+            // No usable local candidate: try the remote repo contents cache
+            // (best effort; errors must not fail materialization).
+            match fetch_bzlmod_generated_repo_from_remote_cache(ctx, cache_info).await {
+                Ok(true) => {
+                    prepared =
+                        prepare_bzlmod_generated_external_cell_root_from_repo_contents_cache(
+                            ctx, cache_info, path, setup,
+                        )
+                        .await?;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "Error using remote bzlmod repo contents cache for `{}`: {:#}",
+                        path.as_str(),
+                        error
+                    );
+                }
+            }
+        }
+        if prepared {
+            write_new_bzlmod_generated_materialization_value_stamp(ctx, path, setup).await?;
+            return bzlmod_generated_materialization_value(ctx, path, setup, &stamp_content).await;
+        }
     }
 
     cancellations
@@ -5432,10 +5725,32 @@ async fn materialize_generated_with_repo_contents_cache(
 
             let result = materialize_generated_contents(ctx, path, setup, cancellations).await?;
             if result.cacheable && !cache_info.local {
-                if !promote_current_bzlmod_generated_repo_to_cache(ctx, cache_info, path, setup)
+                match promote_current_bzlmod_generated_repo_to_cache(ctx, cache_info, path, setup)
                     .await?
                 {
-                    return Err(BzlmodError::MissingExtractedDirectory(path.to_string()).into());
+                    BzlmodGeneratedRepoPromotion::Missing => {
+                        return Err(
+                            BzlmodError::MissingExtractedDirectory(path.to_string()).into()
+                        );
+                    }
+                    BzlmodGeneratedRepoPromotion::KeptInPlace => {}
+                    BzlmodGeneratedRepoPromotion::Promoted { entry_name } => {
+                        // Best effort: remote cache upload failures must not
+                        // fail the build.
+                        if let Err(error) = upload_bzlmod_generated_repo_to_remote_cache(
+                            ctx,
+                            cache_info,
+                            &entry_name,
+                        )
+                        .await
+                        {
+                            tracing::warn!(
+                                "Error uploading bzlmod repo contents cache entry for `{}`: {:#}",
+                                path.as_str(),
+                                error
+                            );
+                        }
+                    }
                 }
             } else {
                 write_bzlmod_generated_materialization_stamp_content(

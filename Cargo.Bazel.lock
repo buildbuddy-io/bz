@@ -2375,9 +2375,12 @@ dependencies = [
  "re_grpc_proto",
  "serde",
  "serde_json",
+ "sha1",
+ "sha2",
  "tokio",
  "tonic",
  "tonic-prost",
+ "tracing",
 ]
 
 [[package]]
