@@ -3193,6 +3193,10 @@ fn resolve_bcr_modules_from_dep_graph(
         discovered,
         &dep_graph.selected_keys_in_dependency_order,
         canonical_repo_names_by_key,
+        &bzlmod_direct_root_dep_cells(
+            canonical_repo_names_by_key,
+            &dep_graph.root_aliases_by_key,
+        )?,
         &mut cell_aliases_by_cell,
         &dep_graph.canonical_repo_names_by_cell,
         &dep_graph.extension_unique_names,
@@ -3456,6 +3460,7 @@ fn resolve_generated_bzlmod_repos(
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys_in_dependency_order: &[(String, String)],
     canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
+    direct_root_dep_cells: &BTreeSet<String>,
     cell_aliases_by_cell: &mut BzlmodCellAliasesByCell,
     canonical_repo_names_by_cell: &BTreeMap<String, String>,
     extension_unique_names: &BTreeMap<BzlmodExtensionId, String>,
@@ -3644,6 +3649,7 @@ fn resolve_generated_bzlmod_repos(
                 &parent_canonical_repo_name,
                 &parent_cell_name,
                 false,
+                direct_root_dep_cells.contains(&parent_cell_name),
                 root_module,
                 cell_aliases_by_cell,
                 canonical_repo_names_by_cell,
@@ -3663,6 +3669,7 @@ fn resolve_generated_bzlmod_repos(
             &root_module.canonical_repo_name,
             "root",
             true,
+            false,
             root_module,
             cell_aliases_by_cell,
             canonical_repo_names_by_cell,
@@ -3691,6 +3698,7 @@ fn resolve_bzlmod_extension_usage_generated_repos(
     parent_canonical_repo_name: &str,
     parent_cell_name: &str,
     parent_is_root: bool,
+    mirror_imports_to_root: bool,
     root_module: &RootBzlmodModule,
     cell_aliases_by_cell: &mut BzlmodCellAliasesByCell,
     canonical_repo_names_by_cell: &BTreeMap<String, String>,
@@ -3802,6 +3810,13 @@ fn resolve_bzlmod_extension_usage_generated_repos(
                 &import.alias,
                 target_cell_name,
             );
+            if mirror_imports_to_root {
+                add_bzlmod_root_generated_repo_alias(
+                    cell_aliases_by_cell,
+                    &import.alias,
+                    target_cell_name,
+                );
+            }
             continue;
         }
 
@@ -3812,6 +3827,13 @@ fn resolve_bzlmod_extension_usage_generated_repos(
                 &import.alias,
                 generated_cell_name,
             );
+            if mirror_imports_to_root {
+                add_bzlmod_root_generated_repo_alias(
+                    cell_aliases_by_cell,
+                    &import.alias,
+                    generated_cell_name,
+                );
+            }
             generated_repo_names.remove(&import.repo_name);
             continue;
         }
@@ -3837,6 +3859,13 @@ fn resolve_bzlmod_extension_usage_generated_repos(
             &canonical_repo_name,
             generator_json,
         );
+        if mirror_imports_to_root {
+            add_bzlmod_root_generated_repo_alias(
+                cell_aliases_by_cell,
+                &import.alias,
+                &generated_cell_name,
+            );
+        }
         extension_generated_repo_groups
             .entry(extension_group_key.clone())
             .or_default()
@@ -4754,6 +4783,33 @@ fn add_bzlmod_cell_alias(
         .entry(current_cell_name.to_owned())
         .or_default()
         .insert(alias.to_owned(), target_cell_name.to_owned());
+}
+
+fn add_bzlmod_root_generated_repo_alias(
+    aliases_by_cell: &mut BzlmodCellAliasesByCell,
+    alias: &str,
+    target_cell_name: &str,
+) {
+    aliases_by_cell
+        .entry("root".to_owned())
+        .or_default()
+        .entry(alias.to_owned())
+        .or_insert_with(|| target_cell_name.to_owned());
+}
+
+fn bzlmod_direct_root_dep_cells(
+    canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
+    root_aliases_by_key: &BTreeMap<(String, String), BTreeSet<String>>,
+) -> bz_error::Result<BTreeSet<String>> {
+    root_aliases_by_key
+        .keys()
+        .map(|(name, version)| {
+            bzlmod_selected_canonical_repo_name(canonical_repo_names_by_key, name, version)
+                .map(|canonical_repo_name| {
+                    bzlmod_cell_name_for_canonical_repo_name(&canonical_repo_name)
+                })
+        })
+        .collect()
 }
 
 fn bzlmod_cell_alias_target<'a>(
@@ -6627,6 +6683,7 @@ mod tests {
             "",
             "root",
             true,
+            false,
             &root_module,
             &mut cell_aliases_by_cell,
             &canonical_repo_names_by_cell,
@@ -6716,6 +6773,7 @@ mod tests {
             "",
             "root",
             true,
+            false,
             &root_module,
             &mut cell_aliases_by_cell,
             &canonical_repo_names_by_cell,
@@ -6803,6 +6861,7 @@ mod tests {
             "dep+",
             "bzlmod_dep_",
             false,
+            false,
             &root_module,
             &mut cell_aliases_by_cell,
             &canonical_repo_names_by_cell,
@@ -6817,6 +6876,94 @@ mod tests {
         assert_eq!(
             super::bzlmod_cell_alias_target(&cell_aliases_by_cell, "bzlmod_dep_", "npm"),
             Some("bzlmod_aspect_rules_js__npm_npm")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_direct_root_dep_extension_import_alias_in_root() -> bz_error::Result<()> {
+        let usage = super::BzlmodExtensionUsage {
+            proxy_name: "llvm".to_owned(),
+            extension_bzl_file: "//extensions:llvm.bzl".to_owned(),
+            extension_name: "llvm".to_owned(),
+            dev_dependency: false,
+            imports: vec![super::BzlmodUseRepoImport {
+                alias: "llvm-project".to_owned(),
+                repo_name: "llvm-project".to_owned(),
+            }],
+            repo_overrides: Vec::new(),
+            tags: Vec::new(),
+        };
+        let root_module = super::RootBzlmodModule {
+            name: "root".to_owned(),
+            version: String::new(),
+            repo_name: "root".to_owned(),
+            canonical_repo_name: String::new(),
+            lockfile_extension_generated_repos: std::collections::BTreeMap::new(),
+            lockfile_extension_facts: std::collections::BTreeSet::new(),
+            constants: Vec::new(),
+            extension_usages: Vec::new(),
+            use_repo_rule_invocations: Vec::new(),
+            registered_toolchains: Vec::new(),
+        };
+
+        let llvm_cell = super::bzlmod_cell_name("llvm+");
+        let generated_llvm_project_cell = super::bzlmod_cell_name("llvm++llvm+llvm-project");
+        let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
+        super::add_bzlmod_cell_alias(&mut cell_aliases_by_cell, "root", "llvm", &llvm_cell);
+
+        let mut extension_unique_names = std::collections::BTreeMap::new();
+        extension_unique_names.insert(
+            super::BzlmodExtensionId {
+                bzl_cell_name: llvm_cell.clone(),
+                bzl_path: "extensions/llvm.bzl".to_owned(),
+                extension_name: "llvm".to_owned(),
+            },
+            "llvm++llvm".to_owned(),
+        );
+
+        let mut canonical_repo_names_by_cell = std::collections::BTreeMap::new();
+        canonical_repo_names_by_cell.insert(llvm_cell.clone(), "llvm+".to_owned());
+
+        let mut generated = Vec::new();
+        let mut generated_repo_declaring_cells = Vec::new();
+        let mut extension_generated_repo_groups = std::collections::BTreeMap::new();
+        let mut extension_repo_override_groups = std::collections::BTreeMap::new();
+        let mut extension_usages_json_by_id = std::collections::BTreeMap::new();
+        insert_test_extension_usages_json(
+            &mut extension_usages_json_by_id,
+            super::BzlmodExtensionId {
+                bzl_cell_name: llvm_cell.clone(),
+                bzl_path: "extensions/llvm.bzl".to_owned(),
+                extension_name: "llvm".to_owned(),
+            },
+        )?;
+
+        super::resolve_bzlmod_extension_usage_generated_repos(
+            &usage,
+            "llvm+",
+            &llvm_cell,
+            false,
+            true,
+            &root_module,
+            &mut cell_aliases_by_cell,
+            &canonical_repo_names_by_cell,
+            &extension_unique_names,
+            &mut extension_usages_json_by_id,
+            &mut generated,
+            &mut generated_repo_declaring_cells,
+            &mut extension_generated_repo_groups,
+            &mut extension_repo_override_groups,
+        )?;
+
+        assert_eq!(
+            super::bzlmod_cell_alias_target(&cell_aliases_by_cell, &llvm_cell, "llvm-project"),
+            Some(generated_llvm_project_cell.as_str())
+        );
+        assert_eq!(
+            super::bzlmod_cell_alias_target(&cell_aliases_by_cell, "root", "llvm-project"),
+            Some(generated_llvm_project_cell.as_str())
         );
 
         Ok(())
