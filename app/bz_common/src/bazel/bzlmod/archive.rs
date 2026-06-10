@@ -1,10 +1,18 @@
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io;
 use std::io::Read;
+use std::io::Write;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 
 use bz_error::BuckErrorContext;
 use bz_error::bz_error;
@@ -413,6 +421,188 @@ fn compressed_file_entry_name(archive: &Path, extension: &str) -> bz_error::Resu
         .to_owned())
 }
 
+/// Archive entries larger than this are written inline on the decode thread to
+/// bound the memory held by queued writes.
+const ARCHIVE_INLINE_WRITE_THRESHOLD: u64 = 8 * 1024 * 1024;
+/// Total queued file writes across all writer threads.
+const ARCHIVE_WRITE_QUEUE_CAPACITY: usize = 64;
+const ARCHIVE_MAX_WRITER_THREADS: usize = 8;
+
+#[derive(Debug)]
+enum PendingArchiveFilePerms {
+    /// Raw tar header mode; applied unmasked like `tar::Entry::unpack` does
+    /// with `preserve_permissions` enabled.
+    Tar(Option<u32>),
+    /// Zip unix mode; applied via `set_extracted_file_mode`.
+    Zip(Option<u32>),
+}
+
+#[derive(Debug)]
+struct PendingArchiveFileWrite {
+    destination: PathBuf,
+    bytes: Vec<u8>,
+    perms: PendingArchiveFilePerms,
+    /// Tar header mtime; `None` skips setting times (zip entries).
+    mtime: Option<u64>,
+}
+
+/// Routes buffered file writes to a pool of writer threads. The decode thread
+/// creates parent directories before dispatching a write, so writers never
+/// create directories. Writes to the same destination are routed to the same
+/// thread so duplicate archive entries keep their last-entry-wins order.
+struct ArchiveFileWriteQueue<'env> {
+    senders: Vec<mpsc::SyncSender<PendingArchiveFileWrite>>,
+    write_failed: &'env AtomicBool,
+}
+
+impl ArchiveFileWriteQueue<'_> {
+    fn write_failed(&self) -> bool {
+        self.write_failed.load(Ordering::Relaxed)
+    }
+
+    fn send(&self, write: PendingArchiveFileWrite) {
+        let mut hasher = DefaultHasher::new();
+        write.destination.hash(&mut hasher);
+        let index = (hasher.finish() % self.senders.len() as u64) as usize;
+        // Writers drain their queue even after a write failure, so a send only
+        // fails if a writer thread panicked; that panic is propagated when the
+        // writer scope joins.
+        let _ = self.senders[index].send(write);
+    }
+}
+
+/// Runs `decode` with a pool of writer threads consuming
+/// `PendingArchiveFileWrite`s. The first writer error is propagated and takes
+/// precedence over a decode error, since the decode loop stops early once
+/// `write_failed` is observed.
+fn with_archive_file_writers<T>(
+    decode: impl FnOnce(&ArchiveFileWriteQueue) -> bz_error::Result<T>,
+) -> bz_error::Result<T> {
+    let writer_count = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(ARCHIVE_MAX_WRITER_THREADS);
+    let queue_capacity = ARCHIVE_WRITE_QUEUE_CAPACITY.div_ceil(writer_count);
+    let write_failed = AtomicBool::new(false);
+    let first_write_error: Mutex<Option<bz_error::Error>> = Mutex::new(None);
+    let result = std::thread::scope(|scope| {
+        let mut senders = Vec::with_capacity(writer_count);
+        for _ in 0..writer_count {
+            let (sender, receiver) = mpsc::sync_channel(queue_capacity);
+            senders.push(sender);
+            let write_failed = &write_failed;
+            let first_write_error = &first_write_error;
+            scope.spawn(move || {
+                while let Ok(write) = receiver.recv() {
+                    // Keep draining after a failure so the decode thread never
+                    // blocks on a full queue.
+                    if write_failed.load(Ordering::Relaxed) {
+                        continue;
+                    }
+                    if let Err(error) = write_pending_archive_file(&write) {
+                        write_failed.store(true, Ordering::Relaxed);
+                        first_write_error
+                            .lock()
+                            .expect("archive write error mutex poisoned")
+                            .get_or_insert(error);
+                    }
+                }
+            });
+        }
+        let queue = ArchiveFileWriteQueue {
+            senders,
+            write_failed: &write_failed,
+        };
+        let result = decode(&queue);
+        drop(queue);
+        result
+    });
+    if let Some(error) = first_write_error
+        .into_inner()
+        .expect("archive write error mutex poisoned")
+    {
+        return Err(error);
+    }
+    result
+}
+
+fn write_pending_archive_file(write: &PendingArchiveFileWrite) -> bz_error::Result<()> {
+    let mut file = match write.perms {
+        // Mirror `tar::Entry::unpack`: never write through an existing file or
+        // symlink, replace it instead.
+        PendingArchiveFilePerms::Tar(_) => create_replacing_extracted_file(&write.destination),
+        PendingArchiveFilePerms::Zip(_) => fs::File::create(&write.destination),
+    }
+    .with_buck_error_context(|| format!("Error creating `{}`", write.destination.display()))?;
+    file.write_all(&write.bytes)
+        .with_buck_error_context(|| format!("Error writing `{}`", write.destination.display()))?;
+    if let Some(mtime) = write.mtime {
+        // Mirror `tar::Entry::unpack`: avoid emitting 0-mtime files.
+        let mtime = if mtime == 0 { 1 } else { mtime };
+        let time = filetime::FileTime::from_unix_time(mtime as i64, 0);
+        filetime::set_file_handle_times(&file, Some(time), Some(time)).with_buck_error_context(
+            || {
+                format!(
+                    "Error setting modification time on `{}`",
+                    write.destination.display()
+                )
+            },
+        )?;
+    }
+    match write.perms {
+        PendingArchiveFilePerms::Tar(Some(mode)) => {
+            set_extracted_tar_file_mode(&file, &write.destination, mode)?;
+        }
+        PendingArchiveFilePerms::Zip(Some(mode)) => {
+            set_extracted_file_mode(&write.destination, mode)?;
+        }
+        PendingArchiveFilePerms::Tar(None) | PendingArchiveFilePerms::Zip(None) => {}
+    }
+    Ok(())
+}
+
+fn create_replacing_extracted_file(destination: &Path) -> io::Result<fs::File> {
+    fn create_new(destination: &Path) -> io::Result<fs::File> {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)
+    }
+    match create_new(destination) {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            match fs::remove_file(destination) {
+                Ok(()) => create_new(destination),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => create_new(destination),
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+fn set_extracted_tar_file_mode(
+    file: &fs::File,
+    destination: &Path,
+    mode: u32,
+) -> bz_error::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    file.set_permissions(fs::Permissions::from_mode(mode))
+        .with_buck_error_context(|| {
+            format!("Error setting permissions on `{}`", destination.display())
+        })
+}
+
+#[cfg(not(unix))]
+fn set_extracted_tar_file_mode(
+    _file: &fs::File,
+    _destination: &Path,
+    _mode: u32,
+) -> bz_error::Result<()> {
+    Ok(())
+}
+
 fn extract_zip_archive(
     archive: &Path,
     output: &Path,
@@ -433,62 +623,86 @@ fn extract_zip_archive(
     let mut found_prefix = strip_prefix.is_empty();
     let mut available_prefixes = Vec::new();
     let mut pending_links = Vec::new();
-    for index in 0..zip.len() {
-        let mut entry = zip.by_index(index).map_err(|error| {
-            bz_error!(
-                bz_error::ErrorTag::Input,
-                "Error reading zip entry {} from `{}`: {}",
-                index,
-                archive.display(),
-                error
-            )
-        })?;
-        let entry_name = renamed_archive_entry_name(entry.name(), rename_files);
-        let Some(relative_path) = prepare_archive_entry_path(
-            &entry_name,
-            strip_prefix,
-            strip_components,
-            &mut found_prefix,
-            &mut available_prefixes,
-        )?
-        else {
-            continue;
-        };
-        let destination = output.join(&relative_path);
-        if entry.is_dir() {
-            fs::create_dir_all(&destination).with_buck_error_context(|| {
+    with_archive_file_writers(|queue| {
+        for index in 0..zip.len() {
+            if queue.write_failed() {
+                break;
+            }
+            let mut entry = zip.by_index(index).map_err(|error| {
+                bz_error!(
+                    bz_error::ErrorTag::Input,
+                    "Error reading zip entry {} from `{}`: {}",
+                    index,
+                    archive.display(),
+                    error
+                )
+            })?;
+            let entry_name = renamed_archive_entry_name(entry.name(), rename_files);
+            let Some(relative_path) = prepare_archive_entry_path(
+                &entry_name,
+                strip_prefix,
+                strip_components,
+                &mut found_prefix,
+                &mut available_prefixes,
+            )?
+            else {
+                continue;
+            };
+            let destination = output.join(&relative_path);
+            if entry.is_dir() {
+                fs::create_dir_all(&destination).with_buck_error_context(|| {
+                    format!("Error creating `{}`", destination.display())
+                })?;
+                continue;
+            }
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).with_buck_error_context(|| {
+                    format!("Error creating `{}`", parent.display())
+                })?;
+            }
+            if is_zip_symlink(entry.unix_mode()) {
+                let mut target = String::new();
+                entry
+                    .read_to_string(&mut target)
+                    .with_buck_error_context(|| {
+                        format!("Error reading symlink target from `{}`", entry.name())
+                    })?;
+                let target = prepare_archive_symlink_target(
+                    &relative_path,
+                    Path::new(&target),
+                    strip_prefix,
+                )?;
+                pending_links.push(PendingArchiveLink {
+                    kind: PendingArchiveLinkKind::Symlink,
+                    destination,
+                    target,
+                });
+                continue;
+            }
+            if entry.size() <= ARCHIVE_INLINE_WRITE_THRESHOLD {
+                let mut bytes = Vec::with_capacity(entry.size() as usize);
+                entry.read_to_end(&mut bytes).with_buck_error_context(|| {
+                    format!("Error extracting `{}`", destination.display())
+                })?;
+                queue.send(PendingArchiveFileWrite {
+                    destination,
+                    bytes,
+                    perms: PendingArchiveFilePerms::Zip(entry.unix_mode()),
+                    mtime: None,
+                });
+                continue;
+            }
+            let mut file = fs::File::create(&destination).with_buck_error_context(|| {
                 format!("Error creating `{}`", destination.display())
             })?;
-            continue;
+            io::copy(&mut entry, &mut file)
+                .with_buck_error_context(|| format!("Error writing `{}`", destination.display()))?;
+            if let Some(mode) = entry.unix_mode() {
+                set_extracted_file_mode(&destination, mode)?;
+            }
         }
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)
-                .with_buck_error_context(|| format!("Error creating `{}`", parent.display()))?;
-        }
-        if is_zip_symlink(entry.unix_mode()) {
-            let mut target = String::new();
-            entry
-                .read_to_string(&mut target)
-                .with_buck_error_context(|| {
-                    format!("Error reading symlink target from `{}`", entry.name())
-                })?;
-            let target =
-                prepare_archive_symlink_target(&relative_path, Path::new(&target), strip_prefix)?;
-            pending_links.push(PendingArchiveLink {
-                kind: PendingArchiveLinkKind::Symlink,
-                destination,
-                target,
-            });
-            continue;
-        }
-        let mut file = fs::File::create(&destination)
-            .with_buck_error_context(|| format!("Error creating `{}`", destination.display()))?;
-        io::copy(&mut entry, &mut file)
-            .with_buck_error_context(|| format!("Error writing `{}`", destination.display()))?;
-        if let Some(mode) = entry.unix_mode() {
-            set_extracted_file_mode(&destination, mode)?;
-        }
-    }
+        Ok(())
+    })?;
     ensure_strip_prefix_found(strip_prefix, found_prefix, available_prefixes)?;
     create_pending_archive_links(&pending_links)
 }
@@ -505,74 +719,113 @@ fn extract_tar_archive<R: Read>(
     let mut found_prefix = strip_prefix.is_empty();
     let mut available_prefixes = Vec::new();
     let mut pending_links = Vec::new();
-    for entry in archive
-        .entries()
-        .buck_error_context("Error reading tar archive")?
-    {
-        let mut entry = entry.buck_error_context("Error reading tar archive entry")?;
-        let path = entry
-            .path()
-            .buck_error_context("Error reading tar archive entry path")?;
-        let entry_name = renamed_archive_entry_name(&path.to_string_lossy(), rename_files);
-        let Some(relative_path) = prepare_archive_entry_path(
-            &entry_name,
-            strip_prefix,
-            strip_components,
-            &mut found_prefix,
-            &mut available_prefixes,
-        )?
-        else {
-            continue;
-        };
-        let destination = output.join(&relative_path);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)
-                .with_buck_error_context(|| format!("Error creating `{}`", parent.display()))?;
-        }
-        let entry_type = entry.header().entry_type();
-        if entry_type.is_symlink() || entry_type.is_hard_link() {
-            let target = entry
-                .link_name()
-                .with_buck_error_context(|| format!("Error reading link target from `{path:?}`"))?
-                .ok_or_else(|| {
-                    bz_error!(
-                        bz_error::ErrorTag::Input,
-                        "Archive link entry `{}` has no target",
-                        entry_name
-                    )
-                })?;
-            if target.as_os_str().is_empty() {
-                return Err(bz_error!(
-                    bz_error::ErrorTag::Input,
-                    "Archive link entry `{}` has an empty target",
-                    entry_name
-                ));
+    with_archive_file_writers(|queue| {
+        for entry in archive
+            .entries()
+            .buck_error_context("Error reading tar archive")?
+        {
+            if queue.write_failed() {
+                break;
             }
-            let (kind, target) = if entry_type.is_symlink() {
-                (
-                    PendingArchiveLinkKind::Symlink,
-                    prepare_archive_symlink_target(&relative_path, &target, strip_prefix)?,
-                )
-            } else {
-                let target = prepare_archive_hardlink_target(
-                    &target,
-                    strip_prefix,
-                    strip_components,
-                    rename_files,
-                )?;
-                (PendingArchiveLinkKind::Hardlink, output.join(target))
+            let mut entry = entry.buck_error_context("Error reading tar archive entry")?;
+            let path = entry
+                .path()
+                .buck_error_context("Error reading tar archive entry path")?;
+            let entry_name = renamed_archive_entry_name(&path.to_string_lossy(), rename_files);
+            let Some(relative_path) = prepare_archive_entry_path(
+                &entry_name,
+                strip_prefix,
+                strip_components,
+                &mut found_prefix,
+                &mut available_prefixes,
+            )?
+            else {
+                continue;
             };
-            pending_links.push(PendingArchiveLink {
-                kind,
-                destination,
-                target,
-            });
-            continue;
+            let destination = output.join(&relative_path);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).with_buck_error_context(|| {
+                    format!("Error creating `{}`", parent.display())
+                })?;
+            }
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_symlink() || entry_type.is_hard_link() {
+                let target = entry
+                    .link_name()
+                    .with_buck_error_context(|| {
+                        format!("Error reading link target from `{path:?}`")
+                    })?
+                    .ok_or_else(|| {
+                        bz_error!(
+                            bz_error::ErrorTag::Input,
+                            "Archive link entry `{}` has no target",
+                            entry_name
+                        )
+                    })?;
+                if target.as_os_str().is_empty() {
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::Input,
+                        "Archive link entry `{}` has an empty target",
+                        entry_name
+                    ));
+                }
+                let (kind, target) = if entry_type.is_symlink() {
+                    (
+                        PendingArchiveLinkKind::Symlink,
+                        prepare_archive_symlink_target(&relative_path, &target, strip_prefix)?,
+                    )
+                } else {
+                    let target = prepare_archive_hardlink_target(
+                        &target,
+                        strip_prefix,
+                        strip_components,
+                        rename_files,
+                    )?;
+                    (PendingArchiveLinkKind::Hardlink, output.join(target))
+                };
+                pending_links.push(PendingArchiveLink {
+                    kind,
+                    destination,
+                    target,
+                });
+                continue;
+            }
+            // Plain regular files are buffered and written on the writer pool.
+            // Everything else (directories, sparse files, fifos, old-style
+            // trailing-slash directories, oversized files) keeps the
+            // sequential `unpack` path.
+            if entry_type.is_file()
+                && entry.size() <= ARCHIVE_INLINE_WRITE_THRESHOLD
+                && !entry.path_bytes().ends_with(b"/")
+            {
+                let mode = entry.header().mode().ok();
+                let mtime = entry.header().mtime().ok();
+                let size = entry.size();
+                let mut bytes = Vec::with_capacity(size as usize);
+                entry.read_to_end(&mut bytes).with_buck_error_context(|| {
+                    format!("Error extracting `{}`", destination.display())
+                })?;
+                if bytes.len() as u64 != size {
+                    return Err(bz_error!(
+                        bz_error::ErrorTag::Input,
+                        "Archive entry `{}` is truncated",
+                        entry_name
+                    ));
+                }
+                queue.send(PendingArchiveFileWrite {
+                    destination,
+                    bytes,
+                    perms: PendingArchiveFilePerms::Tar(mode),
+                    mtime,
+                });
+                continue;
+            }
+            entry.unpack(&destination).with_buck_error_context(|| {
+                format!("Error extracting `{}`", destination.display())
+            })?;
         }
-        entry
-            .unpack(&destination)
-            .with_buck_error_context(|| format!("Error extracting `{}`", destination.display()))?;
-    }
+        Ok(())
+    })?;
     ensure_strip_prefix_found(strip_prefix, found_prefix, available_prefixes)?;
     create_pending_archive_links(&pending_links)
 }
@@ -1354,6 +1607,116 @@ mod tests {
             "content"
         );
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_tar_parallel_writes_preserve_contents_modes_and_links() -> bz_error::Result<()>
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.tar.gz");
+        let file = fs::File::create(&archive).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut tar = Builder::new(encoder);
+        for index in 0..32 {
+            let contents = format!("contents-{index}");
+            let mut header = tar::Header::new_gnu();
+            header.set_size(contents.len() as u64);
+            header.set_mode(0o644);
+            header.set_mtime(1_234_567);
+            header.set_cksum();
+            tar.append_data(
+                &mut header,
+                format!("pkg/nested/dir{}/file{index}.txt", index % 4),
+                contents.as_bytes(),
+            )
+            .unwrap();
+        }
+        let mut header = tar::Header::new_gnu();
+        header.set_size(4);
+        header.set_mode(0o755);
+        header.set_mtime(1_234_567);
+        header.set_cksum();
+        tar.append_data(&mut header, "pkg/bin/tool", "run\n".as_bytes())
+            .unwrap();
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(EntryType::Symlink);
+        header.set_size(0);
+        tar.append_link(&mut header, "pkg/bin/link", "pkg/nested/dir0/file0.txt")
+            .unwrap();
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let output = dir.path().join("out");
+        extract_archive(&archive, &output, ArchiveKind::TarGz, "pkg", 0, &[])?;
+
+        for index in 0..32 {
+            let path = output.join(format!("nested/dir{}/file{index}.txt", index % 4));
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                format!("contents-{index}")
+            );
+            let metadata = fs::metadata(&path).unwrap();
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o644);
+            assert_eq!(
+                metadata.modified().unwrap(),
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_234_567)
+            );
+        }
+        let tool = output.join("bin/tool");
+        assert_eq!(fs::read_to_string(&tool).unwrap(), "run\n");
+        assert_eq!(
+            fs::metadata(&tool).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            fs::read_link(output.join("bin/link")).unwrap(),
+            PathBuf::from("../nested/dir0/file0.txt")
+        );
+        assert_eq!(
+            fs::read_to_string(output.join("bin/link")).unwrap(),
+            "contents-0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_tar_surfaces_parallel_write_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.tar.gz");
+        let file = fs::File::create(&archive).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut tar = Builder::new(encoder);
+        for index in 0..16 {
+            let contents = format!("contents-{index}");
+            let mut header = tar::Header::new_gnu();
+            header.set_size(contents.len() as u64);
+            header.set_cksum();
+            tar.append_data(
+                &mut header,
+                format!("pkg/file{index}.txt"),
+                contents.as_bytes(),
+            )
+            .unwrap();
+        }
+        let mut header = tar::Header::new_gnu();
+        header.set_size(7);
+        header.set_cksum();
+        tar.append_data(&mut header, "pkg/blocked", "content".as_bytes())
+            .unwrap();
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        // `blocked` already exists as a non-empty directory, so the writer
+        // thread fails to replace it with a file.
+        let output = dir.path().join("out");
+        fs::create_dir_all(output.join("blocked/keep")).unwrap();
+
+        let error = extract_archive(&archive, &output, ArchiveKind::TarGz, "pkg", 0, &[])
+            .expect_err("write error should surface");
+        assert!(format!("{error:#}").contains("blocked"));
     }
 
     #[test]
