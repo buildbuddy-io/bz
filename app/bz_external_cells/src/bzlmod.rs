@@ -98,6 +98,7 @@ use bz_execute::materialize::materializer::Materializer;
 use bz_fs::error::IoResultExt;
 use bz_fs::fs_util;
 use bz_fs::paths::abs_norm_path::AbsNormPath;
+use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 use bz_fs::paths::abs_path::AbsPath;
 use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use bz_http::HttpClient;
@@ -486,7 +487,6 @@ struct BzlmodExtractIoRequest {
     archive: ProjectRelativePathBuf,
     patch_files: Vec<BzlmodPatchFile>,
     overlay_files: Vec<BzlmodOverlayFile>,
-    temp: ProjectRelativePathBuf,
     cache_repo: ProjectRelativePathBuf,
     cache_tmp: ProjectRelativePathBuf,
     cache_alias: ProjectRelativePathBuf,
@@ -516,17 +516,15 @@ impl IoRequest for BzlmodExtractIoRequest {
         }
 
         let archive = project_fs.resolve(&self.archive);
-        let temp = project_fs.resolve(&self.temp);
         let cache_tmp = project_fs.resolve(&self.cache_tmp);
         let cache_repo = project_fs.resolve(&self.cache_repo);
 
         fs_util::remove_all(&cache_tmp).categorize_internal()?;
-        fs_util::remove_all(&temp).categorize_internal()?;
-        fs_util::create_dir_all(temp.clone())?;
         fs_util::create_dir_all(cache_tmp.clone())?;
 
-        extract_archive(&self.setup, &archive, &temp)?;
-        copy_dir_contents(&temp, &cache_tmp)?;
+        // Extract straight into the rename-staging directory: it is a
+        // sibling of the final cache entry, so no tree copy is needed.
+        extract_archive(&self.setup, &archive, &cache_tmp)?;
 
         for patch in &self.patch_files {
             apply_patch(project_fs, &cache_tmp, &patch.path, patch.patch_strip)?;
@@ -539,7 +537,7 @@ impl IoRequest for BzlmodExtractIoRequest {
                 fs_util::create_dir_all(parent)?;
             }
             fs_util::remove_all(&dest).categorize_internal()?;
-            link_or_copy_file(&project_fs.resolve(&overlay.file), &dest)?;
+            fs_util::copy(project_fs.resolve(&overlay.file), &dest).categorize_internal()?;
         }
 
         if let Some(parent) = cache_repo.parent() {
@@ -594,18 +592,19 @@ struct BzlmodGeneratedPublishIoRequest {
 struct BzlmodGeneratedHttpArchiveIoRequest {
     setup: BzlmodHttpArchiveSetup,
     archive: ProjectRelativePathBuf,
-    temp: ProjectRelativePathBuf,
     dest: ProjectRelativePathBuf,
 }
 
 impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
     fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> bz_error::Result<()> {
         let archive = project_fs.resolve(&self.archive);
-        let temp = project_fs.resolve(&self.temp);
         let dest = project_fs.resolve(&self.dest);
+        let dest_tmp = project_fs.resolve(&bzlmod_generated_dest_tmp_path(&self.dest));
 
-        fs_util::create_dir_all(temp.clone())?;
-        fs_util::create_dir_all(dest.clone())?;
+        // A crashed extraction only leaves a `.tmp.<pid>` sibling behind;
+        // sweep such litter before staging a fresh tree.
+        sweep_bzlmod_generated_dest_tmp(&dest)?;
+        fs_util::create_dir_all(dest_tmp.clone())?;
 
         let extract_setup = BzlmodCellSetup {
             module_name: self.setup.repo_name.dupe(),
@@ -621,9 +620,9 @@ impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
             overlays: Arc::new(Vec::new()),
             patch_strip: 0,
         };
-        extract_archive(&extract_setup, &archive, &temp)?;
-        copy_dir_contents(&temp, &dest)?;
-        write_generated_module_file(&dest, &self.setup.repo_name)?;
+        extract_archive(&extract_setup, &archive, &dest_tmp)?;
+        write_generated_module_file(&dest_tmp, &self.setup.repo_name)?;
+        publish_bzlmod_generated_dir(&dest_tmp, &dest)?;
         Ok(())
     }
 }
@@ -846,7 +845,7 @@ mod tests {
         let project_root = ProjectRootTemp::new()?;
         let dest_rel = ProjectRelativePathBuf::testing_new("host_platform");
         let dest = project_root.path().resolve(&dest_rel);
-        fs_util::create_dir_all(dest.clone()).categorize_internal()?;
+        fs_util::create_dir_all(dest.clone())?;
 
         write_host_platform_repo(
             &dest,
@@ -975,6 +974,45 @@ toolchain(
 
     #[test]
     #[cfg(unix)]
+    fn repository_rule_source_dir_is_renamed_into_place_with_replanted_links()
+    -> bz_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let source_rel = ProjectRelativePath::new("scratch/repo/repository_ctx")?;
+        let source = project_root.path().resolve(source_rel);
+        let dest = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("scratch/repo/materialization")?);
+        let target = source.join(ForwardRelativePath::new("tools/tool")?);
+        fs_util::create_dir_all(target.parent().expect("target has parent"))?;
+        fs_util::write(&target, "tool").categorize_internal()?;
+        // `repository_ctx.symlink` records absolute targets into the
+        // working directory.
+        let link = source.join(ForwardRelativePath::new("bin/tool")?);
+        fs_util::create_dir_all(link.parent().expect("link has parent"))?;
+        fs_util::symlink(&target, &link).categorize_internal()?;
+        let setup = BzlmodRepositoryRuleSetup {
+            files: Arc::new(Vec::new()),
+            source_dir: Some(Arc::from(source_rel.as_str())),
+        };
+
+        write_repository_rule_repo(project_root.path(), &dest, "repo", &setup)?;
+
+        // The working directory was consumed by the rename.
+        assert!(fs_util::symlink_metadata_if_exists(&source)?.is_none());
+        let moved_link = dest.join(ForwardRelativePath::new("bin/tool")?);
+        assert_eq!(
+            PathBuf::from("../tools/tool"),
+            fs_util::read_link(&moved_link).categorize_internal()?
+        );
+        assert_eq!(
+            "tool",
+            fs_util::read_to_string(&moved_link).categorize_internal()?
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn symlink_targets_exist_allows_dangling_links_within_repo() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let repo = project_root
@@ -1034,66 +1072,188 @@ toolchain(
     }
 
     #[test]
-    #[cfg(unix)]
-    fn copy_dir_contents_rewrites_in_tree_absolute_symlink() -> bz_error::Result<()> {
+    fn generated_dest_tmp_sweep_removes_stale_staging_dirs() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
-        let from = project_root
+        let dest = project_root
             .path()
-            .resolve(ProjectRelativePath::new("from")?);
-        let to = project_root.path().resolve(ProjectRelativePath::new("to")?);
-        let target_rel = ForwardRelativePath::new(".tmp_git_root/shed/pkg/Cargo.toml")?;
-        let target = from.join(target_rel);
-        fs_util::create_dir_all(target.parent().expect("target has parent"))?;
-        fs_util::write(&target, "[package]\n").categorize_internal()?;
-        let link = from.join(ForwardRelativePath::new("Cargo.toml")?);
-        fs_util::symlink(&target, &link).categorize_internal()?;
+            .resolve(ProjectRelativePath::new("cells/repo")?);
+        let stale_tmp = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("cells/repo.tmp.123")?);
+        let stale_tmp_other = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("cells/repo.tmp.999")?);
+        let stamp = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("cells/repo.materialization_stamp")?);
+        let sibling = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("cells/repo2")?);
+        fs_util::create_dir_all(&stale_tmp)?;
+        fs_util::write(stale_tmp.join(ForwardRelativePath::new("file")?), "x")
+            .categorize_internal()?;
+        fs_util::create_dir_all(&stale_tmp_other)?;
+        fs_util::write(&stamp, "stamp").categorize_internal()?;
+        fs_util::create_dir_all(&sibling)?;
 
-        copy_dir_contents(&from, &to)?;
+        sweep_bzlmod_generated_dest_tmp(&dest)?;
 
-        let copied_link = to.join(ForwardRelativePath::new("Cargo.toml")?);
+        assert!(fs_util::symlink_metadata_if_exists(&stale_tmp)?.is_none());
+        assert!(fs_util::symlink_metadata_if_exists(&stale_tmp_other)?.is_none());
+        assert!(fs_util::symlink_metadata_if_exists(&stamp)?.is_some());
+        assert!(fs_util::symlink_metadata_if_exists(&sibling)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn publish_generated_dir_atomically_replaces_dest() -> bz_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let dest_rel = ProjectRelativePathBuf::testing_new("cells/repo");
+        let dest = project_root.path().resolve(&dest_rel);
+        let staged = project_root
+            .path()
+            .resolve(&bzlmod_generated_dest_tmp_path(&dest_rel));
+        fs_util::create_dir_all(&dest)?;
+        fs_util::write(dest.join(ForwardRelativePath::new("old")?), "old")
+            .categorize_internal()?;
+        fs_util::create_dir_all(&staged)?;
+        fs_util::write(staged.join(ForwardRelativePath::new("new")?), "new")
+            .categorize_internal()?;
+
+        publish_bzlmod_generated_dir(&staged, &dest)?;
+
+        assert!(fs_util::symlink_metadata_if_exists(&staged)?.is_none());
         assert!(
-            fs_util::symlink_metadata_if_exists(&copied_link)?
-                .is_some_and(|metadata| metadata.file_type().is_symlink())
+            fs_util::symlink_metadata_if_exists(&dest.join(ForwardRelativePath::new("old")?))?
+                .is_none()
         );
         assert_eq!(
-            PathBuf::from(".tmp_git_root/shed/pkg/Cargo.toml"),
-            fs_util::read_link(&copied_link).categorize_internal()?
-        );
-        assert_eq!(
-            "[package]\n",
-            fs_util::read_to_string(&copied_link).categorize_internal()?
+            "new",
+            fs_util::read_to_string(dest.join(ForwardRelativePath::new("new")?))
+                .categorize_internal()?
         );
         Ok(())
     }
 
     #[test]
     #[cfg(unix)]
-    fn copy_dir_contents_preserves_hardlinks() -> bz_error::Result<()> {
-        use std::os::unix::fs::MetadataExt;
-
+    fn replant_generated_repo_symlinks_rewrites_links_across_subdirectories()
+    -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
-        let from = project_root
+        let repo = project_root.path().resolve(ProjectRelativePath::new(
+            "buck-out/v2/external_cells/bzlmod_generated/repo",
+        )?);
+        let external_cell_root = project_root
             .path()
-            .resolve(ProjectRelativePath::new("from")?);
-        let to = project_root.path().resolve(ProjectRelativePath::new("to")?);
-        let original = from.join(ForwardRelativePath::new("lib/libSystem.B.tbd")?);
-        let hardlink = from.join(ForwardRelativePath::new("lib/libproc.tbd")?);
-        fs_util::create_dir_all(original.parent().expect("original has parent"))?;
-        fs_util::write(&original, "--- !tapi-tbd\n").categorize_internal()?;
-        fs::hard_link(original.as_path(), hardlink.as_path()).categorize_internal()?;
+            .resolve(ProjectRelativePath::new("buck-out/v2/external_cells")?);
+        let target = repo.join(ForwardRelativePath::new("tools/tool")?);
+        fs_util::create_dir_all(target.parent().expect("target has parent"))?;
+        fs_util::write(&target, "tool").categorize_internal()?;
+        let mut links = Vec::new();
+        for idx in 0..8 {
+            let link = repo.join(ForwardRelativePath::new(&format!("sub{idx}/nested/tool"))?);
+            fs_util::create_dir_all(link.parent().expect("link has parent"))?;
+            fs_util::symlink(&target, &link).categorize_internal()?;
+            links.push(link);
+        }
 
-        copy_dir_contents(&from, &to)?;
+        assert!(replant_bzlmod_generated_repo_symlinks(
+            &repo,
+            &external_cell_root
+        )?);
 
-        let copied_original = to.join(ForwardRelativePath::new("lib/libSystem.B.tbd")?);
-        let copied_hardlink = to.join(ForwardRelativePath::new("lib/libproc.tbd")?);
+        for link in &links {
+            assert_eq!(
+                PathBuf::from("../../tools/tool"),
+                fs_util::read_link(link).categorize_internal()?
+            );
+            assert_eq!(
+                "tool",
+                fs_util::read_to_string(link).categorize_internal()?
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn replant_generated_repo_symlinks_detects_cross_repo_link_in_subdirectory()
+    -> bz_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let repo = project_root.path().resolve(ProjectRelativePath::new(
+            "buck-out/v2/external_cells/bzlmod_generated/repo",
+        )?);
+        let external_cell_root = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("buck-out/v2/external_cells")?);
+        let target = repo.join(ForwardRelativePath::new("tools/tool")?);
+        fs_util::create_dir_all(target.parent().expect("target has parent"))?;
+        fs_util::write(&target, "tool").categorize_internal()?;
+        let mut links = Vec::new();
+        for idx in 0..4 {
+            let link = repo.join(ForwardRelativePath::new(&format!("sub{idx}/tool"))?);
+            fs_util::create_dir_all(link.parent().expect("link has parent"))?;
+            fs_util::symlink(&target, &link).categorize_internal()?;
+            links.push(link);
+        }
+        let other = project_root.path().resolve(ProjectRelativePath::new(
+            "buck-out/v2/external_cells/bzlmod/other/file",
+        )?);
+        fs_util::create_dir_all(other.parent().expect("other has parent"))?;
+        fs_util::write(&other, "other").categorize_internal()?;
+        let cross_link = repo.join(ForwardRelativePath::new("sub2/cross")?);
+        fs_util::symlink(&other, &cross_link).categorize_internal()?;
+
+        // The cross-repo link in one subtree poisons the AND-ed result, but
+        // every in-repo link is still rewritten.
+        assert!(!replant_bzlmod_generated_repo_symlinks(
+            &repo,
+            &external_cell_root
+        )?);
+
+        for link in &links {
+            assert_eq!(
+                PathBuf::from("../tools/tool"),
+                fs_util::read_link(link).categorize_internal()?
+            );
+        }
         assert_eq!(
-            fs::metadata(copied_original.as_path())
+            other.as_path(),
+            fs_util::read_link(&cross_link)
                 .categorize_internal()?
-                .ino(),
-            fs::metadata(copied_hardlink.as_path())
-                .categorize_internal()?
-                .ino()
+                .as_path()
         );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn symlink_targets_exist_checks_all_subdirectories() -> bz_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let repo = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("repo")?);
+        for idx in 0..8 {
+            let dir = repo.join(ForwardRelativePath::new(&format!("sub{idx}"))?);
+            fs_util::create_dir_all(&dir)?;
+            // Dangling links staying inside the repo are archive content and
+            // tolerated.
+            fs_util::symlink(
+                PathBuf::from("missing"),
+                &dir.join(ForwardRelativePath::new("dangling")?),
+            )
+            .categorize_internal()?;
+        }
+        assert!(bzlmod_generated_repo_symlink_targets_exist(&repo)?);
+
+        // A single escaping dead link in any subtree poisons the AND-ed
+        // result.
+        fs_util::symlink(
+            PathBuf::from("../../../scratch/gone"),
+            &repo.join(ForwardRelativePath::new("sub3/escape")?),
+        )
+        .categorize_internal()?;
+        assert!(!bzlmod_generated_repo_symlink_targets_exist(&repo)?);
         Ok(())
     }
 
@@ -1154,7 +1314,10 @@ toolchain(
             &external_cell_root
         )?);
 
-        assert_eq!(target, fs_util::read_link(&link).categorize_internal()?);
+        assert_eq!(
+            target.as_path(),
+            fs_util::read_link(&link).categorize_internal()?.as_path()
+        );
         assert_eq!(
             "other",
             fs_util::read_to_string(&link).categorize_internal()?
@@ -1182,7 +1345,7 @@ toolchain(
 
     #[test]
     #[cfg(unix)]
-    fn generated_repo_symlink_check_rejects_link_loop() -> bz_error::Result<()> {
+    fn generated_repo_symlink_check_tolerates_in_repo_link_loop() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let repo = project_root
             .path()
@@ -1191,7 +1354,10 @@ toolchain(
         let link = repo.join(ForwardRelativePath::new("JavaBuilder_deploy.jar")?);
         fs_util::symlink(&link, &link).categorize_internal()?;
 
-        assert!(!bzlmod_generated_repo_symlink_targets_exist(&repo)?);
+        // The loop stays inside the cached entry, so like other in-entry
+        // (possibly dangling) links it is treated as archive content and
+        // tolerated; only links escaping the entry must resolve.
+        assert!(bzlmod_generated_repo_symlink_targets_exist(&repo)?);
         Ok(())
     }
 
@@ -1410,49 +1576,55 @@ fn apply_patch(
         .buck_error_context("Could not apply patch for bzlmod external cell")
 }
 
-fn copy_dir_contents(from: &AbsNormPath, to: &AbsNormPath) -> bz_error::Result<()> {
-    copy_dir_contents_impl(from, to, from, to)
+/// Sibling staging directory for a generated repo, on the same volume as
+/// `dest` so the final publish is a single atomic rename.
+fn bzlmod_generated_dest_tmp_path(dest: &ProjectRelativePath) -> ProjectRelativePathBuf {
+    ProjectRelativePathBuf::unchecked_new(format!(
+        "{}.tmp.{}",
+        dest.as_str(),
+        std::process::id()
+    ))
 }
 
-fn copy_dir_contents_impl(
-    root_from: &AbsNormPath,
-    root_to: &AbsNormPath,
-    from: &AbsNormPath,
-    to: &AbsNormPath,
-) -> bz_error::Result<()> {
-    for entry in fs_util::read_dir(from).categorize_internal()? {
+/// Removes stale `<dest>.tmp.*` staging siblings left behind by crashed
+/// materializations.
+fn sweep_bzlmod_generated_dest_tmp(dest: &AbsNormPath) -> bz_error::Result<()> {
+    let Some(parent) = dest.parent() else {
+        return Ok(());
+    };
+    let Some(file_name) = dest.as_path().file_name() else {
+        return Ok(());
+    };
+    let prefix = format!("{}.tmp.", file_name.to_string_lossy());
+    let Some(entries) = fs_util::read_dir_if_exists(parent)? else {
+        return Ok(());
+    };
+    for entry in entries {
         let entry = entry?;
-        let from_path = entry.path();
-        let to_path = to.join(ForwardRelativePath::new(&entry.file_name())?);
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            fs_util::create_dir_all(&to_path)?;
-            copy_dir_contents_impl(root_from, root_to, &from_path, &to_path)?;
-        } else if file_type.is_file() {
-            link_or_copy_file(&from_path, &to_path)?;
-        } else if file_type.is_symlink() {
-            let target = fs_util::read_link(&from_path).categorize_internal()?;
-            let target = copy_dir_symlink_target(root_from, root_to, &to_path, target);
-            fs_util::symlink(target, &to_path).categorize_internal()?;
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            fs_util::remove_all(entry.path()).categorize_internal()?;
         }
     }
     Ok(())
 }
 
-fn copy_dir_symlink_target(
-    root_from: &AbsNormPath,
-    root_to: &AbsNormPath,
-    link: &AbsNormPath,
-    target: PathBuf,
-) -> PathBuf {
-    if !target.is_absolute() {
-        return target;
+/// Atomically replaces `dest` with the staged tree at `src`. The two are
+/// siblings, so the rename stays on one volume; if buck-out is somehow split
+/// across filesystems the `EXDEV` branch falls back to a tree clone.
+fn publish_bzlmod_generated_dir(src: &AbsNormPath, dest: &AbsNormPath) -> bz_error::Result<()> {
+    if let Some(parent) = dest.parent() {
+        fs_util::create_dir_all(parent)?;
     }
-    let Ok(target_relative) = target.strip_prefix(root_from.as_path()) else {
-        return target;
-    };
-    let copied_target = root_to.as_path().join(target_relative);
-    path_relative_to_link(&copied_target, link.as_path())
+    fs_util::remove_all(dest).categorize_internal()?;
+    match fs_util::rename(src, dest) {
+        Ok(()) => Ok(()),
+        Err(error) if error.io_error_kind() == Some(ErrorKind::CrossesDevices) => {
+            fs_util::clone_tree(src, dest).categorize_internal()?;
+            fs_util::remove_all(src).categorize_internal()?;
+            Ok(())
+        }
+        Err(error) => Err(error.categorize_internal()),
+    }
 }
 
 fn replant_bzlmod_generated_repo_symlinks(
@@ -1460,13 +1632,23 @@ fn replant_bzlmod_generated_repo_symlinks(
     external_cell_root: &AbsNormPath,
 ) -> bz_error::Result<bool> {
     let mut safe_for_repo_contents_cache = true;
-    replant_bzlmod_generated_repo_symlinks_impl(
+    let subdirs = replant_bzlmod_generated_repo_symlinks_dir(
         repo_dir,
         repo_dir,
         external_cell_root,
         &mut safe_for_repo_contents_cache,
     )?;
-    Ok(safe_for_repo_contents_cache)
+    let subdir_results = bzlmod_parallel_map_dirs(subdirs, |dir| {
+        let mut safe_for_repo_contents_cache = true;
+        replant_bzlmod_generated_repo_symlinks_impl(
+            repo_dir,
+            dir,
+            external_cell_root,
+            &mut safe_for_repo_contents_cache,
+        )?;
+        Ok(safe_for_repo_contents_cache)
+    })?;
+    Ok(safe_for_repo_contents_cache && subdir_results.into_iter().all(|safe| safe))
 }
 
 fn replant_bzlmod_generated_repo_symlinks_impl(
@@ -1475,6 +1657,30 @@ fn replant_bzlmod_generated_repo_symlinks_impl(
     external_cell_root: &AbsNormPath,
     safe_for_repo_contents_cache: &mut bool,
 ) -> bz_error::Result<()> {
+    for subdir in replant_bzlmod_generated_repo_symlinks_dir(
+        repo_dir,
+        dir,
+        external_cell_root,
+        safe_for_repo_contents_cache,
+    )? {
+        replant_bzlmod_generated_repo_symlinks_impl(
+            repo_dir,
+            &subdir,
+            external_cell_root,
+            safe_for_repo_contents_cache,
+        )?;
+    }
+    Ok(())
+}
+
+/// Rewrites the symlinks directly in `dir` and returns its subdirectories.
+fn replant_bzlmod_generated_repo_symlinks_dir(
+    repo_dir: &AbsNormPath,
+    dir: &AbsNormPath,
+    external_cell_root: &AbsNormPath,
+    safe_for_repo_contents_cache: &mut bool,
+) -> bz_error::Result<Vec<AbsNormPathBuf>> {
+    let mut subdirs = Vec::new();
     for entry in fs_util::read_dir(dir).categorize_internal()? {
         let entry = entry?;
         let entry_path = entry.path();
@@ -1497,15 +1703,97 @@ fn replant_bzlmod_generated_repo_symlinks_impl(
                 fs_util::symlink(new_target, &entry_path).categorize_internal()?;
             }
         } else if file_type.is_dir() {
-            replant_bzlmod_generated_repo_symlinks_impl(
-                repo_dir,
-                &entry_path,
-                external_cell_root,
-                safe_for_repo_contents_cache,
-            )?;
+            subdirs.push(entry_path);
+        }
+    }
+    Ok(subdirs)
+}
+
+/// Rewrites absolute symlinks under `dir` whose targets point into
+/// `old_root` — the tree's location before it was renamed into place — to
+/// equivalent relative links into `new_root`, so they survive subsequent
+/// renames of the tree.
+fn replant_bzlmod_renamed_dir_symlinks(
+    dir: &AbsNormPath,
+    old_root: &AbsNormPath,
+    new_root: &AbsNormPath,
+) -> bz_error::Result<()> {
+    for entry in fs_util::read_dir(dir).categorize_internal()? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            let target = fs_util::read_link(&entry_path).categorize_internal()?;
+            if !target.is_absolute() {
+                continue;
+            }
+            let Ok(suffix) = target.strip_prefix(old_root.as_path()) else {
+                continue;
+            };
+            let new_target =
+                path_relative_to_link(&new_root.as_path().join(suffix), entry_path.as_path());
+            fs_util::remove_file(&entry_path).categorize_internal()?;
+            fs_util::symlink(new_target, &entry_path).categorize_internal()?;
+        } else if file_type.is_dir() {
+            replant_bzlmod_renamed_dir_symlinks(&entry_path, old_root, new_root)?;
         }
     }
     Ok(())
+}
+
+/// Maps `f` over `items` from a small pool of scoped threads; the repo walks
+/// fanning out here are pure filesystem metadata work, so they scale
+/// near-linearly. Results come back in input order and the first error in
+/// input order wins, keeping the outcome deterministic regardless of
+/// scheduling.
+fn bzlmod_parallel_map_dirs<D, T, F>(items: Vec<D>, f: F) -> bz_error::Result<Vec<T>>
+where
+    D: Sync,
+    T: Send,
+    F: Fn(&D) -> bz_error::Result<T> + Sync,
+{
+    let threads = std::thread::available_parallelism()
+        .map(|threads| threads.get())
+        .unwrap_or(1)
+        .min(items.len());
+    if threads <= 1 {
+        return items.iter().map(f).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut slots = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut chunk = Vec::new();
+                    loop {
+                        let idx = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(item) = items.get(idx) else {
+                            break;
+                        };
+                        chunk.push((idx, f(item)));
+                    }
+                    chunk
+                })
+            })
+            .collect();
+        let mut slots: Vec<Option<bz_error::Result<T>>> =
+            items.iter().map(|_| None).collect();
+        for handle in handles {
+            match handle.join() {
+                Ok(chunk) => {
+                    for (idx, result) in chunk {
+                        slots[idx] = Some(result);
+                    }
+                }
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }
+        slots
+    });
+    slots
+        .drain(..)
+        .map(|slot| slot.expect("every index is claimed by exactly one worker"))
+        .collect()
 }
 
 fn path_relative_to_link(target: &Path, link: &Path) -> PathBuf {
@@ -1530,16 +1818,6 @@ fn path_relative_to_link(target: &Path, link: &Path) -> PathBuf {
         relative.push(".");
     }
     relative
-}
-
-fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> bz_error::Result<()> {
-    match fs::hard_link(from, to) {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            fs_util::copy(from, to).categorize_internal()?;
-            Ok(())
-        }
-    }
 }
 
 fn checksum_from_integrity(integrity: &str) -> bz_error::Result<Checksum> {
@@ -2152,6 +2430,21 @@ fn bzlmod_external_cell_root_is_current_with_stamp(
 
 fn bzlmod_generated_repo_symlink_targets_exist(path: &AbsNormPath) -> bz_error::Result<bool> {
     fn visit(root: &Path, dir: &Path) -> bz_error::Result<bool> {
+        let mut subdirs = Vec::new();
+        if !visit_dir(root, dir, &mut subdirs)? {
+            return Ok(false);
+        }
+        for subdir in subdirs {
+            if !visit(root, &subdir)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Checks the symlinks directly in `dir` and collects its
+    /// subdirectories.
+    fn visit_dir(root: &Path, dir: &Path, subdirs: &mut Vec<PathBuf>) -> bz_error::Result<bool> {
         let entries = fs::read_dir(dir).with_buck_error_context(|| {
             format!("Error reading cached repo directory `{}`", dir.display())
         })?;
@@ -2164,9 +2457,7 @@ fn bzlmod_generated_repo_symlink_targets_exist(path: &AbsNormPath) -> bz_error::
                 format!("Error statting cached repo entry `{}`", entry_path.display())
             })?;
             if file_type.is_dir() {
-                if !visit(root, &entry_path)? {
-                    return Ok(false);
-                }
+                subdirs.push(entry_path);
             } else if file_type.is_symlink() {
                 let target = fs::read_link(&entry_path).with_buck_error_context(|| {
                     format!("Error reading cached repo symlink `{}`", entry_path.display())
@@ -2197,7 +2488,17 @@ fn bzlmod_generated_repo_symlink_targets_exist(path: &AbsNormPath) -> bz_error::
         }
         Ok(true)
     }
-    visit(path.as_path(), path.as_path())
+
+    let root = path.as_path();
+    let mut subdirs = Vec::new();
+    if !visit_dir(root, root, &mut subdirs)? {
+        return Ok(false);
+    }
+    // Fan out per top-level subdirectory. Subtrees are checked exhaustively
+    // (no cross-subtree short-circuit) and the results ANDed, so the answer
+    // is deterministic regardless of scheduling.
+    let results = bzlmod_parallel_map_dirs(subdirs, |dir| visit(root, dir))?;
+    Ok(results.into_iter().all(|targets_exist| targets_exist))
 }
 
 /// Whether `path`, after lexically resolving `.` and `..` components, stays
@@ -2283,7 +2584,7 @@ fn bzlmod_generated_repo_contents_cache_key(setup: &BzlmodGeneratedCellSetup) ->
     let mut hasher = blake3::Hasher::new();
     update_bzlmod_repo_contents_cache_key(
         &mut hasher,
-        "buck2-bzlmod-generated-materialization-v10",
+        "buck2-bzlmod-generated-materialization-v11",
     );
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::OS);
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::ARCH);
@@ -4094,7 +4395,6 @@ async fn download_impl(
 
     let io = ctx.get_blocking_executor();
     let archive = bzlmod_path(setup, "source.archive");
-    let temp = bzlmod_path(setup, "extract-tmp");
     let patch_dir = bzlmod_path(setup, "patches");
     let overlay_dir = bzlmod_path(setup, "overlays");
     let stamp = bzlmod_external_cell_root_stamp_path(dest);
@@ -4129,7 +4429,6 @@ async fn download_impl(
                     stamp,
                     dest.to_owned(),
                     archive.clone(),
-                    temp.clone(),
                     patch_dir.clone(),
                     overlay_dir.clone(),
                     cache_tmp.to_owned(),
@@ -4220,7 +4519,6 @@ async fn download_impl(
                 archive,
                 patch_files,
                 overlay_files,
-                temp,
                 cache_repo: cache_repo.to_owned(),
                 cache_tmp: cache_tmp.to_owned(),
                 cache_alias: cache_alias.to_owned(),
@@ -5567,11 +5865,10 @@ async fn materialize_generated_contents(
         }
         BzlmodGeneratedCellGenerator::HttpArchive(http_archive) => {
             let archive = bzlmod_generated_scratch_path(setup, "source.archive");
-            let temp = bzlmod_generated_scratch_path(setup, "extract-tmp");
             ctx.get_blocking_executor()
                 .execute_io(
                     Box::new(bz_execute::execute::clean_output_paths::CleanOutputPaths {
-                        paths: vec![path.to_owned(), archive.clone(), temp.clone()],
+                        paths: vec![path.to_owned(), archive.clone()],
                     }),
                     cancellations,
                 )
@@ -5602,7 +5899,6 @@ async fn materialize_generated_contents(
                     Box::new(BzlmodGeneratedHttpArchiveIoRequest {
                         setup: http_archive.dupe(),
                         archive,
-                        temp,
                         dest: path.to_owned(),
                     }),
                     cancellations,

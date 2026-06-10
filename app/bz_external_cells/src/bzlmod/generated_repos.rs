@@ -9,7 +9,15 @@ pub(super) fn write_repository_rule_repo(
     if let Some(source_dir) = &setup.source_dir {
         let source_dir = ProjectRelativePath::new(source_dir.as_ref())?;
         let source = project_fs.resolve(source_dir);
-        copy_dir_contents(&source, dest)?;
+        // The repository rule's working directory is consumed here: rename
+        // it into place instead of copying it file by file. Nothing reads
+        // the working directory after materialization.
+        publish_bzlmod_generated_dir(&source, dest)?;
+        // `repository_ctx.symlink` records absolute targets, so links into
+        // the rule's own working directory must be replanted as relative
+        // links now that the tree has moved (and will move again when it is
+        // published to its external cell location).
+        replant_bzlmod_renamed_dir_symlinks(dest, &source, dest)?;
     }
     write_generated_module_file(dest, canonical_repo_name)?;
     for file in setup.files.iter() {
