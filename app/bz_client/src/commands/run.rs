@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -555,25 +556,29 @@ fn materialize_runfiles_tree(run_spec: &RunSpec, project_root: &Path) -> bz_erro
 
     let manifest = runfiles_manifest_content(run_spec, project_root)?;
     let manifest_path = runfiles_dir.join(BAZEL_RUNFILES_MANIFEST);
-    if runfiles_dir.is_dir()
-        && std::fs::read_to_string(&manifest_path)
-            .is_ok_and(|existing_manifest| existing_manifest == manifest)
-    {
+    let existing_manifest = std::fs::read_to_string(&manifest_path).ok();
+    if runfiles_dir.is_dir() && existing_manifest.as_deref() == Some(manifest.as_str()) {
         return Ok(());
     }
 
-    remove_path_if_exists(&runfiles_dir).with_buck_error_context(|| {
-        format!(
-            "Failed to remove existing runfiles tree `{}`",
-            runfiles_dir.display()
-        )
-    })?;
     std::fs::create_dir_all(&runfiles_dir).with_buck_error_context(|| {
         format!(
             "Failed to create runfiles tree `{}`",
             runfiles_dir.display()
         )
     })?;
+    ensure_runfiles_workspace_dir(&runfiles_dir, run_spec.workspace_name.as_str())?;
+
+    let desired_paths = runfiles_manifest_paths(&manifest);
+    if let Some(existing_manifest) = existing_manifest {
+        for stale_path in runfiles_manifest_paths(&existing_manifest).difference(&desired_paths) {
+            let stale_path = validate_runfiles_relative_path(stale_path)?;
+            let stale_path = runfiles_dir.join(stale_path);
+            remove_path_if_exists(&stale_path).with_buck_error_context(|| {
+                format!("Failed to remove stale runfile `{}`", stale_path.display())
+            })?;
+        }
+    }
 
     for empty_filename in &run_spec.empty_filenames {
         let relative_path = validate_runfiles_relative_path(empty_filename)?;
@@ -623,6 +628,38 @@ fn materialize_runfiles_tree(run_spec: &RunSpec, project_root: &Path) -> bz_erro
     })?;
 
     Ok(())
+}
+
+fn ensure_runfiles_workspace_dir(
+    runfiles_dir: &Path,
+    workspace_name: &str,
+) -> bz_error::Result<()> {
+    if workspace_name.is_empty() {
+        return Ok(());
+    }
+
+    let workspace_name = validate_runfiles_relative_path(workspace_name)?;
+    let workspace_dir = runfiles_dir.join(workspace_name);
+    std::fs::create_dir_all(&workspace_dir).with_buck_error_context(|| {
+        format!(
+            "Failed to create runfiles workspace directory `{}`",
+            workspace_dir.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn runfiles_manifest_paths(manifest: &str) -> BTreeSet<String> {
+    manifest
+        .lines()
+        .filter_map(|line| {
+            if line.is_empty() {
+                return None;
+            }
+            let (path, _) = line.split_once(' ').unwrap_or((line, ""));
+            Some(path.to_owned())
+        })
+        .collect()
 }
 
 fn runfiles_manifest_content(run_spec: &RunSpec, project_root: &Path) -> bz_error::Result<String> {
