@@ -59,7 +59,7 @@ pub(super) fn record_repository_env_var(
     value
 }
 
-pub(super) fn repository_recorded_file_value(path: &Path) -> io::Result<String> {
+pub fn repository_recorded_file_value(path: &Path) -> io::Result<String> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
@@ -91,7 +91,7 @@ pub(super) fn repository_recorded_file_value(path: &Path) -> io::Result<String> 
     Ok("OTHER".to_owned())
 }
 
-pub(super) fn repository_recorded_dirents_value(path: &Path) -> io::Result<String> {
+pub fn repository_recorded_dirents_value(path: &Path) -> io::Result<String> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
@@ -115,7 +115,7 @@ pub(super) fn repository_recorded_dirents_value(path: &Path) -> io::Result<Strin
     ))
 }
 
-pub(super) fn repository_recorded_dir_tree_value(path: &Path) -> io::Result<String> {
+pub fn repository_recorded_dir_tree_value(path: &Path) -> io::Result<String> {
     fn visit(base: &Path, path: &Path, hasher: &mut blake3::Hasher) -> io::Result<()> {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,

@@ -4,7 +4,6 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::future::Future;
 use std::io::ErrorKind;
-use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -104,6 +103,9 @@ use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use bz_http::HttpClient;
 use bz_http::HttpClientBuilder;
 use bz_interpreter_for_build::bazel::repository::BazelRepositoryRuleCacheInfo;
+use bz_interpreter_for_build::bazel::repository::repository_recorded_dir_tree_value;
+use bz_interpreter_for_build::bazel::repository::repository_recorded_dirents_value;
+use bz_interpreter_for_build::bazel::repository::repository_recorded_file_value;
 use bz_interpreter_for_build::bazel::repository::BazelRepositoryRuleProgress;
 use bz_interpreter_for_build::bazel::repository::bzlmod_module_extension_bazel_bzl_transitive_digest;
 use bz_interpreter_for_build::bazel::repository::bzlmod_module_extension_bazel_usages_digest;
@@ -968,6 +970,66 @@ toolchain(
             )?
             .is_none()
         );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn symlink_targets_exist_allows_dangling_links_within_repo() -> bz_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let repo = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("repo")?);
+        fs_util::create_dir_all(repo.join(ForwardRelativePath::new("bin")?))?;
+        fs_util::write(repo.join(ForwardRelativePath::new("bin/llvm")?), "x")
+            .categorize_internal()?;
+        // A multitool-style link to an existing sibling.
+        fs_util::symlink(
+            PathBuf::from("llvm"),
+            &repo.join(ForwardRelativePath::new("bin/clang")?),
+        )
+        .categorize_internal()?;
+        // A dangling link whose target stays inside the repo: archive content,
+        // e.g. a minimal toolchain shipping `clangd -> empty` stubs.
+        fs_util::symlink(
+            PathBuf::from("empty"),
+            &repo.join(ForwardRelativePath::new("bin/clangd")?),
+        )
+        .categorize_internal()?;
+        assert!(bzlmod_generated_repo_symlink_targets_exist(&repo)?);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn symlink_targets_exist_rejects_dangling_links_escaping_repo() -> bz_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let repo = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("repo")?);
+        fs_util::create_dir_all(repo.join(ForwardRelativePath::new("bin")?))?;
+        // A link out of the repo to a since-deleted location (e.g. an
+        // extraction scratch directory) must invalidate the cache entry.
+        fs_util::symlink(
+            PathBuf::from("../../scratch/gone"),
+            &repo.join(ForwardRelativePath::new("bin/tool")?),
+        )
+        .categorize_internal()?;
+        assert!(!bzlmod_generated_repo_symlink_targets_exist(&repo)?);
+
+        // But an existing out-of-repo target is fine.
+        let external = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("external-file")?);
+        fs_util::write(&external, "x").categorize_internal()?;
+        fs_util::remove_all(repo.join(ForwardRelativePath::new("bin/tool")?))
+            .categorize_internal()?;
+        fs_util::symlink(
+            external.as_path().to_path_buf(),
+            &repo.join(ForwardRelativePath::new("bin/tool")?),
+        )
+        .categorize_internal()?;
+        assert!(bzlmod_generated_repo_symlink_targets_exist(&repo)?);
         Ok(())
     }
 
@@ -2089,32 +2151,72 @@ fn bzlmod_external_cell_root_is_current_with_stamp(
 }
 
 fn bzlmod_generated_repo_symlink_targets_exist(path: &AbsNormPath) -> bz_error::Result<bool> {
-    for entry in fs_util::read_dir(path).categorize_internal()? {
-        let entry = entry?;
-        let entry_path = entry.path();
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            if !bzlmod_generated_repo_symlink_targets_exist(&entry_path)? {
-                return Ok(false);
-            }
-        } else if file_type.is_symlink() {
-            let target = fs_util::read_link(&entry_path).categorize_internal()?;
-            let target_path = if target.is_absolute() {
-                target
-            } else {
-                entry_path
-                    .as_path()
-                    .parent()
-                    .map(|parent| parent.join(&target))
-                    .unwrap_or(target)
-            };
-            match fs::metadata(&target_path) {
-                Ok(_) => {}
-                Err(_) => return Ok(false),
+    fn visit(root: &Path, dir: &Path) -> bz_error::Result<bool> {
+        let entries = fs::read_dir(dir).with_buck_error_context(|| {
+            format!("Error reading cached repo directory `{}`", dir.display())
+        })?;
+        for entry in entries {
+            let entry = entry.with_buck_error_context(|| {
+                format!("Error reading cached repo directory `{}`", dir.display())
+            })?;
+            let entry_path = entry.path();
+            let file_type = entry.file_type().with_buck_error_context(|| {
+                format!("Error statting cached repo entry `{}`", entry_path.display())
+            })?;
+            if file_type.is_dir() {
+                if !visit(root, &entry_path)? {
+                    return Ok(false);
+                }
+            } else if file_type.is_symlink() {
+                let target = fs::read_link(&entry_path).with_buck_error_context(|| {
+                    format!("Error reading cached repo symlink `{}`", entry_path.display())
+                })?;
+                let target_path = if target.is_absolute() {
+                    target
+                } else {
+                    entry_path
+                        .parent()
+                        .map(|parent| parent.join(&target))
+                        .unwrap_or(target)
+                };
+                // Symlinks that stay inside the cached repo are archive
+                // content and may dangle by design (e.g. a minimal toolchain
+                // shipping `clangd -> empty` stubs); Bazel's repo contents
+                // cache validates candidates by recorded inputs only and
+                // never inspects symlink targets. Only links escaping the
+                // entry must resolve: this check exists to reject entries
+                // pointing at extraction scratch directories that no longer
+                // exist.
+                if bzlmod_path_lexically_within(root, &target_path) {
+                    continue;
+                }
+                if fs::symlink_metadata(&target_path).is_err() {
+                    return Ok(false);
+                }
             }
         }
+        Ok(true)
     }
-    Ok(true)
+    visit(path.as_path(), path.as_path())
+}
+
+/// Whether `path`, after lexically resolving `.` and `..` components, stays
+/// within `root`. Used to classify symlink targets without touching the
+/// filesystem.
+fn bzlmod_path_lexically_within(root: &Path, path: &Path) -> bool {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    return false;
+                }
+            }
+            component => normalized.push(component),
+        }
+    }
+    normalized.starts_with(root)
 }
 
 fn update_bzlmod_repo_contents_cache_key_opt(hasher: &mut blake3::Hasher, field: Option<&str>) {
@@ -2501,126 +2603,36 @@ fn bzlmod_recorded_input_path(project_root: &ProjectRoot, path: &str) -> bz_erro
         .to_owned())
 }
 
+/// Recorded input values must be computed exactly like
+/// `repository_recorded_file_value` in bz_interpreter_for_build, which
+/// records these inputs during repository rule evaluation: any asymmetry
+/// makes recorded inputs permanently stale and repositories re-materialize
+/// on every cold daemon start. Like Bazel's RepoRecordedInput.getValue, the
+/// same implementation serves both recording and verification.
 fn bzlmod_recorded_file_value(path: &Path) -> bz_error::Result<String> {
-    let metadata = match fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
-        Err(error) => {
-            return Err(error).with_buck_error_context(|| {
-                format!("Error statting bzlmod recorded input `{}`", path.display())
-            });
-        }
-    };
-    if metadata.is_dir() {
-        return Ok("DIR".to_owned());
-    }
-    if metadata.is_file() {
-        let mut file = fs::File::open(path).with_buck_error_context(|| {
-            format!("Error opening bzlmod recorded input `{}`", path.display())
-        })?;
-        let mut hasher = blake3::Hasher::new();
-        let mut buf = [0u8; 8192];
-        loop {
-            let len = file.read(&mut buf).with_buck_error_context(|| {
-                format!("Error reading bzlmod recorded input `{}`", path.display())
-            })?;
-            if len == 0 {
-                break;
-            }
-            hasher.update(&buf[..len]);
-        }
-        return Ok(format!("FILE:{}", hasher.finalize().to_hex()));
-    }
-    Ok("OTHER".to_owned())
+    repository_recorded_file_value(path).with_buck_error_context(|| {
+        format!("Error reading bzlmod recorded input `{}`", path.display())
+    })
 }
 
+/// See `bzlmod_recorded_file_value` for why this delegates to the recorder.
 fn bzlmod_recorded_dirents_value(path: &Path) -> bz_error::Result<String> {
-    let metadata = match fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
-        Err(error) => {
-            return Err(error).with_buck_error_context(|| {
-                format!("Error statting bzlmod recorded input `{}`", path.display())
-            });
-        }
-    };
-    if !metadata.is_dir() {
-        return bzlmod_recorded_file_value(path);
-    }
-    let mut entries = fs::read_dir(path)
-        .with_buck_error_context(|| {
-            format!(
-                "Error reading bzlmod recorded directory `{}`",
-                path.display()
-            )
-        })?
-        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
-        .collect::<Result<Vec<_>, _>>()
-        .with_buck_error_context(|| {
-            format!(
-                "Error reading bzlmod recorded directory `{}`",
-                path.display()
-            )
-        })?;
-    entries.sort();
-    let mut hasher = blake3::Hasher::new();
-    for entry in entries {
-        hasher.update(entry.as_bytes());
-        hasher.update(&[0]);
-    }
-    Ok(format!("DIRENTS:{}", hasher.finalize().to_hex()))
+    repository_recorded_dirents_value(path).with_buck_error_context(|| {
+        format!(
+            "Error reading bzlmod recorded directory `{}`",
+            path.display()
+        )
+    })
 }
 
+/// See `bzlmod_recorded_file_value` for why this delegates to the recorder.
 fn bzlmod_recorded_dir_tree_value(path: &Path) -> bz_error::Result<String> {
-    fn visit(base: &Path, path: &Path, hasher: &mut blake3::Hasher) -> bz_error::Result<()> {
-        let metadata = match fs::metadata(path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                hasher.update(b"ENOENT");
-                return Ok(());
-            }
-            Err(error) => {
-                return Err(error).with_buck_error_context(|| {
-                    format!("Error statting bzlmod recorded input `{}`", path.display())
-                });
-            }
-        };
-        let relative = path.strip_prefix(base).unwrap_or(path);
-        hasher.update(relative.to_string_lossy().as_bytes());
-        hasher.update(&[0]);
-        if metadata.is_dir() {
-            hasher.update(b"DIR");
-            let mut entries = fs::read_dir(path)
-                .with_buck_error_context(|| {
-                    format!(
-                        "Error reading bzlmod recorded directory `{}`",
-                        path.display()
-                    )
-                })?
-                .map(|entry| entry.map(|entry| entry.path()))
-                .collect::<Result<Vec<_>, _>>()
-                .with_buck_error_context(|| {
-                    format!(
-                        "Error reading bzlmod recorded directory `{}`",
-                        path.display()
-                    )
-                })?;
-            entries.sort();
-            for entry in entries {
-                visit(base, &entry, hasher)?;
-            }
-        } else if metadata.is_file() {
-            hasher.update(bzlmod_recorded_file_value(path)?.as_bytes());
-        } else {
-            hasher.update(b"OTHER");
-        }
-        hasher.update(&[0]);
-        Ok(())
-    }
-
-    let mut hasher = blake3::Hasher::new();
-    visit(path, path, &mut hasher)?;
-    Ok(format!("DIRTREE:{}", hasher.finalize().to_hex()))
+    repository_recorded_dir_tree_value(path).with_buck_error_context(|| {
+        format!(
+            "Error reading bzlmod recorded directory tree `{}`",
+            path.display()
+        )
+    })
 }
 
 fn bzlmod_repo_name_for_cell(cell_name: &str) -> String {
