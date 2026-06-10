@@ -16,6 +16,7 @@ use crate::digest_config::DigestConfig;
 use crate::execute::action_digest::ActionDigest;
 use crate::execute::blobs::ActionBlobs;
 use crate::execute::paths_with_digest::PathsWithDigestBlobData;
+use crate::execute::request::ActionMetadataBlobData;
 
 #[derive(Clone)]
 pub struct ActionDigestAndBlobs {
@@ -40,6 +41,10 @@ impl ActionDigestAndBlobsBuilder {
 
     pub fn add_paths(&mut self, digest: TrackedFileDigest, paths: PathsWithDigestBlobData) {
         self.blobs.add_blob(digest, paths.0);
+    }
+
+    pub fn add_blob(&mut self, digest: TrackedFileDigest, data: ActionMetadataBlobData) {
+        self.blobs.add_blob(digest, data);
     }
 
     pub fn add_command(&mut self, command: &RE::Command) -> TrackedFileDigest {

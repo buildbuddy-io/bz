@@ -11,3 +11,4 @@
 #![feature(error_generic_member_access)]
 
 tonic::include_proto!("buck.test");
+tonic::include_proto!("blaze");

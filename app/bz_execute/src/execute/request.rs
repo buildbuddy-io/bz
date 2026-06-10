@@ -102,6 +102,10 @@ pub enum CommandExecutionInput {
         value: ArtifactValue,
     },
     EmptyFile(ProjectRelativePathBuf),
+    SyntheticFile {
+        path: ProjectRelativePathBuf,
+        content: Arc<[u8]>,
+    },
     ActionMetadata(ActionMetadataBlob),
     ScratchPath(BuckOutScratchPath),
     IncrementalRemoteOutput(
@@ -230,6 +234,7 @@ pub struct CommandExecutionPaths {
     input_directory: ActionImmutableDirectory,
     external_symlink_upload_paths: Vec<ExternalSymlinkUploadPath>,
     resolved_symlink_upload_paths: Vec<ResolvedSymlinkUploadPath>,
+    input_blobs: Vec<(TrackedFileDigest, ActionMetadataBlobData)>,
     output_paths: Vec<(ProjectRelativePathBuf, OutputType)>,
 
     /// Total size of input files.
@@ -252,8 +257,12 @@ impl CommandExecutionPaths {
         digest_config: DigestConfig,
         interner: Option<&DashMapDirectoryInterner<ActionDirectoryMember, TrackedFileDigest>>,
     ) -> bz_error::Result<Self> {
-        let (mut builder, external_symlink_upload_paths, resolved_symlink_upload_paths) =
-            inputs_directory(&inputs, digest_config, fs)?;
+        let (
+            mut builder,
+            external_symlink_upload_paths,
+            resolved_symlink_upload_paths,
+            input_blobs,
+        ) = inputs_directory(&inputs, digest_config, fs)?;
 
         // RE spec requires outputs to be sorted:
         // https://github.com/bazelbuild/remote-apis/blob/1f36c310b28d762b258ea577ed08e8203274efae/build/bazel/remote/execution/v2/remote_execution.proto#L667-L669
@@ -294,6 +303,7 @@ impl CommandExecutionPaths {
             input_directory,
             external_symlink_upload_paths,
             resolved_symlink_upload_paths,
+            input_blobs,
             output_paths,
             input_files_bytes,
         })
@@ -340,6 +350,7 @@ impl CommandExecutionPaths {
             input_directory: _,
             external_symlink_upload_paths: _,
             resolved_symlink_upload_paths: _,
+            input_blobs: _,
             output_paths: _,
             input_files_bytes: _,
         } = self;
@@ -371,6 +382,10 @@ impl CommandExecutionPaths {
 
     pub fn resolved_symlink_upload_paths(&self) -> &[ResolvedSymlinkUploadPath] {
         &self.resolved_symlink_upload_paths
+    }
+
+    pub fn input_blobs(&self) -> &[(TrackedFileDigest, ActionMetadataBlobData)] {
+        &self.input_blobs
     }
 
     pub fn output_paths(&self) -> &[(ProjectRelativePathBuf, OutputType)] {

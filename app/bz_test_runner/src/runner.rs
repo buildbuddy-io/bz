@@ -134,17 +134,8 @@ fi
 export GTEST_TMP_DIR="$TEST_TMPDIR"
 GUNIT_OUTPUT="xml:$XML_OUTPUT_FILE"
 
-RUNFILES_MANIFEST_FILE="$TEST_SRCDIR/MANIFEST"
-if [ "${RUNFILES_MANIFEST_ONLY:-}" = "1" ] && [ ! -e "$RUNFILES_MANIFEST_FILE" ] && [ -d "$TEST_SRCDIR" ]; then
-  (
-    cd "$TEST_SRCDIR" || exit 1
-    find -L . -type f | while IFS= read -r runfile; do
-      runfile="${runfile#./}"
-      [ "$runfile" = "MANIFEST" ] && continue
-      target="$TEST_SRCDIR/$runfile"
-      printf '%s %s\n' "$runfile" "$target"
-    done | sort
-  ) > "$RUNFILES_MANIFEST_FILE"
+if [ -z "${RUNFILES_MANIFEST_FILE:-}" ]; then
+  RUNFILES_MANIFEST_FILE="$TEST_SRCDIR/MANIFEST"
 fi
 if [ "${RUNFILES_MANIFEST_ONLY:-}" = "1" ] && [ -e "$RUNFILES_MANIFEST_FILE" ]; then
   export RUNFILES_MANIFEST_FILE
@@ -250,6 +241,7 @@ for signal in $signals; do
   trap "signal_children ${signal}" "${signal}"
 done
 start=$(date +%s)
+start_millis=$((start * 1000))
 
 if [ -n "${BUILD_EXECROOT:-}" ]; then
   rm -f "$TEST_PREMATURE_EXIT_FILE"
@@ -282,6 +274,7 @@ done
 wait "$childPid"
 exit_code=$?
 duration_seconds=$(($(date +%s) - start))
+duration_millis=$((duration_seconds * 1000))
 
 kill_group SIGKILL "$childPid"
 kill_group SIGKILL "$cleanupPid" &> /dev/null
@@ -392,11 +385,67 @@ if [ ! -f "$XML_OUTPUT_FILE" ]; then
   } > "$XML_OUTPUT_FILE"
 fi
 
+emit_byte() {
+  printf "\\$(printf '%03o' "$1")"
+}
+
+write_varint() {
+  local value="$1"
+  while (( value >= 128 )); do
+    emit_byte $(((value & 127) | 128))
+    value=$((value >> 7))
+  done
+  emit_byte "$value"
+}
+
+write_field_varint() {
+  write_varint "$1"
+  write_varint "$2"
+}
+
+write_field_string() {
+  local tag="$1"
+  local value="$2"
+  write_varint "$tag"
+  write_varint "${#value}"
+  printf '%s' "$value"
+}
+
+status=4
+status_details="Test failed"
 if [ "$exit_code" -eq 0 ]; then
-  printf '\010\001\020\001\030\001' > "$cache_status"
-else
-  printf '\010\001\020\000\030\004' > "$cache_status"
+  status=1
+  status_details="Test passed"
+elif [ "$exit_code" -eq 142 ] || [ "$exit_code" -eq 143 ]; then
+  status=3
+  status_details="Test timed out"
 fi
+
+{
+  write_field_varint 8 1
+  if [ "$exit_code" -eq 0 ]; then
+    write_field_varint 16 1
+  else
+    write_field_varint 16 0
+  fi
+  write_field_varint 24 "$status"
+  if [ "$exit_code" -ne 0 ]; then
+    write_field_string 34 "$TEST_LOG"
+  fi
+  if [ -n "${COVERAGE_DIR:-}" ]; then
+    write_field_varint 48 1
+  fi
+  write_field_varint 72 "$duration_millis"
+  if [ "$exit_code" -eq 0 ]; then
+    write_field_string 82 "$TEST_LOG"
+  fi
+  write_field_varint 88 "$duration_millis"
+  write_field_varint 96 "$duration_millis"
+  write_field_varint 120 "$start_millis"
+  write_field_string 130 "$status_details"
+  write_field_varint 136 "$exit_code"
+} > "${cache_status}.tmp"
+mv "${cache_status}.tmp" "$cache_status"
 
 : > "$TEST_WARNINGS_OUTPUT_FILE"
 : > "$TEST_UNUSED_RUNFILES_LOG_FILE"

@@ -1875,6 +1875,11 @@ fn fingerprint_command_execution_input(
             action_cache_add_str(fingerprint, "empty_file");
             action_cache_add_str(fingerprint, path.as_str());
         }
+        CommandExecutionInput::SyntheticFile { path, content } => {
+            action_cache_add_str(fingerprint, "synthetic_file");
+            action_cache_add_str(fingerprint, path.as_str());
+            action_cache_add_bytes(fingerprint, content);
+        }
         CommandExecutionInput::ActionMetadata(metadata) => {
             action_cache_add_str(fingerprint, "action_metadata");
             action_cache_add_tracked_file_digest(fingerprint, &metadata.digest);

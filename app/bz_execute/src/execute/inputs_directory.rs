@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use bz_common::file_ops::metadata::FileMetadata;
 use bz_common::file_ops::metadata::Symlink;
+use bz_common::file_ops::metadata::TrackedFileDigest;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -30,6 +31,7 @@ use crate::directory::LazyActionDirectoryBuilder;
 use crate::directory::ResolvedSymlinkUploadPath;
 use crate::directory::finalize_lazy_action_directory;
 use crate::directory::insert_artifact_lazy_for_execution;
+use crate::execute::request::ActionMetadataBlobData;
 use crate::execute::request::CommandExecutionInput;
 
 pub fn inputs_directory(
@@ -40,10 +42,12 @@ pub fn inputs_directory(
     ActionDirectoryBuilder,
     Vec<ExternalSymlinkUploadPath>,
     Vec<ResolvedSymlinkUploadPath>,
+    Vec<(TrackedFileDigest, ActionMetadataBlobData)>,
 )> {
     let mut builder = LazyActionDirectoryBuilder::empty();
     let mut external_symlink_upload_paths = Vec::new();
     let mut resolved_symlink_upload_paths = Vec::new();
+    let mut input_blobs = Vec::new();
     for input in inputs {
         match input {
             CommandExecutionInput::Artifact(group) => {
@@ -96,6 +100,20 @@ pub fn inputs_directory(
                     DirectoryEntry::Leaf(ActionDirectoryMember::File(digest_config.empty_file())),
                 )?;
             }
+            CommandExecutionInput::SyntheticFile { path, content } => {
+                let digest = TrackedFileDigest::from_content(
+                    content.as_ref(),
+                    digest_config.cas_digest_config(),
+                );
+                builder.insert(
+                    path.clone().into(),
+                    DirectoryEntry::Leaf(ActionDirectoryMember::File(FileMetadata {
+                        digest: digest.dupe(),
+                        is_executable: false,
+                    })),
+                )?;
+                input_blobs.push((digest, ActionMetadataBlobData(content.to_vec())));
+            }
             CommandExecutionInput::ActionMetadata(metadata) => {
                 let path = fs
                     .buck_out_path_resolver()
@@ -129,6 +147,7 @@ pub fn inputs_directory(
         finalize_lazy_action_directory(builder)?,
         external_symlink_upload_paths,
         resolved_symlink_upload_paths,
+        input_blobs,
     ))
 }
 

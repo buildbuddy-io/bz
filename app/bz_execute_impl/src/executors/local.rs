@@ -541,6 +541,11 @@ fn bazel_shared_action_input_key(
             "empty_file:{}",
             bazel_shared_action_path_key(path.as_ref())
         )),
+        CommandExecutionInput::SyntheticFile { path, content } => Some(format!(
+            "synthetic_file:{}:{:x?}",
+            bazel_shared_action_path_key(path.as_ref()),
+            content
+        )),
         CommandExecutionInput::ActionMetadata(metadata) => Some(format!(
             "action_metadata:{}:{:?}:{}",
             metadata.path.path().as_str(),
@@ -3626,6 +3631,32 @@ fn materialize_empty_input_file(
     Ok(())
 }
 
+fn materialize_synthetic_input_file(
+    artifact_fs: &ArtifactFs,
+    path: &ProjectRelativePath,
+    content: &[u8],
+) -> bz_error::Result<()> {
+    let fs = artifact_fs.fs();
+    let dest = fs.resolve(path);
+    if fs_util::symlink_metadata_if_exists(&dest)?
+        .is_some_and(|metadata| metadata.is_file() && metadata.len() == content.len() as u64)
+        && matches!(std::fs::read(&dest), Ok(existing) if existing == content)
+    {
+        return Ok(());
+    }
+
+    CleanOutputPaths::clean(std::iter::once(path), fs)?;
+    if let Some(parent) = dest.parent() {
+        fs_util::create_dir_all(parent).with_buck_error_context(|| {
+            format!("Error creating parent directory for synthetic input file `{path}`")
+        })?;
+    }
+    fs_util::write(&dest, content)
+        .categorize_internal()
+        .with_buck_error_context(|| format!("Error writing synthetic input file `{path}`"))?;
+    Ok(())
+}
+
 fn materialize_external_cell_root_alias(
     artifact_fs: &ArtifactFs,
     source_root: &ProjectRelativePath,
@@ -4201,6 +4232,10 @@ pub async fn materialize_inputs(
                 materialize_empty_input_file(artifact_fs, path.as_ref())?;
                 paths.push(path.clone());
             }
+            CommandExecutionInput::SyntheticFile { path, content } => {
+                materialize_synthetic_input_file(artifact_fs, path.as_ref(), content.as_ref())?;
+                paths.push(path.clone());
+            }
             CommandExecutionInput::ActionMetadata(metadata) => {
                 let path = artifact_fs
                     .buck_out_path_resolver()
@@ -4455,6 +4490,17 @@ async fn check_inputs(
                         );
                     }
                     CommandExecutionInput::EmptyFile(path) => {
+                        let abs_path = artifact_fs.fs().resolve(path);
+
+                        let _ignored = tag_result!(
+                            "missing_local_inputs",
+                            fs_util::symlink_metadata(&abs_path).categorize_internal().buck_error_context("Missing input"),
+                            quiet: true,
+                            task: false,
+                            daemon_materializer_state_is_corrupted: true
+                        );
+                    }
+                    CommandExecutionInput::SyntheticFile { path, .. } => {
                         let abs_path = artifact_fs.fs().resolve(path);
 
                         let _ignored = tag_result!(

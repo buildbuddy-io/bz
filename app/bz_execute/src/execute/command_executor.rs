@@ -49,6 +49,7 @@ use crate::execute::prepared::PreparedCommand;
 use crate::execute::prepared::PreparedCommandExecutor;
 use crate::execute::prepared::PreparedCommandOptionalExecutor;
 use crate::execute::prepared::UnpreparedCommand;
+use crate::execute::request::ActionMetadataBlobData;
 use crate::execute::request::CommandExecutionOutput;
 use crate::execute::request::CommandExecutionRequest;
 use crate::execute::request::ExecutorPreference;
@@ -356,6 +357,7 @@ impl CommandExecutor {
                 request.working_directory(),
                 request.env(),
                 input_digest,
+                request.paths().input_blobs(),
                 request.timeout(),
                 platform,
                 false,
@@ -387,6 +389,7 @@ fn re_create_action(
     working_directory: &ProjectRelativePath,
     environment: &SortedVectorMap<String, String>,
     input_digest: &TrackedFileDigest,
+    input_blobs: &[(TrackedFileDigest, ActionMetadataBlobData)],
     timeout: Option<Duration>,
     platform: RE::Platform,
     do_not_cache: bool,
@@ -430,6 +433,9 @@ fn re_create_action(
             do_not_cache,
             ..Default::default()
         };
+        for (digest, data) in worker.input_paths.input_blobs() {
+            action_and_blobs.add_blob(digest.dupe(), data.clone());
+        }
         let action_and_blobs = action_and_blobs.build(&action);
         (Some(action_and_blobs), args)
     } else {
@@ -500,6 +506,9 @@ fn re_create_action(
     }
 
     let mut action_and_blobs = ActionDigestAndBlobsBuilder::new(digest_config);
+    for (digest, data) in input_blobs {
+        action_and_blobs.add_blob(digest.dupe(), data.clone());
+    }
 
     let mut action = RE::Action {
         input_root_digest: Some(input_digest.to_grpc()),

@@ -2090,12 +2090,22 @@ fn bazel_test_runfiles_inputs(
 
     let mut inputs = Vec::new();
     let mut aliases = BuckIndexSet::new();
+    let workspace = test_info
+        .executable_runfiles_path()
+        .split('/')
+        .next()
+        .unwrap_or_default();
+    let mut manifest_entries = Vec::new();
     test_info.for_each_runfiles_entry(&mut |runfiles_path, artifact| {
         let value = bazel_test_artifact_value_for(ensured_inputs, &artifact)?;
         let alias = bazel_test_runfiles_alias_path(test_binary, &runfiles_path)?;
         if !aliases.insert(alias.clone()) {
             return Ok(());
         }
+        manifest_entries.push((
+            runfiles_path.clone(),
+            bazel_test_runfiles_manifest_value(workspace, &runfiles_path),
+        ));
 
         let source_path = bazel_test_artifact_alias_source_path(&artifact, value, artifact_fs)
             .buck_error_context("Invalid Bazel test runfiles source path")?;
@@ -2116,9 +2126,25 @@ fn bazel_test_runfiles_inputs(
     for empty_filename in test_info.runfiles_empty_filenames()? {
         let alias = bazel_test_runfiles_alias_path(test_binary, &empty_filename)?;
         if aliases.insert(alias.clone()) {
+            manifest_entries.push((
+                empty_filename.clone(),
+                bazel_test_runfiles_manifest_value(workspace, &empty_filename),
+            ));
             inputs.push(CommandExecutionInput::EmptyFile(alias));
         }
     }
+
+    manifest_entries.sort();
+    manifest_entries.dedup_by(|left, right| left.0 == right.0);
+    let manifest_content = manifest_entries
+        .into_iter()
+        .map(|(runfiles_path, target_path)| format!("{runfiles_path} {target_path}\n"))
+        .collect::<String>();
+    inputs.push(CommandExecutionInput::SyntheticFile {
+        path: ProjectRelativePathBuf::try_from(format!("{test_binary}.runfiles/MANIFEST"))
+            .buck_error_context("Invalid Bazel test runfiles manifest path")?,
+        content: Arc::<[u8]>::from(manifest_content.into_bytes()),
+    });
 
     Ok(inputs)
 }
@@ -2173,6 +2199,16 @@ fn bazel_test_runfiles_alias_path(
     let runfiles_path = runfiles_path.strip_prefix("../").unwrap_or(runfiles_path);
     ProjectRelativePathBuf::try_from(format!("{test_binary}.runfiles/{runfiles_path}"))
         .buck_error_context("Invalid Bazel test runfiles alias path")
+}
+
+fn bazel_test_runfiles_manifest_value(workspace: &str, runfiles_path: &str) -> String {
+    if workspace.is_empty() {
+        runfiles_path.to_owned()
+    } else if let Some(workspace_relative) = runfiles_path.strip_prefix(&format!("{workspace}/")) {
+        workspace_relative.to_owned()
+    } else {
+        format!("../{runfiles_path}")
+    }
 }
 
 struct Execute2RequestExpander<'a> {
