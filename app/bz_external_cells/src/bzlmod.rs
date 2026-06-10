@@ -4665,7 +4665,7 @@ async fn bzlmod_download_any_with_headers(
     progress_subject: &str,
 ) -> bz_error::Result<()> {
     if let Some(remote_downloader) = remote_downloader {
-        return remote_asset_download_any_with_headers(
+        match remote_asset_download_any_with_headers(
             remote_downloader,
             fs,
             digest_config,
@@ -4677,7 +4677,18 @@ async fn bzlmod_download_any_with_headers(
             progress_state,
             progress_subject,
         )
-        .await;
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                // Servers without the Remote Asset API or without the asset
+                // cached must not fail the build; the origin URL still works.
+                tracing::warn!(
+                    "Remote downloader failed for {progress_subject}, \
+                     falling back to direct download: {error:#}"
+                );
+            }
+        }
     }
 
     let mut last_error = None;
@@ -4723,7 +4734,7 @@ async fn bzlmod_download_with_headers(
     progress_subject: &str,
 ) -> bz_error::Result<()> {
     if let Some(remote_downloader) = remote_downloader {
-        return remote_asset_download_any_with_headers(
+        match remote_asset_download_any_with_headers(
             remote_downloader,
             fs,
             digest_config,
@@ -4735,7 +4746,18 @@ async fn bzlmod_download_with_headers(
             progress_state,
             progress_subject,
         )
-        .await;
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                // Servers without the Remote Asset API or without the asset
+                // cached must not fail the build; the origin URL still works.
+                tracing::warn!(
+                    "Remote downloader failed for {progress_subject}, \
+                     falling back to direct download: {error:#}"
+                );
+            }
+        }
     }
 
     bzlmod_http_download_with_headers(
@@ -4832,7 +4854,7 @@ async fn remote_asset_download_any_with_headers(
             format!("downloading {progress_subject} from remote CAS"),
         );
     }
-    remote_asset_download_blob(config, fs, digest_config, path, &digest).await?;
+    remote_asset_download_blob(config, fs, digest_config, path, &digest, checksum).await?;
     if executable {
         fs.set_executable(path)?;
     }
@@ -4963,13 +4985,63 @@ fn remote_asset_oldest_content_accepted(
     }))
 }
 
+/// Verifies remotely fetched bytes against the user-declared checksum. The
+/// Remote Asset server is not trusted: it asserts the digest corresponds to
+/// the requested checksum.sri qualifier, but only a local hash proves it.
+struct RemoteAssetChecksumVerifier {
+    hashers: Vec<(&'static str, Box<dyn sha1::digest::DynDigest + Send>, String)>,
+}
+
+impl RemoteAssetChecksumVerifier {
+    fn new(checksum: &Checksum) -> Self {
+        use sha1::Digest as _;
+        let mut hashers: Vec<(&'static str, Box<dyn sha1::digest::DynDigest + Send>, String)> =
+            Vec::new();
+        if let Some(expected) = checksum.sha1() {
+            hashers.push(("sha1", Box::new(sha1::Sha1::new()), expected.to_owned()));
+        }
+        if let Some(expected) = checksum.sha256() {
+            hashers.push(("sha256", Box::new(sha2::Sha256::new()), expected.to_owned()));
+        }
+        if let Some(expected) = checksum.sha384() {
+            hashers.push(("sha384", Box::new(sha2::Sha384::new()), expected.to_owned()));
+        }
+        if let Some(expected) = checksum.sha512() {
+            hashers.push(("sha512", Box::new(sha2::Sha512::new()), expected.to_owned()));
+        }
+        Self { hashers }
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        for (_, hasher, _) in &mut self.hashers {
+            hasher.update(data);
+        }
+    }
+
+    fn finish(self) -> bz_error::Result<()> {
+        for (kind, hasher, expected) in self.hashers {
+            let actual = hex::encode(hasher.finalize());
+            if !actual.eq_ignore_ascii_case(&expected) {
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
+                    "Remote downloader returned content with mismatched {kind} checksum: \
+                     expected {expected}, got {actual}"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 async fn remote_asset_download_blob(
     config: &BzlmodRemoteDownloaderConfig,
     fs: &ProjectRoot,
     digest_config: bz_execute::digest_config::DigestConfig,
     path: &ProjectRelativePath,
     digest: &RemoteExecutionDigest,
+    checksum: &Checksum,
 ) -> bz_error::Result<TrackedFileDigest> {
+    let mut verifier = RemoteAssetChecksumVerifier::new(checksum);
     let endpoint = ParsedRemoteAssetEndpoint::parse(&config.endpoint)?;
     let mut endpoint_builder = Endpoint::from_shared(endpoint.uri.clone()).map_err(|error| {
         BzlmodError::InvalidRemoteDownloaderEndpoint {
@@ -5025,6 +5097,7 @@ async fn remote_asset_download_blob(
                 error: error.to_string(),
             })?
     {
+        verifier.update(&response.data);
         file.write_all(&response.data)
             .await
             .with_buck_error_context(|| format!("write({abs_path})"))?;
@@ -5032,6 +5105,13 @@ async fn remote_asset_download_blob(
     file.flush()
         .await
         .with_buck_error_context(|| format!("flush({abs_path})"))?;
+
+    if let Err(error) = verifier.finish() {
+        // The server is not trusted: a checksum mismatch must not leave a
+        // plausible-looking artifact behind.
+        let _ = fs_util::remove_all(&abs_path);
+        return Err(error);
+    }
 
     let file_digest_config = FileDigestConfig::build(digest_config.cas_digest_config());
     let file_digest = FileDigest::from_file(&abs_path, file_digest_config)?;
