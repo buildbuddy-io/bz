@@ -3292,10 +3292,12 @@ dependencies = [
  "bz_error",
  "bz_grpc",
  "bz_test_api",
+ "bz_test_proto",
  "clap",
  "futures 0.3.32",
  "host_sharing",
  "parking_lot 0.12.5",
+ "prost",
  "sorted_vector_map",
  "tokio",
 ]

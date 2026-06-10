@@ -8,7 +8,10 @@
  * above-listed licenses.
  */
 
+use std::fs;
+use std::path::Path;
 use std::time::Duration;
+use std::time::SystemTime;
 
 use bz_error::BuckErrorContext;
 use bz_error::internal_error;
@@ -23,6 +26,7 @@ use bz_test_api::data::ExecutionResult2;
 use bz_test_api::data::ExecutionStatus;
 use bz_test_api::data::ExternalRunnerSpec;
 use bz_test_api::data::ExternalRunnerSpecValue;
+use bz_test_api::data::Output;
 use bz_test_api::data::OutputName;
 use bz_test_api::data::RemoteStorageConfig;
 use bz_test_api::data::RequiredLocalResources;
@@ -30,12 +34,15 @@ use bz_test_api::data::TestResult;
 use bz_test_api::data::TestStage;
 use bz_test_api::data::TestStatus;
 use bz_test_api::grpc::TestOrchestratorClient;
+use bz_test_proto::BlazeTestStatus;
+use bz_test_proto::TestResultData;
 use clap::Parser;
 use futures::StreamExt;
 use futures::TryStreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
 use host_sharing::HostSharingRequirements;
 use parking_lot::Mutex;
+use prost::Message;
 use sorted_vector_map::SortedVectorMap;
 
 use crate::config::Config;
@@ -583,7 +590,7 @@ impl Buck2TestRunner {
                         shard_runs,
                         run_index,
                         run_count,
-                        settings,
+                        settings.clone(),
                     )
                     .await?;
 
@@ -594,7 +601,24 @@ impl Buck2TestRunner {
                     }
                 };
 
-                let test_result = get_test_result(name, target_handle, execution_result);
+                let cache_status_output = bazel_output_path(
+                    shard_index,
+                    shard_runs,
+                    run_index,
+                    run_count,
+                    "test.cache_status",
+                );
+                let test_log_output =
+                    bazel_output_path(shard_index, shard_runs, run_index, run_count, "test.log");
+                let test_result_data = save_bazel_test_result_data(
+                    &execution_result,
+                    &settings,
+                    &cache_status_output,
+                    &test_log_output,
+                )
+                .buck_error_context("Failed to save Bazel test cache status")?;
+                let test_result =
+                    get_bazel_test_result(name, target_handle, execution_result, test_result_data);
                 let test_status = test_result.status.clone();
 
                 self.report_test_result(test_result)
@@ -812,6 +836,150 @@ impl Buck2TestRunner {
             .report_test_result(test_result)
             .await
     }
+}
+
+fn save_bazel_test_result_data(
+    execution_result: &ExecutionResult2,
+    settings: &BazelTestSettings,
+    cache_status_output: &str,
+    test_log_output: &str,
+) -> bz_error::Result<TestResultData> {
+    let mut result_data =
+        bazel_test_result_data(execution_result, settings.coverage_enabled, test_log_output);
+    let Some(cache_status_path) = local_output_path(execution_result, cache_status_output) else {
+        return Ok(result_data);
+    };
+
+    let mut bytes = Vec::new();
+    result_data
+        .encode(&mut bytes)
+        .buck_error_context("Failed to encode Bazel TestResultData")?;
+    fs::write(cache_status_path, bytes).with_buck_error_context(|| {
+        format!(
+            "Failed to write Bazel test cache status to `{}`",
+            cache_status_path.display()
+        )
+    })?;
+
+    if let Ok(bytes) = fs::read(cache_status_path)
+        && let Ok(saved) = TestResultData::decode(bytes.as_slice())
+    {
+        result_data = saved;
+    }
+
+    Ok(result_data)
+}
+
+fn bazel_test_result_data(
+    execution_result: &ExecutionResult2,
+    coverage_enabled: bool,
+    test_log_output: &str,
+) -> TestResultData {
+    let duration_millis = duration_millis(execution_result.execution_time);
+    let start_time_millis_epoch = system_time_millis(execution_result.start_time);
+    let log_path = local_output_path(execution_result, test_log_output)
+        .filter(|path| path.exists())
+        .map(|path| path.display().to_string());
+
+    let (mut status, mut test_passed, exit_code) = match execution_result.status {
+        ExecutionStatus::Finished { exitcode: 0 } => (BlazeTestStatus::Passed, true, Some(0)),
+        ExecutionStatus::Finished { exitcode } => (BlazeTestStatus::Failed, false, Some(exitcode)),
+        ExecutionStatus::TimedOut { .. } => (BlazeTestStatus::Timeout, false, None),
+    };
+
+    let mut passed_log = None;
+    let mut failed_logs = Vec::new();
+    let mut status_details = None;
+    match (status, log_path) {
+        (BlazeTestStatus::Passed, Some(path)) => passed_log = Some(path),
+        (BlazeTestStatus::Passed, None) => {
+            status = BlazeTestStatus::Incomplete;
+            test_passed = false;
+            status_details = Some("Test log was not generated".to_owned());
+        }
+        (BlazeTestStatus::Incomplete, _) | (_, None) => {
+            status = BlazeTestStatus::Incomplete;
+            status_details = Some("Test log was not generated".to_owned());
+        }
+        (_, Some(path)) => failed_logs.push(path),
+    }
+
+    TestResultData {
+        cachable: Some(true),
+        test_passed: Some(test_passed),
+        status: Some(status as i32),
+        status_details,
+        exit_code,
+        failed_logs,
+        warning: Vec::new(),
+        has_coverage: Some(coverage_enabled),
+        remotely_cached: None,
+        is_remote_strategy: None,
+        test_times: vec![duration_millis],
+        passed_log,
+        test_process_times: vec![duration_millis],
+        run_duration_millis: Some(duration_millis),
+        start_time_millis_epoch: Some(start_time_millis_epoch),
+        test_case: None,
+        failed_status: None,
+    }
+}
+
+fn get_bazel_test_result(
+    name: String,
+    target: ConfiguredTargetHandle,
+    execution_result: ExecutionResult2,
+    result_data: TestResultData,
+) -> TestResult {
+    let status = bazel_test_status(result_data.status);
+    let duration = result_data
+        .run_duration_millis
+        .and_then(|millis| u64::try_from(millis).ok())
+        .map(Duration::from_millis)
+        .unwrap_or(execution_result.execution_time);
+    TestResult {
+        target,
+        name,
+        status,
+        msg: result_data.status_details.clone(),
+        duration: Some(duration),
+        details: format!(
+            "---- STDOUT ----\n{:?}\n---- STDERR ----\n{:?}\n",
+            execution_result.stdout, execution_result.stderr
+        ),
+        max_memory_used_bytes: execution_result.max_memory_used_bytes,
+    }
+}
+
+fn bazel_test_status(status: Option<i32>) -> TestStatus {
+    match status.and_then(|status| BlazeTestStatus::try_from(status).ok()) {
+        Some(BlazeTestStatus::Passed | BlazeTestStatus::Flaky) => TestStatus::PASS,
+        Some(BlazeTestStatus::Timeout) => TestStatus::TIMEOUT,
+        Some(BlazeTestStatus::RemoteFailure) => TestStatus::INFRA_FAILURE,
+        Some(BlazeTestStatus::Incomplete)
+        | Some(BlazeTestStatus::FailedToBuild)
+        | Some(BlazeTestStatus::BlazeHaltedBeforeTesting) => TestStatus::FATAL,
+        Some(BlazeTestStatus::Failed) => TestStatus::FAIL,
+        Some(BlazeTestStatus::NoStatus) | None => TestStatus::UNKNOWN,
+    }
+}
+
+fn local_output_path<'a>(execution_result: &'a ExecutionResult2, output: &str) -> Option<&'a Path> {
+    let output_name = OutputName::unchecked_new(output.to_owned());
+    match execution_result.outputs.get(&output_name) {
+        Some(Output::LocalPath(path)) => Some(path.as_path()),
+        Some(Output::RemoteObject(_)) | None => None,
+    }
+}
+
+fn duration_millis(duration: Duration) -> i64 {
+    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+}
+
+fn system_time_millis(time: SystemTime) -> i64 {
+    time.duration_since(SystemTime::UNIX_EPOCH)
+        .map(duration_millis)
+        .unwrap_or(0)
 }
 
 fn get_test_result(

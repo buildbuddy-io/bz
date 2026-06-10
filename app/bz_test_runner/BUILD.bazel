@@ -32,6 +32,7 @@ rust_library(
         "//app/bz_error:bz_error",
         "//app/bz_grpc:bz_grpc",
         "//app/bz_test_api:bz_test_api",
+        "//app/bz_test_proto:bz_test_proto",
         "//host_sharing:host_sharing",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
