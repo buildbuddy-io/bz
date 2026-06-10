@@ -1277,6 +1277,44 @@ pub fn bazel_expand_target_run_args<'v>(
     Ok(result)
 }
 
+pub fn bazel_expand_run_environment<'v>(
+    ctx: &AnalysisContext<'v>,
+    environment: &[(String, String)],
+    heap: Heap<'v>,
+) -> bz_error::Result<Vec<(String, String)>> {
+    if environment.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut expander = BazelLocationExpander::new(
+        ctx,
+        false,
+        true,
+        true,
+        heap,
+        Vec::new(),
+        None,
+        BazelLocationInsertMode::Merge,
+    );
+    let variables = analysis_context_make_variable_entries(ctx)?;
+    let lookup = |name: &str| {
+        variables
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == name).then(|| value.clone()))
+    };
+
+    environment
+        .iter()
+        .map(|(name, value)| {
+            Ok((
+                name.clone(),
+                expand_bazel_template_with_locations(value, &mut expander, &lookup, 0)?,
+            ))
+        })
+        .collect()
+}
+
 fn bazel_apple_platform<'v>(heap: Heap<'v>) -> Value<'v> {
     heap.alloc(AllocStruct([
         ("name", heap.alloc_str("macos").to_value()),

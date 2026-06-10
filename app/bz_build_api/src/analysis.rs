@@ -46,6 +46,8 @@ pub struct AnalysisResult {
     pub num_declared_actions: u64,
     pub num_declared_artifacts: u64,
     pub bazel_target_args: Arc<Vec<String>>,
+    pub bazel_run_environment: Arc<Vec<(String, String)>>,
+    pub bazel_run_inherited_environment: Arc<Vec<String>>,
     /// `None` means there are no `ValidationInfo` providers in transitive dependencies.
     pub validations: Option<TransitiveValidations>,
 }
@@ -67,6 +69,8 @@ impl AnalysisResult {
             num_declared_actions,
             num_declared_artifacts,
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             validations,
         )
     }
@@ -78,6 +82,8 @@ impl AnalysisResult {
         num_declared_actions: u64,
         num_declared_artifacts: u64,
         bazel_target_args: Vec<String>,
+        bazel_run_environment: Vec<(String, String)>,
+        bazel_run_inherited_environment: Vec<String>,
         validations: Option<TransitiveValidations>,
     ) -> Self {
         Self {
@@ -87,6 +93,8 @@ impl AnalysisResult {
             num_declared_actions,
             num_declared_artifacts,
             bazel_target_args: Arc::new(bazel_target_args),
+            bazel_run_environment: Arc::new(bazel_run_environment),
+            bazel_run_inherited_environment: Arc::new(bazel_run_inherited_environment),
             validations,
         }
     }

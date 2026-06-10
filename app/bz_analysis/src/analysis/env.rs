@@ -26,6 +26,7 @@ use bz_build_api::interpreter::rule_defs::context::AnalysisToolchains;
 use bz_build_api::interpreter::rule_defs::context::BazelActionsContextOverride;
 use bz_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use bz_build_api::interpreter::rule_defs::context::analysis_actions_to_bazel_ctx_with_overrides;
+use bz_build_api::interpreter::rule_defs::context::bazel_expand_run_environment;
 use bz_build_api::interpreter::rule_defs::context::bazel_expand_target_run_args;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::FrozenBazelOutputFileInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::new_bazel_output_file_info;
@@ -2294,6 +2295,15 @@ async fn run_analysis_with_env_underlying(
         } else {
             Vec::new()
         };
+        let (bazel_run_environment, bazel_run_inherited_environment) = if node.is_bazel_rule() {
+            let (environment, inherited_environment) = bazel_run_environment_values(node)?;
+            let environment = reentrant_eval.with_evaluator(|eval| {
+                bazel_expand_run_environment(ctx.as_ref(), &environment, eval.heap())
+            })?;
+            (environment, inherited_environment)
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
         let mut res_typed = reentrant_eval.with_evaluator(|eval| {
             if let Some(label_resolution_context) = &label_resolution_context {
@@ -2348,6 +2358,8 @@ async fn run_analysis_with_env_underlying(
                     declared_actions,
                     declared_artifacts,
                     bazel_target_args,
+                    bazel_run_environment,
+                    bazel_run_inherited_environment,
                     validations,
                 ),
                 split_instants,
@@ -2395,6 +2407,57 @@ fn bazel_target_arg_values(node: ConfiguredTargetNodeRef<'_>) -> bz_error::Resul
             )),
         })
         .collect()
+}
+
+fn bazel_run_environment_values(
+    node: ConfiguredTargetNodeRef<'_>,
+) -> bz_error::Result<(Vec<(String, String)>, Vec<String>)> {
+    let mut environment = Vec::new();
+    let mut fixed_names = StdBuckHashSet::default();
+    if let Some(attr) = node.get("env", AttrInspectOptions::All) {
+        let ConfiguredAttr::Dict(entries) = &attr.value else {
+            return Ok((Vec::new(), Vec::new()));
+        };
+        for (key, value) in entries.iter() {
+            let ConfiguredAttr::String(key) = key else {
+                return Err(bz_error::internal_error!(
+                    "Bazel executable `env` attr keys should be strings, got `{:?}`",
+                    key
+                ));
+            };
+            let ConfiguredAttr::String(value) = value else {
+                return Err(bz_error::internal_error!(
+                    "Bazel executable `env` attr values should be strings, got `{:?}`",
+                    value
+                ));
+            };
+            fixed_names.insert(key.0.to_string());
+            environment.push((key.0.to_string(), value.0.to_string()));
+        }
+    }
+
+    let mut inherited_environment = Vec::new();
+    if let Some(attr) = node.get("env_inherit", AttrInspectOptions::All) {
+        let ConfiguredAttr::List(entries) = &attr.value else {
+            return Ok((environment, Vec::new()));
+        };
+        for entry in entries.iter() {
+            let ConfiguredAttr::String(entry) = entry else {
+                return Err(bz_error::internal_error!(
+                    "Bazel executable `env_inherit` attr should contain strings, got `{:?}`",
+                    entry
+                ));
+            };
+            if !fixed_names.contains(entry.0.as_str()) {
+                inherited_environment.push(entry.0.to_string());
+            }
+        }
+    }
+
+    environment.sort_by(|(left, _), (right, _)| left.cmp(right));
+    inherited_environment.sort();
+    inherited_environment.dedup();
+    Ok((environment, inherited_environment))
 }
 
 fn get_rule_callable(

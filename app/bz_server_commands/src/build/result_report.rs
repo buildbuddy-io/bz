@@ -22,6 +22,7 @@ use bz_build_api::build::ProviderArtifacts;
 use bz_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
 use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use bz_build_api::interpreter::rule_defs::context::bazel_workspace_name_for_cell;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::run_environment_info::FrozenRunEnvironmentInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_add_executable_to_command_line;
 use bz_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
@@ -228,24 +229,36 @@ impl<'a> ResultReporter<'a> {
         let (run_args, run_environment, run_inherited_environment, run_spec) =
             if let Some(providers) = result.provider_collection.as_ref() {
                 let provider_collection = providers.provider_collection();
-                let (run_environment, run_inherited_environment) =
-                    if let Some(run_environment_info) =
-                        provider_collection.builtin_provider::<FrozenRunEnvironmentInfo>()
-                    {
-                        (
-                            run_environment_info
-                                .environment()?
-                                .into_iter()
-                                .map(|(name, value)| proto::ClientEnvironmentVariable {
-                                    name,
-                                    value: Some(value),
-                                })
-                                .collect(),
-                            run_environment_info.inherited_environment()?,
-                        )
-                    } else {
-                        (Vec::new(), Vec::new())
-                    };
+                let (run_environment, run_inherited_environment): (
+                    Vec<proto::ClientEnvironmentVariable>,
+                    Vec<String>,
+                ) = if let Some(run_environment_info) =
+                    provider_collection.builtin_provider::<FrozenRunEnvironmentInfo>()
+                {
+                    (
+                        run_environment_info
+                            .environment()?
+                            .into_iter()
+                            .map(|(name, value)| proto::ClientEnvironmentVariable {
+                                name,
+                                value: Some(value),
+                            })
+                            .collect(),
+                        run_environment_info.inherited_environment()?,
+                    )
+                } else {
+                    (
+                        result
+                            .bazel_run_environment
+                            .iter()
+                            .map(|(name, value)| proto::ClientEnvironmentVariable {
+                                name: name.clone(),
+                                value: Some(value.clone()),
+                            })
+                            .collect(),
+                        result.bazel_run_inherited_environment.clone(),
+                    )
+                };
                 let path_separator = if cfg!(windows) {
                     PathSeparatorKind::Windows
                 } else {
@@ -257,7 +270,7 @@ impl<'a> ResultReporter<'a> {
                 let error_counting_artifact_path_mapper =
                     ErrorCountingArtifactPathMapperImpl::new(artifact_path_mapping);
                 let mut added_bazel_files_to_run = false;
-                let mut run_spec = None;
+                let mut run_spec: Option<proto::RunSpec> = None;
                 if let Ok(default_info) = provider_collection.default_info() {
                     // Bazel executable rules expose DefaultInfo.files_to_run instead of Buck RunInfo.
                     added_bazel_files_to_run = bazel_files_to_run_add_executable_to_command_line(
@@ -280,7 +293,15 @@ impl<'a> ResultReporter<'a> {
                             });
                             Ok(())
                         })?;
+                        let workspace_name = bazel_workspace_name_for_cell(
+                            label.target().pkg().cell_name().as_str(),
+                        );
                         let runfiles_dir = format!("{executable}.runfiles");
+                        let working_directory = if workspace_name.is_empty() {
+                            runfiles_dir.clone()
+                        } else {
+                            format!("{runfiles_dir}/{workspace_name}")
+                        };
                         let execroot = format!(
                             "{}/__bazel_execroot",
                             self.artifact_fs.buck_out_path_resolver().root()
@@ -289,13 +310,15 @@ impl<'a> ResultReporter<'a> {
                             executable: executable.clone(),
                             target_args: result.bazel_target_args.clone(),
                             runfiles_dir: runfiles_dir.clone(),
-                            working_directory: runfiles_dir,
+                            working_directory,
                             environment: run_environment.clone(),
                             inherited_environment: run_inherited_environment.clone(),
                             environment_to_clear: Vec::new(),
                             execroot,
                             runfiles,
                             empty_filenames: default_info.default_runfiles_empty_filenames()?,
+                            workspace_name,
+                            bazel_files_to_run: true,
                         });
                     }
                 }

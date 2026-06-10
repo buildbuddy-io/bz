@@ -206,15 +206,25 @@ async fn compute_target_completion(
         crate::actions::calculation::get_target_rule_type_name(ctx, key.providers_label.target())
             .await?;
 
-    let (provider_collection, bazel_target_args) = if key.providers_to_build.run {
+    let (
+        provider_collection,
+        bazel_target_args,
+        bazel_run_environment,
+        bazel_run_inherited_environment,
+    ) = if key.providers_to_build.run {
         let analysis = ctx
             .get_analysis_result(key.providers_label.target())
             .await?
             .require_compatible()?;
         let providers = analysis.lookup_inner(&key.providers_label)?;
-        (Some(providers), (*analysis.bazel_target_args).clone())
+        (
+            Some(providers),
+            (*analysis.bazel_target_args).clone(),
+            (*analysis.bazel_run_environment).clone(),
+            (*analysis.bazel_run_inherited_environment).clone(),
+        )
     } else {
-        (None, Vec::new())
+        (None, Vec::new(), Vec::new(), Vec::new())
     };
 
     if !key.skippable && outputs.is_empty() {
@@ -235,6 +245,8 @@ async fn compute_target_completion(
                 provider_collection: provider_collection.clone(),
                 target_rule_type_name: target_rule_type_name.clone(),
                 bazel_target_args,
+                bazel_run_environment,
+                bazel_run_inherited_environment,
             },
         },
     )?;

@@ -89,6 +89,8 @@ pub struct ConfiguredBuildTargetResultGen<T> {
     pub provider_collection: Option<FrozenProviderCollectionValue>,
     pub target_rule_type_name: Option<String>,
     pub bazel_target_args: Vec<String>,
+    pub bazel_run_environment: Vec<(String, String)>,
+    pub bazel_run_inherited_environment: Vec<String>,
     pub graph_properties: Option<bz_error::Result<MaybeCompatible<GraphPropertiesValues>>>,
     pub errors: Vec<Timed<bz_error::Error>>,
 }
@@ -235,6 +237,8 @@ impl BuildTargetResultBuilder {
                 provider_collection,
                 target_rule_type_name,
                 bazel_target_args,
+                bazel_run_environment,
+                bazel_run_inherited_environment,
             } => {
                 self.res
                     .entry(label.dupe())
@@ -243,6 +247,8 @@ impl BuildTargetResultBuilder {
                         provider_collection,
                         target_rule_type_name: Some(target_rule_type_name),
                         bazel_target_args,
+                        bazel_run_environment,
+                        bazel_run_inherited_environment,
                         graph_properties: None,
                         errors: Vec::new(),
                     }));
@@ -311,6 +317,8 @@ impl BuildTargetResultBuilder {
                         provider_collection: None,
                         target_rule_type_name: None,
                         bazel_target_args: Vec::new(),
+                        bazel_run_environment: Vec::new(),
+                        bazel_run_inherited_environment: Vec::new(),
                         graph_properties: None,
                         errors: Vec::new(),
                     }))
@@ -384,6 +392,10 @@ impl BuildTargetResultBuilder {
                         provider_collection: result.provider_collection.clone(),
                         target_rule_type_name: result.target_rule_type_name.clone(),
                         bazel_target_args: result.bazel_target_args.clone(),
+                        bazel_run_environment: result.bazel_run_environment.clone(),
+                        bazel_run_inherited_environment: result
+                            .bazel_run_inherited_environment
+                            .clone(),
                         graph_properties: result.graph_properties.clone(),
                         errors: result.errors.clone(),
                     }
@@ -469,6 +481,8 @@ pub enum ConfiguredBuildEventVariant {
         provider_collection: Option<FrozenProviderCollectionValue>,
         target_rule_type_name: String,
         bazel_target_args: Vec<String>,
+        bazel_run_environment: Vec<(String, String)>,
+        bazel_run_inherited_environment: Vec<String>,
     },
     Execution(ConfiguredBuildEventExecutionVariant),
     GraphProperties {

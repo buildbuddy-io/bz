@@ -646,6 +646,10 @@ message BuildTarget {
     repeated Runfile runfiles = 9;
     // Empty files to create, relative to the runfiles root.
     repeated string empty_filenames = 10;
+    // Bazel workspace-name directory under the runfiles root.
+    string workspace_name = 11;
+    // Whether this run spec came from Bazel DefaultInfo.files_to_run.
+    bool bazel_files_to_run = 12;
   }
   message BuildOutput {
     // Path relative to the project root
