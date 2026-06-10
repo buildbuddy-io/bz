@@ -8,19 +8,24 @@
  * above-listed licenses.
  */
 
+use std::ffi::OsString;
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
 use bz_common::file_ops::metadata::FileDigest;
+use bz_common::file_ops::metadata::FileDigestConfig;
 use bz_common::file_ops::metadata::TrackedFileDigest;
+use bz_common::io::fs::is_executable;
 use bz_core::bz_env;
 use bz_core::fs::project::ProjectRoot;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
 use bz_directory::directory::directory::Directory;
 use bz_directory::directory::directory_iterator::DirectoryIterator;
 use bz_directory::directory::directory_iterator::DirectoryIteratorPathStack;
+use bz_directory::directory::directory_ref::DirectoryRef;
 use bz_directory::directory::entry::DirectoryEntry;
 use bz_directory::directory::walk::unordered_entry_walk;
 use bz_error::BuckErrorContext;
@@ -96,6 +101,177 @@ pub struct DefaultIoHandler {
 struct MaterializationStat {
     file_count: u64,
     total_bytes: u64,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum ExistingMaterialization {
+    Matches,
+    Missing,
+    Mismatch,
+}
+
+#[derive(Debug)]
+struct ExistingCasMaterializationCheckResult {
+    status: ExistingMaterialization,
+    file_count: u64,
+    total_bytes: u64,
+}
+
+fn check_existing_cas_materialization(
+    project_fs: &ProjectRoot,
+    path: ProjectRelativePathBuf,
+    entry: ActionDirectoryEntry<ActionSharedDirectory>,
+    digest_config: DigestConfig,
+) -> bz_error::Result<ExistingCasMaterializationCheckResult> {
+    let mut stat = MaterializationStat {
+        file_count: 0,
+        total_bytes: 0,
+    };
+    let mut abs_path = project_fs.resolve(&path);
+    let status = existing_materialization_matches(
+        entry.as_ref().map_dir(Directory::as_ref),
+        &mut abs_path,
+        digest_config,
+        &mut stat,
+    )?;
+
+    if status != ExistingMaterialization::Matches {
+        cleanup_path(project_fs, &path)?;
+    }
+
+    Ok(ExistingCasMaterializationCheckResult {
+        status,
+        file_count: stat.file_count,
+        total_bytes: stat.total_bytes,
+    })
+}
+
+fn merge_existing_materialization_status(
+    current: ExistingMaterialization,
+    child: ExistingMaterialization,
+) -> ExistingMaterialization {
+    match (current, child) {
+        (ExistingMaterialization::Mismatch, _) | (_, ExistingMaterialization::Mismatch) => {
+            ExistingMaterialization::Mismatch
+        }
+        (ExistingMaterialization::Missing, _) | (_, ExistingMaterialization::Missing) => {
+            ExistingMaterialization::Missing
+        }
+        (ExistingMaterialization::Matches, ExistingMaterialization::Matches) => {
+            ExistingMaterialization::Matches
+        }
+    }
+}
+
+fn existing_materialization_matches<'a, D>(
+    entry: DirectoryEntry<D, &ActionDirectoryMember>,
+    dest: &mut AbsNormPathBuf,
+    digest_config: DigestConfig,
+    stat: &mut MaterializationStat,
+) -> bz_error::Result<ExistingMaterialization>
+where
+    D: DirectoryRef<'a, Leaf = ActionDirectoryMember>,
+{
+    match entry {
+        DirectoryEntry::Dir(d) => {
+            let Some(metadata) = fs_util::symlink_metadata_if_exists(&dest)? else {
+                return Ok(ExistingMaterialization::Missing);
+            };
+            if !metadata.is_dir() {
+                return Ok(ExistingMaterialization::Mismatch);
+            }
+
+            let mut expected_names = StdBuckHashSet::<OsString>::default();
+            let mut status = ExistingMaterialization::Matches;
+            for (name, entry) in d.entries() {
+                expected_names.insert(OsString::from(name.as_str()));
+                dest.push(name);
+                let child_status =
+                    existing_materialization_matches(entry, dest, digest_config, stat)?;
+                dest.pop();
+                status = merge_existing_materialization_status(status, child_status);
+                if status == ExistingMaterialization::Mismatch {
+                    return Ok(status);
+                }
+            }
+
+            for actual in fs_util::read_dir(&dest).categorize_internal()? {
+                let actual = actual?;
+                if !expected_names.remove(&actual.file_name()) {
+                    return Ok(ExistingMaterialization::Mismatch);
+                }
+            }
+
+            if expected_names.is_empty() {
+                Ok(status)
+            } else {
+                Ok(merge_existing_materialization_status(
+                    status,
+                    ExistingMaterialization::Missing,
+                ))
+            }
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::File(expected)) => {
+            stat.file_count += 1;
+            stat.total_bytes += expected.digest.size();
+
+            let Some(metadata) = fs_util::symlink_metadata_if_exists(&dest)? else {
+                return Ok(ExistingMaterialization::Missing);
+            };
+            if !metadata.is_file()
+                || metadata.len() != expected.digest.size()
+                || is_executable(&metadata) != expected.is_executable
+            {
+                return Ok(ExistingMaterialization::Mismatch);
+            }
+
+            let digest = FileDigest::from_file_with_metadata(
+                dest,
+                FileDigestConfig::build(digest_config.cas_digest_config()),
+                &metadata,
+            )?;
+            if digest == expected.digest.data().dupe() {
+                Ok(ExistingMaterialization::Matches)
+            } else {
+                Ok(ExistingMaterialization::Mismatch)
+            }
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(expected)) => {
+            let Some(metadata) = fs_util::symlink_metadata_if_exists(&dest)? else {
+                return Ok(ExistingMaterialization::Missing);
+            };
+            if !metadata.file_type().is_symlink() {
+                return Ok(ExistingMaterialization::Mismatch);
+            }
+
+            let actual = fs_util::read_link(&dest).categorize_internal()?;
+            if actual == Path::new(expected.target().as_str()) {
+                Ok(ExistingMaterialization::Matches)
+            } else {
+                Ok(ExistingMaterialization::Mismatch)
+            }
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(expected)) => {
+            let Some(metadata) = fs_util::symlink_metadata_if_exists(&dest)? else {
+                return Ok(ExistingMaterialization::Missing);
+            };
+            if !metadata.file_type().is_symlink() {
+                return Ok(ExistingMaterialization::Mismatch);
+            }
+
+            let actual = fs_util::read_link(&dest).categorize_internal()?;
+            if actual == expected.target() {
+                Ok(ExistingMaterialization::Matches)
+            } else {
+                Ok(ExistingMaterialization::Mismatch)
+            }
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(_)) => {
+            Err(bz_error::internal_error!(
+                "source file proxy must be resolved before CAS materialization"
+            ))
+        }
+    }
 }
 
 #[async_trait]
@@ -180,6 +356,38 @@ impl DefaultIoHandler {
         stat: &mut MaterializationStat,
         cancellations: &CancellationContext,
     ) -> Result<(), MaterializeEntryError> {
+        if let ArtifactMaterializationMethod::CasDownload { .. } = method.as_ref() {
+            let existing = self
+                .io_executor
+                .execute_io_inline(|| {
+                    check_existing_cas_materialization(
+                        &self.fs,
+                        path.clone(),
+                        entry.dupe(),
+                        self.digest_config,
+                    )
+                })
+                .await?;
+
+            if existing.status == ExistingMaterialization::Matches {
+                stat.file_count = existing.file_count;
+                stat.total_bytes = existing.total_bytes;
+                tracing::debug!(
+                    path = %path,
+                    file_count = existing.file_count,
+                    total_bytes = existing.total_bytes,
+                    "reusing existing CAS materialization"
+                );
+                return Ok(());
+            }
+
+            tracing::debug!(
+                path = %path,
+                status = ?existing.status,
+                "existing CAS materialization did not match; cleaned output path before download"
+            );
+        }
+
         // Materialize the dir structure, and symlinks
         self.io_executor
             .execute_io(
@@ -512,6 +720,179 @@ fn maybe_tombstone_digest(digest: &FileDigest) -> bz_error::Result<&FileDigest> 
     }
 
     Ok(digest)
+}
+
+#[cfg(test)]
+mod tests {
+    use bz_common::file_ops::metadata::FileMetadata;
+    use bz_common::file_ops::metadata::TrackedFileDigest;
+    use bz_core::fs::project::ProjectRootTemp;
+    use bz_execute::directory::ActionDirectoryBuilder;
+    use bz_execute::directory::INTERNER;
+    use bz_execute::directory::insert_file;
+
+    use super::*;
+
+    fn make_path(path: &str) -> ProjectRelativePathBuf {
+        ProjectRelativePathBuf::unchecked_new(path.to_owned())
+    }
+
+    fn file_metadata(
+        content: &[u8],
+        executable: bool,
+        digest_config: DigestConfig,
+    ) -> FileMetadata {
+        FileMetadata {
+            digest: TrackedFileDigest::from_content(content, digest_config.cas_digest_config()),
+            is_executable: executable,
+        }
+    }
+
+    fn file_entry(
+        content: &[u8],
+        executable: bool,
+        digest_config: DigestConfig,
+    ) -> ActionDirectoryEntry<ActionSharedDirectory> {
+        ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(file_metadata(
+            content,
+            executable,
+            digest_config,
+        )))
+    }
+
+    fn dir_entry(
+        path: &str,
+        content: &[u8],
+        digest_config: DigestConfig,
+    ) -> bz_error::Result<ActionDirectoryEntry<ActionSharedDirectory>> {
+        let mut builder = ActionDirectoryBuilder::empty();
+        insert_file(
+            &mut builder,
+            make_path(path),
+            file_metadata(content, false, digest_config),
+        )?;
+        Ok(ActionDirectoryEntry::Dir(
+            builder
+                .fingerprint(digest_config.as_directory_serializer())
+                .shared(&*INTERNER),
+        ))
+    }
+
+    fn run_existing_check(
+        root: &ProjectRootTemp,
+        path: &str,
+        entry: ActionDirectoryEntry<ActionSharedDirectory>,
+        digest_config: DigestConfig,
+    ) -> bz_error::Result<ExistingCasMaterializationCheckResult> {
+        check_existing_cas_materialization(root.path(), make_path(path), entry, digest_config)
+    }
+
+    #[test]
+    fn existing_matching_file_is_reused() -> bz_error::Result<()> {
+        let root = ProjectRootTemp::new()?;
+        let digest_config = DigestConfig::testing_default();
+        root.path()
+            .write_file(make_path("out"), b"content", false)?;
+
+        let result = run_existing_check(
+            &root,
+            "out",
+            file_entry(b"content", false, digest_config),
+            digest_config,
+        )?;
+
+        assert_eq!(result.status, ExistingMaterialization::Matches);
+        assert_eq!(result.file_count, 1);
+        assert_eq!(result.total_bytes, b"content".len() as u64);
+        assert!(
+            fs_util::symlink_metadata_if_exists(root.path().resolve(make_path("out")))?.is_some()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn existing_file_with_wrong_content_is_cleaned() -> bz_error::Result<()> {
+        let root = ProjectRootTemp::new()?;
+        let digest_config = DigestConfig::testing_default();
+        root.path().write_file(make_path("out"), b"stale", false)?;
+
+        let result = run_existing_check(
+            &root,
+            "out",
+            file_entry(b"content", false, digest_config),
+            digest_config,
+        )?;
+
+        assert_eq!(result.status, ExistingMaterialization::Mismatch);
+        assert!(
+            fs_util::symlink_metadata_if_exists(root.path().resolve(make_path("out")))?.is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn missing_file_reports_missing() -> bz_error::Result<()> {
+        let root = ProjectRootTemp::new()?;
+        let digest_config = DigestConfig::testing_default();
+
+        let result = run_existing_check(
+            &root,
+            "out",
+            file_entry(b"content", false, digest_config),
+            digest_config,
+        )?;
+
+        assert_eq!(result.status, ExistingMaterialization::Missing);
+        assert!(
+            fs_util::symlink_metadata_if_exists(root.path().resolve(make_path("out")))?.is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn existing_tree_with_unexpected_file_is_cleaned() -> bz_error::Result<()> {
+        let root = ProjectRootTemp::new()?;
+        let digest_config = DigestConfig::testing_default();
+        root.path()
+            .write_file(make_path("out/file"), b"content", false)?;
+        root.path()
+            .write_file(make_path("out/extra"), b"extra", false)?;
+
+        let result = run_existing_check(
+            &root,
+            "out",
+            dir_entry("file", b"content", digest_config)?,
+            digest_config,
+        )?;
+
+        assert_eq!(result.status, ExistingMaterialization::Mismatch);
+        assert!(
+            fs_util::symlink_metadata_if_exists(root.path().resolve(make_path("out")))?.is_none()
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_file_with_wrong_executable_bit_is_cleaned() -> bz_error::Result<()> {
+        let root = ProjectRootTemp::new()?;
+        let digest_config = DigestConfig::testing_default();
+        root.path()
+            .write_file(make_path("out"), b"content", false)?;
+
+        let result = run_existing_check(
+            &root,
+            "out",
+            file_entry(b"content", true, digest_config),
+            digest_config,
+        )?;
+
+        assert_eq!(result.status, ExistingMaterialization::Mismatch);
+        assert!(
+            fs_util::symlink_metadata_if_exists(root.path().resolve(make_path("out")))?.is_none()
+        );
+        Ok(())
+    }
 }
 
 /// Spawn a task to refresh TTLs.
