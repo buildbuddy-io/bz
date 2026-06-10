@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use bz_artifact::artifact::artifact_type::Artifact;
 use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use bz_build_api::actions::execute::dice_data::CommandExecutorResponse;
 use bz_build_api::actions::execute::dice_data::DiceHasCommandExecutor;
@@ -45,6 +46,7 @@ use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
 use bz_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
 use bz_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use bz_build_api::interpreter::rule_defs::cmd_args::space_separated::SpaceSeparatedCommandLineBuilder;
+use bz_build_api::interpreter::rule_defs::context::bazel_workspace_name_for_cell;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel_test_info::FrozenBazelTestInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::FrozenExternalRunnerTestInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::TestCommandMember;
@@ -86,6 +88,7 @@ use bz_error::ErrorTag;
 use bz_error::conversion::from_any_with_tag;
 use bz_error::internal_error;
 use bz_events::dispatch::EventDispatcher;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
 use bz_execute::artifact::fs::ExecutorFs;
 use bz_execute::artifact_value::ArtifactValue;
 use bz_execute::digest_config::DigestConfig;
@@ -565,6 +568,7 @@ impl<'a> BuckTestOrchestrator<'a> {
             cmd: expanded_cmd,
             env: expanded_env,
             ensured_inputs,
+            runfiles_inputs,
             supports_re,
             declared_outputs,
             worker,
@@ -616,6 +620,7 @@ impl<'a> BuckTestOrchestrator<'a> {
             expanded_cmd,
             expanded_env,
             ensured_inputs,
+            runfiles_inputs,
             declared_outputs,
             &fs,
             Some(timeout),
@@ -1012,6 +1017,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
             cmd: expanded_cmd,
             env: expanded_env,
             ensured_inputs,
+            runfiles_inputs,
             supports_re: _,
             declared_outputs,
             worker,
@@ -1023,6 +1029,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
             expanded_cmd,
             expanded_env,
             ensured_inputs,
+            runfiles_inputs,
             declared_outputs,
             &fs,
             None,
@@ -1665,7 +1672,7 @@ impl BuckTestOrchestrator<'_> {
             }?;
             (expanded_cmd, expanded_env, ensured_inputs, expanded_worker)
         };
-        if let Some(bazel_test_info) = test_info.bazel_info() {
+        let runfiles_inputs = if let Some(bazel_test_info) = test_info.bazel_info() {
             add_bazel_test_environment(
                 &mut expanded_env,
                 test_target,
@@ -1673,7 +1680,15 @@ impl BuckTestOrchestrator<'_> {
                 &expanded_cmd,
                 &output_root,
             );
-        }
+            bazel_test_runfiles_inputs(
+                bazel_test_info,
+                &expanded_cmd,
+                &ensured_inputs,
+                executor_fs.fs(),
+            )?
+        } else {
+            Vec::new()
+        };
 
         for output in pre_create_dirs.into_owned() {
             let test_path = BuckOutTestPath::new(output_root.clone(), output.name.into());
@@ -1685,6 +1700,7 @@ impl BuckTestOrchestrator<'_> {
             cmd: expanded_cmd,
             env: expanded_env,
             ensured_inputs,
+            runfiles_inputs,
             declared_outputs,
             supports_re,
             worker: expanded_worker,
@@ -1697,6 +1713,7 @@ impl BuckTestOrchestrator<'_> {
         cmd: Vec<String>,
         env: SortedVectorMap<String, String>,
         ensured_inputs: Vec<(ArtifactGroup, ArtifactGroupValues)>,
+        runfiles_inputs: Vec<CommandExecutionInput>,
         declared_outputs: BuckIndexMap<BuckOutTestPath, OutputCreationBehavior>,
         fs: &ArtifactFs,
         timeout: Option<Duration>,
@@ -1708,10 +1725,11 @@ impl BuckTestOrchestrator<'_> {
         meta_internal_extra_params: Arc<MetaInternalExtraParams>,
         network_access: Option<NetworkAccess>,
     ) -> bz_error::Result<CommandExecutionRequest> {
-        let inputs = ensured_inputs
+        let mut inputs = ensured_inputs
             .into_iter()
             .map(|(_, v)| CommandExecutionInput::Artifact(Box::new(v)))
             .collect_vec();
+        inputs.extend(runfiles_inputs);
 
         // NOTE: This looks a bit awkward, that's because fbcode's rustfmt and ours slightly
         // disagree about format here...
@@ -2027,7 +2045,9 @@ fn add_bazel_test_environment(
         }
     }
 
-    let test_binary = expanded_cmd.first().cloned().unwrap_or_default();
+    let test_binary = bazel_test_binary_path(expanded_cmd)
+        .map(str::to_owned)
+        .unwrap_or_default();
     let runfiles_dir = if test_binary.is_empty() {
         ".".to_owned()
     } else {
@@ -2049,7 +2069,7 @@ fn add_bazel_test_environment(
     insert_default(
         env,
         "TEST_WORKSPACE",
-        test_target.target().pkg().cell_name().to_string(),
+        bazel_workspace_name_for_cell(test_target.target().pkg().cell_name().as_str()),
     );
     insert_default(env, "TEST_BINARY", test_binary);
 
@@ -2060,6 +2080,103 @@ fn add_bazel_test_environment(
             test_info.shard_count().to_string(),
         );
     }
+}
+
+fn bazel_test_runfiles_inputs(
+    test_info: &FrozenBazelTestInfo,
+    expanded_cmd: &[String],
+    ensured_inputs: &[(ArtifactGroup, ArtifactGroupValues)],
+    artifact_fs: &ArtifactFs,
+) -> bz_error::Result<Vec<CommandExecutionInput>> {
+    let Some(test_binary) = bazel_test_binary_path(expanded_cmd) else {
+        return Ok(Vec::new());
+    };
+
+    let mut inputs = Vec::new();
+    let mut aliases = BuckIndexSet::new();
+    test_info.for_each_runfiles_entry(&mut |runfiles_path, artifact| {
+        let value = bazel_test_artifact_value_for(ensured_inputs, &artifact)?;
+        let alias = bazel_test_runfiles_alias_path(test_binary, &runfiles_path)?;
+        if !aliases.insert(alias.clone()) {
+            return Ok(());
+        }
+
+        let source_path = bazel_test_artifact_alias_source_path(&artifact, value, artifact_fs)
+            .buck_error_context("Invalid Bazel test runfiles source path")?;
+        if source_path == alias {
+            return Ok(());
+        }
+
+        inputs.push(CommandExecutionInput::ArtifactPathAlias {
+            source_path,
+            source_requires_materialization: artifact.requires_materialization(artifact_fs),
+            owner: artifact.input_owner(),
+            path: alias,
+            value: value.dupe(),
+        });
+        Ok(())
+    })?;
+
+    for empty_filename in test_info.runfiles_empty_filenames()? {
+        let alias = bazel_test_runfiles_alias_path(test_binary, &empty_filename)?;
+        if aliases.insert(alias.clone()) {
+            inputs.push(CommandExecutionInput::EmptyFile(alias));
+        }
+    }
+
+    Ok(inputs)
+}
+
+fn bazel_test_binary_path(expanded_cmd: &[String]) -> Option<&str> {
+    let path = if expanded_cmd
+        .get(3)
+        .is_some_and(|arg| arg == "bazel-test-setup")
+    {
+        expanded_cmd.get(5).map(String::as_str)
+    } else {
+        expanded_cmd.first().map(String::as_str)
+    };
+    path.filter(|path| !path.is_empty())
+}
+
+fn bazel_test_artifact_value_for<'a>(
+    ensured_inputs: &'a [(ArtifactGroup, ArtifactGroupValues)],
+    artifact: &Artifact,
+) -> bz_error::Result<&'a ArtifactValue> {
+    for (_, artifact_group_values) in ensured_inputs {
+        for (input_artifact, value) in artifact_group_values.iter() {
+            if input_artifact == artifact {
+                return Ok(value);
+            }
+        }
+    }
+    Err(internal_error!(
+        "Bazel test runfiles artifact was not present in action inputs"
+    ))
+}
+
+fn bazel_test_artifact_alias_source_path(
+    artifact: &Artifact,
+    value: &ArtifactValue,
+    artifact_fs: &ArtifactFs,
+) -> bz_error::Result<ProjectRelativePathBuf> {
+    if artifact.has_content_based_path() && !artifact.is_projected() {
+        return artifact.resolve_configuration_hash_path(artifact_fs);
+    }
+
+    let content_hash = artifact
+        .path_resolution_requires_artifact_value()
+        .then(|| value.content_based_path_hash());
+    artifact.resolve_path(artifact_fs, content_hash.as_ref())
+}
+
+fn bazel_test_runfiles_alias_path(
+    test_binary: &str,
+    runfiles_path: &str,
+) -> bz_error::Result<ProjectRelativePathBuf> {
+    let runfiles_path = runfiles_path.strip_prefix("../").unwrap_or(runfiles_path);
+    ProjectRelativePathBuf::try_from(format!("{test_binary}.runfiles/{runfiles_path}"))
+        .buck_error_context("Invalid Bazel test runfiles alias path")
 }
 
 struct Execute2RequestExpander<'a> {
@@ -2350,6 +2467,7 @@ struct ExpandedTestExecutable {
     cmd: Vec<String>,
     env: SortedVectorMap<String, String>,
     ensured_inputs: Vec<(ArtifactGroup, ArtifactGroupValues)>,
+    runfiles_inputs: Vec<CommandExecutionInput>,
     supports_re: bool,
     declared_outputs: BuckIndexMap<BuckOutTestPath, OutputCreationBehavior>,
     worker: Option<WorkerSpec>,

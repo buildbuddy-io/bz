@@ -116,6 +116,7 @@ use starlark::values::FrozenValueTyped;
 use starlark::values::Heap;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueLike;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
 use starlark::values::ValueTypedComplex;
@@ -2499,6 +2500,18 @@ fn bazel_test_info<'v>(
     let executable_short_path = bazel_artifact_short_path(executable_artifact.get_path());
     let executable_runfiles_path =
         bazel_prefixed_runfiles_path(bazel_runfiles_prefix(), &executable_short_path);
+    let runfiles = if let Some(default_info) = default_info.downcast_ref::<DefaultInfo>() {
+        default_info.default_runfiles_raw_for_dependency()
+    } else if let Some(default_info) = default_info
+        .unpack_frozen()
+        .and_then(|value| value.downcast_ref::<FrozenDefaultInfo>())
+    {
+        default_info.default_runfiles_raw().to_value()
+    } else {
+        return Err(internal_error!(
+            "DefaultInfo provider should have the expected provider type"
+        ));
+    };
 
     let mut command = Vec::with_capacity(1 + target_args.len());
     command.push(executable);
@@ -2510,6 +2523,13 @@ fn bazel_test_info<'v>(
         environment.to_vec(),
         bazel_test_labels(node)?,
         executable_runfiles_path,
+        runfiles,
+        false,
+        1,
+        String::new(),
+        false,
+        false,
+        false,
         size,
         timeout_seconds,
         shard_count,

@@ -30,6 +30,7 @@ rust_library(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         "//allocative/allocative:allocative",
+        "//app/bz_artifact:bz_artifact",
         "//app/bz_build_api:bz_build_api",
         "//app/bz_build_signals:bz_build_signals",
         "//app/bz_cli_proto:bz_cli_proto",

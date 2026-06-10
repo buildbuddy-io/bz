@@ -189,6 +189,18 @@ pub struct BazelTestSpec {
     pub shard_count: u32,
     /// Test binary path as seen inside the runfiles tree.
     pub executable_runfiles_path: String,
+    /// Whether tests should use runfiles manifest lookup instead of a runfiles tree.
+    pub runfiles_manifest_only: bool,
+    /// Bazel runs_per_test. One means the common single-run case.
+    pub runs_per_test: u32,
+    /// Optional TESTBRIDGE_TEST_ONLY filter.
+    pub test_filter: String,
+    /// Whether TESTBRIDGE_TEST_RUNNER_FAIL_FAST should be set.
+    pub test_runner_fail_fast: bool,
+    /// Whether undeclared outputs should be zipped instead of exposed as a tree.
+    pub zip_undeclared_outputs: bool,
+    /// Whether coverage-specific test env should be emitted.
+    pub coverage_enabled: bool,
 }
 
 /// Command line argument or environment variable value

@@ -176,6 +176,12 @@ message BazelTestSpec {
   uint64 timeout_seconds = 6;
   uint32 shard_count = 7;
   string executable_runfiles_path = 8;
+  bool runfiles_manifest_only = 9;
+  uint32 runs_per_test = 10;
+  string test_filter = 11;
+  bool test_runner_fail_fast = 12;
+  bool zip_undeclared_outputs = 13;
+  bool coverage_enabled = 14;
 }
 
 message TestExecutable {

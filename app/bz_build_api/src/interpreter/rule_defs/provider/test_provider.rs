@@ -121,6 +121,9 @@ impl TestProvider for FrozenBazelTestInfo {
         for (_, value) in self.env() {
             value.visit_artifacts(visitor)?;
         }
+        self.for_each_runfiles_artifact(&mut |artifact| {
+            visitor.visit_input(artifact, Vec::new());
+        })?;
         Ok(())
     }
 
@@ -167,6 +170,12 @@ impl TestProvider for FrozenBazelTestInfo {
             timeout_seconds: self.timeout_seconds(),
             shard_count: self.shard_count(),
             executable_runfiles_path: self.executable_runfiles_path().to_owned(),
+            runfiles_manifest_only: self.runfiles_manifest_only(),
+            runs_per_test: self.runs_per_test(),
+            test_filter: self.test_filter().to_owned(),
+            test_runner_fail_fast: self.test_runner_fail_fast(),
+            zip_undeclared_outputs: self.zip_undeclared_outputs(),
+            coverage_enabled: self.coverage_enabled(),
         };
 
         async move { executor.bazel_test_spec(spec).await }.boxed()

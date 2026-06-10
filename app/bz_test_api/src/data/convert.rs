@@ -536,6 +536,12 @@ impl TryFrom<bz_test_proto::BazelTestSpec> for BazelTestSpec {
             timeout_seconds,
             shard_count,
             executable_runfiles_path,
+            runfiles_manifest_only,
+            runs_per_test,
+            test_filter,
+            test_runner_fail_fast,
+            zip_undeclared_outputs,
+            coverage_enabled,
         } = s;
 
         Ok(Self {
@@ -555,6 +561,12 @@ impl TryFrom<bz_test_proto::BazelTestSpec> for BazelTestSpec {
             timeout_seconds,
             shard_count,
             executable_runfiles_path,
+            runfiles_manifest_only,
+            runs_per_test,
+            test_filter,
+            test_runner_fail_fast,
+            zip_undeclared_outputs,
+            coverage_enabled,
         })
     }
 }
@@ -572,6 +584,12 @@ impl TryInto<bz_test_proto::BazelTestSpec> for BazelTestSpec {
             timeout_seconds,
             shard_count,
             executable_runfiles_path,
+            runfiles_manifest_only,
+            runs_per_test,
+            test_filter,
+            test_runner_fail_fast,
+            zip_undeclared_outputs,
+            coverage_enabled,
         } = self;
 
         Ok(bz_test_proto::BazelTestSpec {
@@ -588,6 +606,12 @@ impl TryInto<bz_test_proto::BazelTestSpec> for BazelTestSpec {
             timeout_seconds,
             shard_count,
             executable_runfiles_path,
+            runfiles_manifest_only,
+            runs_per_test,
+            test_filter,
+            test_runner_fail_fast,
+            zip_undeclared_outputs,
+            coverage_enabled,
         })
     }
 }
@@ -1366,6 +1390,12 @@ mod tests {
             timeout_seconds: 60,
             shard_count: 2,
             executable_runfiles_path: "qux/foo/bar".to_owned(),
+            runfiles_manifest_only: false,
+            runs_per_test: 3,
+            test_filter: "SomeTest.*".to_owned(),
+            test_runner_fail_fast: true,
+            zip_undeclared_outputs: true,
+            coverage_enabled: true,
         };
         assert_roundtrips::<bz_test_proto::BazelTestSpec, BazelTestSpec>(&test_spec);
     }

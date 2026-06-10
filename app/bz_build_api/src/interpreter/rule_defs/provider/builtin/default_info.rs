@@ -224,9 +224,126 @@ fn bazel_runfiles_with_file<'v>(
     )))
 }
 
-fn bazel_runfiles_empty_value<'v>(heap: Heap<'v>) -> Value<'v> {
+pub(crate) fn bazel_runfiles_empty_value<'v>(heap: Heap<'v>) -> Value<'v> {
     let empty = bazel_depset_empty(heap);
     heap.alloc(bazel_runfiles_from_depsets(empty, empty, empty, empty))
+}
+
+pub(crate) fn bazel_runfiles_for_each_artifact(
+    runfiles: FrozenValue,
+    processor: &mut dyn FnMut(ArtifactGroup),
+) -> bz_error::Result<()> {
+    let runfiles = runfiles
+        .to_value()
+        .downcast_ref::<FrozenBazelRunfiles>()
+        .ok_or_else(|| internal_error!("Bazel runfiles value should be runfiles"))?;
+
+    for value in bazel_depset_to_list(runfiles.files.get().to_value())? {
+        let artifact = ValueAsInputArtifactLike::unpack_value_err(value)?
+            .0
+            .get_bound_artifact()?;
+        processor(ArtifactGroup::Artifact(artifact));
+    }
+
+    for value in bazel_depset_to_list(runfiles.symlinks.get().to_value())?
+        .into_iter()
+        .chain(bazel_depset_to_list(
+            runfiles.root_symlinks.get().to_value(),
+        )?)
+    {
+        let target_file = if let Some(symlink) = BazelSymlinkEntry::from_value(value) {
+            symlink.target_file.to_value()
+        } else if let Some(symlink) = value.downcast_ref::<FrozenBazelSymlinkEntry>() {
+            symlink.target_file.to_value()
+        } else {
+            return Err(internal_error!(
+                "Bazel runfiles symlink entry should be SymlinkEntry"
+            ));
+        };
+        let artifact = ValueAsInputArtifactLike::unpack_value_err(target_file)?
+            .0
+            .get_bound_artifact()?;
+        processor(ArtifactGroup::Artifact(artifact));
+    }
+
+    Ok(())
+}
+
+pub(crate) fn bazel_runfiles_for_each_entry(
+    runfiles: FrozenValue,
+    processor: &mut dyn FnMut(String, Artifact) -> bz_error::Result<()>,
+) -> bz_error::Result<()> {
+    let runfiles = runfiles
+        .to_value()
+        .downcast_ref::<FrozenBazelRunfiles>()
+        .ok_or_else(|| internal_error!("Bazel runfiles value should be runfiles"))?;
+
+    for value in bazel_depset_to_list(runfiles.files.get().to_value())? {
+        let artifact = ValueAsInputArtifactLike::unpack_value_err(value)?
+            .0
+            .get_bound_artifact()?;
+        let path = bazel_runfiles_prefixed_path(&bazel_artifact_short_path(artifact.get_path()));
+        processor(path, artifact)?;
+    }
+
+    for value in bazel_depset_to_list(runfiles.symlinks.get().to_value())? {
+        let (path, target_file) = if let Some(symlink) = BazelSymlinkEntry::from_value(value) {
+            (
+                bazel_runfiles_prefixed_path(&symlink.path),
+                symlink.target_file.to_value(),
+            )
+        } else if let Some(symlink) = value.downcast_ref::<FrozenBazelSymlinkEntry>() {
+            (
+                bazel_runfiles_prefixed_path(&symlink.path),
+                symlink.target_file.to_value(),
+            )
+        } else {
+            return Err(internal_error!(
+                "Bazel runfiles symlink entry should be SymlinkEntry"
+            ));
+        };
+        let artifact = ValueAsInputArtifactLike::unpack_value_err(target_file)?
+            .0
+            .get_bound_artifact()?;
+        processor(path, artifact)?;
+    }
+
+    for value in bazel_depset_to_list(runfiles.root_symlinks.get().to_value())? {
+        let (path, target_file) = if let Some(symlink) = BazelSymlinkEntry::from_value(value) {
+            (symlink.path.clone(), symlink.target_file.to_value())
+        } else if let Some(symlink) = value.downcast_ref::<FrozenBazelSymlinkEntry>() {
+            (symlink.path.clone(), symlink.target_file.to_value())
+        } else {
+            return Err(internal_error!(
+                "Bazel runfiles root symlink entry should be SymlinkEntry"
+            ));
+        };
+        let artifact = ValueAsInputArtifactLike::unpack_value_err(target_file)?
+            .0
+            .get_bound_artifact()?;
+        processor(path, artifact)?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn bazel_runfiles_empty_filenames(
+    runfiles: FrozenValue,
+) -> bz_error::Result<Vec<String>> {
+    let runfiles = runfiles
+        .to_value()
+        .downcast_ref::<FrozenBazelRunfiles>()
+        .ok_or_else(|| internal_error!("Bazel runfiles value should be runfiles"))?;
+
+    bazel_depset_to_list(runfiles.empty_filenames.get().to_value())?
+        .into_iter()
+        .map(|value| {
+            let path = value
+                .unpack_str()
+                .ok_or_else(|| internal_error!("runfiles.empty_filenames should be strings"))?;
+            Ok(bazel_runfiles_prefixed_path(path))
+        })
+        .collect()
 }
 
 fn bazel_runfiles_empty_frozen_value(heap: &FrozenHeap) -> FrozenValue {
