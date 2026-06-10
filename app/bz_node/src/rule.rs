@@ -87,6 +87,8 @@ pub struct Rule {
     pub is_bazel_rule: bool,
     /// Whether the rule was declared through Bazel's `rule(test = True)` API.
     pub is_bazel_test_rule: bool,
+    /// Whether the rule was declared through Bazel's `rule(executable = True)` API.
+    pub is_bazel_executable_rule: bool,
     /// Whether the rule was declared with Bazel's `build_setting = ...`.
     pub is_bazel_build_setting: bool,
 }

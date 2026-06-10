@@ -239,6 +239,10 @@ impl TargetNode {
         self.as_ref().is_bazel_test_rule()
     }
 
+    pub fn is_bazel_executable_rule(&self) -> bool {
+        self.as_ref().is_bazel_executable_rule()
+    }
+
     pub fn bazel_output_to_genfiles(&self) -> bool {
         self.as_ref().bazel_output_to_genfiles()
     }
@@ -813,6 +817,10 @@ impl<'a> TargetNodeRef<'a> {
         self.0.get().rule.is_bazel_test_rule
     }
 
+    pub fn is_bazel_executable_rule(self) -> bool {
+        self.0.get().rule.is_bazel_executable_rule
+    }
+
     pub fn bazel_output_to_genfiles(self) -> bool {
         self.0.get().rule.bazel_output_to_genfiles
     }
@@ -918,6 +926,7 @@ pub mod testing {
                     bazel_output_to_genfiles: false,
                     is_bazel_rule: false,
                     is_bazel_test_rule: false,
+                    is_bazel_executable_rule: false,
                     is_bazel_build_setting: false,
                 }),
                 Arc::new(Package {

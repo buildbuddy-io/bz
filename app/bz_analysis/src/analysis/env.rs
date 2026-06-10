@@ -2295,8 +2295,10 @@ async fn run_analysis_with_env_underlying(
             None
         };
 
+        let should_expand_bazel_run_attrs =
+            node.is_bazel_executable_rule() || node.is_bazel_test_rule();
         // TODO: Convert the ValueError from `try_from_value` better than just printing its Debug
-        let bazel_target_args = if node.is_bazel_rule() {
+        let bazel_target_args = if should_expand_bazel_run_attrs {
             let args = bazel_target_arg_values(node)?;
             reentrant_eval.with_evaluator(|eval| {
                 bazel_expand_target_run_args(ctx.as_ref(), &args, eval.heap())
@@ -2304,15 +2306,16 @@ async fn run_analysis_with_env_underlying(
         } else {
             Vec::new()
         };
-        let (bazel_run_environment, bazel_run_inherited_environment) = if node.is_bazel_rule() {
-            let (environment, inherited_environment) = bazel_run_environment_values(node)?;
-            let environment = reentrant_eval.with_evaluator(|eval| {
-                bazel_expand_run_environment(ctx.as_ref(), &environment, eval.heap())
-            })?;
-            (environment, inherited_environment)
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        let (bazel_run_environment, bazel_run_inherited_environment) =
+            if should_expand_bazel_run_attrs {
+                let (environment, inherited_environment) = bazel_run_environment_values(node)?;
+                let environment = reentrant_eval.with_evaluator(|eval| {
+                    bazel_expand_run_environment(ctx.as_ref(), &environment, eval.heap())
+                })?;
+                (environment, inherited_environment)
+            } else {
+                (Vec::new(), Vec::new())
+            };
 
         let mut res_typed = reentrant_eval.with_evaluator(|eval| {
             if let Some(label_resolution_context) = &label_resolution_context {

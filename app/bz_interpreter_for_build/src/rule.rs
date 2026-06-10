@@ -410,6 +410,8 @@ pub struct StarlarkRuleCallable<'v> {
     is_bazel_rule: bool,
     /// Whether the rule was declared through Bazel's `rule(test = True)` API.
     is_bazel_test_rule: bool,
+    /// Whether the rule was declared through Bazel's `rule(executable = True)` API.
+    is_bazel_executable_rule: bool,
     /// Whether the rule was declared with Bazel's `build_setting = ...`.
     is_bazel_build_setting: bool,
     /// Bazel rule initializer called at target declaration time before attr coercion.
@@ -972,6 +974,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             bazel_output_to_genfiles,
             is_bazel_rule,
             is_bazel_test_rule,
+            is_bazel_executable_rule,
             is_bazel_build_setting,
             bazel_initializer,
             bazel_initializer_attrs,
@@ -1213,6 +1216,7 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
                 bazel_output_to_genfiles: self.bazel_output_to_genfiles,
                 is_bazel_rule: self.is_bazel_rule,
                 is_bazel_test_rule: self.is_bazel_test_rule,
+                is_bazel_executable_rule: self.is_bazel_executable_rule,
                 is_bazel_build_setting: self.is_bazel_build_setting,
             }),
             rule_type,
