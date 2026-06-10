@@ -179,6 +179,39 @@ fn is_transient_re_error(error: &bz_error::Error) -> bool {
         })
 }
 
+fn is_non_transient_materialize_files_error(error: &bz_error::Error) -> bool {
+    error
+        .find_typed_context::<RemoteExecutionError>()
+        .is_some_and(|error| {
+            let message = error.message.as_str();
+            message.contains("No space left on device")
+                || message.contains("Permission denied (os error 13)")
+                || message.contains("Read-only file system")
+        })
+}
+
+async fn cleanup_failed_materialize_files(chunk: &[NamedDigestWithPermissions]) {
+    for file in chunk {
+        let path = file.named_digest.name.as_str();
+        if path.is_empty() {
+            continue;
+        }
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => {
+                tracing::debug!(path, "Removed partial materialized output after failed download");
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::debug!(
+                    path,
+                    %error,
+                    "Failed to remove partial materialized output after failed download"
+                );
+            }
+        }
+    }
+}
+
 async fn retry_transient_re_error<F, Fut, T>(op_name: &str, mut op: F) -> bz_error::Result<T>
 where
     F: FnMut() -> Fut,
@@ -1989,24 +2022,51 @@ impl RemoteExecutionClientImpl {
                     }
                 };
 
-                let response = retry_transient_re_error("materialize_files", || async {
-                    with_error_handler(
-                        "materialize_files",
-                        self.get_session_id(),
-                        self.client()
-                            .get_cas_client()
-                            .download(
-                                use_case.metadata(None),
-                                DownloadRequest {
-                                    file_digests: Some(chunk.clone()),
-                                    ..Default::default()
-                                },
-                            )
-                            .await,
-                    )
-                    .await
-                })
-                .await?;
+                let response = 'download: loop {
+                    let mut delay = RE_TRANSIENT_RETRY_INITIAL_DELAY;
+                    for attempt in 0..=RE_TRANSIENT_RETRY_ATTEMPTS {
+                        match with_error_handler(
+                            "materialize_files",
+                            self.get_session_id(),
+                            self.client()
+                                .get_cas_client()
+                                .download(
+                                    use_case.metadata(None),
+                                    DownloadRequest {
+                                        file_digests: Some(chunk.clone()),
+                                        ..Default::default()
+                                    },
+                                )
+                                .await,
+                        )
+                        .await
+                        {
+                            Ok(response) => break 'download response,
+                            Err(error) if is_non_transient_materialize_files_error(&error) => {
+                                cleanup_failed_materialize_files(&chunk).await;
+                                return Err(error);
+                            }
+                            Err(error)
+                                if attempt < RE_TRANSIENT_RETRY_ATTEMPTS
+                                    && is_transient_re_error(&error) =>
+                            {
+                                cleanup_failed_materialize_files(&chunk).await;
+                                tracing::warn!(
+                                    "Transient RE error in materialize_files, retrying after {:?}: {:#}",
+                                    delay,
+                                    error
+                                );
+                                tokio::time::sleep(delay).await;
+                                delay = std::cmp::min(delay * 2, RE_TRANSIENT_RETRY_MAX_DELAY);
+                            }
+                            Err(error) => {
+                                cleanup_failed_materialize_files(&chunk).await;
+                                return Err(error);
+                            }
+                        }
+                    }
+                    unreachable!("retry loop returns on success or final error")
+                };
 
                 bz_error::Ok(ChunkDownloadResult::Downloaded(response.local_cache_stats))
             }
@@ -2213,5 +2273,38 @@ mod tests {
         assert_eq!(it.next(), Some(vec![1, 2]));
         assert_eq!(it.next(), Some(vec![3]));
         assert_eq!(it.next(), None);
+    }
+
+    #[test]
+    fn test_materialize_files_local_write_error_is_not_transient() {
+        let error = test_re_error(
+            "Error downloading digest `abc:123` to `out`: Error writing chunk of: abc:123: No space left on device (os error 28)",
+            TCode::CANCELLED,
+        );
+
+        assert!(is_transient_re_error(&error));
+        assert!(is_non_transient_materialize_files_error(&error));
+    }
+
+    #[test]
+    fn test_materialize_files_timeout_stays_transient() {
+        let error = test_re_error(
+            "code: 'The operation was cancelled', message: \"Timeout expired\"",
+            TCode::CANCELLED,
+        );
+
+        assert!(is_transient_re_error(&error));
+        assert!(!is_non_transient_materialize_files_error(&error));
+    }
+
+    #[test]
+    fn test_materialize_files_existing_output_retries_after_cleanup() {
+        let error = test_re_error(
+            "Error downloading digest `abc:123` to `out`: Error opening: File exists (os error 17)",
+            TCode::CANCELLED,
+        );
+
+        assert!(is_transient_re_error(&error));
+        assert!(!is_non_transient_materialize_files_error(&error));
     }
 }
