@@ -135,7 +135,7 @@ fn check_existing_cas_materialization(
         &mut stat,
     )?;
 
-    if status != ExistingMaterialization::Matches {
+    if status == ExistingMaterialization::Mismatch {
         cleanup_path(project_fs, &path)?;
     }
 
