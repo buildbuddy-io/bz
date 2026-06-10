@@ -112,6 +112,7 @@ const DEFAULT_MAX_TOTAL_BATCH_SIZE: usize = 4 * 1000 * 1000;
 const DEFAULT_REMOTE_MAX_CONNECTIONS: usize = 100;
 const DEFAULT_REMOTE_MAX_CONCURRENCY_PER_CONNECTION: usize = 100;
 const DEFAULT_REMOTE_TIMEOUT_SECS: u64 = 60;
+const DEFAULT_REMOTE_TRANSFER_MIN_BYTES_PER_SECOND: u64 = 1024 * 1024;
 const DEFAULT_GRPC_KEEPALIVE_TIME_SECS: u64 = 60;
 const DEFAULT_GRPC_KEEPALIVE_TIMEOUT_SECS: u64 = 20;
 const DEFAULT_GRPC_KEEPALIVE_WHILE_IDLE: bool = false;
@@ -354,6 +355,55 @@ fn remote_timeout(opts: &Buck2OssReConfiguration) -> Duration {
         opts.remote_timeout_secs
             .unwrap_or(DEFAULT_REMOTE_TIMEOUT_SECS),
     )
+}
+
+fn transfer_timeout(remote_timeout: Duration, size_bytes: u64) -> Duration {
+    let transfer_secs = size_bytes.div_ceil(DEFAULT_REMOTE_TRANSFER_MIN_BYTES_PER_SECOND);
+    remote_timeout
+        .checked_add(Duration::from_secs(transfer_secs))
+        .unwrap_or(Duration::MAX)
+}
+
+fn positive_size_bytes(size_bytes: i64) -> u64 {
+    u64::try_from(size_bytes).unwrap_or(0)
+}
+
+fn batch_read_blobs_request_size(request: &BatchReadBlobsRequest) -> u64 {
+    request.digests.iter().fold(0, |acc, digest| {
+        acc.saturating_add(positive_size_bytes(digest.size_bytes))
+    })
+}
+
+fn batch_update_blobs_request_size(request: &BatchUpdateBlobsRequest) -> u64 {
+    request.requests.iter().fold(0, |acc, request| {
+        let digest_size = request
+            .digest
+            .as_ref()
+            .map(|digest| positive_size_bytes(digest.size_bytes))
+            .unwrap_or(0);
+        let data_size = request.data.len() as u64;
+        acc.saturating_add(digest_size.max(data_size))
+    })
+}
+
+fn resource_name_size(resource_name: &str) -> Option<u64> {
+    resource_name.rsplit('/').next()?.parse::<u64>().ok()
+}
+
+fn read_request_size(request: &ReadRequest) -> u64 {
+    resource_name_size(&request.resource_name).unwrap_or(0)
+}
+
+fn write_requests_size(requests: &[WriteRequest]) -> u64 {
+    if let Some(size) = requests
+        .first()
+        .and_then(|request| resource_name_size(&request.resource_name))
+    {
+        return size;
+    }
+    requests.iter().fold(0, |acc, request| {
+        acc.saturating_add(request.data.len() as u64)
+    })
 }
 
 fn grpc_keepalive_time(opts: &Buck2OssReConfiguration) -> Option<Duration> {
@@ -1232,19 +1282,27 @@ impl REClient {
             self.runtime_opts.max_concurrent_uploads_per_action,
             |re_request| async {
                 let metadata = metadata.clone();
+                let timeout = transfer_timeout(
+                    self.runtime_opts.remote_timeout,
+                    batch_update_blobs_request_size(&re_request),
+                );
                 let (mut cas_client, _permit) = self.grpc_clients.cas_client().await?;
                 let resp = cas_client
                     .batch_update_blobs(with_re_metadata(
                         re_request,
                         metadata,
                         self.runtime_opts.use_fbcode_metadata,
-                        self.runtime_opts.remote_timeout,
+                        timeout,
                     ))
                     .await?;
                 Ok(resp.into_inner())
             },
             |segments| async {
                 let metadata = metadata.clone();
+                let timeout = transfer_timeout(
+                    self.runtime_opts.remote_timeout,
+                    write_requests_size(&segments),
+                );
                 let (mut bytestream_client, _permit) =
                     self.grpc_clients.bytestream_client().await?;
                 let requests = futures::stream::iter(segments);
@@ -1253,7 +1311,7 @@ impl REClient {
                         requests,
                         metadata,
                         self.runtime_opts.use_fbcode_metadata,
-                        self.runtime_opts.remote_timeout,
+                        timeout,
                     ))
                     .await?;
 
@@ -1309,13 +1367,17 @@ impl REClient {
             self.capabilities.max_total_batch_size,
             |re_request| async {
                 let metadata = metadata.clone();
+                let timeout = transfer_timeout(
+                    self.runtime_opts.remote_timeout,
+                    batch_read_blobs_request_size(&re_request),
+                );
                 let (mut client, _permit) = self.grpc_clients.cas_client().await?;
                 Ok(client
                     .batch_read_blobs(with_re_metadata(
                         re_request,
                         metadata,
                         self.runtime_opts.use_fbcode_metadata,
-                        self.runtime_opts.remote_timeout,
+                        timeout,
                     ))
                     .await?
                     .into_inner())
@@ -1323,13 +1385,17 @@ impl REClient {
             |read_request| {
                 let metadata = metadata.clone();
                 async move {
+                    let timeout = transfer_timeout(
+                        self.runtime_opts.remote_timeout,
+                        read_request_size(&read_request),
+                    );
                     let (mut client, permit) = self.grpc_clients.bytestream_client().await?;
                     let response = client
                         .read(with_re_metadata(
                             read_request,
                             metadata,
                             self.runtime_opts.use_fbcode_metadata,
-                            self.runtime_opts.remote_timeout,
+                            timeout,
                         ))
                         .await?
                         .into_inner();
@@ -2299,6 +2365,73 @@ mod tests {
                 .get("grpc-timeout")
                 .and_then(|value| value.to_str().ok()),
             Some("60000000u")
+        );
+    }
+
+    #[test]
+    fn test_transfer_timeout_scales_with_size() {
+        assert_eq!(
+            transfer_timeout(Duration::from_secs(60), 0),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            transfer_timeout(Duration::from_secs(60), 1),
+            Duration::from_secs(61)
+        );
+        assert_eq!(
+            transfer_timeout(
+                Duration::from_secs(60),
+                DEFAULT_REMOTE_TRANSFER_MIN_BYTES_PER_SECOND
+            ),
+            Duration::from_secs(61)
+        );
+        assert_eq!(
+            transfer_timeout(
+                Duration::from_secs(60),
+                DEFAULT_REMOTE_TRANSFER_MIN_BYTES_PER_SECOND + 1
+            ),
+            Duration::from_secs(62)
+        );
+    }
+
+    #[test]
+    fn test_transfer_request_sizes() {
+        let digest = Digest {
+            hash: "aa".to_owned(),
+            size_bytes: 123,
+        };
+        assert_eq!(
+            batch_read_blobs_request_size(&BatchReadBlobsRequest {
+                digests: vec![digest.clone()],
+                ..Default::default()
+            }),
+            123
+        );
+        assert_eq!(
+            batch_update_blobs_request_size(&BatchUpdateBlobsRequest {
+                requests: vec![Request {
+                    digest: Some(digest),
+                    data: vec![0; 12],
+                    compressor: compressor::Value::Identity as i32,
+                }],
+                ..Default::default()
+            }),
+            123
+        );
+        assert_eq!(
+            read_request_size(&ReadRequest {
+                resource_name: "instance/compressed-blobs/zstd/aa/456".to_owned(),
+                ..Default::default()
+            }),
+            456
+        );
+        assert_eq!(
+            write_requests_size(&[WriteRequest {
+                resource_name: "instance/uploads/id/blobs/aa/789".to_owned(),
+                data: vec![0; 12],
+                ..Default::default()
+            }]),
+            789
         );
     }
 
