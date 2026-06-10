@@ -118,6 +118,7 @@ use bz_execute::execute::result::CommandExecutionReport;
 use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::execute::result::CommandExecutionStatus;
 use bz_execute::execute::target::CommandExecutionTarget;
+use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_execute::materialize::materializer::HasMaterializer;
 use bz_execute::re::action_identity::ReActionIdentity;
 use bz_execute_impl::executors::local::EnvironmentBuilder;
@@ -2097,7 +2098,8 @@ fn bazel_test_runfiles_inputs(
         .unwrap_or_default();
     let mut manifest_entries = Vec::new();
     test_info.for_each_runfiles_entry(&mut |runfiles_path, artifact| {
-        let value = bazel_test_artifact_value_for(ensured_inputs, &artifact)?;
+        let (value, remote_cache_cas_info) =
+            bazel_test_artifact_value_for(ensured_inputs, &artifact)?;
         let alias = bazel_test_runfiles_alias_path(test_binary, &runfiles_path)?;
         if !aliases.insert(alias.clone()) {
             return Ok(());
@@ -2116,6 +2118,7 @@ fn bazel_test_runfiles_inputs(
         inputs.push(CommandExecutionInput::ArtifactPathAlias {
             source_path,
             source_requires_materialization: artifact.requires_materialization(artifact_fs),
+            remote_cache_cas_info,
             owner: artifact.input_owner(),
             path: alias,
             value: value.dupe(),
@@ -2164,11 +2167,13 @@ fn bazel_test_binary_path(expanded_cmd: &[String]) -> Option<&str> {
 fn bazel_test_artifact_value_for<'a>(
     ensured_inputs: &'a [(ArtifactGroup, ArtifactGroupValues)],
     artifact: &Artifact,
-) -> bz_error::Result<&'a ArtifactValue> {
+) -> bz_error::Result<(&'a ArtifactValue, Option<Arc<CasDownloadInfo>>)> {
     for (_, artifact_group_values) in ensured_inputs {
-        for (input_artifact, value) in artifact_group_values.iter() {
+        for ((input_artifact, value), remote_cache_cas_info) in
+            artifact_group_values.iter_with_remote_cache_cas_info()
+        {
             if input_artifact == artifact {
-                return Ok(value);
+                return Ok((value, remote_cache_cas_info.cloned()));
             }
         }
     }

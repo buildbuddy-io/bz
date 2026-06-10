@@ -124,6 +124,7 @@ impl OutputSize for ActionOutputs {
 struct ActionOutputsData {
     outputs: BuckIndexMap<BuildArtifactPath, ArtifactValue>,
     #[allocative(skip)]
+    #[derivative(PartialEq = "ignore")]
     remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
 }
 
@@ -1094,6 +1095,7 @@ mod tests {
     use bz_core::execution_types::executor_config::CommandExecutorConfig;
     use bz_core::execution_types::executor_config::CommandGenerationOptions;
     use bz_core::execution_types::executor_config::PathSeparatorKind;
+    use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
     use bz_core::fs::artifact_path_resolver::ArtifactFs;
     use bz_core::fs::buck_out_path::BuckOutPathResolver;
     use bz_core::fs::project::ProjectRootTemp;
@@ -1117,10 +1119,12 @@ mod tests {
     use bz_execute::execute::request::CommandExecutionRequest;
     use bz_execute::execute::request::OutputType;
     use bz_execute::execute::testing_dry_run::DryRunExecutor;
+    use bz_execute::materialize::materializer::CasDownloadInfo;
     use bz_execute::materialize::nodisk::NoDiskMaterializer;
     use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
     use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
     use bz_fs::fs_util::uncategorized as fs_util;
+    use bz_hash::buck_indexmap;
     use bz_hash::buck_indexset;
     use bz_http::HttpClientBuilder;
     use dice_futures::cancellation::CancellationContext;
@@ -1355,6 +1359,29 @@ mod tests {
             })
             .collect();
         assert_eq!(res.0, ActionOutputs::new(outputs));
+    }
+
+    #[test]
+    fn test_action_outputs_equality_ignores_remote_cache_cas_info() {
+        let label =
+            TargetLabel::testing_parse("cell//pkg:foo").configure(ConfigurationData::testing_new());
+        let output = BuildArtifact::testing_new(label, "output", ActionIndex::new(0));
+        let value = ArtifactValue::file(DigestConfig::testing_default().empty_file());
+        let outputs = buck_indexmap! { output.get_path().dupe() => value };
+
+        let declared = Arc::new(CasDownloadInfo::new_declared(
+            RemoteExecutorUseCase::bz_default(),
+        ));
+        let transient = Arc::new(CasDownloadInfo::new_declared_transient(
+            RemoteExecutorUseCase::bz_default(),
+        ));
+        assert_ne!(declared.as_ref(), transient.as_ref());
+
+        let with_declared =
+            ActionOutputs::new_with_remote_cache_cas_info(outputs.clone(), Some(declared));
+        let with_transient = ActionOutputs::new_with_remote_cache_cas_info(outputs, Some(transient));
+
+        assert_eq!(with_declared, with_transient);
     }
 
     #[test]

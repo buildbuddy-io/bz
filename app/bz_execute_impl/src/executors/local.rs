@@ -2997,6 +2997,7 @@ struct SharedArtifactPathAlias {
     source_path: ProjectRelativePathBuf,
     path: ProjectRelativePathBuf,
     value: ArtifactValue,
+    remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
 }
 
 struct ExternalCellRootAlias {
@@ -3040,6 +3041,17 @@ fn remote_cas_payload_for_artifact_dyn(
         artifact: value.dupe(),
         configuration_path,
     })
+}
+
+fn remote_cas_payload_for_path(
+    path: ProjectRelativePathBuf,
+    value: &ArtifactValue,
+) -> DeclareArtifactPayload {
+    DeclareArtifactPayload {
+        path,
+        artifact: value.dupe(),
+        configuration_path: None,
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -4107,6 +4119,7 @@ pub async fn materialize_inputs(
             CommandExecutionInput::ArtifactPathAlias {
                 source_path,
                 source_requires_materialization,
+                remote_cache_cas_info,
                 owner,
                 path,
                 value,
@@ -4129,6 +4142,13 @@ pub async fn materialize_inputs(
                             .entry(source_path.clone())
                             .or_insert_with(|| owner.clone());
                     }
+                    if let Some(remote_cache_cas_info) = remote_cache_cas_info {
+                        push_remote_cas_declaration(
+                            &mut remote_cas_declarations,
+                            remote_cache_cas_info.clone(),
+                            remote_cas_payload_for_path(source_path.clone(), value),
+                        );
+                    }
                     if let Some(root) = external_cell_root(source_path.as_ref()) {
                         external_cell_roots_to_materialize.insert(root.source_root);
                     } else {
@@ -4143,11 +4163,12 @@ pub async fn materialize_inputs(
                 if sandbox_alias {
                     sandbox_artifact_path_aliases.push((source_path.clone(), path.clone()));
                 } else {
-                    shared_artifact_path_aliases.push((
-                        source_path.clone(),
-                        path.clone(),
-                        value.dupe(),
-                    ));
+                    shared_artifact_path_aliases.push(SharedArtifactPathAlias {
+                        source_path: source_path.clone(),
+                        path: path.clone(),
+                        value: value.dupe(),
+                        remote_cache_cas_info: remote_cache_cas_info.clone(),
+                    });
                 }
             }
             CommandExecutionInput::EmptyFile(path) => {
@@ -4190,29 +4211,33 @@ pub async fn materialize_inputs(
     let mut copied_artifact_path_aliases = BuckIndexSet::new();
     let mut copied_artifact_path_aliases_to_materialize = Vec::new();
     let mut artifact_path_alias_copies = Vec::new();
-    for (source_path, path, value) in &shared_artifact_path_aliases {
+    for alias in &shared_artifact_path_aliases {
         let is_external_root_alias =
-            bazel_external_repo_root_alias(artifact_fs, source_path.as_ref(), path.as_ref())?
+            bazel_external_repo_root_alias(
+                artifact_fs,
+                alias.source_path.as_ref(),
+                alias.path.as_ref(),
+            )?
                 .is_some();
-        let source_is_generated = buck_artifact_store_path(source_path.as_ref());
+        let source_is_generated = buck_artifact_store_path(alias.source_path.as_ref());
         let source_is_generated_file = source_is_generated
             && matches!(
-                value.entry(),
+                alias.value.entry(),
                 ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(_))
             );
-        if (!value.is_dir() && !source_is_generated_file) || is_external_root_alias {
+        if (!alias.value.is_dir() && !source_is_generated_file) || is_external_root_alias {
             continue;
         }
 
-        if copied_artifact_path_aliases.insert(path.clone()) {
-            copied_artifact_path_aliases_to_materialize.push(path.clone());
+        if copied_artifact_path_aliases.insert(alias.path.clone()) {
+            copied_artifact_path_aliases_to_materialize.push(alias.path.clone());
             artifact_path_alias_copies.push((
-                path.clone(),
-                value.dupe(),
+                alias.path.clone(),
+                alias.value.dupe(),
                 vec![CopiedArtifact {
-                    src: source_path.clone(),
-                    dest: path.clone(),
-                    dest_entry: value.entry().dupe().map_dir(|d| d.as_immutable()),
+                    src: alias.source_path.clone(),
+                    dest: alias.path.clone(),
+                    dest_entry: alias.value.entry().dupe().map_dir(|d| d.as_immutable()),
                     executable_bit_override: None,
                 }],
                 None,
@@ -4287,12 +4312,16 @@ pub async fn materialize_inputs(
     let mut external_cell_root_aliases = BuckIndexSet::new();
     let mut external_cell_root_aliases_to_materialize = Vec::new();
     let mut shared_artifact_path_aliases_to_materialize = Vec::new();
-    for (source_path, path, value) in &shared_artifact_path_aliases {
-        if copied_artifact_path_aliases.contains(path) {
+    for alias in &shared_artifact_path_aliases {
+        if copied_artifact_path_aliases.contains(&alias.path) {
             continue;
         }
         if let Some((source_root, alias_root)) =
-            bazel_external_repo_root_alias(artifact_fs, source_path.as_ref(), path.as_ref())?
+            bazel_external_repo_root_alias(
+                artifact_fs,
+                alias.source_path.as_ref(),
+                alias.path.as_ref(),
+            )?
         {
             if external_cell_root_aliases.insert((source_root.clone(), alias_root.clone())) {
                 paths.push(alias_root.clone());
@@ -4302,11 +4331,12 @@ pub async fn materialize_inputs(
                 });
             }
         } else {
-            paths.push(path.clone());
+            paths.push(alias.path.clone());
             shared_artifact_path_aliases_to_materialize.push(SharedArtifactPathAlias {
-                source_path: source_path.clone(),
-                path: path.clone(),
-                value: value.dupe(),
+                source_path: alias.source_path.clone(),
+                path: alias.path.clone(),
+                value: alias.value.dupe(),
+                remote_cache_cas_info: alias.remote_cache_cas_info.clone(),
             });
         }
     }
@@ -5239,6 +5269,7 @@ mod tests {
                 "buck-out/v2/external_cells/bzlmod/protobuf+/upb/message.h".to_owned(),
             ),
             source_requires_materialization: true,
+            remote_cache_cas_info: None,
             owner: None,
             path: ProjectRelativePathBuf::unchecked_new(
                 "buck-out/v2/__bazel_execroot/aaaaaaaaaaaaaaaa/external/protobuf+/upb/message.h"
@@ -5251,6 +5282,7 @@ mod tests {
                 "buck-out/v2/external_cells/bzlmod/protobuf+/upb/message.h".to_owned(),
             ),
             source_requires_materialization: true,
+            remote_cache_cas_info: None,
             owner: None,
             path: ProjectRelativePathBuf::unchecked_new(
                 "buck-out/v2/__bazel_execroot/bbbbbbbbbbbbbbbb/external/protobuf+/upb/message.h"
@@ -5292,6 +5324,7 @@ mod tests {
                     .to_owned(),
             ),
             source_requires_materialization: true,
+            remote_cache_cas_info: None,
             owner: None,
             path: ProjectRelativePathBuf::unchecked_new(
                 "buck-out/bin/1e8be1aa92087ba6/external/protobuf+/src/google/protobuf/libsource_context_proto.a-0.params"
@@ -5305,6 +5338,7 @@ mod tests {
                     .to_owned(),
             ),
             source_requires_materialization: true,
+            remote_cache_cas_info: None,
             owner: None,
             path: ProjectRelativePathBuf::unchecked_new(
                 "buck-out/bin/1e8be1aa92087ba6/external/protobuf+/src/google/protobuf/libsource_context_proto.a-0.params"

@@ -283,7 +283,6 @@ impl ArtifactGroupValues {
         let other = &other.0;
 
         this.values == other.values
-            && this.remote_cache_cas_infos == other.remote_cache_cas_infos
             && this
                 .children
                 .iter()
@@ -624,6 +623,7 @@ mod tests {
     use bz_artifact::artifact::artifact_type::testing::BuildArtifactTestingExt;
     use bz_artifact::artifact::build_artifact::BuildArtifact;
     use bz_core::configuration::data::ConfigurationData;
+    use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
     use bz_core::target::configured_target_label::ConfiguredTargetLabel;
 
     use super::*;
@@ -642,6 +642,11 @@ mod tests {
     impl ArtifactGroupValuesData {
         fn value(mut self, v: &(Artifact, ArtifactValue)) -> Self {
             self.values.push((v.0.dupe(), v.1.dupe()));
+            self
+        }
+
+        fn remote_cache_cas_info(mut self, info: Option<Arc<CasDownloadInfo>>) -> Self {
+            self.remote_cache_cas_infos.push(info);
             self
         }
 
@@ -710,6 +715,29 @@ mod tests {
             let s2 = builder().value(&a1).chain(&v2).build();
             assert!(!s1.shallow_equals(&s2));
         }
+    }
+
+    #[test]
+    fn test_shallow_eq_ignores_remote_cache_cas_info() {
+        let a1 = artifact("a1");
+        let declared = Arc::new(CasDownloadInfo::new_declared(
+            RemoteExecutorUseCase::bz_default(),
+        ));
+        let transient = Arc::new(CasDownloadInfo::new_declared_transient(
+            RemoteExecutorUseCase::bz_default(),
+        ));
+        assert_ne!(declared.as_ref(), transient.as_ref());
+
+        let s1 = builder()
+            .value(&a1)
+            .remote_cache_cas_info(Some(declared))
+            .build();
+        let s2 = builder()
+            .value(&a1)
+            .remote_cache_cas_info(Some(transient))
+            .build();
+
+        assert!(s1.shallow_equals(&s2));
     }
 
     #[test]

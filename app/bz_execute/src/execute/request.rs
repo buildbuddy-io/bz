@@ -57,6 +57,7 @@ use crate::directory::ExternalSymlinkUploadPath;
 use crate::directory::ResolvedSymlinkUploadPath;
 use crate::execute::environment_inheritance::EnvironmentInheritance;
 use crate::execute::inputs_directory::inputs_directory;
+use crate::materialize::materializer::CasDownloadInfo;
 
 /// What protobuf messages can be stored in the action metadata blobs.
 pub trait ActionMetadataBlobMessage: Message {}
@@ -97,6 +98,7 @@ pub enum CommandExecutionInput {
     ArtifactPathAlias {
         source_path: ProjectRelativePathBuf,
         source_requires_materialization: bool,
+        remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
         owner: Option<CommandExecutionInputOwner>,
         path: ProjectRelativePathBuf,
         value: ArtifactValue,

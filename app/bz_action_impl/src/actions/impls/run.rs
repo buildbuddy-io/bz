@@ -125,6 +125,7 @@ use bz_execute::execute::request::WorkerId;
 use bz_execute::execute::request::WorkerProtocol;
 use bz_execute::execute::request::WorkerSpec;
 use bz_execute::execute::result::CommandExecutionResult;
+use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_execute::materialize::materializer::WriteRequest;
 use bz_fs::fs_util;
 use bz_fs::paths::RelativePathBuf;
@@ -3599,7 +3600,9 @@ impl RunAction {
 
         let mut aliases = BuckIndexSet::new();
         for artifact_group_values in artifact_inputs {
-            for (artifact, value) in artifact_group_values.iter() {
+            for ((artifact, value), remote_cache_cas_info) in
+                artifact_group_values.iter_with_remote_cache_cas_info()
+            {
                 let source_path =
                     Self::bazel_artifact_alias_source_path(artifact, value, artifact_fs)
                         .buck_error_context("Invalid Bazel execroot source path")?;
@@ -3619,6 +3622,7 @@ impl RunAction {
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
+                        remote_cache_cas_info: remote_cache_cas_info.cloned(),
                         owner: artifact.input_owner(),
                         path: bazel_alias,
                         value,
@@ -3636,6 +3640,7 @@ impl RunAction {
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
+                        remote_cache_cas_info: remote_cache_cas_info.cloned(),
                         owner: artifact.input_owner(),
                         path: source_alias,
                         value,
@@ -3657,6 +3662,7 @@ impl RunAction {
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
+                        remote_cache_cas_info: remote_cache_cas_info.cloned(),
                         owner: artifact.input_owner(),
                         path: normalized_source_alias,
                         value,
@@ -3682,6 +3688,7 @@ impl RunAction {
                         inputs.push(CommandExecutionInput::ArtifactPathAlias {
                             source_path: source_path.clone(),
                             source_requires_materialization,
+                            remote_cache_cas_info: remote_cache_cas_info.cloned(),
                             owner: artifact.input_owner(),
                             path: mapped_bazel_alias,
                             value,
@@ -3703,6 +3710,7 @@ impl RunAction {
                         inputs.push(CommandExecutionInput::ArtifactPathAlias {
                             source_path: source_path.clone(),
                             source_requires_materialization,
+                            remote_cache_cas_info: remote_cache_cas_info.cloned(),
                             owner: artifact.input_owner(),
                             path: mapped_normalized_source_alias,
                             value,
@@ -3981,6 +3989,7 @@ impl RunAction {
         inputs.push(CommandExecutionInput::ArtifactPathAlias {
             source_path,
             source_requires_materialization: false,
+            remote_cache_cas_info: None,
             owner: None,
             path: alias_path,
             value: ArtifactValue::external_symlink(Arc::new(ExternalSymlink::new(
@@ -4071,11 +4080,13 @@ impl RunAction {
     fn artifact_value_for<'a>(
         artifact_inputs: &'a [&ArtifactGroupValues],
         artifact: &Artifact,
-    ) -> bz_error::Result<&'a ArtifactValue> {
+    ) -> bz_error::Result<(&'a ArtifactValue, Option<Arc<CasDownloadInfo>>)> {
         for artifact_group_values in artifact_inputs {
-            for (input_artifact, value) in artifact_group_values.iter() {
+            for ((input_artifact, value), remote_cache_cas_info) in
+                artifact_group_values.iter_with_remote_cache_cas_info()
+            {
                 if input_artifact == artifact {
-                    return Ok(value);
+                    return Ok((value, remote_cache_cas_info.cloned()));
                 }
             }
         }
@@ -4119,7 +4130,8 @@ impl RunAction {
                 })?
                 .0
                 .get_bound_artifact()?;
-            let value = Self::artifact_value_for(artifact_inputs, &artifact)?;
+            let (value, remote_cache_cas_info) =
+                Self::artifact_value_for(artifact_inputs, &artifact)?;
             let alias =
                 Self::bazel_runfiles_alias_path(bazel_execroot, executable_path, entry.path)?;
             if aliases.insert(alias.clone()) {
@@ -4139,6 +4151,7 @@ impl RunAction {
                 inputs.push(CommandExecutionInput::ArtifactPathAlias {
                     source_path,
                     source_requires_materialization,
+                    remote_cache_cas_info,
                     owner: artifact.input_owner(),
                     path: alias,
                     value,
@@ -4599,6 +4612,7 @@ impl RunAction {
                 inputs.push(CommandExecutionInput::ArtifactPathAlias {
                     source_path: project_rel_path,
                     source_requires_materialization: true,
+                    remote_cache_cas_info: None,
                     owner: None,
                     path: Self::bazel_execroot_path(bazel_execroot, bazel_exec_path.clone())?,
                     value: ArtifactValue::file(FileMetadata {
