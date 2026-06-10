@@ -1139,13 +1139,6 @@ fn bzlmod_yanked_versions_cache_path(registry: &str, module_name: &str) -> Proje
     ))
 }
 
-fn bzlmod_registry_epoch_hour() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs() / 3600)
-        .unwrap_or_default()
-}
-
 #[async_trait::async_trait]
 impl Key for BzlmodYankedVersionsKey {
     type Value = bz_error::Result<Arc<BzlmodYankedVersionsValue>>;
@@ -1162,9 +1155,17 @@ impl Key for BzlmodYankedVersionsKey {
                 url: self.registry_url.clone(),
             })
             .await??;
+        // Like Bazel's RegistryFunction reading LAST_INVALIDATION in refresh
+        // mode, depend on the hourly registry invalidation so a long-running
+        // daemon re-fetches mutable yanked-version metadata once the epoch
+        // advances. The same epoch stamps the on-disk cache below, extending
+        // Bazel's in-memory refresh policy across daemon restarts.
+        let epoch_hour = ctx
+            .compute(&BzlmodRegistryInvalidationKey)
+            .await??
+            .epoch_hour;
         let project_fs = ctx.global_data().get_io_provider().project_root().dupe();
         let cache_path = bzlmod_yanked_versions_cache_path(&registry.url, &self.module_name);
-        let epoch_hour = bzlmod_registry_epoch_hour();
         if let Ok(Some(contents)) = read_bzlmod_bcr_discovery_cache(&project_fs, &cache_path)
             && let Ok(cached) = serde_json::from_str::<CachedBzlmodYankedVersions>(&contents)
             && cached.epoch_hour == epoch_hour
