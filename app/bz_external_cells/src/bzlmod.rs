@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::fmt;
 use std::fs;
 use std::future::Future;
 use std::io::ErrorKind;
@@ -13,6 +14,7 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -946,6 +948,94 @@ toolchain(
     }
 
     #[test]
+    fn bzlmod_recorded_filesystem_input_batch_accepts_current_inputs() -> bz_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let file = project_root.path().resolve(ProjectRelativePath::new("file.txt")?);
+        let dir = project_root.path().resolve(ProjectRelativePath::new("dir")?);
+        let tree = project_root.path().resolve(ProjectRelativePath::new("tree")?);
+        fs_util::write(&file, "file").categorize_internal()?;
+        fs_util::create_dir_all(&dir)?;
+        fs_util::write(dir.join(ForwardRelativePath::new("entry")?), "entry")
+            .categorize_internal()?;
+        fs_util::create_dir_all(tree.join(ForwardRelativePath::new("nested")?))?;
+        fs_util::write(
+            tree.join(ForwardRelativePath::new("nested/file")?),
+            "tree file",
+        )
+        .categorize_internal()?;
+
+        let checks = vec![
+            BzlmodRecordedFilesystemInputCheck {
+                kind: BzlmodRecordedFilesystemInputKind::File,
+                display_path: "file.txt".to_owned(),
+                path: file.as_path().to_owned(),
+                expected_value: bzlmod_recorded_file_value(&file)?,
+            },
+            BzlmodRecordedFilesystemInputCheck {
+                kind: BzlmodRecordedFilesystemInputKind::Dirents,
+                display_path: "dir".to_owned(),
+                path: dir.as_path().to_owned(),
+                expected_value: bzlmod_recorded_dirents_value(&dir)?,
+            },
+            BzlmodRecordedFilesystemInputCheck {
+                kind: BzlmodRecordedFilesystemInputKind::DirTree,
+                display_path: "tree".to_owned(),
+                path: tree.as_path().to_owned(),
+                expected_value: bzlmod_recorded_dir_tree_value(&tree)?,
+            },
+        ];
+
+        assert!(bzlmod_validate_recorded_filesystem_inputs(checks)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn bzlmod_recorded_filesystem_input_batch_reports_first_mismatch() -> bz_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let file = project_root.path().resolve(ProjectRelativePath::new("file.txt")?);
+        let dir = project_root.path().resolve(ProjectRelativePath::new("dir")?);
+        fs_util::write(&file, "file").categorize_internal()?;
+        fs_util::create_dir_all(&dir)?;
+
+        let mismatch = bzlmod_validate_recorded_filesystem_inputs(vec![
+            BzlmodRecordedFilesystemInputCheck {
+                kind: BzlmodRecordedFilesystemInputKind::File,
+                display_path: "file.txt".to_owned(),
+                path: file.as_path().to_owned(),
+                expected_value: "FILE:not-the-current-digest".to_owned(),
+            },
+            BzlmodRecordedFilesystemInputCheck {
+                kind: BzlmodRecordedFilesystemInputKind::Dirents,
+                display_path: "dir".to_owned(),
+                path: dir.as_path().to_owned(),
+                expected_value: "DIRENTS:not-the-current-digest".to_owned(),
+            },
+        ])?
+        .expect("expected mismatch");
+
+        assert!(matches!(
+            mismatch,
+            BzlmodRecordedInputMismatch::File { path } if path == "file.txt"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn bzlmod_recorded_file_value_matches_repository_symlink_recording() -> bz_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let link = project_root.path().resolve(ProjectRelativePath::new("link")?);
+        fs_util::symlink("missing-target", &link).categorize_internal()?;
+
+        assert_eq!("SYMLINK:missing-target", bzlmod_recorded_file_value(&link)?);
+        assert_eq!(
+            "SYMLINK:missing-target",
+            bzlmod_recorded_dirents_value(&link)?
+        );
+        Ok(())
+    }
+
+    #[test]
     fn repository_rule_build_directory_is_not_mirrored_as_build_bazel() -> bz_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let dest_rel = ProjectRelativePath::new("repo")?;
@@ -1503,6 +1593,10 @@ fn update_bzlmod_repo_contents_cache_key(hasher: &mut blake3::Hasher, field: &st
     hasher.update(b"\0");
 }
 
+fn bzlmod_short_cache_key(key: &str) -> &str {
+    &key[..key.len().min(12)]
+}
+
 fn bzlmod_repo_contents_cache_key(setup: &BzlmodCellSetup) -> String {
     let mut hasher = blake3::Hasher::new();
     update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-repo-contents-v2");
@@ -1775,8 +1869,10 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
 ) -> bz_error::Result<Vec<BzlmodGeneratedRepoContentsCacheCandidate>> {
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let entry_dir = bzlmod_generated_repo_contents_cache_entry_dir(cache_info);
+    let cache_key_short = bzlmod_short_cache_key(&cache_info.predeclared_input_hash).to_owned();
     let cache_info = cache_info.clone();
-    run_bzlmod_cache_io(move || {
+    let start = Instant::now();
+    let candidates = run_bzlmod_cache_io(move || {
         let candidate_for_entry = |entry_name: &str| -> bz_error::Result<
             Option<(u128, BzlmodGeneratedRepoContentsCacheCandidate)>,
         > {
@@ -1791,6 +1887,12 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
                         Some(ErrorKind::NotFound | ErrorKind::NotADirectory)
                     ) =>
                 {
+                    tracing::debug!(
+                        cache_key = %bzlmod_short_cache_key(&cache_info.predeclared_input_hash),
+                        entry = entry_name,
+                        reason = "recorded_inputs_missing",
+                        "bzlmod generated repo contents cache candidate rejected"
+                    );
                     return Ok(None);
                 }
                 Err(error) => return Err(error.categorize_internal()),
@@ -1798,6 +1900,12 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
             let Ok(recorded_inputs) =
                 serde_json::from_str::<Vec<BazelRepositoryRecordedInput>>(&recorded_inputs_json)
             else {
+                tracing::debug!(
+                    cache_key = %bzlmod_short_cache_key(&cache_info.predeclared_input_hash),
+                    entry = entry_name,
+                    reason = "recorded_inputs_parse_failed",
+                    "bzlmod generated repo contents cache candidate rejected"
+                );
                 return Ok(None);
             };
             let repo = ProjectRelativePathBuf::unchecked_new(format!(
@@ -1806,10 +1914,24 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
                 entry_name
             ));
             if !bzlmod_repo_contents_cache_exists(&project_root, &repo)? {
+                tracing::debug!(
+                    cache_key = %bzlmod_short_cache_key(&cache_info.predeclared_input_hash),
+                    entry = entry_name,
+                    repo = repo.as_str(),
+                    reason = "cached_repo_missing",
+                    "bzlmod generated repo contents cache candidate rejected"
+                );
                 return Ok(None);
             }
             let repo_abs = project_root.resolve(&repo);
             if !bzlmod_generated_repo_symlink_targets_exist(&repo_abs)? {
+                tracing::debug!(
+                    cache_key = %bzlmod_short_cache_key(&cache_info.predeclared_input_hash),
+                    entry = entry_name,
+                    repo = repo.as_str(),
+                    reason = "symlink_target_missing",
+                    "bzlmod generated repo contents cache candidate rejected"
+                );
                 return Ok(None);
             }
             let modified = fs_util::metadata(recorded_inputs_abs)
@@ -1868,7 +1990,7 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
                 return Ok(candidates
                     .into_iter()
                     .map(|(_, candidate)| candidate)
-                    .collect());
+                    .collect::<Vec<_>>());
             }
             Err(error) => return Err(error.categorize_internal()),
         };
@@ -1895,7 +2017,14 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
             .map(|(_, candidate)| candidate)
             .collect())
     })
-    .await
+    .await?;
+    tracing::debug!(
+        cache_key = %cache_key_short,
+        candidates = candidates.len(),
+        elapsed_ms = start.elapsed().as_millis(),
+        "listed bzlmod generated repo contents cache candidates"
+    );
+    Ok(candidates)
 }
 
 fn touch_bzlmod_generated_repo_contents_cache_recorded_inputs(
@@ -1957,16 +2086,52 @@ async fn prepare_bzlmod_generated_external_cell_root_from_repo_contents_cache(
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
 ) -> bz_error::Result<bool> {
+    let start = Instant::now();
     let candidates = bzlmod_generated_repo_contents_cache_candidates(ctx, cache_info).await?;
+    let candidate_count = candidates.len();
     for candidate in candidates {
-        if bzlmod_recorded_inputs_are_current(ctx, &candidate.recorded_inputs).await? {
-            prepare_bzlmod_generated_external_cell_root_from_cache_candidate(
-                ctx, candidate, path, setup, cache_info,
-            )
-            .await?;
-            return Ok(true);
+        let validation_start = Instant::now();
+        match validate_bzlmod_recorded_inputs(ctx, &candidate.recorded_inputs).await? {
+            Ok(()) => {
+                let entry_name = candidate.entry_name.clone();
+                prepare_bzlmod_generated_external_cell_root_from_cache_candidate(
+                    ctx, candidate, path, setup, cache_info,
+                )
+                .await?;
+                tracing::debug!(
+                    repo = setup.canonical_repo_name.as_ref(),
+                    kind = bzlmod_generated_repo_kind(setup),
+                    cache_key = %bzlmod_short_cache_key(&cache_info.predeclared_input_hash),
+                    entry = %entry_name,
+                    candidates = candidate_count,
+                    validation_ms = validation_start.elapsed().as_millis(),
+                    elapsed_ms = start.elapsed().as_millis(),
+                    "bzlmod generated repo contents cache hit"
+                );
+                return Ok(true);
+            }
+            Err(mismatch) => {
+                tracing::debug!(
+                    repo = setup.canonical_repo_name.as_ref(),
+                    kind = bzlmod_generated_repo_kind(setup),
+                    cache_key = %bzlmod_short_cache_key(&cache_info.predeclared_input_hash),
+                    entry = %candidate.entry_name,
+                    mismatch_kind = mismatch.kind(),
+                    mismatch = %mismatch,
+                    validation_ms = validation_start.elapsed().as_millis(),
+                    "bzlmod generated repo contents cache candidate rejected"
+                );
+            }
         }
     }
+    tracing::debug!(
+        repo = setup.canonical_repo_name.as_ref(),
+        kind = bzlmod_generated_repo_kind(setup),
+        cache_key = %bzlmod_short_cache_key(&cache_info.predeclared_input_hash),
+        candidates = candidate_count,
+        elapsed_ms = start.elapsed().as_millis(),
+        "bzlmod generated repo contents cache miss"
+    );
     Ok(false)
 }
 
@@ -2501,8 +2666,12 @@ fn bzlmod_recorded_input_path(project_root: &ProjectRoot, path: &str) -> bz_erro
         .to_owned())
 }
 
+/// Must compute values exactly like `repository_recorded_file_value` in
+/// bz_interpreter_for_build, which records these inputs during repository
+/// rule evaluation: any asymmetry makes recorded inputs permanently stale
+/// and repositories re-materialize on every cold daemon start.
 fn bzlmod_recorded_file_value(path: &Path) -> bz_error::Result<String> {
-    let metadata = match fs::metadata(path) {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
         Err(error) => {
@@ -2511,6 +2680,12 @@ fn bzlmod_recorded_file_value(path: &Path) -> bz_error::Result<String> {
             });
         }
     };
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(path).with_buck_error_context(|| {
+            format!("Error reading bzlmod recorded symlink `{}`", path.display())
+        })?;
+        return Ok(format!("SYMLINK:{}", target.to_string_lossy()));
+    }
     if metadata.is_dir() {
         return Ok("DIR".to_owned());
     }
@@ -2534,8 +2709,10 @@ fn bzlmod_recorded_file_value(path: &Path) -> bz_error::Result<String> {
     Ok("OTHER".to_owned())
 }
 
+/// Mirror of `repository_recorded_dirents_value`; see
+/// `bzlmod_recorded_file_value` for why exact symmetry matters.
 fn bzlmod_recorded_dirents_value(path: &Path) -> bz_error::Result<String> {
-    let metadata = match fs::metadata(path) {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
         Err(error) => {
@@ -2571,9 +2748,11 @@ fn bzlmod_recorded_dirents_value(path: &Path) -> bz_error::Result<String> {
     Ok(format!("DIRENTS:{}", hasher.finalize().to_hex()))
 }
 
+/// Mirror of `repository_recorded_dir_tree_value`; see
+/// `bzlmod_recorded_file_value` for why exact symmetry matters.
 fn bzlmod_recorded_dir_tree_value(path: &Path) -> bz_error::Result<String> {
     fn visit(base: &Path, path: &Path, hasher: &mut blake3::Hasher) -> bz_error::Result<()> {
-        let metadata = match fs::metadata(path) {
+        let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 hasher.update(b"ENOENT");
@@ -2588,7 +2767,9 @@ fn bzlmod_recorded_dir_tree_value(path: &Path) -> bz_error::Result<String> {
         let relative = path.strip_prefix(base).unwrap_or(path);
         hasher.update(relative.to_string_lossy().as_bytes());
         hasher.update(&[0]);
-        if metadata.is_dir() {
+        if metadata.file_type().is_symlink() {
+            hasher.update(bzlmod_recorded_file_value(path)?.as_bytes());
+        } else if metadata.is_dir() {
             hasher.update(b"DIR");
             let mut entries = fs::read_dir(path)
                 .with_buck_error_context(|| {
@@ -2641,11 +2822,115 @@ fn bzlmod_current_repo_mapping(source_cell_name: &str, apparent_name: &str) -> O
         })
 }
 
-async fn bzlmod_recorded_inputs_are_current(
+#[derive(Debug, Clone, Copy)]
+enum BzlmodRecordedFilesystemInputKind {
+    File,
+    Dirents,
+    DirTree,
+}
+
+impl BzlmodRecordedFilesystemInputKind {
+    fn current_value(&self, path: &Path) -> bz_error::Result<String> {
+        match self {
+            Self::File => bzlmod_recorded_file_value(path),
+            Self::Dirents => bzlmod_recorded_dirents_value(path),
+            Self::DirTree => bzlmod_recorded_dir_tree_value(path),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct BzlmodRecordedFilesystemInputCheck {
+    kind: BzlmodRecordedFilesystemInputKind,
+    display_path: String,
+    path: PathBuf,
+    expected_value: String,
+}
+
+#[derive(Debug)]
+enum BzlmodRecordedInputMismatch {
+    EnvVar {
+        name: String,
+    },
+    File {
+        path: String,
+    },
+    Dirents {
+        path: String,
+    },
+    DirTree {
+        path: String,
+    },
+    RepoMapping {
+        source_cell_name: String,
+        apparent_name: String,
+    },
+}
+
+impl BzlmodRecordedInputMismatch {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::EnvVar { .. } => "env",
+            Self::File { .. } => "file",
+            Self::Dirents { .. } => "dirents",
+            Self::DirTree { .. } => "dirtree",
+            Self::RepoMapping { .. } => "repo_mapping",
+        }
+    }
+}
+
+impl fmt::Display for BzlmodRecordedInputMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EnvVar { name } => write!(f, "env var `{name}` changed"),
+            Self::File { path } => write!(f, "file `{path}` changed"),
+            Self::Dirents { path } => write!(f, "directory entries of `{path}` changed"),
+            Self::DirTree { path } => write!(f, "directory tree `{path}` changed"),
+            Self::RepoMapping {
+                source_cell_name,
+                apparent_name,
+            } => {
+                write!(
+                    f,
+                    "repo mapping `{source_cell_name}` -> `{apparent_name}` changed"
+                )
+            }
+        }
+    }
+}
+
+fn bzlmod_validate_recorded_filesystem_inputs(
+    checks: Vec<BzlmodRecordedFilesystemInputCheck>,
+) -> bz_error::Result<Option<BzlmodRecordedInputMismatch>> {
+    for check in checks {
+        let current = check.kind.current_value(&check.path)?;
+        if current != check.expected_value {
+            return Ok(Some(match check.kind {
+                BzlmodRecordedFilesystemInputKind::File => BzlmodRecordedInputMismatch::File {
+                    path: check.display_path,
+                },
+                BzlmodRecordedFilesystemInputKind::Dirents => {
+                    BzlmodRecordedInputMismatch::Dirents {
+                        path: check.display_path,
+                    }
+                }
+                BzlmodRecordedFilesystemInputKind::DirTree => {
+                    BzlmodRecordedInputMismatch::DirTree {
+                        path: check.display_path,
+                    }
+                }
+            }));
+        }
+    }
+    Ok(None)
+}
+
+async fn validate_bzlmod_recorded_inputs(
     ctx: &mut DiceComputations<'_>,
     recorded_inputs: &[BazelRepositoryRecordedInput],
-) -> bz_error::Result<bool> {
+) -> bz_error::Result<Result<(), BzlmodRecordedInputMismatch>> {
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let mut filesystem_checks = Vec::new();
     for input in recorded_inputs {
         match input {
             BazelRepositoryRecordedInput::EnvVar { name, value } => {
@@ -2655,38 +2940,34 @@ async fn bzlmod_recorded_inputs_are_current(
                     .as_ref()
                     != value.as_ref()
                 {
-                    return Ok(false);
+                    return Ok(Err(BzlmodRecordedInputMismatch::EnvVar {
+                        name: name.clone(),
+                    }));
                 }
             }
             BazelRepositoryRecordedInput::File { path, value } => {
-                let path = bzlmod_recorded_input_path(&project_root, path)?;
-                let current = ctx
-                    .get_blocking_executor()
-                    .execute_io_inline(move || bzlmod_recorded_file_value(&path))
-                    .await?;
-                if &current != value {
-                    return Ok(false);
-                }
+                filesystem_checks.push(BzlmodRecordedFilesystemInputCheck {
+                    kind: BzlmodRecordedFilesystemInputKind::File,
+                    display_path: path.clone(),
+                    path: bzlmod_recorded_input_path(&project_root, path)?,
+                    expected_value: value.clone(),
+                });
             }
             BazelRepositoryRecordedInput::Dirents { path, value } => {
-                let path = bzlmod_recorded_input_path(&project_root, path)?;
-                let current = ctx
-                    .get_blocking_executor()
-                    .execute_io_inline(move || bzlmod_recorded_dirents_value(&path))
-                    .await?;
-                if &current != value {
-                    return Ok(false);
-                }
+                filesystem_checks.push(BzlmodRecordedFilesystemInputCheck {
+                    kind: BzlmodRecordedFilesystemInputKind::Dirents,
+                    display_path: path.clone(),
+                    path: bzlmod_recorded_input_path(&project_root, path)?,
+                    expected_value: value.clone(),
+                });
             }
             BazelRepositoryRecordedInput::DirTree { path, value } => {
-                let path = bzlmod_recorded_input_path(&project_root, path)?;
-                let current = ctx
-                    .get_blocking_executor()
-                    .execute_io_inline(move || bzlmod_recorded_dir_tree_value(&path))
-                    .await?;
-                if &current != value {
-                    return Ok(false);
-                }
+                filesystem_checks.push(BzlmodRecordedFilesystemInputCheck {
+                    kind: BzlmodRecordedFilesystemInputKind::DirTree,
+                    display_path: path.clone(),
+                    path: bzlmod_recorded_input_path(&project_root, path)?,
+                    expected_value: value.clone(),
+                });
             }
             BazelRepositoryRecordedInput::RepoMapping {
                 source_repo: _,
@@ -2695,12 +2976,31 @@ async fn bzlmod_recorded_inputs_are_current(
                 canonical_name,
             } => {
                 if &bzlmod_current_repo_mapping(source_cell_name, apparent_name) != canonical_name {
-                    return Ok(false);
+                    return Ok(Err(BzlmodRecordedInputMismatch::RepoMapping {
+                        source_cell_name: source_cell_name.clone(),
+                        apparent_name: apparent_name.clone(),
+                    }));
                 }
             }
         }
     }
-    Ok(true)
+    if let Some(mismatch) = ctx
+        .get_blocking_executor()
+        .execute_io_inline(move || bzlmod_validate_recorded_filesystem_inputs(filesystem_checks))
+        .await?
+    {
+        return Ok(Err(mismatch));
+    }
+    Ok(Ok(()))
+}
+
+async fn bzlmod_recorded_inputs_are_current(
+    ctx: &mut DiceComputations<'_>,
+    recorded_inputs: &[BazelRepositoryRecordedInput],
+) -> bz_error::Result<bool> {
+    Ok(validate_bzlmod_recorded_inputs(ctx, recorded_inputs)
+        .await?
+        .is_ok())
 }
 
 fn bzlmod_hidden_lockfile_path() -> ProjectRelativePathBuf {
@@ -3999,6 +4299,7 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
             Ok(())
         })
         .await?;
+    let evaluation_start = Instant::now();
     let result = evaluate_bzlmod_repository_rule_with_recorded_inputs(
         ctx,
         invocation,
@@ -4011,6 +4312,16 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
         cancellations,
     )
     .await?;
+    tracing::debug!(
+        repo = canonical_repo_name,
+        path = path.as_str(),
+        kind,
+        recorded_inputs = result.recorded_inputs.len(),
+        generated_files = result.files.len(),
+        reproducible = result.reproducible,
+        elapsed_ms = evaluation_start.elapsed().as_millis(),
+        "evaluated bzlmod repository rule"
+    );
     let files = result
         .files
         .into_iter()
