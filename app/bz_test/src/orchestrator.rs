@@ -2073,13 +2073,9 @@ fn add_bazel_test_environment(
     );
     insert_default(env, "TEST_BINARY", test_binary);
 
-    if test_info.shard_count() > 0 {
-        env.insert("TEST_SHARD_INDEX".to_owned(), "0".to_owned());
-        env.insert(
-            "TEST_TOTAL_SHARDS".to_owned(),
-            test_info.shard_count().to_string(),
-        );
-    }
+    // Bazel sets shard/run-specific env in TestRunnerAction. The internal
+    // runner has that per-execution context; this orchestrator only provides
+    // stable runfiles/env defaults.
 }
 
 fn bazel_test_runfiles_inputs(

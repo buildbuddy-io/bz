@@ -340,6 +340,27 @@ if [ -n "${TEST_UNDECLARED_OUTPUTS_ZIP:-}" ] && cd "$TEST_UNDECLARED_OUTPUTS_DIR
   cd "$EXEC_ROOT" || true
 fi
 
+encode_stream() {
+  LC_ALL=C sed -E \
+      -e 's/.*/& /g' \
+      -e 's/(('\
+"$(echo -e '[\x9\x20-\x7f]')|"\
+"$(echo -e '[\xc0-\xdf][\x80-\xbf]')|"\
+"$(echo -e '[\xe0-\xec][\x80-\xbf][\x80-\xbf]')|"\
+"$(echo -e '[\xed][\x80-\x9f][\x80-\xbf]')|"\
+"$(echo -e '[\xee-\xef][\x80-\xbf][\x80-\xbf]')|"\
+"$(echo -e '[\xf0][\x80-\x8f][\x80-\xbf][\x80-\xbf]')"\
+')*)./\1?/g' \
+      -e 's/(.*)\?/\1/g' \
+      -e 's|]]>|]]>]]<![CDATA[>|g'
+}
+
+encode_as_xml() {
+  if [ -f "$1" ]; then
+    cat "$1" | encode_stream
+  fi
+}
+
 if [ ! -f "$XML_OUTPUT_FILE" ]; then
   test_name="${TEST_BINARY#./}"
   test_name="${test_name#../}"
@@ -350,6 +371,7 @@ if [ ! -f "$XML_OUTPUT_FILE" ]; then
     shard_num=$((TEST_SHARD_INDEX + 1))
     test_name="${test_name}_shard_${shard_num}/${TEST_TOTAL_SHARDS}"
   fi
+  encoded_log="$(encode_as_xml "$TEST_LOG")" || exit_code=1
   errors=0
   error_msg=""
   if [ "$exit_code" -ne 0 ]; then
@@ -363,9 +385,7 @@ if [ ! -f "$XML_OUTPUT_FILE" ]; then
     printf '    <testcase name="%s" status="run" duration="%s" time="%s">%s</testcase>\n' "$test_name" "$duration_seconds" "$duration_seconds" "$error_msg"
     printf '      <system-out>\n'
     printf 'Generated test.log (if the file is not UTF-8, then this may be unreadable):\n'
-    printf '<![CDATA['
-    sed 's|]]>|]]>]]<![CDATA[>|g' "$TEST_LOG" 2>/dev/null
-    printf ']]>\n'
+    printf '<![CDATA[%s]]>\n' "$encoded_log"
     printf '      </system-out>\n'
     printf '  </testsuite>\n'
     printf '</testsuites>\n'
@@ -492,8 +512,9 @@ impl Buck2TestRunner {
         &self,
         spec: BazelTestSpec,
     ) -> bz_error::Result<RunVerdict> {
+        let settings = self.bazel_test_settings(&spec);
         let shard_runs = spec.shard_count.max(1);
-        let run_count = spec.runs_per_test.max(1);
+        let run_count = settings.runs_per_test.max(1);
         futures::stream::iter(
             (0..shard_runs).flat_map(|shard_index| {
                 (0..run_count).map(move |run_index| (shard_index, run_index))
@@ -501,6 +522,7 @@ impl Buck2TestRunner {
         )
         .map(|(shard_index, run_index)| {
             let spec = spec.clone();
+            let settings = settings.clone();
             async move {
                 let name =
                     bazel_test_name(&spec.target, shard_index, shard_runs, run_index, run_count);
@@ -512,6 +534,7 @@ impl Buck2TestRunner {
                         shard_runs,
                         run_index,
                         run_count,
+                        settings,
                     )
                     .await?;
 
@@ -634,6 +657,7 @@ impl Buck2TestRunner {
         shard_runs: u32,
         run_index: u32,
         run_count: u32,
+        settings: BazelTestSettings,
     ) -> bz_error::Result<ExecuteResponse> {
         let target_name = target_name(&spec.target);
         let stage = TestStage::Testing {
@@ -676,6 +700,7 @@ impl Buck2TestRunner {
         add_bazel_test_environment(
             &mut env,
             &spec,
+            &settings,
             shard_index,
             shard_runs,
             run_index,
@@ -688,7 +713,7 @@ impl Buck2TestRunner {
             shard_runs,
             run_index,
             run_count,
-            spec.coverage_enabled,
+            settings.coverage_enabled,
         );
         let executor_override = None;
 
@@ -714,6 +739,23 @@ impl Buck2TestRunner {
             .iter()
             .map(|s| s.parse())
             .collect::<bz_error::Result<_>>()
+    }
+
+    fn bazel_test_settings(&self, spec: &BazelTestSpec) -> BazelTestSettings {
+        BazelTestSettings {
+            runfiles_manifest_only: spec.runfiles_manifest_only
+                || self.config.runfiles_manifest_only,
+            runs_per_test: self.config.runs_per_test.unwrap_or(spec.runs_per_test),
+            test_filter: self
+                .config
+                .test_filter
+                .clone()
+                .unwrap_or_else(|| spec.test_filter.clone()),
+            test_runner_fail_fast: spec.test_runner_fail_fast || self.config.test_runner_fail_fast,
+            zip_undeclared_outputs: spec.zip_undeclared_outputs
+                || self.config.zip_undeclared_test_outputs,
+            coverage_enabled: spec.coverage_enabled || self.config.coverage_enabled,
+        }
     }
 
     async fn report_test_result(&self, test_result: TestResult) -> bz_error::Result<()> {
@@ -833,6 +875,7 @@ fn add_declared_env(env: &mut SortedVectorMap<String, ArgValue>, key: &str, path
 fn add_bazel_test_environment(
     env: &mut SortedVectorMap<String, ArgValue>,
     spec: &BazelTestSpec,
+    settings: &BazelTestSettings,
     shard_index: u32,
     shard_runs: u32,
     run_index: u32,
@@ -877,13 +920,13 @@ fn add_bazel_test_environment(
         add_string_env_if_absent(env, "TEST_RANDOM_SEED", (run_index + 1).to_string());
         add_string_env_if_absent(env, "TEST_RUN_NUMBER", (run_index + 1).to_string());
     }
-    if !spec.test_filter.is_empty() {
-        add_string_env(env, "TESTBRIDGE_TEST_ONLY", spec.test_filter.clone());
+    if !settings.test_filter.is_empty() {
+        add_string_env(env, "TESTBRIDGE_TEST_ONLY", settings.test_filter.clone());
     }
-    if spec.test_runner_fail_fast {
+    if settings.test_runner_fail_fast {
         add_string_env(env, "TESTBRIDGE_TEST_RUNNER_FAIL_FAST", "1");
     }
-    if spec.runfiles_manifest_only {
+    if settings.runfiles_manifest_only {
         add_string_env(env, "RUNFILES_MANIFEST_ONLY", "1");
     }
 
@@ -944,7 +987,7 @@ fn add_bazel_test_environment(
             "test.infrastructure_failure",
         ),
     );
-    if spec.zip_undeclared_outputs {
+    if settings.zip_undeclared_outputs {
         add_declared_env(
             env,
             "TEST_UNDECLARED_OUTPUTS_ZIP",
@@ -967,7 +1010,7 @@ fn add_bazel_test_environment(
         "TEST_UNDECLARED_OUTPUTS_ANNOTATIONS_DIR",
         test_outputs_manifest_dir,
     );
-    if spec.coverage_enabled {
+    if settings.coverage_enabled {
         add_string_env(env, "RUNTEST_PRESERVE_CWD", "1");
         add_declared_env(
             env,
@@ -983,12 +1026,24 @@ fn add_bazel_test_environment(
         add_declared_env(
             env,
             "COVERAGE_DIR",
-            bazel_output_path(shard_index, shard_runs, run_index, run_count, "test.coverage"),
+            bazel_output_path(
+                shard_index,
+                shard_runs,
+                run_index,
+                run_count,
+                "test.coverage",
+            ),
         );
         add_declared_env(
             env,
             "COVERAGE_OUTPUT_FILE",
-            bazel_output_path(shard_index, shard_runs, run_index, run_count, "coverage.dat"),
+            bazel_output_path(
+                shard_index,
+                shard_runs,
+                run_index,
+                run_count,
+                "coverage.dat",
+            ),
         );
         add_string_env(env, "SPLIT_COVERAGE_POST_PROCESSING", "0");
         add_string_env(env, "IS_COVERAGE_SPAWN", "0");
@@ -1065,6 +1120,16 @@ fn bazel_output_path(
         (Some(dir), None) | (None, Some(dir)) => format!("{dir}/{name}"),
         (None, None) => name.to_owned(),
     }
+}
+
+#[derive(Clone)]
+struct BazelTestSettings {
+    runfiles_manifest_only: bool,
+    runs_per_test: u32,
+    test_filter: String,
+    test_runner_fail_fast: bool,
+    zip_undeclared_outputs: bool,
+    coverage_enabled: bool,
 }
 
 #[derive(Debug, PartialEq)]

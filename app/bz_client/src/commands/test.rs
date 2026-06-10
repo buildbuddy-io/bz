@@ -149,14 +149,36 @@ If include patterns are present, regardless of whether exclude patterns are pres
     #[clap(long)]
     test_executor_stderr: Option<OutputDestinationArg>,
 
-    /// Additional arguments passed to the test executor.
-    ///
-    /// Test executor is expected to have `--env` flag to pass environment variables.
-    /// Can be used like this:
-    ///
-    /// bz test //foo:bar -- --env PRIVATE_KEY=123
-    #[clap(name = "TEST_EXECUTOR_ARGS", raw = true)]
-    test_executor_args: Vec<String>,
+    /// Additional argument passed to the test binary.
+    #[clap(long = "test_arg", alias = "test-arg", allow_hyphen_values = true)]
+    test_arg: Vec<String>,
+
+    /// Environment variable passed to tests, in NAME=VALUE form.
+    #[clap(long = "test_env", alias = "test-env")]
+    test_env: Vec<String>,
+
+    /// Run each test this many times.
+    #[clap(long = "runs_per_test", alias = "runs-per-test")]
+    runs_per_test: Option<u32>,
+
+    /// Filter test cases using the test runner's native filter variable.
+    #[clap(long = "test_filter", alias = "test-filter")]
+    test_filter: Option<String>,
+
+    /// Ask supported test runners to stop after the first failing test.
+    #[clap(long = "test_runner_fail_fast", alias = "test-runner-fail-fast")]
+    test_runner_fail_fast: bool,
+
+    /// Zip undeclared test outputs.
+    #[clap(
+        long = "zip_undeclared_test_outputs",
+        alias = "zip-undeclared-test-outputs"
+    )]
+    zip_undeclared_test_outputs: bool,
+
+    /// Run tests using manifest-only runfiles lookup.
+    #[clap(long = "runfiles_manifest_only", alias = "runfiles-manifest-only")]
+    runfiles_manifest_only: bool,
 
     /// Also build DefaultInfo provider, which is what `bz build` command builds (this is not the default)
     #[clap(long, group = "default-info")]
@@ -199,6 +221,15 @@ If include patterns are present, regardless of whether exclude patterns are pres
 
     #[clap(flatten)]
     common_opts: CommonCommandOptions,
+
+    /// Additional arguments passed to the test executor.
+    ///
+    /// Test executor is expected to have `--env` flag to pass environment variables.
+    /// Can be used like this:
+    ///
+    /// bz test //foo:bar -- --env PRIVATE_KEY=123
+    #[clap(name = "TEST_EXECUTOR_ARGS", raw = true)]
+    test_executor_args: Vec<String>,
 }
 
 #[derive(Debug, bz_error::Error)]
@@ -337,7 +368,7 @@ impl StreamingCommand for TestCommand {
                     target_cfg: Some(self.target_cfg.target_cfg_with_default_platform(
                         self.common_opts.config_opts.implied_target_platform(),
                     )),
-                    test_executor_args: self.test_executor_args,
+                    test_executor_args: self.bazel_test_executor_args(),
                     excluded_labels: self.exclude,
                     included_labels: self.include,
                     always_exclude: self.always_exclude,
@@ -535,5 +566,38 @@ impl StreamingCommand for TestCommand {
 
     fn build_event_protocol_target_patterns(&self) -> Vec<String> {
         self.patterns.clone()
+    }
+}
+
+impl TestCommand {
+    fn bazel_test_executor_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+        for env in &self.test_env {
+            args.push("--env".to_owned());
+            args.push(env.to_owned());
+        }
+        for arg in &self.test_arg {
+            args.push("--test-arg".to_owned());
+            args.push(arg.to_owned());
+        }
+        if let Some(runs_per_test) = self.runs_per_test {
+            args.push("--runs_per_test".to_owned());
+            args.push(runs_per_test.to_string());
+        }
+        if let Some(test_filter) = &self.test_filter {
+            args.push("--test_filter".to_owned());
+            args.push(test_filter.to_owned());
+        }
+        if self.test_runner_fail_fast {
+            args.push("--test_runner_fail_fast".to_owned());
+        }
+        if self.zip_undeclared_test_outputs {
+            args.push("--zip_undeclared_test_outputs".to_owned());
+        }
+        if self.runfiles_manifest_only {
+            args.push("--runfiles_manifest_only".to_owned());
+        }
+        args.extend(self.test_executor_args.iter().cloned());
+        args
     }
 }

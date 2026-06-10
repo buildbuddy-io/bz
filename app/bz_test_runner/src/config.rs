@@ -30,6 +30,35 @@ pub struct Config {
     /// Available as a workaround for when test features are available.
     #[clap(long, num_args=1.., allow_hyphen_values = true)]
     pub test_arg: Vec<String>,
+
+    /// Bazel-compatible --runs_per_test value.
+    #[clap(long = "runs_per_test", alias = "runs-per-test")]
+    pub runs_per_test: Option<u32>,
+
+    /// Bazel-compatible --test_filter value.
+    #[clap(long = "test_filter", alias = "test-filter")]
+    pub test_filter: Option<String>,
+
+    /// Bazel-compatible --test_runner_fail_fast flag.
+    #[clap(long = "test_runner_fail_fast", alias = "test-runner-fail-fast")]
+    pub test_runner_fail_fast: bool,
+
+    /// Bazel-compatible --zip_undeclared_test_outputs flag.
+    #[clap(
+        long = "zip_undeclared_test_outputs",
+        alias = "zip-undeclared-test-outputs",
+        alias = "zip_undeclared_outputs",
+        alias = "zip-undeclared-outputs"
+    )]
+    pub zip_undeclared_test_outputs: bool,
+
+    /// Force Bazel manifest-only runfiles behavior.
+    #[clap(long = "runfiles_manifest_only", alias = "runfiles-manifest-only")]
+    pub runfiles_manifest_only: bool,
+
+    /// Force Bazel coverage-mode test env behavior.
+    #[clap(long = "coverage_enabled", alias = "coverage-enabled", hide = true)]
+    pub coverage_enabled: bool,
 }
 
 /// Uiltity that can be used to parse Env values from CLI arguments.
