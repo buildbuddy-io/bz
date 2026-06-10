@@ -47,12 +47,7 @@ pub type SpecReceiver = UnboundedReceiver<TestSpec>;
 const BAZEL_TEST_SETUP_SCRIPT: &str = r#"set +e
 
 is_absolute() {
-  case "$1" in
-    /*) return 0 ;;
-    [A-Za-z]:/*) return 0 ;;
-    [A-Za-z]:\\*) return 0 ;;
-    *) return 1 ;;
-  esac
+  [[ "$1" = /* ]] || [[ "$1" =~ ^[a-zA-Z]:[/\\].* ]]
 }
 
 absolutize_var() {
@@ -66,6 +61,9 @@ absolutize_var() {
 cache_status="$1"
 shift
 absolutize_var cache_status
+
+# Shift stderr to stdout, matching Bazel's test setup wrapper.
+exec 2>&1
 
 EXEC_ROOT="$PWD"
 export BAZEL_TEST=1
@@ -85,9 +83,15 @@ absolutize_var TEST_SRCDIR
 absolutize_var TEST_TMPDIR
 absolutize_var XML_OUTPUT_FILE
 absolutize_var TEST_SHARD_STATUS_FILE
-absolutize_var RUNFILES_DIR
-absolutize_var JAVA_RUNFILES
-absolutize_var PYTHON_RUNFILES
+if [ -n "${RUNFILES_DIR:-}" ]; then
+  absolutize_var RUNFILES_DIR
+fi
+if [ -n "${JAVA_RUNFILES:-}" ]; then
+  absolutize_var JAVA_RUNFILES
+fi
+if [ -n "${PYTHON_RUNFILES:-}" ]; then
+  absolutize_var PYTHON_RUNFILES
+fi
 
 if [ -z "${HOME:-}" ] || ! is_absolute "$HOME"; then
   export HOME="$TEST_TMPDIR"
@@ -108,6 +112,12 @@ mkdir -p "$(dirname "$XML_OUTPUT_FILE")" \
   "$(dirname "$TEST_INFRASTRUCTURE_FAILURE_FILE")" \
   "$(dirname "$cache_status")"
 
+: > "$TEST_LOG"
+{
+  echo 'exec ${PAGER:-/usr/bin/less} "$0" || exit 1'
+  echo "Executing tests from ${TEST_TARGET}"
+} >> "$TEST_LOG"
+
 if [ -n "${TEST_SHARD_STATUS_FILE:-}" ]; then
   mkdir -p "$(dirname "$TEST_SHARD_STATUS_FILE")"
 fi
@@ -122,9 +132,20 @@ if [ -n "${TEST_TOTAL_SHARDS+x}" ] && [ "${TEST_TOTAL_SHARDS:-0}" != "0" ]; then
   export GTEST_SHARD_STATUS_FILE="$TEST_SHARD_STATUS_FILE"
 fi
 export GTEST_TMP_DIR="$TEST_TMPDIR"
-export GUNIT_OUTPUT="xml:$XML_OUTPUT_FILE"
+GUNIT_OUTPUT="xml:$XML_OUTPUT_FILE"
 
 RUNFILES_MANIFEST_FILE="$TEST_SRCDIR/MANIFEST"
+if [ "${RUNFILES_MANIFEST_ONLY:-}" = "1" ] && [ ! -e "$RUNFILES_MANIFEST_FILE" ] && [ -d "$TEST_SRCDIR" ]; then
+  (
+    cd "$TEST_SRCDIR" || exit 1
+    find -L . -type f | while IFS= read -r runfile; do
+      runfile="${runfile#./}"
+      [ "$runfile" = "MANIFEST" ] && continue
+      target="$TEST_SRCDIR/$runfile"
+      printf '%s %s\n' "$runfile" "$target"
+    done | sort
+  ) > "$RUNFILES_MANIFEST_FILE"
+fi
 if [ "${RUNFILES_MANIFEST_ONLY:-}" = "1" ] && [ -e "$RUNFILES_MANIFEST_FILE" ]; then
   export RUNFILES_MANIFEST_FILE
   export RUNFILES_MANIFEST_ONLY
@@ -156,11 +177,15 @@ if [ -z "${COVERAGE_DIR:-}" ]; then
   cd "$DIR" || { echo "Could not chdir $DIR"; exit 1; }
 fi
 
-echo "-----------------------------------------------------------------------------"
+echo "-----------------------------------------------------------------------------" >> "$TEST_LOG"
 PATH=".:$PATH"
 
-EXE="${1#./}"
-shift
+if [ -z "${COVERAGE_DIR:-}" ]; then
+  EXE="${1#./}"
+  shift
+else
+  EXE="${2#./}"
+fi
 if is_absolute "$EXE"; then
   TEST_PATH="$EXE"
 elif [ -n "${TEST_WORKSPACE:-}" ]; then
@@ -175,10 +200,97 @@ if [ -z "$TEST_PATH" ]; then
   TEST_PATH="$EXE"
 fi
 
+rlocation() {
+  caller 0 | {
+    read -r LINE SUB FILE
+    echo >&2 "ERROR: rlocation is no longer implicitly provided by Bazel's test setup, but called from $SUB in line $LINE of $FILE. Please use https://github.com/bazelbuild/rules_shell/blob/main/shell/runfiles/runfiles.bash instead."
+    exit 1
+  }
+}
+export -f rlocation
+
+if [ -n "${TEST_SHORT_EXEC_PATH:-}" ]; then
+  QUALIFIER=0
+  BASE="${EXEC_ROOT}/t${QUALIFIER}"
+  while [[ -e "${BASE}" || -e "${BASE}.exe" || -e "${BASE}.zip" ]]; do
+    ((QUALIFIER++))
+    BASE="${EXEC_ROOT}/t${QUALIFIER}"
+  done
+
+  ln -s "${TEST_PATH%.*}" "${BASE}" 2>/dev/null
+  ln -s "${TEST_PATH%.*}.zip" "${BASE}.zip" 2>/dev/null
+  ln -s "${TEST_PATH}" "${BASE}.exe"
+  TEST_PATH="${BASE}.exe"
+fi
+
 rm -f "$TEST_PREMATURE_EXIT_FILE" "$TEST_INFRASTRUCTURE_FAILURE_FILE" "$TEST_SHARD_STATUS_FILE"
 : > "$TEST_PREMATURE_EXIT_FILE"
-"$TEST_PATH" "$@" > "$TEST_LOG" 2>&1
+
+kill_group() {
+  local signal="${1-}"
+  local pid="${2-}"
+  kill -"$signal" -"$pid" &> /dev/null
+}
+
+childPid=""
+signal_children() {
+  local signal="${1-}"
+  if [ "${signal}" = "SIGTERM" ]; then
+    echo "-- Test timed out at $(date +"%F %T %Z") --" >> "$TEST_LOG"
+  fi
+  if [ -n "$childPid" ]; then
+    kill_group "$signal" "$childPid"
+  fi
+}
+
+exit_code=0
+signals="$(trap -l | sed -E 's/[0-9]+\)//g')"
+for signal in $signals; do
+  [ "${signal}" = "SIGCHLD" ] && continue
+  trap "signal_children ${signal}" "${signal}"
+done
+start=$(date +%s)
+
+if [ -n "${BUILD_EXECROOT:-}" ]; then
+  rm -f "$TEST_PREMATURE_EXIT_FILE"
+  exec "${TEST_PATH}" "$@" >> "$TEST_LOG" 2>&1
+fi
+
+set -m
+if [ -z "${COVERAGE_DIR:-}" ]; then
+  ("${TEST_PATH}" "$@" >> "$TEST_LOG" 2>&1) <&0 &
+else
+  ("$1" "$TEST_PATH" "${@:3}" >> "$TEST_LOG" 2>&1) <&0 &
+fi
+childPid=$!
+
+(
+  if ! (ps -p $$ &> /dev/null || [ "$(pgrep -a -g $$ 2> /dev/null)" != "" ]); then
+    exit 0
+  fi
+  while ps -p $$ &> /dev/null || [ "$(pgrep -a -g $$ 2> /dev/null)" != "" ]; do
+    sleep 10
+  done
+  kill_group SIGKILL "$childPid"
+) &>/dev/null &
+cleanupPid=$!
+
+set +m
+while kill -0 "$childPid" 2>/dev/null; do
+  wait "$childPid"
+done
+wait "$childPid"
 exit_code=$?
+duration_seconds=$(($(date +%s) - start))
+
+kill_group SIGKILL "$childPid"
+kill_group SIGKILL "$cleanupPid" &> /dev/null
+wait "$cleanupPid" 2>/dev/null
+
+for signal in $signals; do
+  trap - "${signal}"
+done
+
 rm -f "$TEST_PREMATURE_EXIT_FILE"
 
 if [ "$exit_code" -eq 0 ] && [ -n "${TEST_TOTAL_SHARDS+x}" ] && [ "${TEST_TOTAL_SHARDS:-0}" != "0" ] && [ ! -f "$TEST_SHARD_STATUS_FILE" ]; then
@@ -205,15 +317,25 @@ EOF_UNDECLARED
 fi
 
 if [ -n "${TEST_UNDECLARED_OUTPUTS_ANNOTATIONS:-}" ] && [ -d "$TEST_UNDECLARED_OUTPUTS_ANNOTATIONS_DIR" ]; then
-  cat "$TEST_UNDECLARED_OUTPUTS_ANNOTATIONS_DIR"/*.part > "$TEST_UNDECLARED_OUTPUTS_ANNOTATIONS" 2>/dev/null || true
-  cat "$TEST_UNDECLARED_OUTPUTS_ANNOTATIONS_DIR"/*.pb > "${TEST_UNDECLARED_OUTPUTS_ANNOTATIONS}.pb" 2>/dev/null || true
+  (
+    shopt -s failglob
+    cat "$TEST_UNDECLARED_OUTPUTS_ANNOTATIONS_DIR"/*.part > "$TEST_UNDECLARED_OUTPUTS_ANNOTATIONS"
+  ) 2>/dev/null
+  (
+    shopt -s failglob
+    cat "$TEST_UNDECLARED_OUTPUTS_ANNOTATIONS_DIR"/*.pb > "${TEST_UNDECLARED_OUTPUTS_ANNOTATIONS}.pb"
+  ) 2>/dev/null
 fi
 
-if [ -n "${TEST_UNDECLARED_OUTPUTS_ZIP:-}" ] && cd "$TEST_UNDECLARED_OUTPUTS_DIR" 2>/dev/null; then
-  set -- *
-  if [ "$1" != "*" ]; then
-    zip -qr "$TEST_UNDECLARED_OUTPUTS_ZIP" -- "$@" 2>> "$TEST_LOG" || exit_code=1
-    rm -rf -- "$@"
+if [ -n "${TEST_UNDECLARED_OUTPUTS_ZIP:-}" ] && cd "$TEST_UNDECLARED_OUTPUTS_DIR"; then
+  shopt -s dotglob nullglob
+  UNDECLARED_OUTPUTS=(*)
+  if [[ "${#UNDECLARED_OUTPUTS[@]}" != 0 ]]; then
+    if ! zip_output="$(zip -qr "$TEST_UNDECLARED_OUTPUTS_ZIP" -- "${UNDECLARED_OUTPUTS[@]}")"; then
+      echo >&2 "Could not create \"$TEST_UNDECLARED_OUTPUTS_ZIP\": $zip_output"
+      exit_code=1
+    fi
+    rm -r "${UNDECLARED_OUTPUTS[@]}"
   fi
   cd "$EXEC_ROOT" || true
 fi
@@ -238,10 +360,13 @@ if [ ! -f "$XML_OUTPUT_FILE" ]; then
     printf '<?xml version="1.0" encoding="UTF-8"?>\n'
     printf '<testsuites>\n'
     printf '  <testsuite name="%s" tests="1" failures="0" errors="%s">\n' "$test_name" "$errors"
-    printf '    <testcase name="%s" status="run" duration="0" time="0">%s</testcase>\n' "$test_name" "$error_msg"
-    printf '    <system-out><![CDATA[\n'
+    printf '    <testcase name="%s" status="run" duration="%s" time="%s">%s</testcase>\n' "$test_name" "$duration_seconds" "$duration_seconds" "$error_msg"
+    printf '      <system-out>\n'
+    printf 'Generated test.log (if the file is not UTF-8, then this may be unreadable):\n'
+    printf '<![CDATA['
     sed 's|]]>|]]>]]<![CDATA[>|g' "$TEST_LOG" 2>/dev/null
-    printf ']]></system-out>\n'
+    printf ']]>\n'
+    printf '      </system-out>\n'
     printf '  </testsuite>\n'
     printf '</testsuites>\n'
   } > "$XML_OUTPUT_FILE"
@@ -261,6 +386,9 @@ mkdir -p "$(dirname "$TEST_LOGSPLITTER_OUTPUT_FILE")"
 : > "${TEST_UNDECLARED_OUTPUTS_ANNOTATIONS}.pb"
 
 cat "$TEST_LOG"
+if [ "$exit_code" -gt 128 ]; then
+  kill -$(($exit_code - 128)) $$ &> /dev/null
+fi
 exit "$exit_code"
 "#;
 
@@ -555,7 +683,13 @@ impl Buck2TestRunner {
         );
 
         let host_sharing_requirements = HostSharingRequirements::default();
-        let pre_create_dirs = bazel_pre_create_dirs(shard_index, shard_runs, run_index, run_count);
+        let pre_create_dirs = bazel_pre_create_dirs(
+            shard_index,
+            shard_runs,
+            run_index,
+            run_count,
+            spec.coverage_enabled,
+        );
         let executor_override = None;
 
         self.orchestrator_client
@@ -682,6 +816,16 @@ fn add_string_env(
     env.insert(key.to_owned(), verbatim_arg(value));
 }
 
+fn add_string_env_if_absent(
+    env: &mut SortedVectorMap<String, ArgValue>,
+    key: &str,
+    value: impl Into<String>,
+) {
+    if env.get(key).is_none() {
+        env.insert(key.to_owned(), verbatim_arg(value));
+    }
+}
+
 fn add_declared_env(env: &mut SortedVectorMap<String, ArgValue>, key: &str, path: String) {
     env.insert(key.to_owned(), declared_output_arg(path));
 }
@@ -730,8 +874,8 @@ fn add_bazel_test_environment(
         },
     );
     if run_count > 1 {
-        add_string_env(env, "TEST_RANDOM_SEED", (run_index + 1).to_string());
-        add_string_env(env, "TEST_RUN_NUMBER", (run_index + 1).to_string());
+        add_string_env_if_absent(env, "TEST_RANDOM_SEED", (run_index + 1).to_string());
+        add_string_env_if_absent(env, "TEST_RUN_NUMBER", (run_index + 1).to_string());
     }
     if !spec.test_filter.is_empty() {
         add_string_env(env, "TESTBRIDGE_TEST_ONLY", spec.test_filter.clone());
@@ -825,6 +969,28 @@ fn add_bazel_test_environment(
     );
     if spec.coverage_enabled {
         add_string_env(env, "RUNTEST_PRESERVE_CWD", "1");
+        add_declared_env(
+            env,
+            "COVERAGE_MANIFEST",
+            bazel_output_path(
+                shard_index,
+                shard_runs,
+                run_index,
+                run_count,
+                "test.instrumented_files",
+            ),
+        );
+        add_declared_env(
+            env,
+            "COVERAGE_DIR",
+            bazel_output_path(shard_index, shard_runs, run_index, run_count, "test.coverage"),
+        );
+        add_declared_env(
+            env,
+            "COVERAGE_OUTPUT_FILE",
+            bazel_output_path(shard_index, shard_runs, run_index, run_count, "coverage.dat"),
+        );
+        add_string_env(env, "SPLIT_COVERAGE_POST_PROCESSING", "0");
         add_string_env(env, "IS_COVERAGE_SPAWN", "0");
     }
 
@@ -844,8 +1010,9 @@ fn bazel_pre_create_dirs(
     shard_runs: u32,
     run_index: u32,
     run_count: u32,
+    coverage_enabled: bool,
 ) -> Vec<DeclaredOutput> {
-    [
+    let mut dirs = vec![
         bazel_output_path(shard_index, shard_runs, run_index, run_count, "test_tmpdir"),
         bazel_output_path(
             shard_index,
@@ -868,10 +1035,19 @@ fn bazel_pre_create_dirs(
             run_count,
             "test.raw_splitlogs",
         ),
-    ]
-    .into_iter()
-    .map(|path| DeclaredOutput::unchecked_new(path, RemoteStorageConfig::default()))
-    .collect()
+    ];
+    if coverage_enabled {
+        dirs.push(bazel_output_path(
+            shard_index,
+            shard_runs,
+            run_index,
+            run_count,
+            "test.coverage",
+        ));
+    }
+    dirs.into_iter()
+        .map(|path| DeclaredOutput::unchecked_new(path, RemoteStorageConfig::default()))
+        .collect()
 }
 
 fn bazel_output_path(
