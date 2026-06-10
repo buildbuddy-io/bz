@@ -125,6 +125,19 @@ pub struct WriteActionResultResponse {
     pub ttl_seconds: i64,
 }
 
+/// Response for [`crate::REClient::fetch_blob`], the Remote Asset API
+/// (`build.bazel.remote.asset.v1.Fetch/FetchBlob`).
+#[derive(Clone, Debug, Default)]
+pub struct FetchBlobResponse {
+    /// The URI from the request that resulted in a successful retrieval.
+    pub uri: String,
+    /// The digest of the fetched content, available for download through the
+    /// CAS (e.g. via [`crate::REClient::download`]).
+    pub digest: TDigest,
+    // Compatibility with the Thrift structs
+    pub _dot_dot_default: (),
+}
+
 #[derive(Clone, Default)]
 pub struct DownloadResponse {
     pub inlined_blobs: Option<Vec<InlinedDigestWithStatus>>,

@@ -40,6 +40,10 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use lru::LruCache;
 use once_cell::sync::Lazy;
 use prost::Message;
+use re_grpc_proto::build::bazel::remote::asset::v1::FetchBlobRequest as GFetchBlobRequest;
+use re_grpc_proto::build::bazel::remote::asset::v1::FetchBlobResponse as GFetchBlobResponse;
+use re_grpc_proto::build::bazel::remote::asset::v1::Qualifier as GQualifier;
+use re_grpc_proto::build::bazel::remote::asset::v1::fetch_client::FetchClient;
 use re_grpc_proto::build::bazel::remote::execution::v2::ActionResult;
 use re_grpc_proto::build::bazel::remote::execution::v2::BatchReadBlobsRequest;
 use re_grpc_proto::build::bazel::remote::execution::v2::BatchReadBlobsResponse;
@@ -424,6 +428,11 @@ impl REClientBuilder {
         let (bytestream_endpoint, _bytestream_address) =
             endpoint_for_address(opts, tls_config, opts.cas_address.clone())
                 .context("Error creating ByteStream endpoint")?;
+        // The Remote Asset API makes fetched assets available in the CAS, so
+        // it is served by (and configured alongside) the CAS endpoint.
+        let (fetch_endpoint, _fetch_address) =
+            endpoint_for_address(opts, tls_config, opts.cas_address.clone())
+                .context("Error creating Fetch endpoint")?;
         let (capabilities_endpoint, _capabilities_address) =
             endpoint_for_address(opts, tls_config, reapi_service_address)
                 .context("Error creating Capabilities endpoint")?;
@@ -522,6 +531,11 @@ impl REClientBuilder {
             ),
             bytestream_channel: GrpcChannelPool::new(
                 bytestream_endpoint,
+                max_connections,
+                max_concurrency_per_connection,
+            ),
+            fetch_channel: GrpcChannelPool::new(
+                fetch_endpoint,
                 max_connections,
                 max_concurrency_per_connection,
             ),
@@ -762,6 +776,7 @@ pub struct GRPCClients {
     execution_channel: GrpcChannelPool,
     action_cache_channel: GrpcChannelPool,
     bytestream_channel: GrpcChannelPool,
+    fetch_channel: GrpcChannelPool,
 }
 
 impl GRPCClients {
@@ -806,6 +821,17 @@ impl GRPCClients {
         let (channel, permit) = self.bytestream_channel.channel().await?;
         Ok((
             ByteStreamClient::with_interceptor(channel, self.interceptor.dupe())
+                .max_decoding_message_size(self.max_decoding_message_size),
+            permit,
+        ))
+    }
+
+    async fn fetch_client(
+        &self,
+    ) -> anyhow::Result<(FetchClient<GrpcService>, OwnedSemaphorePermit)> {
+        let (channel, permit) = self.fetch_channel.channel().await?;
+        Ok((
+            FetchClient::with_interceptor(channel, self.interceptor.dupe())
                 .max_decoding_message_size(self.max_decoding_message_size),
             permit,
         ))
@@ -1011,6 +1037,54 @@ impl REClient {
             actual_action_result: convert_action_result(res.into_inner())?,
             ttl_seconds: 0,
         })
+    }
+
+    /// Resolve or fetch an asset via the Remote Asset API
+    /// (`build.bazel.remote.asset.v1.Fetch/FetchBlob`), making it available
+    /// in the CAS and returning its digest.
+    ///
+    /// The request carries the URIs the asset can be fetched from plus
+    /// qualifiers further specifying the content (e.g. a `checksum.sri`
+    /// qualifier with a Subresource Integrity string, which lets the server
+    /// serve the asset straight from cache). The digest in the response can
+    /// be downloaded through the regular CAS path ([`Self::download`]).
+    /// Callers should still verify content integrity themselves; the server
+    /// is not trusted.
+    ///
+    /// Errors are surfaced so that callers can distinguish "fall back to a
+    /// direct HTTP download" conditions: both RPC errors (e.g.
+    /// `UNIMPLEMENTED` when the server does not support the Remote Asset
+    /// API) and fetch errors reported inline in `FetchBlobResponse.status`
+    /// (e.g. `NOT_FOUND` when the asset was not available at any of the
+    /// URIs) are mapped to [`crate::REClientError`], retrievable from the
+    /// returned `anyhow::Error` via [`crate::re_client_error_from_anyhow`]
+    /// and matchable on [`crate::TCode::NOT_FOUND`] /
+    /// [`crate::TCode::UNIMPLEMENTED`].
+    pub async fn fetch_blob(
+        &self,
+        metadata: RemoteExecutionMetadata,
+        request: FetchBlobRequest,
+    ) -> anyhow::Result<FetchBlobResponse> {
+        let (mut client, _permit) = self.grpc_clients.fetch_client().await?;
+
+        let res = client
+            .fetch_blob(with_re_metadata(
+                GFetchBlobRequest {
+                    instance_name: self.instance_name.as_str().to_owned(),
+                    uris: request.uris,
+                    qualifiers: request.qualifiers.into_map(|q| GQualifier {
+                        name: q.name,
+                        value: q.value,
+                    }),
+                    ..Default::default()
+                },
+                metadata,
+                self.runtime_opts.use_fbcode_metadata,
+                self.runtime_opts.remote_timeout,
+            ))
+            .await?;
+
+        convert_fetch_blob_response(res.into_inner())
     }
 
     pub async fn execute_with_progress(
@@ -1392,6 +1466,26 @@ impl REClient {
     pub fn get_experiment_name(&self) -> anyhow::Result<Option<String>> {
         Ok(None)
     }
+}
+
+fn convert_fetch_blob_response(response: GFetchBlobResponse) -> anyhow::Result<FetchBlobResponse> {
+    // Fetch errors outside the server's control (e.g. NOT_FOUND when the
+    // asset was unavailable at the given URIs) are reported inline in the
+    // `status` field rather than as an RPC error. Surface them as
+    // `REClientError` so callers can match on the code.
+    check_status(response.status.unwrap_or_default())?;
+
+    let digest = tdigest_from(
+        response
+            .blob_digest
+            .context("`blob_digest` not set in FetchBlobResponse with OK status")?,
+    );
+
+    Ok(FetchBlobResponse {
+        uri: response.uri,
+        digest,
+        ..Default::default()
+    })
 }
 
 fn convert_action_result(action_result: ActionResult) -> anyhow::Result<TActionResult2> {
@@ -2233,6 +2327,54 @@ mod tests {
         let tool_details = metadata.tool_details.unwrap();
         assert_eq!(tool_details.tool_name, "buck2");
         assert_eq!(tool_details.tool_version, "buck-revision");
+    }
+
+    #[test]
+    fn test_convert_fetch_blob_response_ok() -> anyhow::Result<()> {
+        let digest = TDigest {
+            hash: "aa".to_owned(),
+            size_in_bytes: 3,
+            ..Default::default()
+        };
+
+        let res = convert_fetch_blob_response(GFetchBlobResponse {
+            status: Some(Status {
+                code: Code::Ok as i32,
+                ..Default::default()
+            }),
+            uri: "https://example.com/archive.tar.gz".to_owned(),
+            blob_digest: Some(tdigest_to(digest.clone())),
+            ..Default::default()
+        })?;
+
+        assert_eq!(res.uri, "https://example.com/archive.tar.gz");
+        assert_eq!(res.digest, digest);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_convert_fetch_blob_response_inline_not_found() {
+        let err = convert_fetch_blob_response(GFetchBlobResponse {
+            status: Some(Status {
+                code: Code::NotFound as i32,
+                message: "asset not found".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .unwrap_err();
+
+        let err = re_client_error_from_anyhow(&err).expect("expected an REClientError");
+        assert_eq!(err.code, TCode::NOT_FOUND);
+        assert_eq!(err.message, "asset not found");
+    }
+
+    #[test]
+    fn test_convert_fetch_blob_response_missing_digest() {
+        // An OK status without a digest is a malformed response.
+        let err = convert_fetch_blob_response(GFetchBlobResponse::default()).unwrap_err();
+        assert!(err.to_string().contains("blob_digest"));
     }
 
     #[tokio::test]

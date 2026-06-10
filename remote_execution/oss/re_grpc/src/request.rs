@@ -19,6 +19,30 @@ pub struct ActionResultRequest {
     pub _dot_dot: (),
 }
 
+/// A qualifier sub-specifying the content to fetch via the Remote Asset API,
+/// e.g. `checksum.sri` carrying a Subresource Integrity string.
+#[derive(Clone, Default)]
+pub struct TQualifier {
+    pub name: String,
+    pub value: String,
+    pub _dot_dot: (),
+}
+
+/// Request for [`crate::REClient::fetch_blob`], the Remote Asset API
+/// (`build.bazel.remote.asset.v1.Fetch/FetchBlob`).
+#[derive(Clone, Default)]
+pub struct FetchBlobRequest {
+    /// The URI(s) of the content to fetch. At least one is required. Multiple
+    /// URIs should represent the same content available at different
+    /// locations (e.g. an origin and mirrors).
+    pub uris: Vec<String>,
+    /// Qualifiers sub-specifying the content to fetch. Names must be unique.
+    /// Callers verifying archive integrity should pass a `checksum.sri`
+    /// qualifier so the server can serve purely from cache.
+    pub qualifiers: Vec<TQualifier>,
+    pub _dot_dot: (),
+}
+
 #[derive(Clone, Default)]
 pub struct DownloadRequest {
     pub inlined_digests: Option<Vec<TDigest>>,
