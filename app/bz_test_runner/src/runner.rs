@@ -15,11 +15,13 @@ use bz_error::internal_error;
 use bz_test_api::data::ArgValue;
 use bz_test_api::data::ArgValueContent;
 use bz_test_api::data::ConfiguredTargetHandle;
+use bz_test_api::data::DeclaredOutput;
 use bz_test_api::data::ExecuteResponse;
 use bz_test_api::data::ExecutionResult2;
 use bz_test_api::data::ExecutionStatus;
 use bz_test_api::data::ExternalRunnerSpec;
 use bz_test_api::data::ExternalRunnerSpecValue;
+use bz_test_api::data::RemoteStorageConfig;
 use bz_test_api::data::RequiredLocalResources;
 use bz_test_api::data::TestResult;
 use bz_test_api::data::TestStage;
@@ -184,7 +186,14 @@ impl Buck2TestRunner {
 
         let target_handle = spec.target.handle;
         let host_sharing_requirements = HostSharingRequirements::default();
-        let pre_create_dirs = Vec::new();
+        let pre_create_dirs = if spec.test_type == "bazel" {
+            vec![DeclaredOutput::unchecked_new(
+                "test_tmpdir".to_owned(),
+                RemoteStorageConfig::default(),
+            )]
+        } else {
+            Vec::new()
+        };
         let executor_override = None;
 
         self.orchestrator_client

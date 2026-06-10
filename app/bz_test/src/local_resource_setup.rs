@@ -39,7 +39,7 @@ impl From<&TestStage> for TestStageSimple {
 
 pub(crate) async fn required_providers<'v>(
     dice: &mut DiceComputations<'_>,
-    test_info: &'v FrozenExternalRunnerTestInfo,
+    test_info: Option<&'v FrozenExternalRunnerTestInfo>,
     required_local_resources: &'v RequiredLocalResources,
     stage: &TestStageSimple,
 ) -> bz_error::Result<
@@ -48,6 +48,9 @@ pub(crate) async fn required_providers<'v>(
         OwnedFrozenValueTyped<FrozenLocalResourceInfo>,
     )>,
 > {
+    let Some(test_info) = test_info else {
+        return Ok(Vec::new());
+    };
     let available_resources = test_info.local_resources();
 
     let targets = required_local_resources

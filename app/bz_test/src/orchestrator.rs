@@ -45,9 +45,11 @@ use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
 use bz_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
 use bz_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use bz_build_api::interpreter::rule_defs::cmd_args::space_separated::SpaceSeparatedCommandLineBuilder;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel_test_info::FrozenBazelTestInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::FrozenExternalRunnerTestInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::external_runner_test_info::TestCommandMember;
 use bz_build_api::interpreter::rule_defs::provider::builtin::local_resource_info::FrozenLocalResourceInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use bz_build_api::keep_going::KeepGoing;
 use bz_build_signals::env::NodeDuration;
 use bz_build_signals::env::WaitingData;
@@ -192,6 +194,126 @@ pub enum ExecutorMessage {
     InfoMessage(String),
 }
 
+enum OwnedTestInfo {
+    External(OwnedFrozenValueTyped<FrozenExternalRunnerTestInfo>),
+    Bazel(OwnedFrozenValueTyped<FrozenBazelTestInfo>),
+}
+
+#[derive(Clone, Copy)]
+enum TestInfoRef<'a> {
+    External(&'a FrozenExternalRunnerTestInfo),
+    Bazel(&'a FrozenBazelTestInfo),
+}
+
+impl OwnedTestInfo {
+    fn as_ref(&self) -> TestInfoRef<'_> {
+        match self {
+            Self::External(info) => TestInfoRef::External(info.as_ref()),
+            Self::Bazel(info) => TestInfoRef::Bazel(info.as_ref()),
+        }
+    }
+}
+
+impl<'a> TestInfoRef<'a> {
+    fn as_external(self) -> Option<&'a FrozenExternalRunnerTestInfo> {
+        match self {
+            Self::External(info) => Some(info),
+            Self::Bazel(_) => None,
+        }
+    }
+
+    fn command(self) -> Box<dyn Iterator<Item = TestCommandMember<'a>> + 'a> {
+        match self {
+            Self::External(info) => Box::new(info.command()),
+            Self::Bazel(info) => Box::new(info.command()),
+        }
+    }
+
+    fn env(self) -> Box<dyn Iterator<Item = (&'a str, &'a dyn CommandLineArgLike<'a>)> + 'a> {
+        match self {
+            Self::External(info) => Box::new(info.env()),
+            Self::Bazel(info) => Box::new(info.env()),
+        }
+    }
+
+    fn labels(self) -> Box<dyn Iterator<Item = &'a str> + 'a> {
+        match self {
+            Self::External(info) => Box::new(info.labels()),
+            Self::Bazel(info) => Box::new(info.labels()),
+        }
+    }
+
+    fn default_executor(self) -> Option<&'a CommandExecutorConfig> {
+        match self {
+            Self::External(info) => info.default_executor().map(|o| &*o.0),
+            Self::Bazel(_) => None,
+        }
+    }
+
+    fn executor_override(self, key: &str) -> Option<&'a CommandExecutorConfig> {
+        match self {
+            Self::External(info) => info.executor_override(key).map(|o| &*o.0),
+            Self::Bazel(_) => None,
+        }
+    }
+
+    fn has_executor_overrides(self) -> bool {
+        match self {
+            Self::External(info) => info.has_executor_overrides(),
+            Self::Bazel(_) => false,
+        }
+    }
+
+    fn worker(self) -> Option<&'a WorkerInfo<'a>> {
+        match self {
+            Self::External(info) => info.worker(),
+            Self::Bazel(_) => None,
+        }
+    }
+
+    fn use_project_relative_paths(self) -> bool {
+        match self {
+            Self::External(info) => info.use_project_relative_paths(),
+            Self::Bazel(_) => true,
+        }
+    }
+
+    fn run_from_project_root(self) -> bool {
+        match self {
+            Self::External(info) => info.run_from_project_root(),
+            Self::Bazel(_) => true,
+        }
+    }
+
+    fn supports_test_execution_caching(self) -> bool {
+        match self {
+            Self::External(info) => info.supports_test_execution_caching(),
+            Self::Bazel(_) => false,
+        }
+    }
+
+    fn network_access(self) -> Option<NetworkAccess> {
+        match self {
+            Self::External(info) => info.network_access(),
+            Self::Bazel(_) => None,
+        }
+    }
+
+    fn timeout(self, requested: Duration) -> Duration {
+        match self {
+            Self::External(_) => requested,
+            Self::Bazel(info) => Duration::from_secs(info.timeout_seconds()),
+        }
+    }
+
+    fn bazel_info(self) -> Option<&'a FrozenBazelTestInfo> {
+        match self {
+            Self::External(_) => None,
+            Self::Bazel(info) => Some(info),
+        }
+    }
+}
+
 pub struct BuckTestOrchestrator<'a: 'static> {
     dice: DiceTransaction,
     session: Arc<TestSession>,
@@ -262,7 +384,7 @@ impl<'a> BuckTestOrchestrator<'a> {
     /// Dynamic listing runs the test binary itself, so keep that isolated.
     fn requested_network_access(
         stage: &TestStage,
-        test_info: &FrozenExternalRunnerTestInfo,
+        test_info: TestInfoRef<'_>,
     ) -> Option<NetworkAccess> {
         match stage {
             TestStage::Listing { .. } if test_info.labels().any(|l| l == "static-listing") => None,
@@ -410,13 +532,15 @@ impl<'a> BuckTestOrchestrator<'a> {
         } = key;
         let fs = dice.get_artifact_fs().await?;
         let test_info = Self::get_test_info(dice, &test_target).await?;
+        let test_info_ref = test_info.as_ref();
+        let timeout = test_info_ref.timeout(timeout);
         let effective_test_execution_caching =
-            test_info.supports_test_execution_caching() && !disable_test_execution_caching;
-        let network_access = Self::requested_network_access(stage.as_ref(), &test_info);
+            test_info_ref.supports_test_execution_caching() && !disable_test_execution_caching;
+        let network_access = Self::requested_network_access(stage.as_ref(), test_info_ref);
         let test_executor = Self::get_test_executor(
             dice,
             &test_target,
-            &test_info,
+            test_info_ref,
             executor_override,
             &fs,
             &stage,
@@ -426,7 +550,7 @@ impl<'a> BuckTestOrchestrator<'a> {
         let test_executable_expanded = Self::expand_test_executable(
             dice,
             &test_target,
-            &test_info,
+            test_info_ref,
             Cow::Borrowed(&cmd),
             Cow::Borrowed(&env),
             Cow::Borrowed(&pre_create_dirs),
@@ -465,8 +589,13 @@ impl<'a> BuckTestOrchestrator<'a> {
             let simple_stage = stage.as_ref().into();
 
             let required_providers = {
-                required_providers(dice, &test_info, &required_local_resources, &simple_stage)
-                    .await?
+                required_providers(
+                    dice,
+                    test_info_ref.as_external(),
+                    &required_local_resources,
+                    &simple_stage,
+                )
+                .await?
             };
             // If some timeout is neeeded, use the same value as for the test itself which is better than nothing.
             Self::setup_local_resources(
@@ -817,7 +946,8 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         let fs = self.dice.clone().get_artifact_fs().await?;
 
         let test_info = Self::get_test_info(self.dice.dupe().deref_mut(), &test_target).await?;
-        let network_access = Self::requested_network_access(&stage, &test_info);
+        let test_info_ref = test_info.as_ref();
+        let network_access = Self::requested_network_access(&stage, test_info_ref);
 
         // In contrast from actual test execution we do not check if local execution is possible.
         // We leave that decision to actual local execution runner that requests local execution preparation.
@@ -826,7 +956,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         let providers = {
             required_providers(
                 self.dice.dupe().deref_mut(),
-                &test_info,
+                test_info_ref.as_external(),
                 &required_local_resources,
                 &TestStageSimple::Testing,
             )
@@ -857,7 +987,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         let test_executor = Self::get_test_executor(
             self.dice.dupe().deref_mut(),
             &test_target,
-            &test_info,
+            test_info_ref,
             None,
             &fs,
             &stage,
@@ -867,7 +997,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
         let test_executable_expanded = Self::expand_test_executable(
             self.dice.dupe().deref_mut(),
             &test_target,
-            &test_info,
+            test_info_ref,
             Cow::Owned(cmd),
             Cow::Owned(env),
             Cow::Owned(pre_create_dirs),
@@ -1390,24 +1520,33 @@ impl BuckTestOrchestrator<'_> {
     async fn get_test_info(
         dice: &mut DiceComputations<'_>,
         test_target: &ConfiguredProvidersLabel,
-    ) -> bz_error::Result<OwnedFrozenValueTyped<FrozenExternalRunnerTestInfo>> {
-        dice.get_providers(test_target)
+    ) -> bz_error::Result<OwnedTestInfo> {
+        let providers = dice
+            .get_providers(test_target)
             .await?
             .require_compatible()?
-            .value
-            .maybe_map(|c| {
-                c.as_ref()
-                    .builtin_provider_value::<FrozenExternalRunnerTestInfo>()
-            })
-            .ok_or_else(|| {
-                internal_error!("Test executable only supports ExternalRunnerTestInfo providers")
-            })
+            .value;
+        if let Some(info) = providers
+            .clone()
+            .maybe_map(|c| c.as_ref().builtin_provider_value::<FrozenBazelTestInfo>())
+        {
+            return Ok(OwnedTestInfo::Bazel(info));
+        }
+        if let Some(info) = providers.maybe_map(|c| {
+            c.as_ref()
+                .builtin_provider_value::<FrozenExternalRunnerTestInfo>()
+        }) {
+            return Ok(OwnedTestInfo::External(info));
+        }
+        Err(internal_error!(
+            "Test executable only supports BazelTestInfo or ExternalRunnerTestInfo providers"
+        ))
     }
 
     async fn get_test_executor(
         dice: &mut DiceComputations<'_>,
         test_target: &ConfiguredProvidersLabel,
-        test_info: &FrozenExternalRunnerTestInfo,
+        test_info: TestInfoRef<'_>,
         executor_override: Option<Arc<ExecutorConfigOverride>>,
         fs: &ArtifactFs,
         stage: &TestStage,
@@ -1422,7 +1561,7 @@ impl BuckTestOrchestrator<'_> {
 
         let resolved_executor_override = match executor_override {
             Some(executor_override) => Some(
-                &test_info
+                test_info
                     .executor_override(&executor_override.name)
                     .ok_or_else(|| {
                         internal_error!("The `executor_override` provided does not exist")
@@ -1432,21 +1571,19 @@ impl BuckTestOrchestrator<'_> {
                             "Error processing `executor_override`: `{}`",
                             executor_override.name
                         )
-                    })?
-                    .0,
+                    })?,
             ),
             None => match stage {
                 TestStage::Listing { .. } if test_info.has_executor_overrides() => test_info
                     .executor_override("listing")
-                    .or(test_info.default_executor())
-                    .map(|o| &o.0),
-                _ => test_info.default_executor().map(|o| &o.0),
+                    .or(test_info.default_executor()),
+                _ => test_info.default_executor(),
             },
         };
 
         let executor_config = Self::executor_config_with_remote_cache_override(
             &node,
-            resolved_executor_override.as_ref().map(|a| &***a),
+            resolved_executor_override,
             stage,
             supports_test_execution_caching,
         )?;
@@ -1470,7 +1607,7 @@ impl BuckTestOrchestrator<'_> {
     async fn expand_test_executable<'a>(
         dice: &mut DiceComputations<'_>,
         test_target: &ConfiguredProvidersLabel,
-        test_info: &FrozenExternalRunnerTestInfo,
+        test_info: TestInfoRef<'a>,
         cmd: Cow<'a, [ArgValue]>,
         env: Cow<'a, SortedVectorMap<String, ArgValue>>,
         pre_create_dirs: Cow<'a, [DeclaredOutput]>,
@@ -1485,7 +1622,7 @@ impl BuckTestOrchestrator<'_> {
         let mut supports_re = true;
 
         let cwd;
-        let (expanded_cmd, expanded_env, ensured_inputs, expanded_worker) = {
+        let (expanded_cmd, mut expanded_env, ensured_inputs, expanded_worker) = {
             cwd = if test_info.run_from_project_root() || opts.force_run_from_project_root {
                 CellRootPathBuf::new(ProjectRelativePathBuf::unchecked_new("".to_owned()))
             } else {
@@ -1528,6 +1665,15 @@ impl BuckTestOrchestrator<'_> {
             }?;
             (expanded_cmd, expanded_env, ensured_inputs, expanded_worker)
         };
+        if let Some(bazel_test_info) = test_info.bazel_info() {
+            add_bazel_test_environment(
+                &mut expanded_env,
+                test_target,
+                bazel_test_info,
+                &expanded_cmd,
+                &output_root,
+            );
+        }
 
         for output in pre_create_dirs.into_owned() {
             let test_path = BuckOutTestPath::new(output_root.clone(), output.name.into());
@@ -1868,8 +2014,58 @@ impl Drop for BuckTestOrchestrator<'_> {
     }
 }
 
+fn add_bazel_test_environment(
+    env: &mut SortedVectorMap<String, String>,
+    test_target: &ConfiguredProvidersLabel,
+    test_info: &FrozenBazelTestInfo,
+    expanded_cmd: &[String],
+    output_root: &ForwardRelativePath,
+) {
+    fn insert_default(env: &mut SortedVectorMap<String, String>, key: &str, value: String) {
+        if env.get(key).is_none() {
+            env.insert(key.to_owned(), value);
+        }
+    }
+
+    let test_binary = expanded_cmd.first().cloned().unwrap_or_default();
+    let runfiles_dir = if test_binary.is_empty() {
+        ".".to_owned()
+    } else {
+        format!("{test_binary}.runfiles")
+    };
+    let test_tmpdir = format!("{}/test_tmpdir", output_root.as_str());
+
+    insert_default(env, "TZ", "UTC".to_owned());
+    insert_default(env, "TEST_SRCDIR", runfiles_dir.clone());
+    insert_default(env, "JAVA_RUNFILES", runfiles_dir.clone());
+    insert_default(env, "PYTHON_RUNFILES", runfiles_dir.clone());
+    insert_default(env, "RUNFILES_DIR", runfiles_dir.clone());
+    insert_default(env, "TEST_TMPDIR", test_tmpdir);
+    insert_default(env, "RUN_UNDER_RUNFILES", "1".to_owned());
+
+    env.insert("TEST_TARGET".to_owned(), test_target.target().to_string());
+    env.insert("TEST_SIZE".to_owned(), test_info.size().to_owned());
+    env.insert(
+        "TEST_TIMEOUT".to_owned(),
+        test_info.timeout_seconds().to_string(),
+    );
+    env.insert(
+        "TEST_WORKSPACE".to_owned(),
+        test_target.target().pkg().cell_name().to_string(),
+    );
+    env.insert("TEST_BINARY".to_owned(), test_binary);
+
+    if test_info.shard_count() > 0 {
+        env.insert("TEST_SHARD_INDEX".to_owned(), "0".to_owned());
+        env.insert(
+            "TEST_TOTAL_SHARDS".to_owned(),
+            test_info.shard_count().to_string(),
+        );
+    }
+}
+
 struct Execute2RequestExpander<'a> {
-    test_info: &'a FrozenExternalRunnerTestInfo,
+    test_info: TestInfoRef<'a>,
     output_root: &'a ForwardRelativePath,
     declared_outputs: &'a mut BuckIndexMap<BuckOutTestPath, OutputCreationBehavior>,
     fs: &'a ExecutorFs<'a>,
