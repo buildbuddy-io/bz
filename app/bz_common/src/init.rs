@@ -131,6 +131,7 @@ pub struct RemoteExecutionStartupConfig {
     pub remote_cache: Option<String>,
     pub remote_executor: Option<String>,
     pub remote_downloader: Option<String>,
+    pub experimental_remote_repo_contents_cache: bool,
     pub buildbuddy_api_key: Option<String>,
     pub remote_default_exec_properties: Option<Vec<RemoteDefaultExecProperty>>,
     pub remote_max_connections: Option<usize>,
@@ -150,6 +151,8 @@ impl RemoteExecutionStartupConfig {
             self.remote_downloader
                 .clone_from(&overrides.remote_downloader);
         }
+        self.experimental_remote_repo_contents_cache =
+            overrides.experimental_remote_repo_contents_cache;
         if overrides.buildbuddy_api_key.is_some() {
             self.buildbuddy_api_key
                 .clone_from(&overrides.buildbuddy_api_key);
@@ -186,6 +189,11 @@ impl RemoteExecutionStartupConfig {
 
     pub fn should_upload_local_results_to_remote_cache(&self) -> bool {
         self.remote_cache_endpoint_enabled() == Some(true)
+    }
+
+    pub fn should_use_remote_repo_contents_cache(&self) -> bool {
+        self.experimental_remote_repo_contents_cache
+            && self.remote_cache_endpoint_enabled() == Some(true)
     }
 }
 
@@ -920,6 +928,40 @@ mod tests {
         assert!(config.remote_executor_endpoint_enabled());
         assert_eq!(config.remote_cache_endpoint_enabled(), Some(true));
         assert!(config.should_upload_local_results_to_remote_cache());
+    }
+
+    #[test]
+    fn remote_repo_contents_cache_requires_flag_and_remote_cache() {
+        let default_config = RemoteExecutionStartupConfig {
+            remote_cache: Some("remote.buildbuddy.dev".to_owned()),
+            ..Default::default()
+        };
+        assert!(!default_config.should_use_remote_repo_contents_cache());
+
+        let enabled = RemoteExecutionStartupConfig {
+            remote_cache: Some("remote.buildbuddy.dev".to_owned()),
+            experimental_remote_repo_contents_cache: true,
+            ..Default::default()
+        };
+        assert!(enabled.should_use_remote_repo_contents_cache());
+
+        let no_remote_cache = RemoteExecutionStartupConfig {
+            experimental_remote_repo_contents_cache: true,
+            ..Default::default()
+        };
+        assert!(!no_remote_cache.should_use_remote_repo_contents_cache());
+    }
+
+    #[test]
+    fn empty_remote_cache_disables_remote_repo_contents_cache() {
+        let config = RemoteExecutionStartupConfig {
+            remote_cache: Some(String::new()),
+            remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+            experimental_remote_repo_contents_cache: true,
+            ..Default::default()
+        };
+
+        assert!(!config.should_use_remote_repo_contents_cache());
     }
 
     #[test]

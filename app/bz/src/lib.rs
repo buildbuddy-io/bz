@@ -86,16 +86,23 @@ pub mod process_context;
 const BUILDBUDDY_REMOTE_ENDPOINT: &str = "remote.buildbuddy.dev";
 const BUILDBUDDY_DEFAULT_RBE_CONTAINER_IMAGE: &str = "docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:f7db0d4791247f032fdb4451b7c3ba90e567923a341cc6dc43abfc283436791a";
 const BUILDBUDDY_API_KEY_ENV_VAR: &str = "BUILDBUDDY_API_KEY";
+const BZ_BUILDBUDDY_API_KEY_ENV_VAR: &str = "BZ_BUILDBUDDY_API_KEY";
 const BUILDBUDDY_REMOTE_TIMEOUT_SECS: u64 = 60;
 
 fn non_empty_buildbuddy_api_key(api_key: String) -> Option<String> {
     (!api_key.trim().is_empty()).then_some(api_key)
 }
 
+fn buildbuddy_api_key_from_env_vars(
+    mut get_env: impl FnMut(&'static str) -> Option<String>,
+) -> Option<String> {
+    [BUILDBUDDY_API_KEY_ENV_VAR, BZ_BUILDBUDDY_API_KEY_ENV_VAR]
+        .into_iter()
+        .find_map(|env_var| get_env(env_var).and_then(non_empty_buildbuddy_api_key))
+}
+
 fn buildbuddy_api_key_from_env() -> Option<String> {
-    std::env::var(BUILDBUDDY_API_KEY_ENV_VAR)
-        .ok()
-        .and_then(non_empty_buildbuddy_api_key)
+    buildbuddy_api_key_from_env_vars(|env_var| std::env::var(env_var).ok())
 }
 
 fn parse_remote_default_exec_property(
@@ -237,6 +244,23 @@ struct BeforeSubcommandOptions {
     )]
     remote_downloader: Option<String>,
 
+    /// Store and load reproducible repository contents through the remote cache.
+    #[clap(
+        long = "experimental_remote_repo_contents_cache",
+        alias = "experimental-remote-repo-contents-cache",
+        global = true,
+        conflicts_with = "no_experimental_remote_repo_contents_cache"
+    )]
+    experimental_remote_repo_contents_cache: bool,
+
+    /// Disable remote repo contents cache usage.
+    #[clap(
+        long = "noexperimental_remote_repo_contents_cache",
+        global = true,
+        hide = true
+    )]
+    no_experimental_remote_repo_contents_cache: bool,
+
     /// Use BuildBuddy as the remote execution and remote cache endpoint.
     #[clap(long = "rbe", global = true)]
     rbe: bool,
@@ -251,7 +275,8 @@ struct BeforeSubcommandOptions {
 
     /// BuildBuddy API key to send to BuildBuddy gRPC endpoints.
     ///
-    /// Can also be set with the `BUILDBUDDY_API_KEY` environment variable.
+    /// Can also be set with the `BUILDBUDDY_API_KEY` or `BZ_BUILDBUDDY_API_KEY`
+    /// environment variable.
     #[clap(long = "api-key", value_name = "KEY", global = true)]
     api_key: Option<String>,
 
@@ -376,6 +401,8 @@ impl BeforeSubcommandOptions {
             remote_downloader: self.remote_downloader.clone().or_else(|| {
                 (self.rbe || self.buildbuddy).then(|| BUILDBUDDY_REMOTE_ENDPOINT.to_owned())
             }),
+            experimental_remote_repo_contents_cache: self.experimental_remote_repo_contents_cache
+                && !self.no_experimental_remote_repo_contents_cache,
             buildbuddy_api_key: self
                 .api_key
                 .clone()
@@ -1095,6 +1122,7 @@ mod tests {
             remote_execution.remote_downloader.as_deref(),
             Some(BUILDBUDDY_REMOTE_ENDPOINT)
         );
+        assert!(!remote_execution.experimental_remote_repo_contents_cache);
     }
 
     #[test]
@@ -1115,6 +1143,34 @@ mod tests {
             remote_execution.remote_downloader.as_deref(),
             Some(BUILDBUDDY_REMOTE_ENDPOINT)
         );
+    }
+
+    #[test]
+    fn experimental_remote_repo_contents_cache_is_global_startup_override() {
+        let opts = Opt::try_parse_from([
+            "buck2",
+            "--experimental_remote_repo_contents_cache",
+            "build",
+            "//:target",
+        ])
+        .unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert!(remote_execution.experimental_remote_repo_contents_cache);
+    }
+
+    #[test]
+    fn noexperimental_remote_repo_contents_cache_is_bazel_compatible() {
+        let opts = Opt::try_parse_from([
+            "buck2",
+            "--noexperimental_remote_repo_contents_cache",
+            "build",
+            "//:target",
+        ])
+        .unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert!(!remote_execution.experimental_remote_repo_contents_cache);
     }
 
     #[test]
@@ -1199,6 +1255,30 @@ mod tests {
         assert_eq!(
             remote_execution.buildbuddy_api_key.as_deref(),
             Some("from-env")
+        );
+    }
+
+    #[test]
+    fn api_key_can_come_from_bz_env_name() {
+        assert_eq!(
+            buildbuddy_api_key_from_env_vars(|env_var| {
+                (env_var == BZ_BUILDBUDDY_API_KEY_ENV_VAR).then(|| "from-bz-env".to_owned())
+            })
+            .as_deref(),
+            Some("from-bz-env")
+        );
+    }
+
+    #[test]
+    fn buildbuddy_api_key_env_takes_precedence_over_bz_env_name() {
+        assert_eq!(
+            buildbuddy_api_key_from_env_vars(|env_var| match env_var {
+                BUILDBUDDY_API_KEY_ENV_VAR => Some("from-buildbuddy-env".to_owned()),
+                BZ_BUILDBUDDY_API_KEY_ENV_VAR => Some("from-bz-env".to_owned()),
+                _ => None,
+            })
+            .as_deref(),
+            Some("from-buildbuddy-env")
         );
     }
 

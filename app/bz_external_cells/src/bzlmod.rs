@@ -5550,8 +5550,9 @@ async fn promote_current_bzlmod_generated_repo_to_cache(
 
 /// The RE client used for the remote bzlmod repo contents cache, if any.
 ///
-/// Only active when a remote cache (or remote executor) is configured: the
-/// underlying client connects lazily, so gating on the configuration keeps
+/// Only active when Bazel's `--experimental_remote_repo_contents_cache` flag is
+/// set and a remote cache (or cache-capable remote executor) is configured.
+/// The underlying client connects lazily, so gating on the configuration keeps
 /// purely local builds from attempting (and failing) a connection per repo.
 /// `None` makes all remote repo contents cache behavior a silent no-op.
 fn bzlmod_remote_repo_contents_cache_client(
@@ -5562,17 +5563,7 @@ fn bzlmod_remote_repo_contents_cache_client(
         .data
         .get::<RemoteExecutionStartupConfig>()
         .ok()?;
-    let has_remote_backend = [
-        &startup_config.remote_cache,
-        &startup_config.remote_executor,
-    ]
-    .into_iter()
-    .any(|endpoint| {
-        endpoint
-            .as_ref()
-            .is_some_and(|endpoint| !endpoint.trim().is_empty())
-    });
-    if !has_remote_backend {
+    if !startup_config.should_use_remote_repo_contents_cache() {
         return None;
     }
     Some(
