@@ -47,6 +47,7 @@ use bz_execute::re::client::CancellationReason;
 use bz_execute::re::client::ExecuteResponseOrCancelled;
 use bz_execute::re::error::RemoteExecutionError;
 use bz_execute::re::error::get_re_error_tag;
+use bz_execute::re::error::is_re_auth_or_permission_error;
 use bz_execute::re::manager::ManagedRemoteExecutionClient;
 use bz_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
 use bz_execute::re::remote_action_result::ExecuteResponseWithQueueStats;
@@ -703,6 +704,9 @@ fn is_re_queue_full(e: &bz_error::Error) -> bool {
 fn is_transient_re_error(e: &bz_error::Error) -> bool {
     e.find_typed_context::<RemoteExecutionError>()
         .is_some_and(|re_err| {
+            if is_re_auth_or_permission_error(re_err.as_ref()) {
+                return false;
+            }
             matches!(
                 re_err.code,
                 TCode::CANCELLED

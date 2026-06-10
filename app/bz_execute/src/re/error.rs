@@ -72,6 +72,19 @@ impl TypedContext for RemoteExecutionError {
     }
 }
 
+pub fn is_re_auth_or_permission_error(error: &RemoteExecutionError) -> bool {
+    if matches!(error.code, TCode::PERMISSION_DENIED | TCode::UNAUTHENTICATED) {
+        return true;
+    }
+
+    let message = error.message.to_ascii_lowercase();
+    message.contains("permissiondenied desc")
+        || message.contains("permission denied")
+        || message.contains("unauthenticated")
+        || message.contains("missing api key")
+        || message.contains("invalid api key")
+}
+
 pub(crate) fn re_error(
     re_action: &str,
     re_session_id: &str,

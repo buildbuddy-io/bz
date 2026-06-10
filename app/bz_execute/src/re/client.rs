@@ -105,6 +105,7 @@ use crate::re::action_identity::ReActionIdentity;
 use crate::re::convert::platform_to_proto;
 use crate::re::digest_sampler::should_sample_action_digest;
 use crate::re::error::RemoteExecutionError;
+use crate::re::error::is_re_auth_or_permission_error;
 use crate::re::error::test_re_error;
 use crate::re::error::with_error_handler;
 use crate::re::manager::RemoteExecutionConfig;
@@ -169,6 +170,9 @@ fn is_transient_re_error(error: &bz_error::Error) -> bool {
     error
         .find_typed_context::<RemoteExecutionError>()
         .is_some_and(|error| {
+            if is_re_auth_or_permission_error(error.as_ref()) {
+                return false;
+            }
             matches!(
                 error.code,
                 TCode::CANCELLED
@@ -2309,5 +2313,22 @@ mod tests {
 
         assert!(is_transient_re_error(&error));
         assert!(!is_non_transient_materialize_files_error(&error));
+    }
+
+    #[test]
+    fn test_missing_api_key_wrapped_in_unavailable_is_not_transient() {
+        let error = test_re_error(
+            "prepare runner filesystem: Error pulling container: rpc error: code = Unavailable desc = pull OCI image: get layer digest: rpc error: code = PermissionDenied desc = Missing API key",
+            TCode::UNAVAILABLE,
+        );
+
+        assert!(!is_transient_re_error(&error));
+    }
+
+    #[test]
+    fn test_permission_denied_is_not_transient() {
+        let error = test_re_error("Permission denied", TCode::PERMISSION_DENIED);
+
+        assert!(!is_transient_re_error(&error));
     }
 }
