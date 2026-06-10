@@ -584,6 +584,11 @@ impl ConfiguredTargetNode {
     }
 
     #[inline]
+    pub fn is_bazel_test_rule(&self) -> bool {
+        self.as_ref().is_bazel_test_rule()
+    }
+
+    #[inline]
     pub fn bazel_output_to_genfiles(&self) -> bool {
         self.as_ref().bazel_output_to_genfiles()
     }
@@ -894,6 +899,13 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
     pub fn is_bazel_rule(self) -> bool {
         match &self.0.get().target_node {
             TargetNodeOrForward::TargetNode(target_node) => target_node.is_bazel_rule(),
+            TargetNodeOrForward::Forward(_, _) => false,
+        }
+    }
+
+    pub fn is_bazel_test_rule(self) -> bool {
+        match &self.0.get().target_node {
+            TargetNodeOrForward::TargetNode(target_node) => target_node.is_bazel_test_rule(),
             TargetNodeOrForward::Forward(_, _) => false,
         }
     }

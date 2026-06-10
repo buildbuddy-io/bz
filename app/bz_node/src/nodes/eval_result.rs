@@ -452,6 +452,7 @@ fn bazel_input_file_rule() -> bz_error::Result<Arc<Rule>> {
         bazel_implicit_outputs: Vec::new(),
         bazel_output_to_genfiles: false,
         is_bazel_rule: false,
+        is_bazel_test_rule: false,
         is_bazel_build_setting: false,
     }))
 }
