@@ -37,6 +37,7 @@ use self::lockfile::bzlmod_lockfile_data;
 use self::lockfile::bzlmod_lockfile_data_from_str;
 use self::lockfile::bzlmod_lockfile_extension_key;
 use self::lockfile::bzlmod_vendor_file_data;
+use self::lockfile::bzlmod_write_back_lockfile;
 use self::lockfile::empty_bzlmod_lockfile_data;
 
 use self::module_file::BzlmodCompiledModuleFile;
@@ -1905,7 +1906,10 @@ impl Key for BzlmodModuleResolutionKey {
             root.builtin_bazel_tools_module.clone(),
             &discovery.discovered,
         )?;
-        collect_bzlmod_yanked_versions(ctx, &root, &selection).await?;
+        let selected_yanked_versions =
+            collect_bzlmod_yanked_versions(ctx, &root, &selection).await?;
+        bzlmod_resolution_lockfile_write_back(ctx, &root, &selection, &selected_yanked_versions)
+            .await;
         Ok(Arc::new(selection))
     }
 
@@ -2602,13 +2606,17 @@ impl Key for BzlmodVendorFileKey {
     }
 }
 
+/// Checks selected modules against yanked-version metadata, and returns the
+/// selected modules that are yanked but explicitly allowed, for recording in
+/// MODULE.bazel.lock like Bazel's selectedYankedVersions.
 async fn collect_bzlmod_yanked_versions(
     ctx: &mut DiceComputations<'_>,
     root: &BzlmodRootResolutionInput,
     selection: &BzlmodSelectionResult,
-) -> bz_error::Result<()> {
+) -> bz_error::Result<BTreeMap<(String, String), String>> {
     let registry = ctx.compute(&bzlmod_default_registry_key()).await??;
     let allowed_yanked_versions = ctx.compute(&BzlmodAllowedYankedVersionsKey).await??;
+    let mut selected_yanked_versions = BTreeMap::new();
     let mut keys = Vec::new();
     for (name, version) in &selection.selected_keys {
         if name == "bazel_tools"
@@ -2622,6 +2630,8 @@ async fn collect_bzlmod_yanked_versions(
             .get(&(name.clone(), version.clone()))
         {
             if bzlmod_yanked_version_allowed(&allowed_yanked_versions, name, version) {
+                selected_yanked_versions
+                    .insert((name.clone(), version.clone()), info.clone());
                 continue;
             }
             return Err(bzlmod_yanked_version_error(name, version, info));
@@ -2655,11 +2665,71 @@ async fn collect_bzlmod_yanked_versions(
             .selected_versions_for_name(&key.module_name)
             .unwrap_or("");
         if bzlmod_yanked_version_allowed(&allowed_yanked_versions, &key.module_name, version) {
+            selected_yanked_versions
+                .insert((key.module_name.clone(), version.to_owned()), info.clone());
             continue;
         }
         return Err(bzlmod_yanked_version_error(&key.module_name, version, info));
     }
-    Ok(())
+    Ok(selected_yanked_versions)
+}
+
+/// Mirror of Bazel's BazelLockFileModule.afterCommand: once resolution
+/// completes, record the hashes of the registry files it consumed and the
+/// selected yanked versions in MODULE.bazel.lock. Write-back is best effort:
+/// failures are logged, never build errors.
+async fn bzlmod_resolution_lockfile_write_back(
+    ctx: &mut DiceComputations<'_>,
+    root: &BzlmodRootResolutionInput,
+    selection: &BzlmodSelectionResult,
+    selected_yanked_versions: &BTreeMap<(String, String), String>,
+) {
+    let result: bz_error::Result<()> = async {
+        let registry = ctx.compute(&bzlmod_default_registry_key()).await??;
+        let project_fs = ctx.global_data().get_io_provider().project_root().dupe();
+        let mut registry_file_hashes = BTreeMap::new();
+        for (name, version) in selection.discovered.keys() {
+            if name == "bazel_tools"
+                || root.archive_overrides.contains_key(name)
+                || root.local_path_overrides.contains_key(name)
+            {
+                continue;
+            }
+            let dep = BazelDep {
+                name: name.clone(),
+                version: version.clone(),
+                apparent_name: None,
+            };
+            // Like Bazel's RegistryFileDownloadEvent flow, only immutable
+            // registry files are recorded; mutable metadata.json is not.
+            for kind in ["MODULE.bazel", "source.json"] {
+                let cache_path = bzlmod_bcr_discovery_cache_path(&registry.url, &dep, kind);
+                if let Some(contents) =
+                    read_bzlmod_bcr_discovery_cache(&project_fs, &cache_path)?
+                {
+                    let url =
+                        format!("{}/modules/{name}/{version}/{kind}", registry.url);
+                    registry_file_hashes
+                        .insert(url, Some(bzlmod_registry_file_sha256(contents.as_bytes())));
+                }
+            }
+        }
+        bzlmod_write_back_lockfile(
+            &project_fs,
+            &registry_file_hashes,
+            selected_yanked_versions,
+        )
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::warn!("Error writing back MODULE.bazel.lock: {}", error);
+    }
+}
+
+fn bzlmod_registry_file_sha256(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
 }
 
 fn bzlmod_yanked_version_allowed(
