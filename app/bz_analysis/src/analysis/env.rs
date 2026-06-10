@@ -32,8 +32,11 @@ use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::new_bazel_output_file_info;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::template_variable_info::FrozenTemplateVariableInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::toolchain_info::FrozenToolchainInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel_test_info::new_bazel_test_info;
 use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::FrozenDefaultInfo;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_executable;
+use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::default_info_files_to_run;
 use bz_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::validation_info::FrozenValidationInfo;
 use bz_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
@@ -107,6 +110,7 @@ use starlark::eval::Evaluator;
 use starlark::values::FrozenHeap;
 use starlark::values::FrozenValue;
 use starlark::values::FrozenValueTyped;
+use starlark::values::Heap;
 use starlark::values::Value;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
@@ -2327,6 +2331,17 @@ async fn run_analysis_with_env_underlying(
         if let Some(output_file_info) = output_file_info {
             res_typed.insert_provider(output_file_info)?;
         }
+        if node.is_bazel_test_rule()
+            && let Some(test_info) = bazel_test_info(
+                &res_typed,
+                &bazel_target_args,
+                &bazel_run_environment,
+                node,
+                env.heap(),
+            )?
+        {
+            res_typed.insert_provider(test_info)?;
+        }
         {
             let provider_collection = ValueTypedComplex::new_err(env.heap().alloc(res_typed))
                 .internal_error("Just allocated provider collection")?;
@@ -2458,6 +2473,111 @@ fn bazel_run_environment_values(
     inherited_environment.sort();
     inherited_environment.dedup();
     Ok((environment, inherited_environment))
+}
+
+fn bazel_test_info<'v>(
+    providers: &ProviderCollection<'v>,
+    target_args: &[String],
+    environment: &[(String, String)],
+    node: ConfiguredTargetNodeRef<'_>,
+    heap: Heap<'v>,
+) -> bz_error::Result<Option<Value<'v>>> {
+    let default_info = providers.default_info_value()?;
+    let Some(files_to_run) = default_info_files_to_run(default_info)? else {
+        return Ok(None);
+    };
+    let Some(executable) = bazel_files_to_run_executable(files_to_run) else {
+        return Ok(None);
+    };
+
+    let mut command = Vec::with_capacity(1 + target_args.len());
+    command.push(executable);
+    command.extend(target_args.iter().map(|arg| heap.alloc_str(arg).to_value()));
+
+    let (size, timeout_seconds, shard_count) = bazel_test_attrs(node)?;
+    let test_info = new_bazel_test_info(
+        command,
+        environment.to_vec(),
+        bazel_test_labels(node)?,
+        size,
+        timeout_seconds,
+        shard_count,
+        heap,
+    )?;
+    Ok(Some(heap.alloc(test_info)))
+}
+
+fn bazel_test_attrs(node: ConfiguredTargetNodeRef<'_>) -> bz_error::Result<(String, i32, i32)> {
+    let size = bazel_test_string_attr(node, "size")?.unwrap_or_else(|| "medium".to_owned());
+    let timeout = bazel_test_string_attr(node, "timeout")?.unwrap_or_else(|| "moderate".to_owned());
+    let timeout_seconds = match timeout.as_str() {
+        "short" => 60,
+        "moderate" => 300,
+        "long" => 900,
+        "eternal" => 3600,
+        other => {
+            return Err(bz_error::internal_error!(
+                "Bazel test `timeout` attr should be one of short, moderate, long, eternal; got `{}`",
+                other
+            ));
+        }
+    };
+    let shard_count = bazel_test_int_attr(node, "shard_count")?
+        .unwrap_or(-1)
+        .max(0) as i32;
+    Ok((size, timeout_seconds, shard_count))
+}
+
+fn bazel_test_string_attr(
+    node: ConfiguredTargetNodeRef<'_>,
+    name: &str,
+) -> bz_error::Result<Option<String>> {
+    let Some(attr) = node.get(name, AttrInspectOptions::All) else {
+        return Ok(None);
+    };
+    let ConfiguredAttr::String(value) = &attr.value else {
+        return Err(bz_error::internal_error!(
+            "Bazel test `{}` attr should be a string, got `{:?}`",
+            name,
+            attr.value
+        ));
+    };
+    Ok(Some(value.0.to_string()))
+}
+
+fn bazel_test_int_attr(
+    node: ConfiguredTargetNodeRef<'_>,
+    name: &str,
+) -> bz_error::Result<Option<i64>> {
+    let Some(attr) = node.get(name, AttrInspectOptions::All) else {
+        return Ok(None);
+    };
+    let ConfiguredAttr::Int(value) = &attr.value else {
+        return Err(bz_error::internal_error!(
+            "Bazel test `{}` attr should be an int, got `{:?}`",
+            name,
+            attr.value
+        ));
+    };
+    Ok(Some(*value))
+}
+
+fn bazel_test_labels(node: ConfiguredTargetNodeRef<'_>) -> bz_error::Result<Vec<String>> {
+    let Some(attr) = node.get("tags", AttrInspectOptions::All) else {
+        return Ok(Vec::new());
+    };
+    let ConfiguredAttr::List(tags) = &attr.value else {
+        return Ok(Vec::new());
+    };
+    tags.iter()
+        .map(|tag| match tag {
+            ConfiguredAttr::String(value) => Ok(value.0.to_string()),
+            other => Err(bz_error::internal_error!(
+                "Bazel test `tags` attr should contain strings, got `{:?}`",
+                other
+            )),
+        })
+        .collect()
 }
 
 fn get_rule_callable(

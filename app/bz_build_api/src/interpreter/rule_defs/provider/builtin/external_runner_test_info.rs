@@ -270,7 +270,7 @@ fn iter_value<'v>(value: Value<'v>) -> bz_error::Result<impl Iterator<Item = Val
     }
 }
 
-fn iter_test_command<'v>(
+pub(crate) fn iter_test_command<'v>(
     command: Value<'v>,
 ) -> impl Iterator<Item = bz_error::Result<TestCommandMember<'v>>> {
     if command.is_none() {
@@ -303,7 +303,7 @@ fn iter_test_command<'v>(
     }))
 }
 
-fn iter_test_env<'v>(
+pub(crate) fn iter_test_env<'v>(
     env: Value<'v>,
 ) -> impl Iterator<Item = bz_error::Result<(&'v str, &'v dyn CommandLineArgLike<'v>)>> {
     if env.is_none() {
@@ -336,7 +336,7 @@ fn iter_test_env<'v>(
     }))
 }
 
-fn iter_opt_str_list<'v>(
+pub(crate) fn iter_opt_str_list<'v>(
     list: Value<'v>,
     name: &'static str,
 ) -> impl Iterator<Item = bz_error::Result<&'v str>> {
@@ -464,7 +464,7 @@ fn unpack_opt_worker<'v>(worker: Value<'v>) -> bz_error::Result<Option<&'v Worke
     Ok(Some(worker))
 }
 
-fn check_all<I, T>(it: I) -> bz_error::Result<()>
+pub(crate) fn check_all<I, T>(it: I) -> bz_error::Result<()>
 where
     I: IntoIterator<Item = bz_error::Result<T>>,
 {
@@ -474,7 +474,7 @@ where
     Ok(())
 }
 
-fn unwrap_all<I, T>(it: I) -> impl Iterator<Item = T>
+pub(crate) fn unwrap_all<I, T>(it: I) -> impl Iterator<Item = T>
 where
     I: IntoIterator<Item = bz_error::Result<T>>,
 {

@@ -723,6 +723,19 @@ pub fn bazel_files_to_run_executable<'v>(value: Value<'v>) -> Option<Value<'v>> 
     })
 }
 
+pub fn default_info_files_to_run<'v>(value: Value<'v>) -> bz_error::Result<Option<Value<'v>>> {
+    if let Some(default_info) = value.downcast_ref::<DefaultInfo<'v>>() {
+        return Ok(Some(default_info.files_to_run.get().to_value()));
+    }
+    if let Some(default_info) = value
+        .unpack_frozen()
+        .and_then(|value| value.downcast_ref::<FrozenDefaultInfo>())
+    {
+        return Ok(Some(default_info.files_to_run.get().to_value()));
+    }
+    Ok(None)
+}
+
 pub fn bazel_files_to_run_add_executable_to_command_line<'v>(
     value: Value<'v>,
     cli: &mut dyn CommandLineBuilder,

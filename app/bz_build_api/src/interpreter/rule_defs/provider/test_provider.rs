@@ -20,6 +20,7 @@ use futures::future::FutureExt;
 use itertools::Itertools;
 
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use crate::interpreter::rule_defs::provider::builtin::bazel_test_info::FrozenBazelTestInfo;
 use crate::interpreter::rule_defs::provider::builtin::external_runner_test_info::FrozenExternalRunnerTestInfo;
 use crate::interpreter::rule_defs::provider::builtin::external_runner_test_info::TestCommandMember;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
@@ -106,8 +107,78 @@ impl TestProvider for FrozenExternalRunnerTestInfo {
     }
 }
 
+impl TestProvider for FrozenBazelTestInfo {
+    fn visit_artifacts(
+        &self,
+        visitor: &mut dyn CommandLineArtifactVisitor<'_>,
+    ) -> bz_error::Result<()> {
+        for command in self.command() {
+            if let TestCommandMember::Arglike(arg) = command {
+                arg.visit_artifacts(visitor)?;
+            }
+        }
+        for (_, value) in self.env() {
+            value.visit_artifacts(visitor)?;
+        }
+        Ok(())
+    }
+
+    fn labels(&self) -> Vec<&str> {
+        FrozenBazelTestInfo::labels(self).collect()
+    }
+
+    fn dispatch<'exec>(
+        &self,
+        target: ConfiguredTarget,
+        executor: Arc<dyn TestExecutor + 'exec>,
+        working_dir_cell: CellName,
+    ) -> BoxFuture<'exec, bz_error::Result<()>> {
+        let mut handle_index = 0;
+
+        let command = self
+            .command()
+            .map(|c| match c {
+                TestCommandMember::Literal(l) => ExternalRunnerSpecValue::Verbatim(l.to_owned()),
+                TestCommandMember::Arglike(_) => {
+                    let handle = ExternalRunnerSpecValue::ArgHandle(handle_index.into());
+                    handle_index += 1;
+                    handle
+                }
+            })
+            .collect();
+
+        let env = self
+            .env()
+            .map(|(k, _)| {
+                (
+                    k.to_owned(),
+                    ExternalRunnerSpecValue::EnvHandle(k.to_owned().into()),
+                )
+            })
+            .collect();
+        let package_oncall = target.package_oncall.clone();
+
+        let spec = ExternalRunnerSpec {
+            target,
+            test_type: "bazel".to_owned(),
+            command,
+            env,
+            labels: self.labels().map(|l| l.to_owned()).collect(),
+            contacts: Vec::new(),
+            oncall: package_oncall,
+            working_dir_cell,
+        };
+
+        async move { executor.external_runner_spec(spec).await }.boxed()
+    }
+}
+
 impl dyn TestProvider {
     pub fn from_collection(providers: &FrozenProviderCollection) -> Option<&dyn TestProvider> {
+        if let Some(provider) = providers.builtin_provider::<FrozenBazelTestInfo>() {
+            return Some(provider.as_ref());
+        }
+
         if let Some(provider) = providers.builtin_provider::<FrozenExternalRunnerTestInfo>() {
             return Some(provider.as_ref());
         }

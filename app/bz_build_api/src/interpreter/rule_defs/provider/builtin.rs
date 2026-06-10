@@ -11,6 +11,7 @@
 //! Builtin providers.
 
 pub mod bazel;
+pub mod bazel_test_info;
 pub mod configuration_info;
 pub mod constraint_setting_info;
 pub mod constraint_value_info;
