@@ -12,6 +12,7 @@ use std::convert::Infallible;
 use std::fmt::Display;
 use std::ops::ControlFlow;
 use std::ops::FromResidual;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
@@ -34,6 +35,7 @@ use crate::execute::kind::CommandExecutionKind;
 use crate::execute::output::CommandStdStreams;
 use crate::execute::request::CommandExecutionOutput;
 use crate::execute::request::ResolvedCommandExecutionOutput;
+use crate::materialize::materializer::CasDownloadInfo;
 use crate::materialize::materializer::RemoteActionCacheOrigin;
 use crate::output_size::OutputSize;
 use crate::re::remote_action_result::ReMetadataTiming;
@@ -252,6 +254,8 @@ pub struct CommandExecutionResult {
     pub action_result: Option<TActionResult2>,
     /// Remote action-cache origin guaranteeing remotely-backed output CAS blobs, if any.
     pub remote_cache_origin: Option<RemoteActionCacheOrigin>,
+    /// CAS download metadata for outputs served by remote-backed local action-cache metadata.
+    pub remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
     /// Description of how local or remote execution were scheduled (currently only set by hybrid executor)
     pub scheduling_mode: Option<SchedulingMode>,
 

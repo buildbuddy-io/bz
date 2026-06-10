@@ -8,6 +8,8 @@
  * above-listed licenses.
  */
 
+use std::sync::Arc;
+
 use bz_common::file_ops::metadata::TrackedFileDigest;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 
@@ -17,10 +19,25 @@ use crate::digest_config::DigestConfig;
 use crate::directory::ExternalSymlinkUploadPath;
 use crate::directory::LazyActionDirectoryBuilder;
 use crate::directory::ResolvedSymlinkUploadPath;
+use crate::materialize::materializer::CasDownloadInfo;
 
 /// This is like `ArtifactGroupValues`, but without dependency on `Artifact`.
 pub trait ArtifactGroupValuesDyn: Send + Sync + 'static {
     fn iter(&self) -> Box<dyn Iterator<Item = (&dyn ArtifactDyn, &ArtifactValue)> + '_>;
+
+    fn iter_with_remote_cache_cas_info(
+        &self,
+    ) -> Box<
+        dyn Iterator<
+                Item = (
+                    &dyn ArtifactDyn,
+                    &ArtifactValue,
+                    Option<&Arc<CasDownloadInfo>>,
+                ),
+            > + '_,
+    > {
+        Box::new(self.iter().map(|(artifact, value)| (artifact, value, None)))
+    }
 
     fn action_cache_fingerprint(&self) -> Option<&[u8]> {
         None

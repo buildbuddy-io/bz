@@ -49,6 +49,7 @@ use bz_error::bz_error;
 use bz_events::daemon_id::DaemonId;
 use bz_events::dispatch::EventDispatcher;
 use bz_events::dispatch::get_dispatcher_opt;
+use bz_execute::artifact::artifact_dyn::ArtifactDyn;
 use bz_execute::artifact::artifact_dyn::CommandExecutionInputOwner;
 use bz_execute::artifact_utils::ArtifactValueBuilder;
 use bz_execute::artifact_value::ArtifactValue;
@@ -86,6 +87,7 @@ use bz_execute::execute::request::WorkerSpec;
 use bz_execute::execute::result::CommandExecutionMetadata;
 use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::knobs::ExecutorGlobalKnobs;
+use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_execute::materialize::materializer::CopiedArtifact;
 use bz_execute::materialize::materializer::DeclareArtifactPayload;
 use bz_execute::materialize::materializer::LostRemoteCasArtifact;
@@ -1789,57 +1791,20 @@ impl LocalExecutor {
         Ok(())
     }
 
-    async fn declare_remote_local_action_cache_outputs(
+    fn set_remote_local_action_cache_metadata(
         &self,
-        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-        persist_declared_cas: bool,
-        remote_cache_origin: &RemoteActionCacheOrigin,
+        result: &mut CommandExecutionResult,
+        remote_cache_origin: Option<RemoteActionCacheOrigin>,
         digest_config: DigestConfig,
-    ) -> bz_error::Result<()> {
-        let mut to_declare = Vec::with_capacity(outputs.len());
-
-        for (output, value) in outputs {
-            let output = output.as_ref();
-            let CommandExecutionOutputRef::BuildArtifact { .. } = output else {
-                continue;
-            };
-
-            let content_hash = if output.has_content_based_path() {
-                Some(value.content_based_path_hash())
-            } else {
-                None
-            };
-            let path = output
-                .resolve(&self.artifact_fs, content_hash.as_ref())?
-                .into_path();
-            let configuration_path = if self.materializer.is_eager_materialization_enabled()
-                && output.has_content_based_path()
-            {
-                Some(
-                    output
-                        .resolve_configuration_hash_path(&self.artifact_fs)?
-                        .path
-                        .to_owned(),
-                )
-            } else {
-                None
-            };
-
-            to_declare.push(DeclareArtifactPayload {
-                path,
-                artifact: value.dupe(),
-                configuration_path,
-            });
-        }
-
-        let info = remote_cache_origin.to_cas_download_info(
-            self.local_action_cache_re_use_case,
-            digest_config,
-            persist_declared_cas,
-        );
-        self.materializer
-            .declare_cas_many(Arc::new(info), to_declare)
-            .await
+    ) {
+        result.remote_cache_cas_info = remote_cache_origin.as_ref().map(|origin| {
+            Arc::new(origin.to_cas_download_info(
+                self.local_action_cache_re_use_case,
+                digest_config,
+                false,
+            ))
+        });
+        result.remote_cache_origin = remote_cache_origin;
     }
 
     async fn transform_bazel_shared_action_outputs(
@@ -2392,19 +2357,11 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
 
         let remote_cache_origin = entry.remote_cache_origin.clone();
         if !command.outputs_declared_by_action {
-            let declare_result = if let Some(remote_cache_origin) = &remote_cache_origin {
-                self.declare_remote_local_action_cache_outputs(
-                    &outputs,
-                    false,
-                    remote_cache_origin,
-                    command.digest_config,
-                )
-                .await
-            } else {
-                self.declare_local_action_cache_outputs(&outputs, command.digest_config)
+            if remote_cache_origin.is_none()
+                && let Err(e) = self
+                    .declare_local_action_cache_outputs(&outputs, command.digest_config)
                     .await
-            };
-            if let Err(e) = declare_result {
+            {
                 return ControlFlow::Break(
                     manager.error("local_action_cache_declare_outputs_failed", e),
                 );
@@ -2436,7 +2393,11 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 CommandStdStreams::Empty,
                 timing,
             );
-            result.remote_cache_origin = remote_cache_origin;
+            self.set_remote_local_action_cache_metadata(
+                &mut result,
+                remote_cache_origin,
+                command.digest_config,
+            );
             return ControlFlow::Break(result);
         }
     }
@@ -2485,23 +2446,14 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     ) {
                         Ok(Some(outputs)) => {
                             let remote_cache_origin = entry.remote_cache_origin.clone();
-                            let declare_result =
-                                if let Some(remote_cache_origin) = &remote_cache_origin {
-                                    self.declare_remote_local_action_cache_outputs(
-                                        &outputs,
-                                        false,
-                                        remote_cache_origin,
-                                        command.digest_config,
-                                    )
-                                    .await
-                                } else {
-                                    self.declare_local_action_cache_outputs(
+                            if remote_cache_origin.is_none()
+                                && let Err(e) = self
+                                    .declare_local_action_cache_outputs(
                                         &outputs,
                                         command.digest_config,
                                     )
                                     .await
-                                };
-                            if let Err(e) = declare_result {
+                            {
                                 return ControlFlow::Break(
                                     manager.error("local_action_cache_declare_outputs_failed", e),
                                 );
@@ -2530,7 +2482,11 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                                 CommandStdStreams::Empty,
                                 timing,
                             );
-                            result.remote_cache_origin = remote_cache_origin;
+                            self.set_remote_local_action_cache_metadata(
+                                &mut result,
+                                remote_cache_origin,
+                                command.digest_config,
+                            );
                             return ControlFlow::Break(result);
                         }
                         Ok(None) => {
@@ -2643,23 +2599,10 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         ) {
             Ok(Some(outputs)) => {
                 let remote_cache_origin = cache_entry.remote_cache_origin.clone();
-                if let Some(remote_cache_origin_ref) = &remote_cache_origin {
-                    if let Err(e) = self
-                        .declare_remote_local_action_cache_outputs(
-                            &outputs,
-                            false,
-                            remote_cache_origin_ref,
-                            command.digest_config,
-                        )
+                if remote_cache_origin.is_none()
+                    && let Err(e) = self
+                        .declare_local_action_cache_outputs(&outputs, command.digest_config)
                         .await
-                    {
-                        return ControlFlow::Break(
-                            manager.error("local_action_cache_declare_outputs_failed", e),
-                        );
-                    }
-                } else if let Err(e) = self
-                    .declare_local_action_cache_outputs(&outputs, command.digest_config)
-                    .await
                 {
                     return ControlFlow::Break(
                         manager.error("local_action_cache_declare_outputs_failed", e),
@@ -2697,7 +2640,11 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     CommandStdStreams::Empty,
                     timing,
                 );
-                result.remote_cache_origin = remote_cache_origin;
+                self.set_remote_local_action_cache_metadata(
+                    &mut result,
+                    remote_cache_origin,
+                    command.digest_config,
+                );
                 return ControlFlow::Break(result);
             }
             Ok(None) => {
@@ -3055,6 +3002,44 @@ struct SharedArtifactPathAlias {
 struct ExternalCellRootAlias {
     source_root: ProjectRelativePathBuf,
     alias_root: ProjectRelativePathBuf,
+}
+
+fn push_remote_cas_declaration(
+    remote_cas_declarations: &mut Vec<(Arc<CasDownloadInfo>, Vec<DeclareArtifactPayload>)>,
+    info: Arc<CasDownloadInfo>,
+    payload: DeclareArtifactPayload,
+) {
+    if let Some((_, payloads)) = remote_cas_declarations
+        .iter_mut()
+        .find(|(existing, _)| existing.as_ref() == info.as_ref())
+    {
+        payloads.push(payload);
+    } else {
+        remote_cas_declarations.push((info, vec![payload]));
+    }
+}
+
+fn remote_cas_payload_for_artifact_dyn(
+    materializer: &dyn Materializer,
+    artifact_fs: &ArtifactFs,
+    artifact: &dyn ArtifactDyn,
+    value: &ArtifactValue,
+) -> bz_error::Result<DeclareArtifactPayload> {
+    let has_content_based_path = artifact.has_content_based_path();
+    let content_hash = has_content_based_path.then(|| value.content_based_path_hash());
+    let path = artifact.resolve_path(artifact_fs, content_hash.as_ref())?;
+    let configuration_path =
+        if materializer.is_eager_materialization_enabled() && has_content_based_path {
+            Some(artifact.resolve_configuration_hash_path(artifact_fs)?)
+        } else {
+            None
+        };
+
+    Ok(DeclareArtifactPayload {
+        path,
+        artifact: value.dupe(),
+        configuration_path,
+    })
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -3973,6 +3958,7 @@ pub async fn materialize_inputs(
     let mut paths = vec![];
     let mut scratch = ScratchPath(None);
     let mut configuration_path_to_content_based_path_symlinks = vec![];
+    let mut remote_cas_declarations = Vec::new();
     let mut shared_artifact_path_aliases = vec![];
     let mut sandbox_artifact_path_aliases = vec![];
     let mut external_cell_roots_to_materialize = BuckIndexSet::new();
@@ -4001,8 +3987,22 @@ pub async fn materialize_inputs(
     {
         match input {
             CommandExecutionInput::Artifact(group) => {
-                for (artifact, artifact_value) in group.iter() {
+                for (artifact, artifact_value, remote_cache_cas_info) in
+                    group.iter_with_remote_cache_cas_info()
+                {
                     if artifact.requires_materialization(artifact_fs) {
+                        if let Some(remote_cache_cas_info) = remote_cache_cas_info {
+                            push_remote_cas_declaration(
+                                &mut remote_cas_declarations,
+                                remote_cache_cas_info.clone(),
+                                remote_cas_payload_for_artifact_dyn(
+                                    materializer,
+                                    artifact_fs,
+                                    artifact,
+                                    artifact_value,
+                                )?,
+                            );
+                        }
                         let owner = artifact.input_owner();
                         let configuration_hash_path =
                             artifact.resolve_configuration_hash_path(artifact_fs)?;
@@ -4046,8 +4046,22 @@ pub async fn materialize_inputs(
                 }
             }
             CommandExecutionInput::ArtifactWithExecutableOverrides { group, .. } => {
-                for (artifact, artifact_value) in group.iter() {
+                for (artifact, artifact_value, remote_cache_cas_info) in
+                    group.iter_with_remote_cache_cas_info()
+                {
                     if artifact.requires_materialization(artifact_fs) {
+                        if let Some(remote_cache_cas_info) = remote_cache_cas_info {
+                            push_remote_cas_declaration(
+                                &mut remote_cas_declarations,
+                                remote_cache_cas_info.clone(),
+                                remote_cas_payload_for_artifact_dyn(
+                                    materializer,
+                                    artifact_fs,
+                                    artifact,
+                                    artifact_value,
+                                )?,
+                            );
+                        }
                         let owner = artifact.input_owner();
                         let configuration_hash_path =
                             artifact.resolve_configuration_hash_path(artifact_fs)?;
@@ -4217,6 +4231,12 @@ pub async fn materialize_inputs(
             materializer.declare_copy(path, value, copied_artifacts, cfg_path)
         },
     ))
+    .await?;
+    bz_util::future::try_join_all(
+        remote_cas_declarations
+            .into_iter()
+            .map(|(info, payloads)| materializer.declare_cas_many(info, payloads)),
+    )
     .await?;
     let mut stream = materializer.materialize_many(paths.clone()).await?;
     let mut lost_remote_cas_artifacts = Vec::new();

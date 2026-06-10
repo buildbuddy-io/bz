@@ -33,6 +33,7 @@ use bz_execute::directory::finalize_lazy_action_directory;
 use bz_execute::directory::insert_artifact_lazy;
 use bz_execute::directory::insert_artifact_lazy_for_execution;
 use bz_execute::directory::merge_artifact_directory_for_execution;
+use bz_execute::materialize::materializer::CasDownloadInfo;
 use dupe::Dupe;
 use pagable::PagablePanic;
 use smallvec::SmallVec;
@@ -51,6 +52,32 @@ impl ArtifactGroupValues {
         artifact_fs: &ArtifactFs,
         digest_config: DigestConfig,
     ) -> bz_error::Result<Self> {
+        Self::new_with_remote_cache_cas_info(
+            values,
+            empty_remote_cache_cas_infos(0),
+            children,
+            artifact_fs,
+            digest_config,
+        )
+    }
+
+    pub fn new_with_remote_cache_cas_info(
+        values: SmallVec<[(Artifact, ArtifactValue); 1]>,
+        mut remote_cache_cas_infos: SmallVec<[Option<Arc<CasDownloadInfo>>; 1]>,
+        children: Vec<Self>,
+        artifact_fs: &ArtifactFs,
+        digest_config: DigestConfig,
+    ) -> bz_error::Result<Self> {
+        if remote_cache_cas_infos.is_empty() {
+            remote_cache_cas_infos = empty_remote_cache_cas_infos(values.len());
+        }
+        if values.len() != remote_cache_cas_infos.len() {
+            return Err(internal_error!(
+                "ArtifactGroupValues remote CAS metadata length mismatch: {} values, {} metadata entries",
+                values.len(),
+                remote_cache_cas_infos.len()
+            ));
+        }
         let should_defer_directory = values.iter().any(|(_, value)| {
             value.has_source_file_proxy()
                 || (value.deps().is_some()
@@ -73,6 +100,7 @@ impl ArtifactGroupValues {
                     artifact_fs,
                 )?),
                 values,
+                remote_cache_cas_infos,
                 children,
                 directory: None,
             })));
@@ -120,6 +148,7 @@ impl ArtifactGroupValues {
                 artifact_fs,
             )?),
             values,
+            remote_cache_cas_infos,
             children,
             directory: Some(directory),
         })))
@@ -128,6 +157,7 @@ impl ArtifactGroupValues {
     pub fn from_artifact(artifact: Artifact, value: ArtifactValue) -> Self {
         Self(Arc::new(ArtifactGroupValuesData {
             action_cache_fingerprint: None,
+            remote_cache_cas_infos: empty_remote_cache_cas_infos(1),
             values: smallvec![(artifact, value)],
             children: Vec::new(),
             directory: None,
@@ -139,6 +169,15 @@ impl ArtifactGroupValues {
         value: ArtifactValue,
         artifact_fs: &ArtifactFs,
     ) -> bz_error::Result<Self> {
+        Self::from_artifact_with_fs_and_remote_cache_cas_info(artifact, value, None, artifact_fs)
+    }
+
+    pub fn from_artifact_with_fs_and_remote_cache_cas_info(
+        artifact: Artifact,
+        value: ArtifactValue,
+        remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
+        artifact_fs: &ArtifactFs,
+    ) -> bz_error::Result<Self> {
         let values = smallvec![(artifact, value)];
         Ok(Self(Arc::new(ArtifactGroupValuesData {
             action_cache_fingerprint: Some(compute_action_cache_fingerprint(
@@ -147,6 +186,7 @@ impl ArtifactGroupValues {
                 None,
                 artifact_fs,
             )?),
+            remote_cache_cas_infos: smallvec![remote_cache_cas_info],
             values,
             children: Vec::new(),
             directory: None,
@@ -226,6 +266,12 @@ impl ArtifactGroupValues {
         TransitiveSetIterator::new(self)
     }
 
+    pub fn iter_with_remote_cache_cas_info(
+        &self,
+    ) -> impl Iterator<Item = (&(Artifact, ArtifactValue), Option<&Arc<CasDownloadInfo>>)> {
+        TransitiveSetValuesAndCasInfoIterator::new(self)
+    }
+
     pub fn iter_many<'a>(
         values: impl IntoIterator<Item = &'a Self>,
     ) -> impl Iterator<Item = &'a (Artifact, ArtifactValue)> {
@@ -237,6 +283,7 @@ impl ArtifactGroupValues {
         let other = &other.0;
 
         this.values == other.values
+            && this.remote_cache_cas_infos == other.remote_cache_cas_infos
             && this
                 .children
                 .iter()
@@ -249,6 +296,8 @@ pub struct ArtifactGroupValuesData {
     #[allocative(skip)]
     action_cache_fingerprint: Option<Box<[u8]>>,
     pub(super) values: SmallVec<[(Artifact, ArtifactValue); 1]>,
+    #[allocative(skip)]
+    pub(super) remote_cache_cas_infos: SmallVec<[Option<Arc<CasDownloadInfo>>; 1]>,
     pub(super) children: Vec<ArtifactGroupValues>,
     /// If set, a precomputed directory represented the union of all values in this
     /// ArtifactGroupValuesData.
@@ -445,12 +494,89 @@ where
     }
 }
 
+fn empty_remote_cache_cas_infos(len: usize) -> SmallVec<[Option<Arc<CasDownloadInfo>>; 1]> {
+    std::iter::repeat_with(|| None).take(len).collect()
+}
+
+struct TransitiveSetValuesAndCasInfoIterator<'a> {
+    values: std::slice::Iter<'a, (Artifact, ArtifactValue)>,
+    remote_cache_cas_infos: std::slice::Iter<'a, Option<Arc<CasDownloadInfo>>>,
+    queue: Vec<&'a ArtifactGroupValues>,
+    seen: HashSet<ArtifactValueIdentity>,
+}
+
+impl<'a> TransitiveSetValuesAndCasInfoIterator<'a> {
+    fn new(values: &'a ArtifactGroupValues) -> Self {
+        let mut ret = Self {
+            values: values.0.values.iter(),
+            remote_cache_cas_infos: values.0.remote_cache_cas_infos.iter(),
+            queue: Vec::new(),
+            seen: HashSet::new(),
+        };
+        ret.enqueue_children(&values.0.children);
+        ret
+    }
+
+    fn enqueue_children(&mut self, children: &'a [ArtifactGroupValues]) {
+        for child in children.iter().rev() {
+            if self
+                .seen
+                .insert(ArtifactValueIdentity(Arc::as_ptr(&child.0) as usize))
+            {
+                self.queue.push(child);
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for TransitiveSetValuesAndCasInfoIterator<'a> {
+    type Item = (
+        &'a (Artifact, ArtifactValue),
+        Option<&'a Arc<CasDownloadInfo>>,
+    );
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(value) = self.values.next() {
+                let remote_cache_cas_info = self
+                    .remote_cache_cas_infos
+                    .next()
+                    .expect("ArtifactGroupValues remote CAS metadata length mismatch");
+                return Some((value, remote_cache_cas_info.as_ref()));
+            }
+
+            let next = self.queue.pop()?;
+            self.values = next.0.values.iter();
+            self.remote_cache_cas_infos = next.0.remote_cache_cas_infos.iter();
+            self.enqueue_children(&next.0.children);
+        }
+    }
+}
+
 impl ArtifactGroupValuesDyn for ArtifactGroupValues {
     fn iter(&self) -> Box<dyn Iterator<Item = (&dyn ArtifactDyn, &ArtifactValue)> + '_> {
         Box::new(
             self.iter()
                 .map(|(artifact, value)| (artifact as &dyn ArtifactDyn, value)),
         )
+    }
+
+    fn iter_with_remote_cache_cas_info(
+        &self,
+    ) -> Box<
+        dyn Iterator<
+                Item = (
+                    &dyn ArtifactDyn,
+                    &ArtifactValue,
+                    Option<&Arc<CasDownloadInfo>>,
+                ),
+            > + '_,
+    > {
+        Box::new(self.iter_with_remote_cache_cas_info().map(
+            |((artifact, value), remote_cache_cas_info)| {
+                (artifact as &dyn ArtifactDyn, value, remote_cache_cas_info)
+            },
+        ))
     }
 
     fn action_cache_fingerprint(&self) -> Option<&[u8]> {
@@ -533,6 +659,7 @@ mod tests {
         ArtifactGroupValuesData {
             action_cache_fingerprint: None,
             values: Default::default(),
+            remote_cache_cas_infos: Default::default(),
             children: Default::default(),
             directory: None,
         }

@@ -58,6 +58,7 @@ use bz_execute::execute::request::OutputType;
 use bz_execute::execute::result::CommandExecutionReport;
 use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::execute::result::CommandExecutionStatus;
+use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_execute::materialize::materializer::HasMaterializer;
 use bz_execute::materialize::materializer::Materializer;
 use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
@@ -122,6 +123,8 @@ impl OutputSize for ActionOutputs {
 #[derivative(PartialEq, Eq)]
 struct ActionOutputsData {
     outputs: BuckIndexMap<BuildArtifactPath, ArtifactValue>,
+    #[allocative(skip)]
+    remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
 }
 
 /// Bazel-shaped action completion value.
@@ -245,7 +248,17 @@ impl ActionExecutionKind {
 
 impl ActionOutputs {
     pub fn new(outputs: BuckIndexMap<BuildArtifactPath, ArtifactValue>) -> Self {
-        Self(Arc::new(ActionOutputsData { outputs }))
+        Self::new_with_remote_cache_cas_info(outputs, None)
+    }
+
+    pub fn new_with_remote_cache_cas_info(
+        outputs: BuckIndexMap<BuildArtifactPath, ArtifactValue>,
+        remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
+    ) -> Self {
+        Self(Arc::new(ActionOutputsData {
+            outputs,
+            remote_cache_cas_info,
+        }))
     }
 
     pub fn from_single(artifact: BuildArtifactPath, value: ArtifactValue) -> Self {
@@ -269,6 +282,10 @@ impl ActionOutputs {
 
     pub fn values(&self) -> impl Iterator<Item = &ArtifactValue> {
         self.0.outputs.values()
+    }
+
+    pub fn remote_cache_cas_info(&self) -> Option<Arc<CasDownloadInfo>> {
+        self.0.remote_cache_cas_info.clone()
     }
 }
 
@@ -661,15 +678,17 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
             scheduling_mode,
             waiting_data,
             remote_cache_origin,
+            remote_cache_cas_info,
             ..
         } = result;
 
         // TODO(T156483516): We should also validate that the outputs match the expected outputs
-        let action_outputs = ActionOutputs::new(
+        let action_outputs = ActionOutputs::new_with_remote_cache_cas_info(
             outputs
                 .into_iter()
                 .filter_map(|(output, value)| Some((output.into_build_artifact()?.0, value)))
                 .collect(),
+            remote_cache_cas_info,
         );
 
         // TODO (@torozco): The execution kind should be made to come via the command reports too.

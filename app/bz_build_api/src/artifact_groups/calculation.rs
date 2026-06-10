@@ -48,6 +48,7 @@ use bz_execute::directory::INTERNER;
 use bz_execute::directory::extract_artifact_value;
 use bz_execute::directory::insert_artifact;
 use bz_execute::directory::merge_action_directory_with_symlink_conflicts;
+use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use bz_util::time_span::TimeSpan;
 use derive_more::Display;
@@ -125,10 +126,10 @@ impl ArtifactGroupCalculation for DiceComputations<'_> {
 ///    of the ArtifactGroupValues until `into_group_values()` is called. For callers waiting
 ///    on many inputs, this allows them to only allocate those large values only after all
 ///    inputs are ready.
-pub(crate) fn ensure_artifact_group_staged<'a>(
-    ctx: &'a mut DiceComputations,
+pub(crate) fn ensure_artifact_group_staged<'a, 'd>(
+    ctx: &'a mut DiceComputations<'d>,
     input: ResolvedArtifactGroup<'a>,
-) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a, 'd> {
     match input {
         ResolvedArtifactGroup::Artifact(artifact) => {
             ensure_artifact_staged(ctx, artifact.clone()).left_future()
@@ -141,10 +142,10 @@ pub(crate) fn ensure_artifact_group_staged<'a>(
 }
 
 /// See [ensure_artifact_group_staged].
-pub(super) fn ensure_base_artifact_staged<'a>(
-    dice: &'a mut DiceComputations,
+pub(super) fn ensure_base_artifact_staged<'a, 'd>(
+    dice: &'a mut DiceComputations<'d>,
     artifact: BaseArtifactKind,
-) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a, 'd> {
     match artifact {
         BaseArtifactKind::Build(built) => ensure_build_artifact_staged(dice, built).left_future(),
         BaseArtifactKind::Source(source) => {
@@ -154,28 +155,45 @@ pub(super) fn ensure_base_artifact_staged<'a>(
 }
 
 /// See [ensure_artifact_group_staged].
-pub(super) fn ensure_artifact_staged<'a>(
-    dice: &'a mut DiceComputations,
+pub(super) fn ensure_artifact_staged<'a, 'd>(
+    dice: &'a mut DiceComputations<'d>,
     artifact: Artifact,
-) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a, 'd> {
     let ArtifactKind { base, path } = artifact.data();
     match path.is_empty() {
         true => ensure_base_artifact_staged(dice, base.clone()).left_future(),
-        false => dice
-            .compute(EnsureProjectedArtifactKey::ref_cast(artifact.data()))
-            .map(|v| Ok(EnsureArtifactGroupReady::Single(v??)))
-            .right_future(),
+        false => {
+            let artifact_kind = artifact.data().dupe();
+            let base = base.clone();
+            async move {
+                let value = dice
+                    .compute(EnsureProjectedArtifactKey::ref_cast(&artifact_kind))
+                    .await??;
+                let base_value = ensure_base_artifact_staged(dice, base)
+                    .await?
+                    .unpack_single()?;
+                Ok(EnsureArtifactGroupReady::Single(EnsuredArtifactValue::new(
+                    value,
+                    base_value.remote_cache_cas_info,
+                )))
+            }
+            .boxed()
+            .right_future()
+        }
     }
 }
 
-fn ensure_build_artifact_staged<'a>(
-    dice: &'a mut DiceComputations,
+fn ensure_build_artifact_staged<'a, 'd>(
+    dice: &'a mut DiceComputations<'d>,
     built: BuildArtifact,
-) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a, 'd> {
     ActionCalculation::build_action(dice, built.key()).map(move |action_outputs| {
         let action_outputs = action_outputs?;
         if let Some(value) = action_outputs.get(built.get_path()) {
-            Ok(EnsureArtifactGroupReady::Single(value.dupe()))
+            Ok(EnsureArtifactGroupReady::Single(EnsuredArtifactValue::new(
+                value.dupe(),
+                action_outputs.remote_cache_cas_info(),
+            )))
         } else {
             Err(
                 EnsureArtifactStagedError::BuildArtifactMissing(built.clone(), action_outputs)
@@ -185,19 +203,20 @@ fn ensure_build_artifact_staged<'a>(
     })
 }
 
-fn ensure_source_artifact_staged<'a>(
-    dice: &'a mut DiceComputations,
+fn ensure_source_artifact_staged<'a, 'd>(
+    dice: &'a mut DiceComputations<'d>,
     source: SourceArtifact,
-) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a> {
+) -> impl Future<Output = bz_error::Result<EnsureArtifactGroupReady>> + use<'a, 'd> {
     async move {
-        Ok(EnsureArtifactGroupReady::Single(
+        Ok(EnsureArtifactGroupReady::Single(EnsuredArtifactValue::new(
             path_artifact_value(
                 dice,
                 Arc::new(source.get_path().to_cell_path()),
                 Some(source.get_path().package()),
             )
             .await?,
-        ))
+            None,
+        )))
     }
     .boxed()
 }
@@ -229,8 +248,22 @@ fn display_outputs(outputs: &ActionOutputs) -> String {
 
 /// Represents the "ready" stage of an ensure_artifact_*() call. At this point the
 /// ArtifactValue/ArtifactGroupValues can be synchronously accessed/constructed.
+pub(crate) struct EnsuredArtifactValue {
+    value: ArtifactValue,
+    remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
+}
+
+impl EnsuredArtifactValue {
+    fn new(value: ArtifactValue, remote_cache_cas_info: Option<Arc<CasDownloadInfo>>) -> Self {
+        Self {
+            value,
+            remote_cache_cas_info,
+        }
+    }
+}
+
 pub(crate) enum EnsureArtifactGroupReady {
-    Single(ArtifactValue),
+    Single(EnsuredArtifactValue),
     TransitiveSet(ArtifactGroupValues),
 }
 
@@ -246,7 +279,12 @@ impl EnsureArtifactGroupReady {
             EnsureArtifactGroupReady::TransitiveSet(values) => Ok(values),
             EnsureArtifactGroupReady::Single(value) => match resolved_artifact_group {
                 ResolvedArtifactGroup::Artifact(artifact) => {
-                    ArtifactGroupValues::from_artifact_with_fs(artifact.clone(), value, artifact_fs)
+                    ArtifactGroupValues::from_artifact_with_fs_and_remote_cache_cas_info(
+                        artifact.clone(),
+                        value.value,
+                        value.remote_cache_cas_info,
+                        artifact_fs,
+                    )
                 }
                 ResolvedArtifactGroup::TransitiveSetProjection(_) => {
                     Err(EnsureArtifactStagedError::ExpectedTransitiveSet.into())
@@ -255,7 +293,7 @@ impl EnsureArtifactGroupReady {
         }
     }
 
-    fn unpack_single(self) -> bz_error::Result<ArtifactValue> {
+    fn unpack_single(self) -> bz_error::Result<EnsuredArtifactValue> {
         match self {
             EnsureArtifactGroupReady::Single(value) => Ok(value),
             EnsureArtifactGroupReady::TransitiveSet(..) => {
@@ -286,7 +324,12 @@ impl Key for EnsureArtifactGroupValuesKey {
         let value = ensure_artifact_staged(ctx, self.0.dupe())
             .await?
             .unpack_single()?;
-        ArtifactGroupValues::from_artifact_with_fs(self.0.dupe(), value, &artifact_fs)
+        ArtifactGroupValues::from_artifact_with_fs_and_remote_cache_cas_info(
+            self.0.dupe(),
+            value.value,
+            value.remote_cache_cas_info,
+            &artifact_fs,
+        )
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
@@ -301,7 +344,7 @@ impl Key for EnsureArtifactGroupValuesKey {
     }
 }
 
-static_assertions::assert_eq_size!(EnsureArtifactGroupReady, [usize; 4]);
+static_assertions::assert_eq_size!(EnsureArtifactGroupReady, [usize; 5]);
 
 // This assertion assures we don't unknowingly regress the size of this critical future.
 // TODO(cjhopman): We should be able to wrap this in a convenient assertion macro.
@@ -623,7 +666,7 @@ impl Key for EnsureProjectedArtifactKey {
         let base_value = ensure_base_artifact_staged(ctx, base.dupe())
             .await?
             .unpack_single()?;
-        let base_content_based_path_hash = base_value.content_based_path_hash();
+        let base_content_based_path_hash = base_value.value.content_based_path_hash();
 
         let artifact_fs = ctx.get_artifact_fs().await?;
         let digest_config = ctx.global_data().get_digest_config();
@@ -638,7 +681,7 @@ impl Key for EnsureProjectedArtifactKey {
         let projected_path = base_path.join(path);
 
         let mut builder = ActionDirectoryBuilder::empty();
-        insert_artifact(&mut builder, base_path, &base_value)?;
+        insert_artifact(&mut builder, base_path, &base_value.value)?;
 
         let value = extract_artifact_value(&builder, &projected_path, digest_config)
             .with_buck_error_context(|| {
@@ -703,7 +746,7 @@ impl Key for EnsureTransitiveSetProjectionKey {
         ))
         .await?;
 
-        let (values, children) = {
+        let (values, remote_cache_cas_infos, children) = {
             // Compute the new inputs. Note that ordering here (and below) is important to ensure
             // stability of the ArtifactGroupValues we produce across executions, which try_compute_join_all preserves.
             let ready_inputs: Vec<_> = tokio::task::unconstrained(KeepGoing::try_compute_join_all(
@@ -722,19 +765,22 @@ impl Key for EnsureTransitiveSetProjectionKey {
             }
 
             let mut values = SmallVec::<[_; 1]>::with_capacity(values_count);
+            let mut remote_cache_cas_infos = SmallVec::<[_; 1]>::with_capacity(values_count);
             let mut children = Vec::with_capacity(sub_inputs.len() - values_count);
 
             for (group, ready) in zip(sub_inputs.iter(), ready_inputs) {
                 match group {
                     ResolvedArtifactGroup::Artifact(artifact) => {
-                        values.push((artifact.dupe(), ready.unpack_single()?))
+                        let value = ready.unpack_single()?;
+                        remote_cache_cas_infos.push(value.remote_cache_cas_info);
+                        values.push((artifact.dupe(), value.value));
                     }
                     ResolvedArtifactGroup::TransitiveSetProjection(..) => {
                         children.push(ready.into_group_values(group, &artifact_fs)?)
                     }
                 }
             }
-            (values, children)
+            (values, remote_cache_cas_infos, children)
         };
 
         // At this point we're holding a lot of data and want to ensure that we don't hold that across any
@@ -743,8 +789,14 @@ impl Key for EnsureTransitiveSetProjectionKey {
             let time_span = TimeSpan::start_now();
             let digest_config = ctx.global_data().get_digest_config();
 
-            let values = ArtifactGroupValues::new(values, children, &artifact_fs, digest_config)
-                .buck_error_context("Failed to construct ArtifactGroupValues")?;
+            let values = ArtifactGroupValues::new_with_remote_cache_cas_info(
+                values,
+                remote_cache_cas_infos,
+                children,
+                &artifact_fs,
+                digest_config,
+            )
+            .buck_error_context("Failed to construct ArtifactGroupValues")?;
 
             ctx.store_evaluation_data(EnsureTransitiveSetProjectionKeyActivationData {
                 time_span: time_span.end_now(),

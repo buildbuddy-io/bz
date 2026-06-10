@@ -38,7 +38,9 @@ use bz_execute::artifact_value::ArtifactValue;
 use bz_execute::digest_config::HasDigestConfig;
 use bz_execute::directory::ActionDirectoryBuilder;
 use bz_execute::execute::blobs::ActionBlobs;
+use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_execute::materialize::materializer::CasNotFoundError;
+use bz_execute::materialize::materializer::DeclareArtifactPayload;
 use bz_execute::materialize::materializer::HasMaterializer;
 use bz_execute::materialize::materializer::MaterializationError;
 use bz_execute::materialize::materializer::Materializer;
@@ -328,7 +330,7 @@ async fn materialize_artifact_group_values(
     let materializer = ctx.per_transaction_data().get_materializer();
     let mut lost_remote_outputs = Vec::new();
 
-    for (artifact, value) in values.iter() {
+    for ((artifact, value), remote_cache_cas_info) in values.iter_with_remote_cache_cas_info() {
         let BaseArtifactKind::Build(artifact) = artifact.as_parts().0 else {
             continue;
         };
@@ -347,6 +349,7 @@ async fn materialize_artifact_group_values(
             artifact_group,
             artifact.dupe(),
             value.dupe(),
+            remote_cache_cas_info.cloned(),
             waiting_data.clone(),
             force,
         )
@@ -382,11 +385,25 @@ async fn materialize_build_artifact(
     artifact_group: &ArtifactGroup,
     artifact: BuildArtifact,
     value: ArtifactValue,
+    remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
     waiting_data: WaitingData,
     force: bool,
 ) -> Result<(), MaterializationAttemptError> {
     let configuration_hash_path =
         artifact_fs.resolve_build_configuration_hash_path(artifact.get_path())?;
+
+    if let Some(remote_cache_cas_info) = remote_cache_cas_info {
+        let payload = remote_cas_payload_for_build_artifact(
+            materializer.as_ref(),
+            artifact_fs,
+            &artifact,
+            &value,
+        )?;
+        materializer
+            .declare_cas_many(remote_cache_cas_info, vec![payload])
+            .await
+            .buck_error_context("Failed to declare remote-backed local action-cache output")?;
+    }
 
     if artifact.get_path().is_content_based_path() {
         let content_based_path = artifact_fs
@@ -423,6 +440,29 @@ async fn materialize_build_artifact(
         artifact_group,
     )
     .await
+}
+
+fn remote_cas_payload_for_build_artifact(
+    materializer: &dyn Materializer,
+    artifact_fs: &bz_core::fs::artifact_path_resolver::ArtifactFs,
+    artifact: &BuildArtifact,
+    value: &ArtifactValue,
+) -> bz_error::Result<DeclareArtifactPayload> {
+    let has_content_based_path = artifact.get_path().is_content_based_path();
+    let content_hash = has_content_based_path.then(|| value.content_based_path_hash());
+    let path = artifact_fs.resolve_build(artifact.get_path(), content_hash.as_ref())?;
+    let configuration_path =
+        if materializer.is_eager_materialization_enabled() && has_content_based_path {
+            Some(artifact_fs.resolve_build_configuration_hash_path(artifact.get_path())?)
+        } else {
+            None
+        };
+
+    Ok(DeclareArtifactPayload {
+        path,
+        artifact: value.dupe(),
+        configuration_path,
+    })
 }
 
 async fn try_materialize_requested_artifact(

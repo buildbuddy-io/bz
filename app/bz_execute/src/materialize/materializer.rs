@@ -701,7 +701,7 @@ impl RemoteActionCacheOrigin {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CasDownloadInfoOrigin {
     /// Declared by an action that executed on RE.
     Execution(ActionExecutionOrigin),
@@ -710,7 +710,7 @@ pub enum CasDownloadInfoOrigin {
     Declared,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionExecutionOrigin {
     /// Digest of the action that led us to discover this CAS object.
     action_digest: TrackedActionDigest,
@@ -796,7 +796,7 @@ impl fmt::Display for CasDownloadInfoOriginNotFound<'_> {
 }
 
 /// Information about a CAS download we might require when an artifact is not materialized.
-#[derive(Debug, Display)]
+#[derive(Debug, Display, Clone, PartialEq, Eq)]
 #[display("{}, re_use_case = {}", self.origin, self.re_use_case)]
 pub struct CasDownloadInfo {
     pub origin: CasDownloadInfoOrigin,
