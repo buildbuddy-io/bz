@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use bz_cli_proto::BuildRequest;
+use bz_cli_proto::BuildTarget;
 use bz_cli_proto::build_request::BuildProviders;
 use bz_cli_proto::build_request::Materializations;
 use bz_cli_proto::build_request::Uploads;
@@ -61,6 +62,7 @@ const BAZEL_RUN_ENV_VARS_TO_CLEAR: &[&str] = &[
     "RUNFILES_MANIFEST_ONLY",
     "TEST_SRCDIR",
 ];
+const BAZEL_RUNFILES_MANIFEST: &str = "MANIFEST";
 
 /// Build and run the selected target.
 ///
@@ -153,6 +155,12 @@ impl StreamingCommand for RunCommand {
             // and if not print a warning.
             !self.extra_run_args.is_empty() && !ctx.expanded_argv_has_separator();
 
+        let parsed_run_under = self
+            .run_under
+            .as_deref()
+            .map(parse_run_under)
+            .transpose()?;
+        let target_patterns = run_target_patterns(&self.target, parsed_run_under.as_ref());
         let context = ctx.client_context(matches, &self)?;
         let has_target_universe = !self.target_cfg.target_universe.is_empty();
         // TODO(rafaelc): fail fast on the daemon if the target doesn't have RunInfo
@@ -162,7 +170,7 @@ impl StreamingCommand for RunCommand {
                 BuildRequest {
                     context: Some(context),
                     // TODO(wendyy): glob patterns should be prohibited, and command should fail before the build event happens.
-                    target_patterns: vec![self.target.clone()],
+                    target_patterns,
                     target_cfg: Some(self.target_cfg.target_cfg_with_default_platform(
                         self.common_opts.config_opts.implied_target_platform(),
                     )),
@@ -204,39 +212,28 @@ impl StreamingCommand for RunCommand {
             return ExitResult::from_command_result_errors(response.errors);
         }
 
-        if response.build_targets.len() > 1 {
-            return ExitResult::err(RunCommandError::MultipleTargets.into());
-        }
-
         if has_target_universe && response.build_targets.is_empty() {
             return ExitResult::err(
                 RunCommandError::TargetNotFoundInTargetUniverse(self.target).into(),
             );
         }
 
-        if response.build_targets.is_empty() || response.build_targets[0].run.is_none() {
-            return ExitResult::err(RunCommandError::NonBinaryRule(self.target).into());
-        }
-        let build_target = &response.build_targets[0];
-        let run_spec = build_target.run.as_ref().unwrap();
-        let mut run_args =
-            Vec::with_capacity(1 + run_spec.target_args.len() + self.extra_run_args.len());
-        run_args.push(run_spec.executable.clone());
-        run_args.extend(run_spec.target_args.iter().cloned());
-        let (resolved_executable, should_validate_executable) =
-            resolve_run_executable_path(&run_args[0], ctx)?;
-        run_args[0] = resolved_executable;
-        if should_validate_executable {
-            validate_run_executable(Path::new(&run_args[0]))?;
-        }
-        run_args.extend(self.extra_run_args);
-        if let Some(run_under) = &self.run_under {
-            run_args = apply_run_under(run_under, run_args)?;
-        }
+        let (build_target, run_under_target) =
+            select_run_targets(&response.build_targets, &self.target, parsed_run_under.as_ref())?;
+        let run_spec = build_target
+            .run
+            .as_ref()
+            .ok_or_else(|| RunCommandError::NonBinaryRule(self.target.clone()))?;
+        let mut run_args = build_run_args(run_spec, ctx, &self.extra_run_args)?;
         let project_root = ctx.paths()?.project_root().root().as_path().to_path_buf();
         materialize_runfiles_tree(run_spec, &project_root)?;
-        let run_environment = bazel_run_environment(ctx, run_spec, &self.run_env)?;
-        let run_environment_to_clear = bazel_run_environment_to_clear(run_spec);
+        if let Some(run_under_prefix) =
+            run_under_prefix(parsed_run_under.as_ref(), run_under_target, ctx, &project_root)?
+        {
+            run_args = apply_run_under(run_under_prefix.as_str(), run_args)?;
+        }
+        let (run_environment, run_environment_to_clear) =
+            bazel_run_environment(ctx, run_spec, &self.run_env)?;
 
         let extra = if !self.emit_shell {
             Some(" - starting your binary")
@@ -341,7 +338,21 @@ impl StreamingCommand for RunCommand {
     }
 
     fn build_event_protocol_target_patterns(&self) -> Vec<String> {
-        vec![self.target.clone()]
+        let run_under = self.run_under.as_deref().and_then(|run_under| {
+            parse_run_under(run_under)
+                .ok()
+                .and_then(|run_under| match run_under {
+                    ParsedRunUnder::Target { target, .. } => Some(target),
+                    ParsedRunUnder::Prefix(_) => None,
+                })
+        });
+        let mut patterns = vec![self.target.clone()];
+        if let Some(run_under) = run_under
+            && run_under != self.target
+        {
+            patterns.push(run_under);
+        }
+        patterns
     }
 }
 
@@ -356,14 +367,176 @@ struct CommandArgsFile {
     print_command: bool,
 }
 
-fn apply_run_under(run_under: &str, run_args: Vec<String>) -> bz_error::Result<Vec<String>> {
-    let mut prefix = shlex::split(run_under)
+#[derive(Clone, Debug)]
+enum ParsedRunUnder {
+    Prefix(String),
+    Target { target: String, options: Vec<String> },
+}
+
+fn parse_run_under(run_under: &str) -> bz_error::Result<ParsedRunUnder> {
+    let tokens = shlex::split(run_under)
         .ok_or_else(|| RunCommandError::InvalidRunUnder(run_under.to_owned()))?;
-    if prefix.is_empty() {
+    let Some(first) = tokens.first() else {
         return Err(RunCommandError::InvalidRunUnder(run_under.to_owned()).into());
+    };
+    if is_run_under_target(first) {
+        Ok(ParsedRunUnder::Target {
+            target: first.clone(),
+            options: tokens[1..].to_vec(),
+        })
+    } else {
+        Ok(ParsedRunUnder::Prefix(run_under.to_owned()))
     }
-    prefix.extend(run_args);
-    Ok(prefix)
+}
+
+fn is_run_under_target(token: &str) -> bool {
+    token.starts_with("//") || token.starts_with(':') || token.starts_with('@')
+}
+
+fn run_target_patterns(target: &str, run_under: Option<&ParsedRunUnder>) -> Vec<String> {
+    let mut patterns = vec![target.to_owned()];
+    if let Some(ParsedRunUnder::Target {
+        target: run_under_target,
+        ..
+    }) = run_under
+        && run_under_target != target
+    {
+        patterns.push(run_under_target.clone());
+    }
+    patterns
+}
+
+fn select_run_targets<'a>(
+    targets: &'a [BuildTarget],
+    requested_target: &str,
+    run_under: Option<&ParsedRunUnder>,
+) -> bz_error::Result<(&'a BuildTarget, Option<&'a BuildTarget>)> {
+    let Some(run_under_target) = run_under.and_then(|run_under| match run_under {
+        ParsedRunUnder::Target { target, .. } => Some(target.as_str()),
+        ParsedRunUnder::Prefix(_) => None,
+    }) else {
+        if targets.len() > 1 {
+            return Err(RunCommandError::MultipleTargets.into());
+        }
+        return targets
+            .first()
+            .map(|target| (target, None))
+            .ok_or_else(|| RunCommandError::NonBinaryRule(requested_target.to_owned()).into());
+    };
+
+    let main = find_unique_target(targets, requested_target)?
+        .ok_or_else(|| RunCommandError::TargetNotFound(requested_target.to_owned()))?;
+    let under = find_unique_target(targets, run_under_target)?
+        .ok_or_else(|| RunCommandError::RunUnderTargetNotFound(run_under_target.to_owned()))?;
+    Ok((main, Some(under)))
+}
+
+fn find_unique_target<'a>(
+    targets: &'a [BuildTarget],
+    pattern: &str,
+) -> bz_error::Result<Option<&'a BuildTarget>> {
+    let mut matches = targets
+        .iter()
+        .filter(|target| target_matches_pattern(&target.target, pattern));
+    let Some(target) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(RunCommandError::AmbiguousRunTarget(pattern.to_owned()).into());
+    }
+    Ok(Some(target))
+}
+
+fn target_matches_pattern(target: &str, pattern: &str) -> bool {
+    if target == pattern || target.ends_with(pattern) {
+        return true;
+    }
+    if pattern.starts_with(':') {
+        return target.ends_with(pattern);
+    }
+    if !pattern.contains("//") && !pattern.contains(':') {
+        return target.ends_with(&format!(":{pattern}"))
+            || target.ends_with(&format!("//{pattern}:{pattern}"));
+    }
+    false
+}
+
+fn build_run_args(
+    run_spec: &RunSpec,
+    ctx: &ClientCommandContext<'_>,
+    extra_run_args: &[String],
+) -> bz_error::Result<Vec<String>> {
+    let mut run_args =
+        Vec::with_capacity(1 + run_spec.target_args.len() + extra_run_args.len());
+    run_args.push(resolve_run_spec_executable(run_spec, ctx)?);
+    run_args.extend(run_spec.target_args.iter().cloned());
+    run_args.extend(extra_run_args.iter().cloned());
+    Ok(run_args)
+}
+
+fn run_under_prefix(
+    run_under: Option<&ParsedRunUnder>,
+    run_under_target: Option<&BuildTarget>,
+    ctx: &ClientCommandContext<'_>,
+    project_root: &Path,
+) -> bz_error::Result<Option<String>> {
+    match run_under {
+        None => Ok(None),
+        Some(ParsedRunUnder::Prefix(prefix)) => Ok(Some(prefix.clone())),
+        Some(ParsedRunUnder::Target { target, options }) => {
+            let build_target = run_under_target
+                .ok_or_else(|| RunCommandError::RunUnderTargetNotFound(target.clone()))?;
+            let run_spec = build_target
+                .run
+                .as_ref()
+                .ok_or_else(|| RunCommandError::RunUnderTargetNotBinary(target.clone()))?;
+            materialize_runfiles_tree(run_spec, project_root)?;
+            let mut prefix_args = Vec::with_capacity(1 + options.len());
+            prefix_args.push(resolve_run_spec_executable(run_spec, ctx)?);
+            prefix_args.extend(options.iter().cloned());
+            Ok(Some(shell_join_args(&prefix_args)?))
+        }
+    }
+}
+
+fn resolve_run_spec_executable(
+    run_spec: &RunSpec,
+    ctx: &ClientCommandContext<'_>,
+) -> bz_error::Result<String> {
+    let (resolved_executable, should_validate_executable) =
+        resolve_run_executable_path(&run_spec.executable, ctx)?;
+    if should_validate_executable {
+        validate_run_executable(Path::new(&resolved_executable))?;
+    }
+    Ok(resolved_executable)
+}
+
+fn apply_run_under(run_under: &str, run_args: Vec<String>) -> bz_error::Result<Vec<String>> {
+    #[cfg(unix)]
+    {
+        let run_command = shell_join_args(&run_args)?;
+        Ok(vec![
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            format!("{run_under} {run_command}"),
+        ])
+    }
+
+    #[cfg(not(unix))]
+    {
+        let mut prefix = shlex::split(run_under)
+            .ok_or_else(|| RunCommandError::InvalidRunUnder(run_under.to_owned()))?;
+        if prefix.is_empty() {
+            return Err(RunCommandError::InvalidRunUnder(run_under.to_owned()).into());
+        }
+        prefix.extend(run_args);
+        Ok(prefix)
+    }
+}
+
+fn shell_join_args(args: &[String]) -> bz_error::Result<String> {
+    shlex::try_join(args.iter().map(String::as_str))
+        .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Tier0))
 }
 
 fn materialize_runfiles_tree(run_spec: &RunSpec, project_root: &Path) -> bz_error::Result<()> {
@@ -378,6 +551,15 @@ fn materialize_runfiles_tree(run_spec: &RunSpec, project_root: &Path) -> bz_erro
             project_root: project_root.display().to_string(),
         }
         .into());
+    }
+
+    let manifest = runfiles_manifest_content(run_spec, project_root)?;
+    let manifest_path = runfiles_dir.join(BAZEL_RUNFILES_MANIFEST);
+    if runfiles_dir.is_dir()
+        && std::fs::read_to_string(&manifest_path)
+            .is_ok_and(|existing_manifest| existing_manifest == manifest)
+    {
+        return Ok(());
     }
 
     remove_path_if_exists(&runfiles_dir).with_buck_error_context(|| {
@@ -433,7 +615,29 @@ fn materialize_runfiles_tree(run_spec: &RunSpec, project_root: &Path) -> bz_erro
         })?;
     }
 
+    std::fs::write(&manifest_path, manifest).with_buck_error_context(|| {
+        format!(
+            "Failed to write runfiles manifest `{}`",
+            manifest_path.display()
+        )
+    })?;
+
     Ok(())
+}
+
+fn runfiles_manifest_content(run_spec: &RunSpec, project_root: &Path) -> bz_error::Result<String> {
+    let mut entries = Vec::new();
+    for empty_filename in &run_spec.empty_filenames {
+        validate_runfiles_relative_path(empty_filename)?;
+        entries.push(format!("{empty_filename}\n"));
+    }
+    for runfile in &run_spec.runfiles {
+        validate_runfiles_relative_path(&runfile.path)?;
+        let target_path = resolve_run_path_to_path_buf(&runfile.target_path, project_root);
+        entries.push(format!("{} {}\n", runfile.path, target_path.display()));
+    }
+    entries.sort();
+    Ok(entries.concat())
 }
 
 fn validate_runfiles_relative_path(path: &str) -> bz_error::Result<&Path> {
@@ -484,7 +688,7 @@ fn bazel_run_environment(
     ctx: &ClientCommandContext<'_>,
     run_spec: &RunSpec,
     run_env: &[String],
-) -> bz_error::Result<Vec<(String, String)>> {
+) -> bz_error::Result<(Vec<(String, String)>, Vec<String>)> {
     let paths = ctx.paths()?;
     let mut environment = StdBuckHashMap::default();
     environment.insert(
@@ -507,9 +711,16 @@ fn bazel_run_environment(
     environment.insert("BUILD_ID".to_owned(), ctx.trace_id.to_string());
     environment.insert("BUCK_RUN_BUILD_ID".to_owned(), ctx.trace_id.to_string());
 
+    let mut environment_to_clear = bazel_run_environment_to_clear(run_spec);
+    for variable in run_env {
+        apply_run_env(variable, &mut environment, &mut environment_to_clear)?;
+    }
+
     for name in &run_spec.inherited_environment {
         if let Ok(value) = std::env::var(name) {
             environment.insert(name.clone(), value);
+        } else {
+            environment.remove(name.as_str());
         }
     }
     for variable in &run_spec.environment {
@@ -517,15 +728,15 @@ fn bazel_run_environment(
             environment.insert(variable.name.clone(), value.clone());
         } else {
             environment.remove(variable.name.as_str());
+            environment_to_clear.push(variable.name.clone());
         }
-    }
-    for variable in run_env {
-        apply_run_env(variable, &mut environment)?;
     }
 
     let mut environment: Vec<_> = environment.into_iter().collect();
     environment.sort_by(|(left, _), (right, _)| left.cmp(right));
-    Ok(environment)
+    environment_to_clear.sort();
+    environment_to_clear.dedup();
+    Ok((environment, environment_to_clear))
 }
 
 fn bazel_run_environment_to_clear(run_spec: &RunSpec) -> Vec<String> {
@@ -542,10 +753,21 @@ fn bazel_run_environment_to_clear(run_spec: &RunSpec) -> Vec<String> {
 fn apply_run_env(
     variable: &str,
     environment: &mut StdBuckHashMap<String, String>,
+    environment_to_clear: &mut Vec<String>,
 ) -> bz_error::Result<()> {
+    if variable.is_empty() || variable == "=" {
+        return Err(RunCommandError::InvalidRunEnv(variable.to_owned()).into());
+    }
+    if let Some(name) = variable.strip_prefix('=') {
+        validate_env_name(name)?;
+        environment.remove(name);
+        environment_to_clear.push(name.to_owned());
+        return Ok(());
+    }
     if let Some((name, value)) = variable.split_once('=') {
         validate_env_name(name)?;
         environment.insert(name.to_owned(), value.to_owned());
+        environment_to_clear.retain(|to_clear| to_clear != name);
     } else {
         validate_env_name(variable)?;
         match std::env::var(variable) {
@@ -556,6 +778,7 @@ fn apply_run_env(
                 environment.remove(variable);
             }
         }
+        environment_to_clear.retain(|to_clear| to_clear != variable);
     }
     Ok(())
 }
@@ -663,6 +886,14 @@ pub enum RunCommandError {
     MultipleTargets,
     #[error("Target `{0}` is not found in the specified target universe")]
     TargetNotFoundInTargetUniverse(String),
+    #[error("Target `{0}` was not found in the build result")]
+    TargetNotFound(String),
+    #[error("Target pattern `{0}` matched multiple run targets")]
+    AmbiguousRunTarget(String),
+    #[error("`--run_under` target `{0}` was not found in the build result")]
+    RunUnderTargetNotFound(String),
+    #[error("`--run_under` target `{0}` is not a binary rule")]
+    RunUnderTargetNotBinary(String),
     #[error("Non-existent or non-executable `{0}`")]
     NonExistentOrNonExecutable(String),
     #[error("Error checking `{path}`: {error}")]
