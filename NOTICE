@@ -1,3 +1,22 @@
+Portions of this repository are based on Buck2 (https://github.com/facebook/buck2),
+Copyright (c) Meta Platforms, Inc. and affiliates. This includes portions of
+app/, cells/prelude/, deps/, examples/buck2/, rules/, tests/, and some
+top-level build metadata. Buck2 is distributed under either the MIT license or the
+Apache License, Version 2.0.
+
+Portions of this repository are based on Bazel (https://github.com/bazelbuild/bazel),
+Copyright (c) The Bazel Authors. These portions include cells/bazel_tools/,
+app/bz_test_proto/test_status.proto,
+examples/buck2/persistent_worker/proto/bazel/worker_protocol.proto,
+Bazel/Starlark test fixtures under deps/starlark-rust/starlark_syntax/testcases/
+and tests/, and Remote Execution API protobufs under
+deps/remote_execution/re_grpc_proto/proto/build/bazel/. Bazel-derived files are
+distributed under the Apache License, Version 2.0.
+
+The Google API protobufs under deps/remote_execution/re_grpc_proto/proto/google/
+are copied from googleapis (https://github.com/googleapis/googleapis),
+Copyright Google LLC, and are distributed under the Apache License, Version 2.0.
+
 The code in `app/bz_error_derive` is adapted from thiserror (https://github.com/dtolnay/thiserror).
 
 The code in `deps/completion_verify/src/runtime` is adapted from `complete_pty`
