@@ -68,7 +68,7 @@ rust_library(
         "//bz/deps/gazebo/strong_hash:strong_hash",
         "//bz/deps/host_sharing:host_sharing",
         "//bz/deps/pagable:pagable",
-        "//bz/remote_execution:remote_execution",
+        "//bz/deps/remote_execution:remote_execution",
         "//bz/deps/bz_hash:bz_hash",
         "//bz/deps/starlark-rust/starlark_map:starlark_map",
         "//common/rust/shed/fbinit:fbinit",

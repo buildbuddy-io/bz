@@ -5,7 +5,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_mac
 package(default_visibility = ["//visibility:public"])
 
 COMMON_RUSTC_ENV = {
-    "CARGO_MANIFEST_DIR": "remote_execution/oss/re_grpc",
+    "CARGO_MANIFEST_DIR": "deps/remote_execution/re_grpc",
     "CARGO_PKG_AUTHORS": "",
     "CARGO_PKG_DESCRIPTION": "A library providing remote execution using gRPC",
     "CARGO_PKG_HOMEPAGE": "",
@@ -33,7 +33,7 @@ rust_library(
         "//app/bz_util:bz_util",
         "//deps/gazebo/dupe:dupe",
         "//deps/gazebo/gazebo:gazebo",
-        "//remote_execution/oss/re_grpc_proto:re_grpc_proto",
+        "//deps/remote_execution/re_grpc_proto:re_grpc_proto",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,

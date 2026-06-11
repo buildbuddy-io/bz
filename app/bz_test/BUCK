@@ -46,7 +46,7 @@ rust_library(
         "//bz/deps/gazebo/dupe:dupe",
         "//bz/deps/host_sharing:host_sharing",
         "//bz/deps/pagable:pagable",
-        "//bz/remote_execution:remote_execution",
+        "//bz/deps/remote_execution:remote_execution",
         "//bz/deps/bz_hash:bz_hash",
         "//bz/deps/starlark-rust/starlark:starlark",
         "//common/rust/shed/sorted_vector_map:sorted_vector_map",

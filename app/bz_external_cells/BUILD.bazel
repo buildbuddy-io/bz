@@ -48,7 +48,7 @@ rust_library(
         "//deps/gazebo/cmp_any:cmp_any",
         "//deps/gazebo/dupe:dupe",
         "//deps/pagable:pagable",
-        "//remote_execution/oss/re_grpc_proto:re_grpc_proto",
+        "//deps/remote_execution/re_grpc_proto:re_grpc_proto",
         "//deps/bz_hash:bz_hash",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],

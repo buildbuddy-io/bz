@@ -1,0 +1,11 @@
+load("@fbcode_macros//build_defs:native_rules.bzl", "alias")
+
+oncall("build_infra")
+
+# @oss-disable[end= ]: actual = "//bz/deps/remote_execution/internal:remote_execution"
+actual = "//bz/deps/remote_execution/re_grpc:remote_execution" # @oss-enable
+
+alias(
+    name = "remote_execution",
+    actual = actual,
+)

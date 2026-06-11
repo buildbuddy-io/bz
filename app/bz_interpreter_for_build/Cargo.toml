@@ -29,7 +29,7 @@ once_cell = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
 quick-xml = { workspace = true }
-re_grpc_proto = { path = "../../remote_execution/oss/re_grpc_proto" }
+re_grpc_proto = { path = "../../deps/remote_execution/re_grpc_proto" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true }

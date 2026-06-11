@@ -65,7 +65,7 @@ rust_library(
         "//bz/deps/gazebo/gazebo:gazebo",
         "//bz/deps/gazebo/strong_hash:strong_hash",
         "//bz/deps/pagable:pagable",
-        "//bz/remote_execution:remote_execution",
+        "//bz/deps/remote_execution:remote_execution",
         "//bz/deps/bz_hash:bz_hash",
         "//bz/deps/setsketch:setsketch",
         "//bz/deps/starlark-rust/starlark:starlark",

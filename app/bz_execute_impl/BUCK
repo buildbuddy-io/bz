@@ -53,7 +53,7 @@ rust_library(
         "//bz/deps/gazebo/dupe:dupe",
         "//bz/deps/gazebo/gazebo:gazebo",
         "//bz/deps/host_sharing:host_sharing",
-        "//bz/remote_execution:remote_execution",
+        "//bz/deps/remote_execution:remote_execution",
         "//bz/deps/bz_hash:bz_hash",
         "//bz/deps/starlark-rust/starlark_map:starlark_map",
     ] + select({

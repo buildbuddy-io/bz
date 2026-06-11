@@ -70,7 +70,7 @@ rust_library(
         "//bz/deps/games:games",
         "//bz/deps/gazebo/dupe:dupe",
         "//bz/deps/gazebo/gazebo:gazebo",
-        "//bz/remote_execution/oss/re_grpc_proto:re_grpc_proto",
+        "//bz/deps/remote_execution/re_grpc_proto:re_grpc_proto",
         "//bz/deps/bz_hash:bz_hash",
         "//bz/deps/superconsole:superconsole",
         # @oss-disable[end= ]: "//common/rust/shed/detect_eden:detect_eden",

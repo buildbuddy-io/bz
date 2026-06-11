@@ -53,7 +53,7 @@ rust_library(
         "//deps/gazebo/strong_hash:strong_hash",
         "//deps/host_sharing:host_sharing",
         "//deps/pagable:pagable",
-        "//remote_execution/oss/re_grpc:remote_execution",
+        "//deps/remote_execution/re_grpc:remote_execution",
         "//deps/bz_hash:bz_hash",
         "//deps/starlark-rust/starlark_map:starlark_map",
     ],

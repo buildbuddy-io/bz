@@ -115,8 +115,8 @@ members = [
     "integrations/rust-project",
     "deps/pagable",
     "deps/pagable_derive",
-    "remote_execution/oss/re_grpc",
-    "remote_execution/oss/re_grpc_proto",
+    "deps/remote_execution/re_grpc",
+    "deps/remote_execution/re_grpc_proto",
     "deps/starlark-rust/starlark",
     "deps/starlark-rust/starlark_bin",
     "deps/starlark-rust/starlark_derive",
@@ -382,7 +382,7 @@ lock_free_vec = { path = "deps/lock_free_vec" }
 pagable = { path = "deps/pagable", features = ["tokio"] }
 pagable_derive = { path = "deps/pagable_derive" }
 provider = { path = "deps/provider" }
-remote_execution = { path = "remote_execution/oss/re_grpc" }
+remote_execution = { path = "deps/remote_execution/re_grpc" }
 setsketch = { path = "deps/setsketch" }
 sled = "0.34"
 starlark = { version = "0.13.0", path = "deps/starlark-rust/starlark" }

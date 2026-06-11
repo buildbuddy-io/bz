@@ -44,7 +44,7 @@ bz_hash = { workspace = true }
 bz_interpreter = { workspace = true }
 bz_interpreter_for_build = { workspace = true }
 bz_util = { workspace = true }
-re_grpc_proto = { path = "../../remote_execution/oss/re_grpc_proto" }
+re_grpc_proto = { path = "../../deps/remote_execution/re_grpc_proto" }
 
 [dev-dependencies]
 tokio = { workspace = true }
