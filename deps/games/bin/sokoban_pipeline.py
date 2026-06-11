@@ -15,9 +15,9 @@ Subcommands:
   sort      - Sort levels within each size group by difficulty
 
 Example full pipeline:
-  python3 games/bin/sokoban_pipeline.py generate --boxes 5 --sizes 25x19,35x19 --count 5 --time-limit 60 --out /tmp/5box_raw.txt
-  python3 games/bin/sokoban_pipeline.py solve --file /tmp/5box_raw.txt --out /tmp/5box_solved.txt
-  python3 games/bin/sokoban_pipeline.py sort --file /tmp/5box_solved.txt --out games/src/games/sokoban_levels_5box_large.txt
+  python3 deps/games/bin/sokoban_pipeline.py generate --boxes 5 --sizes 25x19,35x19 --count 5 --time-limit 60 --out /tmp/5box_raw.txt
+  python3 deps/games/bin/sokoban_pipeline.py solve --file /tmp/5box_raw.txt --out /tmp/5box_solved.txt
+  python3 deps/games/bin/sokoban_pipeline.py sort --file /tmp/5box_solved.txt --out deps/games/src/games/sokoban_levels_5box_large.txt
 """
 
 import argparse
@@ -45,8 +45,8 @@ def find_bz_root():
 
 
 FBCODE = find_bz_root()
-GEN_TARGET = "fbcode//bz/games:sokoban_gen"
-SOKOBAN_TARGET = "fbcode//bz/games:sokoban"
+GEN_TARGET = "fbcode//bz/deps/games:sokoban_gen"
+SOKOBAN_TARGET = "fbcode//bz/deps/games:sokoban"
 
 
 def run_buck(target, args, capture=True):

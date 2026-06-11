@@ -67,7 +67,7 @@ rust_library(
         "//bz/app/bz_resource_control:bz_resource_control",
         "//bz/app/bz_util:bz_util",
         "//bz/app/bz_wrapper_common:bz_wrapper_common",
-        "//bz/games:games",
+        "//bz/deps/games:games",
         "//bz/deps/gazebo/dupe:dupe",
         "//bz/deps/gazebo/gazebo:gazebo",
         "//bz/remote_execution/oss/re_grpc_proto:re_grpc_proto",

@@ -53,7 +53,7 @@ tonic = { workspace = true }
 tonic-prost = { workspace = true }
 tracing = { workspace = true }
 
-games = { path = "../../games" }
+games = { path = "../../deps/games" }
 
 # Please do not add dependency on `bz_build_api`.
 bz_build_info = { workspace = true }

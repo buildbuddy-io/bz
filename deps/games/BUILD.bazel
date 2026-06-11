@@ -5,7 +5,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_mac
 package(default_visibility = ["//visibility:public"])
 
 COMMON_RUSTC_ENV = {
-    "CARGO_MANIFEST_DIR": "games",
+    "CARGO_MANIFEST_DIR": "deps/games",
     "CARGO_PKG_AUTHORS": "",
     "CARGO_PKG_DESCRIPTION": "Some tui games",
     "CARGO_PKG_HOMEPAGE": "",

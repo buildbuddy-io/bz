@@ -103,7 +103,7 @@ members = [
     # @oss-disable: "deps/dice/fuzzy_dice",
     "deps/dice/read_dump",
     # @oss-disable: "deps/host_sharing",
-    "games",
+    "deps/games",
     "deps/gazebo/display_container",
     "deps/gazebo/cmp_any",
     "deps/gazebo/gazebo",
