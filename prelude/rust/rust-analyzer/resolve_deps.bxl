@@ -103,7 +103,9 @@ def _process_target_config(
         "proc_macro": _get_nullable_attr(attrs, "proc_macro"),
         "project_relative_buildfile": ctx.fs.project_rel_path(target.buildfile_path),
         "rustc_flags": ra_info.rustc_flags,
-        "source_folder": materialize(ctx, target),  # Always generate the source folder. Let rust-project resolve whether or not to use it
+        # Always generate the source folder. Let the metadata consumer decide
+        # whether to use it.
+        "source_folder": materialize(ctx, target),
         "srcs": srcs,
         "tests": tests,
     }
@@ -505,8 +507,8 @@ resolve_owning_buildfile = bxl_main(
     impl = resolve_owning_buildfile_impl,
     cli_args = {
         # while buildfiles, files, and targets can all be passed, only files will be used.
-        # this file is driven primarily by rust-project's needs and is a private implementation
-        # detail.
+        # this file is driven primarily by rust-analyzer metadata needs and is a
+        # private implementation detail.
         "buildfiles": cli_args.option(cli_args.list(cli_args.string())),
         "files": cli_args.option(cli_args.list(cli_args.string())),
         "max_extra_targets": cli_args.int(),

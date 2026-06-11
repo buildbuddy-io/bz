@@ -11,8 +11,8 @@ load("@prelude//utils:type_defs.bzl", "is_list")
 load(":context.bzl", "CompileContext")
 
 # Write a file containing all the dynamically-generated dependency names. This
-# isn't used in the course of any Buck builds, but is needed by rust-project to
-# supply an accurate dependency graph to rust-analyzer..
+# isn't used in the course of any Buck builds, but is needed to supply an
+# accurate dependency graph to rust-analyzer.
 def write_named_deps_names(
         ctx: AnalysisContext,
         compile_ctx: CompileContext) -> Artifact | None:

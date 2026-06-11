@@ -8,14 +8,6 @@ bz_e2e_test(
 )
 
 bz_e2e_test(
-    name = "test_rust_project",
-    srcs = ["test_rust_project.py"],
-    env = {
-        "RUST_PROJECT_BIN": "$(location fbcode//bz/integrations/rust-project:rust-project)",
-    },
-)
-
-bz_e2e_test(
     name = "test_linker_argsfile",
     srcs = ["test_linker_argsfile.py"],
 )

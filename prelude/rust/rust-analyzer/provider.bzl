@@ -76,7 +76,8 @@ def _compute_transitive_target_set(
 def _compute_env(
         ctx: AnalysisContext,
         compile_ctx: CompileContext) -> dict[str, cmd_args]:
-    # Disable rustc_action processing, as rust-project will handle windows + any escaping necessary.
+    # Disable rustc_action processing; the rust-analyzer metadata consumer handles
+    # platform-specific escaping.
     plain_env, path_env = process_env(compile_ctx, ctx.attrs.env, False)
     return plain_env | path_env
 

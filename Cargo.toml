@@ -111,8 +111,6 @@ members = [
     "deps/gazebo/strong_hash",
     "deps/gazebo/strong_hash_derive",
     "deps/gazebo/strong_hash_tests",
-    "integrations/resources/rust",
-    "integrations/rust-project",
     "deps/pagable",
     "deps/pagable_derive",
     "deps/remote_execution/re_grpc",
@@ -300,7 +298,6 @@ scopeguard = "1.2.0"
 sequence_trie = "0.3.6"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "1.0.149", features = ["raw_value"] }
-serde_path_to_error = "0.1"
 sevenz-rust = "0.6.1"
 sha1 = "0.10.5"
 sha2 = "0.10.6"
