@@ -32,7 +32,7 @@ Meta engineer can manually initiate a pipeline run with the token set.
 Configure a local build without persistent workers:
 
 ```
-$ cd examples/persistent_worker
+$ cd examples/buck2/persistent_worker
 $ echo '<file:.buckconfig.no-workers>' > .buckconfig.local
 ```
 
@@ -52,7 +52,7 @@ ONE-SHOT START
 Configure a local build with persistent workers:
 
 ```
-$ cd examples/persistent_worker
+$ cd examples/buck2/persistent_worker
 $ echo '<file:.buckconfig.local-persistent-workers>' > .buckconfig.local
 ```
 
@@ -72,7 +72,7 @@ Buck2 persistent worker ...
 Configure a remote build without persistent workers:
 
 ```
-$ cd examples/persistent_worker
+$ cd examples/buck2/persistent_worker
 $ echo '<file:.buckconfig.buildbuddy>' > .buckconfig.local
 ```
 
@@ -92,7 +92,7 @@ ONE-SHOT START
 Configure a remote build with persistent workers:
 
 ```
-$ cd examples/persistent_worker
+$ cd examples/buck2/persistent_worker
 $ echo '<file:.buckconfig.buildbuddy-persistent-workers>' > .buckconfig.local
 ```
 

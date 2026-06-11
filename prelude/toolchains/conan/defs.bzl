@@ -121,8 +121,8 @@ add it to the `conanfile.txt` and update the import targets.
 
 ### Example
 
-See `examples/prelude/cpp/conan` in the Buck2 source repository for a full
-working example.
+See `examples/buck2/toolchains/conan_toolchain/cpp/conan` in the Buck2 source
+repository for a full working example.
 
 ## Motivation
 

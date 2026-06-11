@@ -12,7 +12,7 @@ offers superb performance and handles incremental changes extremely well.
 
 ## Quick Start
 
-Use project "buck2/examples/vscode" as an example,
+Use project "buck2/examples/buck2/vscode" as an example,
 
 ```
 mkdir modes && echo "" > modes/debug  # One-time setup. Skip if there is one already exists.

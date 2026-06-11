@@ -13,7 +13,7 @@
 # = How to update dependencies? =
 # First download the Artificer jar from GitHub.
 # Run:
-# `cd buck2/examples/demoapp`
+# `cd buck2/examples/buck2/android/demoapp`
 # `java -jar ~/artificer-0.0.1.jar download --log=DEBUG --depth=FULL @app/libs/external_deps.txt`
 
 # See the `.artificer_configs` file for additional information.
