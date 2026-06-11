@@ -375,9 +375,9 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     ///
     /// For example:
     /// ```text
-    /// $ bz uquery "rbuildfiles(//bz/BUCK, //bz/defs.bzl)"
+    /// $ bz uquery "rbuildfiles(//bz/BUCK, //bz/rules/defs.bzl)"
     ///
-    /// bz/defs.bzl
+    /// bz/rules/defs.bzl
     /// bz/BUCK
     /// ```
     async fn rbuildfiles(

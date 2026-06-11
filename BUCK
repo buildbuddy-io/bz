@@ -1,6 +1,6 @@
 load("@fbcode_macros//build_defs:native_rules.bzl", "alias")
 load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
-load(":defs.bzl", "buck2_bundle", "pagable_transition_alias")
+load("@fbcode//bz:rules/defs.bzl", "buck2_bundle", "pagable_transition_alias")
 
 oncall("build_infra")
 

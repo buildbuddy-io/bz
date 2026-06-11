@@ -1,4 +1,4 @@
-load("@fbcode//bz:proto_defs.bzl", "rust_protobuf_library")
+load("@fbcode//bz:rules/proto_defs.bzl", "rust_protobuf_library")
 
 oncall("build_infra")
 

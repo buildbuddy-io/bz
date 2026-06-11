@@ -1,4 +1,4 @@
-load("@fbcode//bz:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
+load("@fbcode//bz:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 load("@fbcode//grpc_fb/codegen:buck_macros.bzl", "grpc_library")
 load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
 
