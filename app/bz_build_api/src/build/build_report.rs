@@ -95,7 +95,7 @@ enum BuildOutcome {
     CANCELED,
 }
 
-/// DO NOT UPDATE WITHOUT UPDATING `docs/users/build_observability/build_report.md`!
+/// Keep this in sync with build report consumers.
 #[derive(Debug, Serialize)]
 pub struct BuildReport {
     trace_id: TraceId,
@@ -137,7 +137,7 @@ struct MaybeConfiguredBuildReportEntry {
     configured_graph_size: Option<u64>,
 }
 
-/// DO NOT UPDATE WITHOUT UPDATING `docs/users/build_observability/build_report.md`!
+/// Keep this in sync with build report consumers.
 #[derive(Default, Debug, Serialize)]
 pub(crate) struct ConfiguredBuildReportEntry {
     /// A list of errors that occurred while building this target
@@ -161,7 +161,7 @@ pub(crate) struct ConfiguredBuildReportEntry {
     action_graph_sketch: Option<String>,
 }
 
-/// DO NOT UPDATE WITHOUT UPDATING `docs/users/build_observability/build_report.md`!
+/// Keep this in sync with build report consumers.
 #[derive(Default, Debug, Serialize)]
 pub(crate) struct TargetBuildMetrics {
     /// The total number of nodes in the action graph, if we were able to fully
@@ -186,7 +186,7 @@ pub(crate) struct TargetBuildMetrics {
     pub wall_clock_completion_ms: Option<u64>,
 }
 
-/// DO NOT UPDATE WITHOUT UPDATING `docs/users/build_observability/build_report.md`!
+/// Keep this in sync with build report consumers.
 #[derive(Default, Debug, Serialize)]
 pub(crate) struct AggregatedBuildMetrics {
     pub full_graph_execution_time_ms: f64,
@@ -200,7 +200,7 @@ pub(crate) struct AggregatedBuildMetrics {
     pub declared_actions: f64,
 }
 
-/// DO NOT UPDATE WITHOUT UPDATING `docs/users/build_observability/build_report.md`!
+/// Keep this in sync with build report consumers.
 #[derive(Default, Debug, Serialize)]
 pub(crate) struct AllTargetsBuildMetrics {
     pub action_graph_size: Option<u64>,
@@ -208,7 +208,7 @@ pub(crate) struct AllTargetsBuildMetrics {
     pub compute_time_ms: Option<u64>,
 }
 
-/// DO NOT UPDATE WITHOUT UPDATING `docs/users/build_observability/build_report.md`!
+/// Keep this in sync with build report consumers.
 #[derive(Debug, Serialize)]
 struct BuildReportEntry {
     /// The buck1 build report did not support multiple configurations of the same target. We
@@ -233,7 +233,7 @@ struct BuildReportEntry {
     package_project_relative_path: Option<ProjectRelativePathBuf>,
 }
 
-/// DO NOT UPDATE WITHOUT UPDATING `docs/users/build_observability/build_report.md`!
+/// Keep this in sync with build report consumers.
 #[derive(Debug, Clone, Serialize, PartialOrd, Ord, PartialEq, Eq)]
 struct BuildReportError {
     message_content: String,

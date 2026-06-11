@@ -76,7 +76,7 @@ struct BuildReportActionSubError {
     remediation: Option<String>,
 }
 
-/// DO NOT UPDATE WITHOUT UPDATING `docs/users/build_observability/build_report.md`!
+/// Keep this in sync with build report consumers.
 #[derive(Debug, Clone, Serialize, PartialOrd, Ord, PartialEq, Eq)]
 pub(crate) struct BuildReportActionError {
     name: BuildReportActionName,

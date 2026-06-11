@@ -44,7 +44,8 @@ outlined on that page and do not file a public issue.
 
 ## Coding Style, Compiling, and Hacking Pro-tips
 
-See [here](./docs/developers/basics.md) for the nitty gritty on how to contribute.
+Follow the style of nearby code, keep changes focused, and run the relevant
+tests and lints for the area you changed.
 
 ## License
 
