@@ -1,14 +1,18 @@
-load("@fbcode//bz:buck_rust_binary.bzl", "buck_rust_binary")
+load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
 
 oncall("build_infra")
 
-buck_rust_binary(
+rust_binary(
     name = "starlark_bin",
     srcs = glob(
         ["bin/**/*.rs"],
     ),
+    allocator = "jemalloc",
     crate_root = "bin/main.rs",
+    edition = "2021",
     env = {"CARGO_PKG_VERSION": "0.0"},  # So our OSS builds can support --version
+    link_group_map = [],
+    link_style = "static",
     deps = [
         "fbsource//third-party/rust:anyhow",
         "fbsource//third-party/rust:argfile",

@@ -1,5 +1,5 @@
-load("@fbcode//bz:buck_rust_binary.bzl", "buck_rust_binary")
 # @oss-disable[end= ]: load("@fbcode_macros//build_defs:platform_utils.bzl", "platform_utils")
+load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
 load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 load(":transition.bzl", "bz_client_transition_alias")
 
@@ -68,12 +68,14 @@ rust_library(
     }),
 )
 
-buck_rust_binary(
+rust_binary(
     name = "bz-bin",
     srcs = ["bin/bz.rs"],
     allow_cache_upload = True,
+    allocator = "jemalloc",
     crate = "bz",
     crate_root = "bin/bz.rs",
+    edition = "2021",
     env = {
         # This is only set for release builds.
         "BUCK2_RELEASE_TIMESTAMP": read_config("buck", "release_timestamp", ""),
@@ -86,6 +88,8 @@ buck_rust_binary(
     },
     # Set via -c buck2.emit_relocs=true in the deploy script to produce a
     # binary with ELF relocations for BOLT post-link optimization.
+    link_group_map = [],
+    link_style = "static",
     linker_flags = ["-Wl,--emit-relocs"] if read_config("buck2", "emit_relocs", "") == "true" else [],
     rustc_flags = select({
         ":bz_client_only_build": ["--cfg=client_only"],
