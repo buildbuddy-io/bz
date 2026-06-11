@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-//! Generate source file containing buck2/prelude tree with contents.
+//! Generate source files containing bundled prelude and bazel_tools trees.
 
 use std::collections::BTreeSet;
 use std::io;
@@ -29,9 +29,9 @@ fn imp() -> io::Result<()> {
         .unwrap()
         .parent()
         .unwrap();
-    let prelude_path = source_tree_path(repo_root, "prelude", "prelude.bzl")?;
+    let prelude_path = source_tree_path(repo_root, "cells/prelude", "prelude.bzl")?;
     let bazel_tools_path =
-        source_tree_path(repo_root, "bazel_tools", "tools/cpp/toolchain_utils.bzl")?;
+        source_tree_path(repo_root, "cells/bazel_tools", "tools/cpp/toolchain_utils.bzl")?;
 
     // Self-check.
     assert!(prelude_path.join("prelude.bzl").exists());
@@ -263,7 +263,9 @@ fn write_include_file_from_runfiles_manifest(
         let files = manifest.lines().filter_map(|line| {
             let (runfile_path, contents_path) = line.split_once(' ')?;
             let path = runfile_path
-                .strip_prefix(&format!("_main/{module}/"))
+                .strip_prefix(&format!("_main/cells/{module}/"))
+                .or_else(|| runfile_path.strip_prefix(&format!("cells/{module}/")))
+                .or_else(|| runfile_path.strip_prefix(&format!("_main/{module}/")))
                 .or_else(|| runfile_path.strip_prefix(&format!("{module}/")))?;
             Some((
                 path.to_owned(),
@@ -296,7 +298,9 @@ fn write_include_file_from_cargo_manifest_args(
         let files = args.lines().skip(2).filter_map(|line| {
             let line = line.trim_matches('\'');
             let (runfile_path, contents_path) = line.split_once('=')?;
-            let path = runfile_path.strip_prefix(&format!("{module}/"))?;
+            let path = runfile_path
+                .strip_prefix(&format!("cells/{module}/"))
+                .or_else(|| runfile_path.strip_prefix(&format!("{module}/")))?;
             let contents_path = runfiles_root.join(contents_path);
             let contents_include_path = if use_buck_generated_out_dir_include_paths(out_dir) {
                 syntactic_include_path_from_out_dir(include_out_dir, runfile_path)
@@ -550,9 +554,9 @@ mod tests {
             syntactic_include_path_from_out_dir_for_cwd(
                 Some(cwd),
                 &out_dir,
-                "bazel_tools/tools/test/generate-xml.sh",
+                "cells/bazel_tools/tools/test/generate-xml.sh",
             ),
-            parents(10, "bazel_tools/tools/test/generate-xml.sh"),
+            parents(10, "cells/bazel_tools/tools/test/generate-xml.sh"),
         );
     }
 }

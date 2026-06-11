@@ -34,13 +34,13 @@ cargo_build_script(
     proc_macro_deps = all_crate_deps(build_proc_macro = True) + [],
     rustc_env = COMMON_RUSTC_ENV,
     build_script_env = {
-        "BUCK2_BUILD_PROTOC": "$(execpath //bazel_tools/tools/proto:bz_protoc)",
-        "BUCK2_BUILD_PROTOC_INCLUDE": "$(execpath //bazel_tools/tools/proto:bz_protoc_descriptor_proto)",
+        "BUCK2_BUILD_PROTOC": "$(execpath //cells/bazel_tools/tools/proto:bz_protoc)",
+        "BUCK2_BUILD_PROTOC_INCLUDE": "$(execpath //cells/bazel_tools/tools/proto:bz_protoc_descriptor_proto)",
     },
     tools = [
-        "//bazel_tools/tools/proto:bz_protoc",
-        "//bazel_tools/tools/proto:bz_protoc_descriptor_proto",
-        "//bazel_tools/tools/proto:bz_protoc_well_known_protos",
+        "//cells/bazel_tools/tools/proto:bz_protoc",
+        "//cells/bazel_tools/tools/proto:bz_protoc_descriptor_proto",
+        "//cells/bazel_tools/tools/proto:bz_protoc_well_known_protos",
     ],
     data = glob(["**/*.proto", "**/*.lalrpop"], allow_empty = True) + [
         "//app/bz_action_metadata_proto:action_metadata.proto",

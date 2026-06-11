@@ -27,7 +27,7 @@ async def test_lint_buck2(buck: Buck) -> None:
 
 @buck_test(inplace=True)
 async def test_typecheck_prelude_lightweight(buck: Buck) -> None:
-    await buck.starlark("typecheck", "buck2/prelude/prelude.bzl")
+    await buck.starlark("typecheck", "buck2/cells/prelude/prelude.bzl")
 
 
 @buck_test(inplace=True)

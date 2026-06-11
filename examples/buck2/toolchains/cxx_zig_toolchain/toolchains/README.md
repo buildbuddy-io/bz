@@ -4,7 +4,7 @@ To build it within the open source tree of buck2 to you need to
 
 - Create a symlink for the prelude
   ```
-  ln -s ../../../prelude prelude
+  ln -s ../../../../cells/prelude prelude
   ```
 - Remove the top-level `.buckconfig`
   ```
@@ -13,10 +13,10 @@ To build it within the open source tree of buck2 to you need to
 - Apply the following patch to the prelude
 
   ```
-  diff --git a/prelude/cxx/tools/TARGETS.v2 b/prelude/cxx/tools/TARGETS.v2
+  diff --git a/cells/prelude/cxx/tools/TARGETS.v2 b/cells/prelude/cxx/tools/TARGETS.v2
   index 2030d2f..5db1689 100644
-  --- a/prelude/cxx/tools/TARGETS.v2
-  +++ b/prelude/cxx/tools/TARGETS.v2
+  --- a/cells/prelude/cxx/tools/TARGETS.v2
+  +++ b/cells/prelude/cxx/tools/TARGETS.v2
   @@ -1,4 +1,3 @@
   -load("@fbcode_macros//build_defs/lib:python_common.bzl", "get_ldflags", "get_strip_mode")
    load(":defs.bzl", "cxx_hacks", "omnibus_environment")

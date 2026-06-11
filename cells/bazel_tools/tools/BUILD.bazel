@@ -1,0 +1,56 @@
+load(":build_defs.bzl", "BZLMOD_ENABLED")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]) + [
+        "//cells/bazel_tools/tools/allowlists/function_transition_allowlist:pkg_sources",
+        "//cells/bazel_tools/tools/android:pkg_sources",
+        "//cells/bazel_tools/tools/bash:pkg_sources",
+        "//cells/bazel_tools/tools/bash/runfiles:pkg_sources",
+        "//cells/bazel_tools/tools/build_defs/build_info:pkg_sources",
+        "//cells/bazel_tools/tools/build_defs/cc:pkg_sources",
+        "//cells/bazel_tools/tools/build_defs/repo:pkg_sources",
+        "//cells/bazel_tools/tools/cpp:pkg_sources",
+        "//cells/bazel_tools/tools/cpp/modules_tools:pkg_sources",
+        "//cells/bazel_tools/tools/jdk:pkg_sources",
+        "//cells/bazel_tools/tools/launcher:pkg_sources",
+        "//cells/bazel_tools/tools/objc:pkg_sources",
+        "//cells/bazel_tools/tools/osx:pkg_sources",
+        "//cells/bazel_tools/tools/proto:pkg_sources",
+        "//cells/bazel_tools/tools/python:pkg_sources",
+        "//cells/bazel_tools/tools/python/runfiles:pkg_sources",
+        "//cells/bazel_tools/tools/sh:pkg_sources",
+        "//cells/bazel_tools/tools/test:pkg_sources",
+        "//cells/bazel_tools/tools/zip:pkg_sources",
+    ],
+)
+
+alias(
+    name = "host_platform",
+    actual = "@platforms//host" if BZLMOD_ENABLED else "@internal_platforms_do_not_use//host",
+)
+
+# Platform used for invalid or empty (e.g. builtin) Bazel actions.
+platform(
+    name = "internal_platform",
+    visibility = ["//visibility:private"],
+)
+
+# All bzl files in the built in repo '@bazel_tools'.
+filegroup(
+    name = "bzl_srcs",
+    srcs = [
+        "//tools:build_defs.bzl",
+        "//tools/android:bzl_srcs",
+        "//tools/build_defs:bzl_srcs",
+        "//tools/build_rules:bzl_srcs",
+        "//tools/cpp:bzl_srcs",
+        "//tools/jdk:bzl_srcs",
+        "//tools/osx:bzl_srcs",
+        "//tools/python:bzl_srcs",
+        "//tools/sh:bzl_srcs",
+        "//tools/test:bzl_srcs",
+    ],
+)

@@ -156,7 +156,7 @@ def buck_e2e_test(
         BUCK2_E2E_TEST_CI_SRCS = [
             "fbandroid/buck2/**",
             "fbcode/buck2/cfg/**",
-            "fbcode/buck2/prelude/**",
+            "fbcode/buck2/cells/prelude/**",
             "fbcode/buck2/platform/**",
             "fbcode/buck2/toolchains/**",
             "fbcode/buck2/tests/targets/**",

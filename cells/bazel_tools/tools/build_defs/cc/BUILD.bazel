@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]) + [
+        "//cells/bazel_tools/tools/build_defs/cc/whitelists/parse_headers_and_layering_check:pkg_sources",
+        "//cells/bazel_tools/tools/build_defs/cc/whitelists/starlark_hdrs_check:pkg_sources",
+    ],
+)

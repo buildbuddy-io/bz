@@ -61,6 +61,6 @@ rust_library(
         "Cargo.toml",
         "fuzz/**",
     ]) + [
-        "//bazel_tools:MODULE.tools",
+        "//cells/bazel_tools:MODULE.tools",
     ],
 )

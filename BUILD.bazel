@@ -1,10 +1,10 @@
 filegroup(
     name = "prelude_sources",
     srcs = glob(
-        ["prelude/**"],
+        ["cells/prelude/**"],
         exclude = [
-            "prelude/**/BUILD.bazel",
-            "prelude/**/.DS_Store",
+            "cells/prelude/**/BUILD.bazel",
+            "cells/prelude/**/.DS_Store",
         ],
     ),
     visibility = ["//visibility:public"],
@@ -12,7 +12,7 @@ filegroup(
 
 filegroup(
     name = "bazel_tools_sources",
-    srcs = ["//bazel_tools:bazel_tools_sources"],
+    srcs = ["//cells/bazel_tools:bazel_tools_sources"],
     visibility = ["//visibility:public"],
 )
 

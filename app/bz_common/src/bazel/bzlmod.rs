@@ -213,7 +213,8 @@ type DiscoveredBcrModules = BTreeMap<(String, String), DiscoveredBcrModule>;
 static BZLMOD_HTTP_CLIENT: LazyLock<tokio::sync::OnceCell<HttpClient>> =
     LazyLock::new(tokio::sync::OnceCell::new);
 
-const BAZEL_TOOLS_MODULE_TOOLS: &str = include_str!("../../../../bazel_tools/MODULE.tools");
+const BAZEL_TOOLS_MODULE_TOOLS: &str =
+    include_str!("../../../../cells/bazel_tools/MODULE.tools");
 
 #[derive(
     Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Allocative, Pagable

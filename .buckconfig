@@ -1,8 +1,12 @@
 [cells]
 gh_facebook_buck2 = .
+prelude = cells/prelude
+bazel_tools = cells/bazel_tools
 
 [cell_aliases]
 root = gh_facebook_buck2
+prelude = prelude
+bazel_tools = bazel_tools
 
 [oss]
 internal_cell = fbcode
