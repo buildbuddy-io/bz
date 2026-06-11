@@ -52,7 +52,7 @@ rust_library(
         "//app/bz_test_api:bz_test_api",
         "//app/bz_util:bz_util",
         "//app/bz_wrapper_common:bz_wrapper_common",
-        "//bz_sketches:bz_sketches",
+        "//app/bz_sketches:bz_sketches",
         "//deps/dice/dice:dice",
         "//deps/dice/dice_futures:dice_futures",
         "//deps/gazebo/display_container:display_container",

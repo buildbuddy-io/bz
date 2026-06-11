@@ -5,7 +5,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_mac
 package(default_visibility = ["//visibility:public"])
 
 COMMON_RUSTC_ENV = {
-    "CARGO_MANIFEST_DIR": "bz_sketches",
+    "CARGO_MANIFEST_DIR": "app/bz_sketches",
     "CARGO_PKG_AUTHORS": "",
     "CARGO_PKG_DESCRIPTION": "Typed sketch wrappers for buck2",
     "CARGO_PKG_HOMEPAGE": "",
