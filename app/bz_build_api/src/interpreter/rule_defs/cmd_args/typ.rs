@@ -1247,7 +1247,7 @@ fn cmd_args<'v>(x: Value<'v>) -> FieldsRef<'v, impl Fields<'v>> {
 /// All these methods operate mutably on `cmd` and return that value too.
 // TODO(nga): `cmd_args` should be immutable, so that all parameters should be
 //   either set in constructor, or operations like `hidden` should return a copy
-//   rather than modify this. https://fburl.com/workplace/ihkplvbn
+//   rather than modify this.
 #[starlark_module]
 fn cmd_args_methods(builder: &mut MethodsBuilder) {
     /// A list of arguments to be added to the command line, which may including `cmd_args`, artifacts, strings, `RunInfo` or lists thereof.

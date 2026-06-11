@@ -1,5 +1,4 @@
-load("@fbcode//bz:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
-load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
+load("//:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 
 oncall("build_infra")
 
@@ -9,8 +8,8 @@ rust_protobuf_library(
     build_script = "build.rs",
     proto_srcs = ":host_sharing.proto",
     deps = [
-        "fbsource//third-party/rust:serde",
-        "//bz/deps/allocative/allocative:allocative",
+        "third_party//rust:serde",
+        "//deps/allocative/allocative:allocative",
     ],
 )
 

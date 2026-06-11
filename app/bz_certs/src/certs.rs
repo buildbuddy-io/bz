@@ -29,7 +29,6 @@ pub fn setup_cryptography_or_fail() {
 }
 
 fn setup_cryptography() -> std::result::Result<(), std::sync::Arc<rustls::crypto::CryptoProvider>> {
-    // https://fb.workplace.com/groups/rust.language/permalink/29117966747825230/
     // Note that all but the first call will fail, so we callers should only use
     // this function as early as possible in their lifetime
     // Note that the use of 'ring' here is arbitrary and should not be
@@ -60,25 +59,8 @@ async fn load_system_root_certs() -> bz_error::Result<RootCertStore> {
                     "No certs or cert errors"
                 ));
 
-            // Annotate the error with our context, but note that we do not return
-            // the error here because we may recover through find_root_ca_certs()/load_certs() below
-            if cfg!(fbcode_build) {
-                let windows_message = if cfg!(target_os = "windows") {
-                    " on an admin PowerShell"
-                } else {
-                    ""
-                };
-                let context = format!(
-                    "Error loading system root certificates native frameworks.
-                    This is usually due to Chef not installed or working properly.
-                    Please try `getchef -reason 'chef broken'`{windows_message}, `Fix My <OS>` via the f-menu, then `bz killall`.
-                    If that doesn't resolve it, please visit HelpDesk to get Chef back to a healthy state."
-                );
-                Err(native_certs_error.context(context))
-            } else {
-                Err(native_certs_error
-                    .context("Error loading system root certificates native frameworks."))
-            }
+            Err(native_certs_error
+                .context("Error loading system root certificates native frameworks."))
         }
     }?;
 
@@ -172,13 +154,9 @@ pub(crate) async fn load_certs<P: AsRef<Path>>(
 
 /// Find root CA certs.
 ///
-/// In OSS or non-fbcode builds, returns None; we do not support hardcoded root
-/// certificates in non-fbcode builds and rely solely on rustls-native-certs.
+/// In OSS or non-workspace builds, returns None; we do not support hardcoded root
+/// certificates in non-workspace builds and rely solely on rustls-native-certs.
 pub(crate) fn find_root_ca_certs() -> Option<OsString> {
-    #[cfg(fbcode_build)]
-    return find_certs::find_root_ca_certs();
-
-    #[cfg(not(fbcode_build))]
     match std::env::var_os("ROOT_CA_CERT_PATH") {
         Some(path) if Path::new(&path).exists() => Some(path),
         _ => None,
@@ -190,18 +168,10 @@ pub(crate) fn find_root_ca_certs() -> Option<OsString> {
 /// Return `None` in Cargo or open source builds; we do not support internal certs
 /// in these builds.
 pub fn find_internal_cert() -> Option<OsString> {
-    #[cfg(fbcode_build)]
-    return find_certs::find_tls_cert();
-
-    #[cfg(not(fbcode_build))]
-    return None;
+    None
 }
 
 /// Whether the machine buck is running on supports vpnless operation.
 pub fn supports_vpnless() -> bool {
-    #[cfg(fbcode_build)]
-    return cpe::x2p::supports_vpnless();
-
-    #[cfg(not(fbcode_build))]
-    return false;
+    false
 }

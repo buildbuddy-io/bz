@@ -2,6 +2,6 @@
 
 [<TIMESTAMP>] Starting new buck2 daemon...
 [<TIMESTAMP>] Connected to new buck2 daemon.
-[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+[<TIMESTAMP>] Build ID: <UUID>
 [<TIMESTAMP>] Skipped 1 incompatible targets:
 [<TIMESTAMP>]   root//a:macos_only (root//:linux_platform#<HASH>)

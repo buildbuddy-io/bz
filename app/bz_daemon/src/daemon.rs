@@ -333,19 +333,7 @@ impl DaemonCommand {
         // https://github.com/jemalloc/jemalloc/blob/dev/TUNING.md#notable-runtime-options-for-performance-tuning
         memory::enable_background_threads()?;
 
-        let fb = bz_common::fbinit::get_or_init_fbcode_globals();
-
-        if cfg!(target_os = "linux") {
-            #[cfg(fbcode_build)]
-            {
-                gflags::set_gflag_value(
-                    fb,
-                    "cgroup2_reader_update_interval_ms",
-                    gflags::GflagValue::U32(2000),
-                )
-                .expect("failed to set gflag --cgroup2_reader_update_interval_ms");
-            }
-        }
+        let fb = bz_common::fbinit::get_or_init_build_globals();
 
         // Unfortunately, buck-out doesn't really have a well-defined place/time at which it creates
         // the buck-out dir, instead just creating it whenever it first wants to write something to

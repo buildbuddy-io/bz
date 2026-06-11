@@ -19,7 +19,6 @@ import zipfile
 from enum import Enum
 from shutil import copyfile
 from typing import Callable, List, Match, Pattern
-from urllib.parse import urlencode
 
 # ANSI color codes
 RED = "\033[91m"
@@ -213,67 +212,10 @@ class FileType(Enum):
 
 def _hyperlink(file: str, line: int, text: str) -> str:
     """
-    Creates a clickable hyperlink in the terminal using OSC 8 escape sequences.
-    Supports both VS Code and Android Studio links based on ANDROID_EDITOR environment variable.
-
-    Args:
-        file: The file path to link to
-        line: The line number to link to
-        text: The text to display as the hyperlink
-
-    Returns:
-        A string containing the hyperlinked text with terminal escape sequences
+    Returns display text for a compiler diagnostic path.
     """
-    # Keep in sync with fbcode/buck2/prelude/toolchains/android/src/com/facebook/buck/jvm/cd/ErrorInterceptor.java
-    isVsCode = (
-        os.environ.get("FBVSCODE_REMOTE_ENV_NAME") == "od"
-        or os.environ.get("TERM_PROGRAM") == "vscode"
-    )
-
-    isHyperlinkDisabled = os.path.exists(
-        os.path.expanduser("~/.disable_buck_jvm_path_hyperlink")
-    )
-
-    if isVsCode or isHyperlinkDisabled:
-        return text
-
-    OSC = "\033]"
-    ST = "\033\\"
-
-    is_jetbrains = (
-        "ANDROID_EDITOR" in os.environ
-        or pathlib.Path("~/.jetbrains-fb/.buck_path_hyperlink_uses_jetbrains")
-        .expanduser()
-        .is_file()
-    )
-
-    if is_jetbrains:
-        params = {
-            "ide": "intellij",
-            "filepath": f"/fbsource/{file}",
-            "line": line,
-        }
-        encoded_params = "&".join(
-            [
-                f"{key}={urlencode({key: str(value)}).split('=', 1)[1]}"
-                for key, value in params.items()
-            ]
-        )
-
-        uri = f"fb-ide-opener://open/?{encoded_params}"
-
-    else:
-        params = {
-            "project": "fbsource",
-            "paths[0]": file,
-            "lines[0]": line,
-        }
-
-        encoded_params = urlencode(params)
-
-        uri = f"https://www.internalfb.com/intern/nuclide/open/arc/?{encoded_params}"
-
-    return f"{OSC}8;;{uri}{ST}{text}{OSC}8;;{ST}"
+    _unused = (file, line)
+    return text
 
 
 def _highlight_code(s: str, keywords: List[str]) -> str:

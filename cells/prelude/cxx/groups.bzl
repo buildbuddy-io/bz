@@ -457,7 +457,7 @@ def _generate_group_subfolder_name(
 def _hash_group_name(prefix: str, name: str) -> str:
     """
     Creates new name via simple hashing.
-    Hash algorithm is stable in starlark: https://fburl.com/code/ptegkov6
+    Hash algorithm is stable in Starlark.
     """
     return "{}_{}".format(prefix, str(hash(name)))
 

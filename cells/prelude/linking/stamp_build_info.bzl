@@ -20,7 +20,7 @@ def cxx_stamp_build_info(ctx: AnalysisContext) -> bool:
 
 def stamp_build_info(ctx: AnalysisContext, obj: Artifact, stamped_output: Artifact | None = None, has_content_based_path: bool = False) -> Artifact:
     """
-    If necessary, add fb_build_info section to binary via late-stamping
+    If necessary, add bz_build_info section to binary via late-stamping
     """
     if cxx_stamp_build_info(ctx):
         ctx.attrs._build_info["late_stamping"] = True
@@ -39,7 +39,7 @@ def stamp_build_info(ctx: AnalysisContext, obj: Artifact, stamped_output: Artifa
             cmd_args([
                 toolchain.binary_utilities_info.objcopy,
                 "--add-section",
-                cmd_args(build_info_json, format = "fb_build_info={}"),
+                cmd_args(build_info_json, format = "bz_build_info={}"),
                 obj,
                 stamped_output.as_output(),
             ]),

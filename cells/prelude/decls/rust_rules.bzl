@@ -187,7 +187,7 @@ rust_library = prelude_rule(
         rust_common.features_arg() |
         rust_common.rustc_flags_arg() |
         # linker_flags weren't supported for rust_library in Buck v1 but the
-        # fbcode macros pass them anyway. They're typically empty since the
+        # workspace macros pass them anyway. They're typically empty since the
         # config-level flags don't get injected, but it doesn't hurt to accept
         # them and it simplifies the implementation of Rust rules since they
         # don't have to know whether we're building a rust_binary or a

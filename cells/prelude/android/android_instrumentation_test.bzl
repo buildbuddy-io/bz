@@ -217,7 +217,7 @@ def _compute_executor_overrides(ctx: AnalysisContext, instrumentation_test_can_r
                 remote_enabled = True,
                 remote_execution_properties = ctx.attrs.re_caps["dynamic-listing"],
                 remote_execution_use_case = ctx.attrs.re_use_case["dynamic-listing"],
-                meta_internal_extra_params = ctx.attrs.meta_internal_extra_params,
+                remote_execution_extra_params = ctx.attrs.remote_execution_extra_params,
             )
         if "test-execution" in ctx.attrs.re_caps and "test-execution" in ctx.attrs.re_use_case:
             _validate_executor_override_re_config(ctx.attrs.re_caps["test-execution"], ctx.attrs.re_use_case["test-execution"])
@@ -226,7 +226,7 @@ def _compute_executor_overrides(ctx: AnalysisContext, instrumentation_test_can_r
                 remote_enabled = True,
                 remote_execution_properties = ctx.attrs.re_caps["test-execution"],
                 remote_execution_use_case = ctx.attrs.re_use_case["test-execution"],
-                meta_internal_extra_params = ctx.attrs.meta_internal_extra_params,
+                remote_execution_extra_params = ctx.attrs.remote_execution_extra_params,
             )
 
     return {
@@ -253,7 +253,7 @@ def _compute_emulator_abi(labels: list[str]):
     else:  # len(emulator_abi_labels) == 1:
         return emulator_abi_labels[0].replace(ANDROID_EMULATOR_ABI_LABEL_PREFIX, "")
 
-# replicating the logic in https://fburl.com/code/1fqowxu4 to match buck1's behavior
+# Replicate buck1's behavior.
 def _compute_emulator_subplatform(labels: list[str]) -> str:
     emulator_subplatform_labels = [label for label in labels if label.startswith("re_emulator_")]
     expect(len(emulator_subplatform_labels) <= 1, "multiple 're_emulator_' labels were found:[{}], there must be only one!".format(", ".join(emulator_subplatform_labels)))

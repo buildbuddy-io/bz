@@ -66,8 +66,7 @@ pub fn is_generated_target(node: TargetNodeRef) -> bool {
 }
 
 #[derive(Debug, bz_error::Error)]
-// WARN: CI uses this message to filter targets
-// If you change this message, please also update https://fburl.com/code/z0azzcc3
+// WARN: CI uses this message to filter targets.
 #[error(
     "Unknown target `{target}` from package `{package}`.\n\
 Did you mean one of the {num_targets} targets in {buildfile_path}?{similar_targets}{all_targets}"
@@ -458,13 +457,9 @@ fn bazel_input_file_rule() -> bz_error::Result<Arc<Rule>> {
     }))
 }
 
-fn attr_id(
-    spec: &AttributeSpec,
-    name: &str,
-) -> bz_error::Result<crate::attrs::spec::AttributeId> {
-    spec.attribute_id_by_name(name).ok_or_else(|| {
-        bz_error::internal_error!("missing attr `{name}` in Bazel input-file rule")
-    })
+fn attr_id(spec: &AttributeSpec, name: &str) -> bz_error::Result<crate::attrs::spec::AttributeId> {
+    spec.attribute_id_by_name(name)
+        .ok_or_else(|| bz_error::internal_error!("missing attr `{name}` in Bazel input-file rule"))
 }
 
 fn bazel_input_file_target(

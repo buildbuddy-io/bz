@@ -8,9 +8,7 @@
 
 """Module containing java macros."""
 
-load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load("@prelude//:native.bzl", "native")
-# @oss-disable[end= ]: load("@prelude//android/meta_only:android_build_tools_cas_artifact.bzl", "android_build_tools_cas_artifact")
 load("@prelude//toolchains/android/tools/build_rules:fb_native.bzl", "fb_native")
 load("@prelude//toolchains/android/tools/build_rules:utils.bzl", "add_os_labels")
 load("@prelude//utils:selects.bzl", "selects")
@@ -69,9 +67,6 @@ def _set_versioned_java_srcs(**kwargs):
         return kwargs
     java_version = select({
         "DEFAULT": native.read_config("java", "bz_java_version", "21"),
-        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-11": "11",
-        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-17": "17",
-        # @oss-disable[end= ]: "fbsource//third-party/toolchains/jdk:constraint-value-version-21": "21",
     })
     versioned_srcs = selects.apply(
         java_version,
@@ -169,28 +164,19 @@ def _buck_remote_file_with_wrapper(
         ext,
         url,
         sha1,
-        # @oss-disable[end= ]: internal_alias,
         **kwargs):
-    if not is_full_meta_repo():
-        return _oss_remote_file_with_wrapper(name, ext, url, sha1, **kwargs)
-    # @oss-disable[end= ]: else:
-        # @oss-disable: # deps are managed by Artificer internally - only relevant for OSS builds.
-        # @oss-disable[end= ]: kwargs.pop("deps", None)
-        # @oss-disable[end= ]: return native.alias(name = name, actual = internal_alias, **kwargs)
-        fail() # @oss-enable
+    return _oss_remote_file_with_wrapper(name, ext, url, sha1, **kwargs)
 
 def third_party_jar(
         name,
         url,
         sha1,
-        # @oss-disable[end= ]: internal_alias,
         **kwargs):
     return _buck_remote_file_with_wrapper(
         name,
         "jar",
         url,
         sha1,
-        # @oss-disable[end= ]: internal_alias,
         **kwargs
     )
 
@@ -198,14 +184,12 @@ def third_party_aar(
         name,
         url,
         sha1,
-        # @oss-disable[end= ]: internal_alias,
         **kwargs):
     return _buck_remote_file_with_wrapper(
         name,
         "aar",
         url,
         sha1,
-        # @oss-disable[end= ]: internal_alias,
         **kwargs
     )
 
@@ -213,14 +197,12 @@ def third_party_exe(
         name,
         url,
         sha1,
-        # @oss-disable[end= ]: internal_alias,
         **kwargs):
     return _buck_remote_file_with_wrapper(
         name,
         "exe",
         url,
         sha1,
-        # @oss-disable[end= ]: internal_alias,
         **kwargs
     )
 
@@ -349,16 +331,12 @@ def standard_java_test(
         )
 
 def buck_prebuilt_artifact(
-        # @oss-disable[end= ]: cas_digest,
         oss_url = None,
         oss_sha1 = None,
         **kwargs):
-    if (not is_full_meta_repo()) and oss_url:
+    if oss_url:
         return fb_native.remote_file(
             sha1 = oss_sha1,
             url = oss_url,
             **kwargs
         )
-    # @oss-disable[end= ]: else:
-        # @oss-disable[end= ]: return android_build_tools_cas_artifact(digest = cas_digest, **kwargs)
-        fail() # @oss-enable

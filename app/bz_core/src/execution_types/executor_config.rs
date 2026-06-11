@@ -52,7 +52,7 @@ pub struct RemoteEnabledExecutorOptions {
     pub dependencies: Vec<RemoteExecutorDependency>,
     pub gang_workers: Vec<ReGangWorker>,
     pub custom_image: Option<Box<RemoteExecutorCustomImage>>,
-    pub meta_internal_extra_params: Arc<MetaInternalExtraParams>,
+    pub remote_execution_extra_params: Arc<RemoteExecutionExtraParams>,
     pub priority: Option<i32>,
 }
 
@@ -72,7 +72,7 @@ pub struct ImagePackageIdentifier {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Hash, Pagable, Allocative)]
-pub struct RemoteExecutorCafFbpkg {
+pub struct RemoteExecutorCafPackage {
     pub name: String,
     pub uuid: String,
     pub tag: Option<String>,
@@ -85,7 +85,7 @@ pub struct RemoteExecutorCustomImage {
     pub drop_host_mount_globs: Vec<String>,
 }
 
-/// A Remote Action can specify a list of dependencies that are required before starting the execution `https://fburl.com/wiki/offzl3ox`
+/// A Remote Action can specify a list of dependencies that are required before starting the execution.
 #[derive(Debug, Eq, PartialEq, Clone, Hash, Pagable, Allocative)]
 pub struct RemoteExecutorDependency {
     /// The SMC tier that the Remote Executor will query to try to acquire the dependency
@@ -206,16 +206,7 @@ impl ReGang {
 impl RemoteExecutorDependency {
     pub fn parse(dep_map: SmallMap<&str, &str>) -> bz_error::Result<RemoteExecutorDependency> {
         fn username() -> Option<String> {
-            #[cfg(fbcode_build)]
-            {
-                user::current_username()
-                    .ok()
-                    .filter(|u| user::is_human_unixname(u))
-            }
-            #[cfg(not(fbcode_build))]
-            {
-                None
-            }
+            None
         }
 
         let smc_tier = dep_map
@@ -405,7 +396,6 @@ impl FromStr for OutputPathsBehavior {
         match s {
             "strict" => Ok(OutputPathsBehavior::Strict),
             "compatibility" => Ok(OutputPathsBehavior::Compatibility),
-            #[cfg(not(fbcode_build))]
             "output_paths" => Ok(OutputPathsBehavior::OutputPaths),
             _ => Err(bz_error::bz_error!(
                 bz_error::ErrorTag::Input,
@@ -418,11 +408,7 @@ impl FromStr for OutputPathsBehavior {
 
 impl Default for OutputPathsBehavior {
     fn default() -> Self {
-        if crate::is_open_source() {
-            Self::OutputPaths
-        } else {
-            Self::Compatibility
-        }
+        Self::OutputPaths
     }
 }
 
@@ -499,11 +485,11 @@ pub struct RemoteExecutionPolicy {
     pub setup_preference_key: Option<String>,
 }
 
-/// This struct is used to pass meta internal params to RE
+/// Extra parameters to include in remote execution requests.
 #[derive(Default, Debug, Clone, Eq, Hash, Pagable, PartialEq, Allocative)]
-pub struct MetaInternalExtraParams {
+pub struct RemoteExecutionExtraParams {
     pub remote_execution_policy: RemoteExecutionPolicy,
-    pub remote_execution_caf_fbpkgs: Vec<RemoteExecutorCafFbpkg>,
+    pub remote_execution_caf_packages: Vec<RemoteExecutorCafPackage>,
     pub gang: Option<ReGang>,
     /// Allow RE workers to upload action results to the action cache even
     /// when the action runs without network isolation. Useful for actions
@@ -511,10 +497,10 @@ pub struct MetaInternalExtraParams {
     pub allow_unsandboxed_action_cache_uploads: bool,
 }
 
-impl MetaInternalExtraParams {
-    pub fn default_arc() -> Arc<MetaInternalExtraParams> {
-        static DEFAULT: Lazy<Arc<MetaInternalExtraParams>> =
-            Lazy::new(|| Arc::new(MetaInternalExtraParams::default()));
+impl RemoteExecutionExtraParams {
+    pub fn default_arc() -> Arc<RemoteExecutionExtraParams> {
+        static DEFAULT: Lazy<Arc<RemoteExecutionExtraParams>> =
+            Lazy::new(|| Arc::new(RemoteExecutionExtraParams::default()));
         DEFAULT.clone()
     }
 }

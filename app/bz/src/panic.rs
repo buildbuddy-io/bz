@@ -23,12 +23,12 @@ use fbinit::FacebookInit;
 pub fn initialize() -> bz_error::Result<()> {
     let hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
-        let fb = bz_common::fbinit::get_or_init_fbcode_globals();
+        let fb = bz_common::fbinit::get_or_init_build_globals();
         the_panic_hook(fb, info);
         hook(info);
     }));
     bz_core::error::initialize(Box::new(move |category, err, loc, options| {
-        let fb = bz_common::fbinit::get_or_init_fbcode_globals();
+        let fb = bz_common::fbinit::get_or_init_build_globals();
         imp::write_soft_error(
             fb,
             category,
@@ -189,8 +189,8 @@ mod imp {
                 #[cfg(client_only)]
                 let warn = !options.quiet;
                 #[cfg(not(client_only))]
-                let warn = !bz_server::active_commands::broadcast_instant_event(&event)
-                    && !options.quiet;
+                let warn =
+                    !bz_server::active_commands::broadcast_instant_event(&event) && !options.quiet;
                 if warn {
                     tracing::warn!("Warning \"{}\": {:#}", category, err);
                 }
@@ -228,12 +228,10 @@ mod imp {
     fn write_to_scribe(fb: FacebookInit, data: bz_data::StructuredError) {
         use std::time::SystemTime;
 
-        use bz_core::facebook_only;
         use bz_data::InstantEvent;
         use bz_events::sink::remote;
         use bz_wrapper_common::invocation_id::TraceId;
 
-        facebook_only();
         if !remote::is_enabled() {
             return;
         }

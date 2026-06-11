@@ -18,7 +18,7 @@ from buck2.tests.e2e_util.buck_workspace import buck_test
 
 from .test_coverage_utils import collect_coverage_for
 
-JAVA_TEST_TARGET = "fbsource//xplat/test_frameworks/coverage/java/playground:SimpleTest"
+JAVA_TEST_TARGET = "root//xplat/test_frameworks/coverage/java/playground:SimpleTest"
 
 EXTRA_BUCK_ARGS = [
     "--config",
@@ -27,7 +27,7 @@ EXTRA_BUCK_ARGS = [
 ]
 
 
-@pytest.mark.parametrize("mode", [None, "@fbcode//mode/dev", "@fbcode//mode/opt"])
+@pytest.mark.parametrize("mode", [None, "@root//mode/dev", "@root//mode/opt"])
 @buck_test(inplace=True)
 async def test_java_coverage_file_filter(
     buck: Buck, tmp_path: Path, mode: Optional[str]
@@ -48,7 +48,7 @@ async def test_java_coverage_file_filter(
     )
 
 
-@pytest.mark.parametrize("mode", [None, "@fbcode//mode/dev", "@fbcode//mode/opt"])
+@pytest.mark.parametrize("mode", [None, "@root//mode/dev", "@root//mode/opt"])
 @buck_test(inplace=True)
 async def test_java_coverage_folder_filter(
     buck: Buck, tmp_path: Path, mode: Optional[str]
@@ -79,7 +79,7 @@ async def test_junit_test_selective_coverage_doesnt_produce_coverage(
     paths = await collect_coverage_for(
         buck,
         tmp_path,
-        "fbcode//testing_frameworks/code_coverage/junit/com/facebook/testing_frameworks:test",
+        "root//testing_frameworks/code_coverage/junit/com/facebook/testing_frameworks:test",
         file_filter=[
             "testing_frameworks/code_coverage/junit/com/facebook/testing_frameworks/AddTest.java"
         ],

@@ -19,7 +19,6 @@ use bz_common::argv::ArgFileKind;
 use bz_common::argv::ArgFilePath;
 use bz_common::argv::ExpandedArgv;
 use bz_common::argv::ExpandedArgvBuilder;
-use bz_core::is_open_source;
 use bz_error::BuckErrorContext;
 use bz_fs::error::IoResultExt;
 use bz_fs::fs_util;
@@ -209,11 +208,7 @@ fn expand_argfile_contents(
             Ok(lines)
         }
         ArgFileKind::PythonExecutable(path, flag) => {
-            let mut cmd = background_command(if is_open_source() {
-                "python3"
-            } else {
-                "fbpython"
-            });
+            let mut cmd = background_command("python3");
             cmd.env("BUCK2_ARG_FILE", "1");
             cmd.arg(argfile_abs_path(context, path)?.as_os_str());
             if let Some(flag) = flag.as_deref() {

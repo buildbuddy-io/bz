@@ -146,8 +146,7 @@ handle_info({Port, {exit_status, ExitStatus}}, #{port := Port} = State) ->
                 case ExitStatus of
                     N when N == 137 orelse N == 143 ->
                         io_lib:format(
-                            ("ct runner killed by SIGKILL (exit code ~b), likely due to running out of memory."
-                            " Check https://fburl.com/wiki/01s5fnom for information about memory limits for tests"),
+                            "ct runner killed by SIGKILL (exit code ~b), likely due to running out of memory.",
                             [ExitStatus]
                         );
                     _ ->

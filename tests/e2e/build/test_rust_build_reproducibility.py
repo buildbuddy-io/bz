@@ -26,7 +26,7 @@ def sha256_file(path: str) -> str:
 # to generate different crate hashes.
 @buck_test(inplace=True)
 async def test_rust_build_reproducibility(buck: Buck) -> None:
-    target = "fbcode//bz/tests/targets/rules/rust/source_map_consistency/repro:repro"
+    target = "//tests/targets/rules/rust/source_map_consistency/repro:repro"
 
     # Build 1: remote execution
     result_remote = await buck.build_without_report(

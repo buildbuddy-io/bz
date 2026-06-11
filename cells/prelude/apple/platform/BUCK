@@ -1,0 +1,52 @@
+load("@prelude//utils:source_listing.bzl", "source_listing")
+
+oncall("build_infra")
+
+source_listing()
+
+apple_provisioning_profile_sources(
+    name = "provisioning_profile_sources",
+    sources = [],
+    visibility = ["PUBLIC"],
+)
+
+genrule(
+    name = "provisioning_profiles",
+    out = "profiles",
+    cmd = "mkdir -p \"$OUT\"",
+    visibility = ["PUBLIC"],
+)
+
+python_binary(
+    name = "noop_idb_targets",
+    main = "noop_idb_targets.py",
+    visibility = ["PUBLIC"],
+)
+
+apple_simulators(
+    name = "ipad_simulator",
+    broker = "prelude//apple/tools/resource_broker:resource_broker",
+    idb_targets = ":noop_idb_targets",
+    visibility = ["PUBLIC"],
+)
+
+apple_simulators(
+    name = "iphone_booted_simulator",
+    broker = "prelude//apple/tools/resource_broker:resource_broker",
+    idb_targets = ":noop_idb_targets",
+    visibility = ["PUBLIC"],
+)
+
+apple_simulators(
+    name = "iphone_unbooted_simulator",
+    broker = "prelude//apple/tools/resource_broker:resource_broker",
+    idb_targets = ":noop_idb_targets",
+    visibility = ["PUBLIC"],
+)
+
+apple_simulators(
+    name = "watch_simulator",
+    broker = "prelude//apple/tools/resource_broker:resource_broker",
+    idb_targets = ":noop_idb_targets",
+    visibility = ["PUBLIC"],
+)

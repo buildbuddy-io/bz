@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_truncate_span_in_middle() {
-        let error = "rdeps(set(fbcode//bz/... fbsource//xplat/buck2/..., fbsource//fbobjc/buck2/...), fbcode//bz/cli:buck2)";
+        let error = "rdeps(set(//... root//xplat/buck2/..., root//fbobjc/buck2/...), //cli:buck2)";
         let span = Spanned {
             position: 0..error.len(),
             value: false,
@@ -141,7 +141,7 @@ mod tests {
             context_lines,
             [
                 "",
-                "    rdeps(set(fbcode//bz/... fbsour<<omitted>>ck2/...), fbcode//bz/cli:buck2)",
+                "    rdeps(set(//... fbsour<<omitted>>ck2/...), //cli:buck2)",
                 "    ^-----------------------------------------------------------------------------^",
                 "",
             ]

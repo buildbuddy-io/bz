@@ -558,11 +558,9 @@ impl ConcurrencyHandler {
                             // background work before this update. Use the new transaction directly
                             // instead of cleaning up and rerunning the whole updater.
                             if data.has_no_active_commands() && dice_was_idle {
-                                event_dispatcher.instant_event(DiceEqualityCheck {
-                                    is_equal: false,
-                                });
-                                data.dice_status =
-                                    DiceStatus::active(transaction.equality_token());
+                                event_dispatcher
+                                    .instant_event(DiceEqualityCheck { is_equal: false });
+                                data.dice_status = DiceStatus::active(transaction.equality_token());
                                 break (transaction, false);
                             }
 
@@ -872,7 +870,6 @@ mod tests {
     use bz_build_signals::env::FILE_WATCHER_WAIT;
     use bz_common::legacy_configs::dice::SetLegacyConfigs;
     use bz_core::fs::project::ProjectRootTemp;
-    use bz_core::is_open_source;
     use bz_events::BuckEvent;
     use bz_events::create_source_sink_pair;
     use bz_events::daemon_id::DaemonId;
@@ -957,11 +954,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "times out in standalone builds"]
     async fn nested_invocation_same_transaction() {
-        // FIXME: This times out on open source, and we don't know why
-        if is_open_source() {
-            return;
-        }
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice);
 
@@ -2165,8 +2159,7 @@ mod tests {
     // This test was moved to the top of the file
 
     #[tokio::test]
-    async fn test_multiple_exit_when_not_idle_commands_with_same_state() -> bz_error::Result<()>
-    {
+    async fn test_multiple_exit_when_not_idle_commands_with_same_state() -> bz_error::Result<()> {
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice.dupe());
 
@@ -2416,10 +2409,7 @@ mod tests {
                 // Check if we got preempted
                 if let Err(ref e) = result {
                     let error: bz_error::Error = e.clone();
-                    if error
-                        .tags()
-                        .contains(&bz_error::ErrorTag::DaemonPreempted)
-                    {
+                    if error.tags().contains(&bz_error::ErrorTag::DaemonPreempted) {
                         preempted.store(true, Ordering::Relaxed);
                     }
                 }
@@ -2471,8 +2461,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_multiple_exit_when_not_idle_commands_with_different_state()
-    -> bz_error::Result<()> {
+    async fn test_multiple_exit_when_not_idle_commands_with_different_state() -> bz_error::Result<()>
+    {
         let dice = make_default_dice().await;
         let concurrency = ConcurrencyHandler::new(dice.dupe());
 

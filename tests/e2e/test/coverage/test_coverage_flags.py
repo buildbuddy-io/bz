@@ -15,30 +15,30 @@ from buck2.tests.e2e_util.buck_workspace import buck_test
 
 
 @buck_test(inplace=True)
-async def test_conflicting_fbcode_coverage_flags_fail(buck: Buck) -> None:
+async def test_conflicting_workspace_coverage_flags_fail(buck: Buck) -> None:
     await expect_failure(
         buck.test(
             *[
                 "--config",
-                "fbcode.coverage=true",
+                "workspace.coverage=true",
                 "--config",
-                "fbcode.coverage_selective=true",
-                "fbcode//testing_frameworks/code_coverage/playground:test",
+                "workspace.coverage_selective=true",
+                "root//testing_frameworks/code_coverage/playground:test",
             ]
         ),
-        stderr_regex=r"""fbcode.coverage and fbcode.coverage_selective are both true. Pick one.""",
+        stderr_regex=r"""workspace.coverage and workspace.coverage_selective are both true. Pick one.""",
     )
 
 
 @buck_test(inplace=True)
-async def test_fbcode_coverage_selective_require_filters(buck: Buck) -> None:
+async def test_workspace_coverage_selective_require_filters(buck: Buck) -> None:
     await expect_failure(
         buck.test(
             *[
                 "--config",
-                "fbcode.coverage_selective=true",
-                "fbcode//testing_frameworks/code_coverage/playground:test",
+                "workspace.coverage_selective=true",
+                "root//testing_frameworks/code_coverage/playground:test",
             ]
         ),
-        stderr_regex=r"""fbcode.coverage_selective=true with no filters""",
+        stderr_regex=r"""workspace.coverage_selective=true with no filters""",
     )

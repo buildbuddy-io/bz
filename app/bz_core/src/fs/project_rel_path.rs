@@ -35,14 +35,14 @@
 //! use relative_path::RelativePath;
 //!
 //! let root = if cfg!(not(windows)) {
-//!     AbsNormPathBuf::from("/usr/local/fbsource/".into())?
+//!     AbsNormPathBuf::from("/usr/local/workspace/".into())?
 //! } else {
-//!     AbsNormPathBuf::from("C:\\open\\fbsource\\".into())?
+//!     AbsNormPathBuf::from("C:\\open\\workspace\\".into())?
 //! };
 //! let some_path = if cfg!(not(windows)) {
-//!     AbsNormPath::new("/usr/local/fbsource/buck/BUCK")?
+//!     AbsNormPath::new("/usr/local/workspace/buck/BUCK")?
 //! } else {
-//!     AbsNormPath::new("c:/open/fbsource/buck/BUCK")?
+//!     AbsNormPath::new("c:/open/workspace/buck/BUCK")?
 //! };
 //!
 //! let fs = ProjectRoot::new_unchecked(root);

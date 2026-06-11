@@ -519,7 +519,7 @@ fn test_parse_go_errorformat_patterns() {
     let error_format = split_lines(error_format);
 
     let error_text = r#"
-fbcode/neteng/vending_machine/bin/spy/semlock.go:158:93: not enough arguments in call to vmtask.CreateTaskWithClient
+workspace/neteng/vending_machine/bin/spy/semlock.go:158:93: not enough arguments in call to vmtask.CreateTaskWithClient
     have (*"facebook/task".Task, string, "facebook/task".TaskServiceClient)
     want ("context".Context, *"facebook/task".Task, string, "facebook/task".TaskServiceClient)
 "#;
@@ -532,7 +532,7 @@ fbcode/neteng/vending_machine/bin/spy/semlock.go:158:93: not enough arguments in
 
     assert_eq!(
         entry.filename,
-        Some("fbcode/neteng/vending_machine/bin/spy/semlock.go".to_owned())
+        Some("workspace/neteng/vending_machine/bin/spy/semlock.go".to_owned())
     );
     assert_eq!(entry.lnum, Some(158));
     assert_eq!(entry.end_lnum, None);
@@ -546,8 +546,8 @@ fbcode/neteng/vending_machine/bin/spy/semlock.go:158:93: not enough arguments in
     assert_eq!(entry.error_number, None);
 
     let error_text2 = r#"
-fbcode/security/duo-2fac/pam_duo.go:26:43: undefined: pam.Style
-fbcode/security/duo-2fac/pam_duo.go:28:11: undefined: pam.PromptEchoOn
+workspace/security/duo-2fac/pam_duo.go:26:43: undefined: pam.Style
+workspace/security/duo-2fac/pam_duo.go:28:11: undefined: pam.PromptEchoOn
 "#;
     let lines2 = split_lines(error_text2);
 
@@ -559,7 +559,7 @@ fbcode/security/duo-2fac/pam_duo.go:28:11: undefined: pam.PromptEchoOn
     let entry2_1 = &entries2[0];
     assert_eq!(
         entry2_1.filename,
-        Some("fbcode/security/duo-2fac/pam_duo.go".to_owned())
+        Some("workspace/security/duo-2fac/pam_duo.go".to_owned())
     );
     assert_eq!(entry2_1.lnum, Some(26));
     assert_eq!(entry2_1.end_lnum, None);
@@ -573,7 +573,7 @@ fbcode/security/duo-2fac/pam_duo.go:28:11: undefined: pam.PromptEchoOn
     let entry2_2 = &entries2[1];
     assert_eq!(
         entry2_2.filename,
-        Some("fbcode/security/duo-2fac/pam_duo.go".to_owned())
+        Some("workspace/security/duo-2fac/pam_duo.go".to_owned())
     );
     assert_eq!(entry2_2.lnum, Some(28));
     assert_eq!(entry2_2.end_lnum, None);

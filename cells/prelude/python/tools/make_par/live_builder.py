@@ -105,22 +105,21 @@ class LiveBuilder(ParBuilder):
         if absolute_base_dir.startswith("/re_cwd"):
             # This is a remote execution job, the actual path will be different
             # when execute locally. Updating the absolute path accordingly.
-            # This change assumes fbsource is always under $HOME, which is generally true for linux.
-            absolute_base_dir = "${HOME}/fbsource/" + self.linktree
+            # This change assumes workspace is always under $HOME, which is generally true for linux.
+            absolute_base_dir = "${HOME}/workspace/" + self.linktree
         script = (
             "#!/bin/bash\n"
             "# {argcomplete_hint}\n"
             "# LINKTREEDIR={linktreedir}\n"
             "\n"
-            'export FB_LPAR_INVOKED_NAME="$0"\n'
+            'export BZ_LPAR_INVOKED_NAME="$0"\n'
             "# This environment variable is immediately unset on startup but will\n"
             "# also appear in e.g. `multiprocessing` workers, and so serves as an\n"
             "# audit trail back to the originating PAR (and can be read via e.g.\n"
             "# `/proc/<pid>/environ`)\n"
             'export PAR_INVOKED_NAME_TAG="$0"\n'
             "# Make live par compatible with the par_builder and export the same environment variable\n"
-            "# See https://fburl.com/workplace/u561pr0v for more details\n"
-            'export FB_XAR_INVOKED_NAME="$0"\n'
+            'export BZ_XAR_INVOKED_NAME="$0"\n'
             'if [ -f "{base_dir}/_bootstrap.sh" ]; then\n'
             '  MAIN_MODULE="{base_dir}/{run_livepar}"\n'
             '  exec {base_dir}/_bootstrap.sh "${{MAIN_MODULE}}" "$@"\n'

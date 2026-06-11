@@ -125,7 +125,7 @@ impl Domain {
             // .<domain> matches all subdomains, look for exact match
             || self.0.trim_start_matches('.') == candidate
             // Candidate suffixed by domain, only match if candidate is a subdomain of domain
-            // Ex: domain=".facebook.com" matches "images.facebook.com" but not "www.thefacebook.com"
+            // Ex: domain=".example.com" matches "images.example.com" but not "www.theexample.com"
             || candidate.trim_end_matches(self.0.as_str().trim_start_matches('.')).ends_with('.')
     }
 }
@@ -202,11 +202,11 @@ impl NoProxy {
     ///
     /// Some examples to clarify:
     ///
-    /// NO_PROXY=".facebook.com" for HTTPS
-    ///     does not proxy https://www.facebook.com
-    ///     does not proxy https://images.facebook.com
-    ///     does proxy https://www.thefacebook.com
-    ///     does proxy http://www.thefacebook.com
+    /// NO_PROXY=".example.com" for HTTPS
+    ///     does not proxy https://www.example.com
+    ///     does not proxy https://images.example.com
+    ///     does proxy https://www.theexample.com
+    ///     does proxy http://www.theexample.com
     ///
     /// NO_PROXY="192.168.0.1" for HTTP
     ///     does not proxy http://192.168.0.1
@@ -237,27 +237,27 @@ mod tests {
 
     #[test]
     fn test_domain_match() {
-        let d = Domain(".facebook.com".to_owned());
-        assert!(d.is_match("www.facebook.com"));
-        assert!(!d.is_match("boofacebook.com"));
+        let d = Domain(".example.com".to_owned());
+        assert!(d.is_match("www.example.com"));
+        assert!(!d.is_match("booexample.com"));
 
-        let d = Domain("facebook.com".to_owned());
-        assert!(d.is_match("facebook.com"));
-        assert!(d.is_match("www.facebook.com"));
+        let d = Domain("example.com".to_owned());
+        assert!(d.is_match("example.com"));
+        assert!(d.is_match("www.example.com"));
 
-        let d = Domain("photos.facebook.com".to_owned());
-        assert!(!d.is_match("facebook.com"));
-        assert!(d.is_match("jpg.photos.facebook.com"));
+        let d = Domain("photos.example.com".to_owned());
+        assert!(!d.is_match("example.com"));
+        assert!(d.is_match("jpg.photos.example.com"));
 
         let d = Domain("*".to_owned());
-        assert!(d.is_match("www.facebook.com"));
-        assert!(d.is_match("facebook.com"));
+        assert!(d.is_match("www.example.com"));
+        assert!(d.is_match("example.com"));
     }
 
     #[test]
     fn test_noproxy_empty_string_does_not_match() {
         let noproxy = NoProxy::new(Scheme::HTTP, "");
-        assert!(!noproxy.should_bypass_proxy_for_host("facebook.com"));
+        assert!(!noproxy.should_bypass_proxy_for_host("example.com"));
     }
 
     #[test]
@@ -274,14 +274,14 @@ mod tests {
 
     #[test]
     fn test_noproxy_matches_subdomain() {
-        let noproxy = NoProxy::new(Scheme::HTTP, ".facebook.com");
-        assert!(noproxy.should_bypass_proxy_for_host("images.facebook.com"));
+        let noproxy = NoProxy::new(Scheme::HTTP, ".example.com");
+        assert!(noproxy.should_bypass_proxy_for_host("images.example.com"));
     }
 
     #[test]
     fn test_noproxy_matches_multiple() {
-        let noproxy = NoProxy::new(Scheme::HTTP, ".facebook.com, 192.168.0.0/24, 28.0.0.1");
-        assert!(noproxy.should_bypass_proxy_for_host("images.facebook.com"));
+        let noproxy = NoProxy::new(Scheme::HTTP, ".example.com, 192.168.0.0/24, 28.0.0.1");
+        assert!(noproxy.should_bypass_proxy_for_host("images.example.com"));
         assert!(noproxy.should_bypass_proxy_for_host("192.168.0.1"));
         assert!(!noproxy.should_bypass_proxy_for_host("28.0.0.2"));
     }
@@ -312,20 +312,20 @@ mod tests {
 
     #[test]
     fn test_noproxy_intercept_does_not_proxy_for_domain_match() {
-        let noproxy = NoProxy::new(Scheme::HTTPS, ".facebook.com");
+        let noproxy = NoProxy::new(Scheme::HTTPS, ".example.com");
         let intercept = noproxy.into_proxy_intercept();
         // DON'T proxy because scheme matches and is subdomain.
-        assert!(!intercept.matches(&uri("https://www.facebook.com/foo/bar")));
+        assert!(!intercept.matches(&uri("https://www.example.com/foo/bar")));
         // DO proxy because scheme matches but domain is different.
-        assert!(intercept.matches(&uri("https://www.thefacebook.com/foo/bar")));
+        assert!(intercept.matches(&uri("https://www.theexample.com/foo/bar")));
         // DON'T proxy because scheme mismatch
-        assert!(!intercept.matches(&uri("http://www.facebook.com/foo/bar")));
+        assert!(!intercept.matches(&uri("http://www.example.com/foo/bar")));
     }
 
     #[test]
     fn test_noproxy_intercept_does_not_proxy_for_scheme_mismatch() {
-        let noproxy = NoProxy::new(Scheme::HTTP, ".facebook.com");
+        let noproxy = NoProxy::new(Scheme::HTTP, ".example.com");
         let intercept = noproxy.into_proxy_intercept();
-        assert!(!intercept.matches(&uri("https://www.facebook.com/foo/bar")));
+        assert!(!intercept.matches(&uri("https://www.example.com/foo/bar")));
     }
 }

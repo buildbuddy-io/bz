@@ -10,7 +10,7 @@ oncall("android_devxx")
 
 source_listing()
 
-# Temporary alias because wa_android toolchain references this target and fbsource target
+# Temporary alias because wa_android toolchain references this target and workspace target
 # determinator doesn't allow mixed changes to whatsapp/android
 fb_native.alias(
     name = "fat-jar-main-binary",

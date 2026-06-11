@@ -579,14 +579,6 @@ impl FallbackTracker {
     pub fn can_fallback(&self) -> bool {
         let retried = self.count_fallbacks.fetch_add(1, Ordering::Relaxed);
 
-        #[cfg(all(fbcode_build, target_os = "linux"))]
-        let max = if hostcaps::is_prod() {
-            justknobs::get("buck2/buck2:max_fallback", None).ok()
-        } else {
-            None
-        };
-
-        #[cfg(not(all(fbcode_build, target_os = "linux")))]
         let max = None::<i64>;
 
         if let Some(max) = max {

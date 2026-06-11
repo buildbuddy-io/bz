@@ -72,17 +72,6 @@ impl IoError {
         self
     }
 
-    /// Set the is_eden flag if provided path is on an eden fs
-    #[cfg(fbcode_build)]
-    pub fn check_eden(mut self, path: &AbsPath) -> Self {
-        self.is_eden |= path
-            .parent()
-            .and_then(|p| detect_eden::is_eden(p.to_path_buf()).ok())
-            .unwrap_or(false);
-        self
-    }
-
-    #[cfg(not(fbcode_build))]
     pub fn check_eden(self, _path: &AbsPath) -> Self {
         self
     }

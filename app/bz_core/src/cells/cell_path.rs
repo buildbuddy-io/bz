@@ -248,10 +248,7 @@ impl CellPath {
     ///
     /// # bz_error::Ok(())
     /// ```
-    pub fn join_normalized<P: AsRef<RelativePath>>(
-        &self,
-        path: P,
-    ) -> bz_error::Result<CellPath> {
+    pub fn join_normalized<P: AsRef<RelativePath>>(&self, path: P) -> bz_error::Result<CellPath> {
         Ok(CellPath::new(self.cell, self.path.join_normalized(path)?))
     }
 

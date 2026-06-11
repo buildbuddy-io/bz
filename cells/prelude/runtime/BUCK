@@ -4,9 +4,7 @@ oncall("build_infra")
 
 source_listing()
 
-# Used by open source projects to support `prelude//`
-
 config_setting(
-    name = "fbcode",
+    name = "standalone",
     visibility = ["PUBLIC"],
 )

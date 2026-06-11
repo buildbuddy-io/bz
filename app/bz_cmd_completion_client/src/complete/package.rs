@@ -138,7 +138,7 @@ mod tests {
 
     fn paths_to_test_data() -> &'static [&'static str] {
         &[
-            "fbcode/buck2/app/bz_cmd_completion_client/test_data",
+            "workspace/buck2/app/bz_cmd_completion_client/test_data",
             "app/bz_cmd_completion_client/test_data",
             "test_data",
         ]
@@ -548,7 +548,7 @@ mod tests {
 
         let actual = uut.complete("//").await?;
 
-        assert_eq!(actual, vec!["//:", "//bz/", "//bz:"]);
+        assert_eq!(actual, vec!["//:", "//", "//:"]);
         Ok(())
     }
 

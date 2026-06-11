@@ -41,14 +41,14 @@ EMBEDDED_CAS_NAME = "tpx"
 @buck_test(inplace=True)
 async def test_produce_artifacts(buck: Buck) -> None:
     await buck.test(
-        "fbcode//bz/tests/targets/rules/python_test:test_produce_artifacts",
+        "//tests/targets/rules/python_test:test_produce_artifacts",
     )
 
 
 @buck_test(inplace=True)
 async def test_remote_artifact_directory_is_materialized_by_default(buck: Buck) -> None:
     await buck.test(
-        "fbcode//bz/tests/targets/rules/python_test:test_produce_artifacts",
+        "//tests/targets/rules/python_test:test_produce_artifacts",
         "--remote-only",
     )
 
@@ -66,7 +66,7 @@ async def test_remote_artifact_directory_is_not_materialized_when_cas_support_en
     buck: Buck,
 ) -> None:
     await buck.test(
-        "fbcode//bz/tests/targets/rules/python_test:test_produce_artifacts_in_cas",
+        "//tests/targets/rules/python_test:test_produce_artifacts_in_cas",
         "--no-remote-cache",
         "--remote-only",
     )
@@ -82,7 +82,7 @@ async def test_remote_artifact_directory_is_not_materialized_when_cas_support_en
 @buck_test(inplace=True)
 async def test_remote_artifact_has_cas_handle_with_right_ttl(buck: Buck) -> None:
     output = await buck.test(
-        "fbcode//bz/tests/targets/rules/python_test:test_produce_artifacts_in_cas",
+        "//tests/targets/rules/python_test:test_produce_artifacts_in_cas",
         "--remote-only",
     )
 

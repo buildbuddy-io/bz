@@ -64,12 +64,11 @@ export function Target(props: {target: ConfiguredTargetNode; tab: string | null}
 
   const filePath = target.codePointer()?.filePath()
   const lineNumber = (target.codePointer()?.line() ?? 0) + 1
-  // TODO iguridi: make it work outside of fbsource
   const codePointer =
     filePath != null && lineNumber != null ? (
-      <a href={`https://www.internalfb.com/code/fbsource/${filePath}?lines=${lineNumber}`}>
-        (codehub)
-      </a>
+      <span>
+        ({filePath}:{lineNumber})
+      </span>
     ) : null
 
   const unconfiguredLabel = target.label()!.targetLabel()

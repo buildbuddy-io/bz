@@ -92,7 +92,7 @@ def _escape_arg(arg):
     return arg
 
 
-def gen_mode_configs(bxl_path, mode_files, fbsource, debug, subprocess_cwd=None):
+def gen_mode_configs(bxl_path, mode_files, workspace, debug, subprocess_cwd=None):
     mode_config_paths = []
     default_mode_file = mode_files[0]
     for mode_file in mode_files:
@@ -108,8 +108,8 @@ def gen_mode_configs(bxl_path, mode_files, fbsource, debug, subprocess_cwd=None)
             "--",
             "--mode_name",
             mode_file,
-            "--fbsource",
-            str(fbsource).lower(),
+            "--workspace",
+            str(workspace).lower(),
         ]
         if debug:
             print("Running BXL command:", " ".join(bxl_cmds))
@@ -140,14 +140,14 @@ def main(
     target_include_patterns,
     solution_name,
     startup_target,
-    fbsource,
+    workspace,
     bxl_path,
     sample_target,
     debug,
     subprocess_cwd=None,
 ):
     mode_configs = gen_mode_configs(
-        bxl_path, mode_files, fbsource, debug, subprocess_cwd
+        bxl_path, mode_files, workspace, debug, subprocess_cwd
     )
 
     explicit_targets = [target for target in targets if is_explicit_target(target)]
@@ -197,7 +197,7 @@ def main(
     if startup_target:
         bxl_cmds += ["--startup_target", startup_target]
     bxl_cmds += ["--output", "json"]
-    bxl_cmds += ["--fbsource", str(fbsource).lower()]
+    bxl_cmds += ["--workspace", str(workspace).lower()]
     if debug:
         bxl_cmds += ["--log_level", "0"]
         print("Running BXL command:", " ".join(bxl_cmds))
@@ -340,9 +340,9 @@ generating and loading):
         help="buck target to be set as the default startup project",
     )
     parser.add_argument(
-        "--fbsource",
+        "--workspace",
         action="store_true",
-        help="whether to turn on fbsource specific behaviors",
+        help="whether to turn on workspace specific behaviors",
         default=False,
     )
     parser.add_argument(
@@ -383,7 +383,7 @@ generating and loading):
         target_include_patterns=args.target_include_patterns,
         solution_name=args.solution_name,
         startup_target=args.startup_target,
-        fbsource=args.fbsource,
+        workspace=args.workspace,
         bxl_path=args.bxl_path,
         sample_target=args.sample_target,
         debug=args.debug,

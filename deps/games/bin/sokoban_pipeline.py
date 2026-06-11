@@ -29,24 +29,24 @@ import tempfile
 
 
 def find_bz_root():
-    """Find the fbcode directory to run buck commands from."""
+    """Find the workspace directory to run buck commands from."""
     d = os.path.dirname(os.path.abspath(__file__))
     while d != "/":
         if os.path.exists(os.path.join(d, "BUCK")) or os.path.exists(
             os.path.join(d, ".buckconfig")
         ):
-            # Go up one more to fbcode
+            # Go up one more to workspace
             parent = os.path.dirname(d)
-            if os.path.basename(d) == "buck2" and os.path.basename(parent) == "fbcode":
+            if os.path.basename(d) == "buck2" and os.path.basename(parent) == "workspace":
                 return parent
         d = os.path.dirname(d)
     # Fallback
-    return os.environ.get("FBCODE_DIR", "/home/cjhopman/fbsource-3/fbcode")
+    return os.environ.get("BZ_ROOT", os.getcwd())
 
 
-FBCODE = find_bz_root()
-GEN_TARGET = "fbcode//bz/deps/games:sokoban_gen"
-SOKOBAN_TARGET = "fbcode//bz/deps/games:sokoban"
+BZ_ROOT = find_bz_root()
+GEN_TARGET = "//deps/games:sokoban_gen"
+SOKOBAN_TARGET = "//deps/games:sokoban"
 
 
 def run_buck(target, args, capture=True):
@@ -54,11 +54,11 @@ def run_buck(target, args, capture=True):
     cmd = ["buck2", "run", target, "--"] + args
     if capture:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=FBCODE, timeout=300
+            cmd, capture_output=True, text=True, cwd=BZ_ROOT, timeout=300
         )
         return result.stdout, result.stderr, result.returncode
     else:
-        result = subprocess.run(cmd, cwd=FBCODE, timeout=300)
+        result = subprocess.run(cmd, cwd=BZ_ROOT, timeout=300)
         return "", "", result.returncode
 
 
@@ -87,7 +87,7 @@ def cmd_generate(args):
     # Build first
     subprocess.run(
         ["buck2", "build", GEN_TARGET],
-        cwd=FBCODE,
+        cwd=BZ_ROOT,
         capture_output=True,
         timeout=300,
     )
@@ -189,7 +189,7 @@ def cmd_solve(args):
     # Build solver
     subprocess.run(
         ["buck2", "build", SOKOBAN_TARGET],
-        cwd=FBCODE,
+        cwd=BZ_ROOT,
         capture_output=True,
         timeout=300,
     )

@@ -503,16 +503,7 @@ impl CasDigestData {
             }
             DigestAlgorithm::Blake3 => DigesterVariant::Blake3(Box::new(blake3::Hasher::new())),
             DigestAlgorithm::Blake3Keyed => {
-                #[cfg(fbcode_build)]
-                {
-                    DigesterVariant::Blake3Keyed(Box::new(blake3::Hasher::new_keyed(
-                        blake3_constants::BLAKE3_HASH_KEY,
-                    )))
-                }
-                #[cfg(not(fbcode_build))]
-                {
-                    panic!("Blake3Keyed is not supported in the open source build")
-                }
+                panic!("Blake3Keyed is not supported in standalone builds")
             }
             DigestAlgorithm::Blake3KeyedTest => {
                 static TEST_KEY: [u8; 32] = [0; 32];

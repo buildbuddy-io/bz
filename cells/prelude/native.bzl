@@ -11,7 +11,6 @@
 # This is buck2's shim import. Any public symbols here will be available within
 # **all** interpreted files.
 
-load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load("@prelude//:paths.bzl", "paths")
 load("@prelude//:rules.bzl", __rules__ = "rules")
 load("@prelude//android:cpu_filters.bzl", "ALL_CPU_FILTERS", "CPU_FILTER_FOR_DEFAULT_PLATFORM")
@@ -84,9 +83,8 @@ def _extract_versions(constraints):
 
     versions = {}
 
-    # Since the constraints will be duplicated for each fbcode "platform", do
-    # some initial work to de-duplicate them here, by extracting just the
-    # project and version and verify we get just a single reduced result.
+    # Since constraints can be duplicated for platform variants, do some initial
+    # work to de-duplicate them here.
     for project, version in constraints.items():
         expect(project not in versions or version == versions[project])
         versions[project] = version
@@ -103,10 +101,6 @@ def _versioned_param_to_select(items, default = None):
     """
 
     if items == None:
-        return None
-
-    # TODO(agallagher): Remove once we move to a `uquery` based TD.
-    if read_root_config("fbcode", "cquery_td") == "true":
         return None
 
     # Special case a form of "empty" constraints that `buckify_tp2` may
@@ -459,12 +453,6 @@ def _swift_toolchain_macro_stub(**kwargs):
     )
 
 def _cxx_toolchain_macro_stub(**kwargs):
-    if is_full_meta_repo():
-        cache_links = kwargs.get("cache_links")
-        kwargs["cache_links"] = select({
-            "DEFAULT": cache_links,
-            "ovr_config//platform/execution/constraints:execution-platform-transitioned": True,
-        })
     cxx_toolchain_macro_impl(
         cxx_toolchain_rule = cxx_toolchain_inheriting_target_platform,
         **kwargs

@@ -26,8 +26,8 @@ def _remove_ci_labels(content: str) -> str:
     # this label is only added for CI jobs, causing inconsistenty between local test and ci test.
     # Examples:
     #  "ci:overwrite",
-    #  "ci:diff:linux:@fbcode//mode/dev-lg",
-    #  "ci:continuous:linux:@fbcode//mode/dev-lg",
+    #  "ci:diff:linux:@root//mode/dev-lg",
+    #  "ci:continuous:linux:@root//mode/dev-lg",
     new_content = []
     for line in content.splitlines():
         if "ci:" in line:

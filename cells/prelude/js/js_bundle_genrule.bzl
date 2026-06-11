@@ -9,7 +9,6 @@
 load("@prelude//:cache_mode.bzl", "CacheModeInfo")
 load("@prelude//:genrule_local_labels.bzl", "genrule_labels_require_local")
 load("@prelude//:genrule_prefer_local_labels.bzl", "genrule_labels_prefer_local")
-load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load("@prelude//android:android_providers.bzl", "AndroidResourceInfo", "merge_android_packageable_info")
 load("@prelude//js:js_providers.bzl", "JsBundleInfo")
 load("@prelude//js:js_utils.bzl", "TRANSFORM_PROFILES", "get_apple_resource_providers_for_js_bundle", "get_bundle_name")
@@ -26,14 +25,8 @@ _WINDOWS_ENV_SUBSTITUTIONS = [
     (regex("\\$(TMP\\b|\\{TMP\\})"), "%TMP%"),
 ]
 
-# We don't want to use cache mode in open source because the config keys that drive it aren't wired up
-_USE_CACHE_MODE = is_full_meta_repo()
-
 def _get_cache_mode(ctx: AnalysisContext) -> CacheModeInfo:
-    if _USE_CACHE_MODE:
-        return ctx.attrs._cache_mode[CacheModeInfo]
-    else:
-        return CacheModeInfo(allow_cache_uploads = False, cache_bust_genrules = False)
+    return CacheModeInfo(allow_cache_uploads = False, cache_bust_genrules = False)
 
 def _run_genrule(
         ctx: AnalysisContext,

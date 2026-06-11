@@ -142,10 +142,9 @@ def _apple_bundle_like_common_attrs():
         "_fast_provisioning_profile_parsing_enabled": attrs.bool(default = False),
         "_incremental_bundling_enabled": attrs.bool(default = False),
         "_profile_bundling_enabled": attrs.bool(default = False),
-        "_provisioning_profile_sources": attrs.dep(default = "fbsource//xplat/buck2/platform/apple:provisioning_profile_sources"),
+        "_provisioning_profile_sources": attrs.dep(default = "prelude//apple/platform:provisioning_profile_sources"),
         "_provisioning_profile_sources_enabled": attrs.bool(default = read_bool("apple", "provisioning_profile_sources_enabled", True)),
-        # FIXME: prelude// should be standalone (not refer to fbsource//)
-        "_provisioning_profiles": attrs.dep(default = "fbsource//xplat/buck2/platform/apple:provisioning_profiles"),
+        "_provisioning_profiles": attrs.dep(default = "prelude//apple/platform:provisioning_profiles"),
         "_resource_bundle": attrs.option(attrs.dep(providers = [AppleBundleResourceInfo]), default = None),
         "_skip_adhoc_resigning_scrubbed_frameworks_default": _skip_adhoc_resigning_scrubbed_frameworks_default_attr(),
         "_skip_adhoc_resigning_scrubbed_frameworks_override": attrs.option(attrs.bool(), default = None),
@@ -195,11 +194,11 @@ def apple_test_extra_attrs():
             Overrides a default selection mechanism.
         """),
         "_enable_library_evolution": get_enable_library_evolution(),
-        "_ipad_simulator": attrs.transition_dep(cfg = clear_platform_transition, default = "fbsource//xplat/buck2/platform/apple:ipad_simulator", providers = [LocalResourceInfo]),
-        "_iphone_booted_simulator": attrs.transition_dep(cfg = clear_platform_transition, default = "fbsource//xplat/buck2/platform/apple:iphone_booted_simulator", providers = [LocalResourceInfo]),
-        "_iphone_unbooted_simulator": attrs.transition_dep(cfg = clear_platform_transition, default = "fbsource//xplat/buck2/platform/apple:iphone_unbooted_simulator", providers = [LocalResourceInfo]),
+        "_ipad_simulator": attrs.transition_dep(cfg = clear_platform_transition, default = "prelude//apple/platform:ipad_simulator", providers = [LocalResourceInfo]),
+        "_iphone_booted_simulator": attrs.transition_dep(cfg = clear_platform_transition, default = "prelude//apple/platform:iphone_booted_simulator", providers = [LocalResourceInfo]),
+        "_iphone_unbooted_simulator": attrs.transition_dep(cfg = clear_platform_transition, default = "prelude//apple/platform:iphone_unbooted_simulator", providers = [LocalResourceInfo]),
         "_swift_enable_testing": attrs.default_only(attrs.bool(default = True)),
-        "_watch_simulator": attrs.transition_dep(cfg = clear_platform_transition, default = "fbsource//xplat/buck2/platform/apple:watch_simulator", providers = [LocalResourceInfo]),
+        "_watch_simulator": attrs.transition_dep(cfg = clear_platform_transition, default = "prelude//apple/platform:watch_simulator", providers = [LocalResourceInfo]),
     } | validation_common.attrs_validators_arg()
     attribs.update(apple_common.apple_toolchain_arg())
     attribs.update(_apple_bundle_like_common_attrs())

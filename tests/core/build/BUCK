@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_core_tests")
+load("//tests:buck_e2e.bzl", "bz_core_tests")
 
 oncall("build_infra")
 
@@ -8,16 +8,16 @@ bz_core_tests(
             "use_compiled_bz_client_and_tpx": True,
         },
         "test_paranoid": {
-            "data": "//bz/tests/targets:isolated_targets",
+            "data": "//tests/targets:isolated_targets",
         },
         "test_retained_analysis_memory_sketch": {
             "env": {
-                "SKETCH_SIZE_BIN": "$(location fbcode//bz/deps/setsketch:sketch_size)",
+                "SKETCH_SIZE_BIN": "$(location //deps/setsketch:sketch_size)",
             },
         },
         "test_uncategorized": {
             "env": {
-                "RECLI": "$(location fbsource//xplat/remote_execution/dotslash:recli)",
+                "RECLI": "$(location third_party//remote_execution:recli)",
             },
         },
     },

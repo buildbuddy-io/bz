@@ -136,9 +136,6 @@ fn initialize_buckconfig(repo_root: &AbsPath, prelude: bool, git: bool) -> bz_er
         writeln!(buckconfig, "[cell_aliases]")?;
         writeln!(buckconfig, "  config = prelude")?;
         writeln!(buckconfig, "  ovr_config = prelude")?;
-        writeln!(buckconfig, "  fbcode = none")?;
-        writeln!(buckconfig, "  fbsource = none")?;
-        writeln!(buckconfig, "  fbcode_macros = none")?;
         writeln!(buckconfig, "  buck = none")?;
         writeln!(buckconfig)?;
         writeln!(
@@ -340,9 +337,6 @@ mod tests {
 [cell_aliases]
   config = prelude
   ovr_config = prelude
-  fbcode = none
-  fbsource = none
-  fbcode_macros = none
   buck = none
 
 # Uses a copy of the prelude bundled with the bz binary. You can alternatively delete this

@@ -448,18 +448,7 @@ impl CacheUploader {
 
         let ((), std_streams) = future::try_join(uploads, std_streams).await?;
 
-        let worker;
-
-        #[cfg(fbcode_build)]
-        {
-            let hostname = hostname::get()?;
-            worker = hostname.to_string_lossy().into_owned();
-        }
-
-        #[cfg(not(fbcode_build))]
-        {
-            worker = "".to_owned();
-        }
+        let worker = String::new();
 
         let (stdout_raw, stdout_digest) = std_streams.stdout.into_raw_or_digest();
         let (stderr_raw, stderr_digest) = std_streams.stderr.into_raw_or_digest();

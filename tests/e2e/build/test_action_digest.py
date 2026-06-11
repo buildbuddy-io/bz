@@ -16,8 +16,6 @@ from buck2.tests.e2e_util.helper.utils import read_what_ran
 
 
 # If this test fails, it means that a change that modifies action digest was made.
-# Background in this post:
-# https://fb.workplace.com/groups/buck2eng/permalink/3452581371706005/
 # Changes should instead be deployed by:
 #   1: Create a new buck2 flag and hide the changes behind it (Ex. D59503359)
 #   2: Wait for bvb that contains #1 to land. To be safe, wait for a second to land
@@ -34,7 +32,7 @@ from buck2.tests.e2e_util.helper.utils import read_what_ran
 async def test_action_digest(buck: Buck) -> None:
     await buck.build(
         get_mode_from_platform(),
-        "fbcode//bz/tests/targets/rules/rust/hello_world:welcome",
+        "//tests/targets/rules/rust/hello_world:welcome",
         "--remote-only",
     )
     compiled_out = await read_what_ran(buck)
@@ -47,7 +45,7 @@ async def test_action_digest(buck: Buck) -> None:
     buck.path_to_executable = Path("buck2")
     await buck.build(
         get_mode_from_platform(),
-        "fbcode//bz/tests/targets/rules/rust/hello_world:welcome",
+        "//tests/targets/rules/rust/hello_world:welcome",
         "--remote-only",
     )
     deployed_out = await read_what_ran(buck)

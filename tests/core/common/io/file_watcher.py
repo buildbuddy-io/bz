@@ -58,7 +58,7 @@ class FileWatcherEvent:
 
 
 #
-# Example FileWatcher.stats - see https://fburl.com/code/pphlekfn:
+# Example FileWatcher.stats:
 #   "FileWatcher": {
 #     "stats": {
 #       "fresh_instance": false,
@@ -70,7 +70,7 @@ class FileWatcherEvent:
 #         {
 #           "event": 1,
 #           "kind": 0,
-#           "path": "fbcode//bz/tests/core/io/test_watchman.py"
+#           "path": "//tests/core/io/test_watchman.py"
 #         }
 #       ],
 #       "incomplete_events_reason": null,

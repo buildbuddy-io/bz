@@ -137,8 +137,7 @@ class AndroidDeviceImpl(val serial: String, val adbUtils: AdbUtils) : AndroidDev
           throw AndroidInstallException.rebootRequired(
               "Installed ${apex.name} on device; however --force-non-staged doesn't work when the" +
                   " native lib dependencies of an apex have changed. You need to run 'adb" +
-                  " reboot' on your device to complete the install. See also:" +
-                  " https://www.internalfb.com/intern/wiki/RL/RL_Release_and_Reliability/Build_and_Release_Infra/APEX_in_fbsource/Pit_falls/"
+                  " reboot' on your device to complete the install."
           )
         }
 

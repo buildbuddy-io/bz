@@ -20,21 +20,18 @@ def __invoke_main() -> None:
     # expects to be using the system python distribution eg: buck
     os.environ.pop("PYTHONHOME", None)
 
-    module = os.getenv("FB_PAR_MAIN_MODULE")
-    main_function = os.getenv("FB_PAR_MAIN_FUNCTION")
+    module = os.getenv("BZ_PAR_MAIN_MODULE")
+    main_function = os.getenv("BZ_PAR_MAIN_FUNCTION")
 
-    sys.argv[0] = os.getenv("FB_LPAR_INVOKED_NAME", sys.argv[0])
+    sys.argv[0] = os.getenv("BZ_LPAR_INVOKED_NAME", sys.argv[0])
 
-    if os.environ.get("FB_PAR_FIX_OS_ARGV"):
-        # pyre-fixme[21]: Could not find module `__par__.meta_only.process_title`.
-        from __par__.meta_only.process_title import set_os_argv
-
-        set_os_argv(sys.argv)
+    if os.environ.get("BZ_PAR_FIX_OS_ARGV"):
+        pass
 
     del sys.path[0]
 
-    main_runner_module = os.environ["FB_PAR_MAIN_RUNNER_MODULE"]
-    main_runner_function = os.environ["FB_PAR_MAIN_RUNNER_FUNCTION"]
+    main_runner_module = os.environ["BZ_PAR_MAIN_RUNNER_MODULE"]
+    main_runner_function = os.environ["BZ_PAR_MAIN_RUNNER_FUNCTION"]
 
     from importlib import import_module
 

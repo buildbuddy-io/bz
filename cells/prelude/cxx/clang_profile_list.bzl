@@ -37,7 +37,7 @@ def _clang_profile_list_impl(ctx: AnalysisContext) -> list[Provider]:
     """
     lines = ["[clang]"]
     for src_path in ctx.attrs.srcs:
-        # Use wildcard prefix to match both direct source paths (fbcode/path/to/file.cpp)
+        # Use wildcard prefix to match both direct source paths (workspace/path/to/file.cpp)
         # and symlink tree paths (buck-out/.../buck-headers/path/to/file.h)
         lines.append("source:*{}=allow".format(src_path))
     if ctx.attrs.srcs:

@@ -438,7 +438,10 @@ mod tests {
         std::os::unix::fs::symlink("missing-target", tree.join("a/b/dangling")).unwrap();
 
         let parallel = repository_recorded_dir_tree_value(&tree).unwrap();
-        assert_eq!(parallel, sequential_reference_dir_tree_value(&tree).unwrap());
+        assert_eq!(
+            parallel,
+            sequential_reference_dir_tree_value(&tree).unwrap()
+        );
 
         fs::write(tree.join("top.txt"), "changed").unwrap();
         let parallel_after = repository_recorded_dir_tree_value(&tree).unwrap();

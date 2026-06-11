@@ -13,6 +13,7 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use bytes::Bytes;
 use bz_fs::paths::abs_path::AbsPath;
 use bz_http::HttpClient;
 use bz_http::HttpClientBuilder;
@@ -20,7 +21,6 @@ use bz_http::retries::HttpError;
 use bz_http::retries::HttpErrorForRetry;
 use bz_http::retries::IntoBuck2Error;
 use bz_http::retries::http_retry;
-use bytes::Bytes;
 use dupe::Dupe;
 use futures::stream::BoxStream;
 use futures::stream::StreamExt;
@@ -164,34 +164,20 @@ impl Bucket {
         format!("{}/{}", self.name, filename)
     }
 
-    pub fn intern_url(&self, filename: &str) -> String {
-        format!(
-            "https://interncache-all.fbcdn.net/manifold/{}",
-            self.path(filename)
-        )
+    pub fn artifact_url(&self, filename: &str) -> String {
+        format!("manifold://{}", self.path(filename))
     }
 }
 
 fn manifold_explorer_url(bucket: &Bucket, filename: String) -> String {
     let full_path = format!("{}/{}", bucket.name, filename);
-    format!("https://www.internalfb.com/manifold/explorer/{full_path}")
+    format!("manifold://{full_path}")
 }
 
-/// Return the scheme+host manifold endpoint to upload to manifold, or None to not upload at all.
+/// Return the scheme+host Manifold endpoint to upload to, or None to not upload at all.
 fn upload_endpoint_url(use_vpnless: bool) -> Option<&'static str> {
-    #[cfg(fbcode_build)]
-    if hostcaps::is_prod() {
-        Some("https://manifold.facebook.net")
-    } else if use_vpnless {
-        Some("http://manifold.edge.x2p.facebook.net")
-    } else {
-        Some("https://manifold.c2p.facebook.net")
-    }
-    #[cfg(not(fbcode_build))]
-    {
-        let _unused = use_vpnless;
-        None
-    }
+    let _unused = use_vpnless;
+    None
 }
 
 pub struct ManifoldClient {

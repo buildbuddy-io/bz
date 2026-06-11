@@ -94,23 +94,11 @@ impl HealthCheckClientInner {
     }
 
     fn create_service(health_check_dir: AbsNormPathBuf) -> Box<dyn HealthCheckService> {
-        #[cfg(fbcode_build)]
-        {
-            Box::new(
-                crate::service::health_check_rpc_client::HealthCheckRpcClient::new(
-                    health_check_dir,
-                ),
-            )
-        }
-        #[cfg(not(fbcode_build))]
-        {
-            // There is no easy binary distribution mechanism for OSS, hence default to in-process execution.
-            Box::new(
-                crate::service::health_check_in_process_service::HealthCheckInProcessService::new(
-                    health_check_dir,
-                ),
-            )
-        }
+        Box::new(
+            crate::service::health_check_in_process_service::HealthCheckInProcessService::new(
+                health_check_dir,
+            ),
+        )
     }
 
     async fn run_event_loop(&mut self, mut event_receiver: Receiver<HealthCheckEvent>) {

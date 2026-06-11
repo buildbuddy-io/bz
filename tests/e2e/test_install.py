@@ -32,7 +32,7 @@ if linux_only():
         tmp_dir.mkdir()
         args = ["--dst", f"{tmp_dir}/"]
         await buck.install(
-            "fbcode//bz/tests/targets/rules/install:installer_test", "--", *args
+            "//tests/targets/rules/install:installer_test", "--", *args
         )
         assert exists(f"{tmp_dir}/artifact_a")
         assert exists(f"{tmp_dir}/artifact_b")
@@ -47,7 +47,7 @@ if linux_only():
         args = ["--dst", f"{tmp_dir}/"]
         args += ["--delay", "1"]
         res = await buck.install(
-            "fbcode//bz/tests/targets/rules/install:installer_test",
+            "//tests/targets/rules/install:installer_test",
             "--",
             *args,
         )
@@ -81,7 +81,7 @@ if linux_only():
     async def test_send_file_timeout(buck: Buck, tmp_path: Path) -> None:
         await expect_failure(
             buck.install(
-                "fbcode//bz/tests/targets/rules/install:installer_single_artifact",
+                "//tests/targets/rules/install:installer_single_artifact",
                 "--",
                 "--delay",
                 "30",
@@ -93,7 +93,7 @@ if linux_only():
     async def test_artifact_fails_to_install(buck: Buck) -> None:
         res = await expect_failure(
             buck.install(
-                "fbcode//bz/tests/targets/rules/install:installer_server_sends_error",
+                "//tests/targets/rules/install:installer_server_sends_error",
             ),
             stderr_regex=r"Interaction with installer failed",
         )
@@ -121,7 +121,7 @@ if linux_only():
     async def test_fail_to_build_artifact(buck: Buck) -> None:
         res = await expect_failure(
             buck.install(
-                "fbcode//bz/tests/targets/rules/install:bad_artifacts",
+                "//tests/targets/rules/install:bad_artifacts",
             ),
             stderr_regex=r"Failed to build",
         )
@@ -133,7 +133,7 @@ if linux_only():
     async def test_install_id_mismatch(buck: Buck) -> None:
         res = await expect_failure(
             buck.install(
-                "fbcode//bz/tests/targets/rules/install:installer_server_sends_wrong_install_info_response",
+                "//tests/targets/rules/install:installer_server_sends_wrong_install_info_response",
             ),
             stderr_regex=r"doesn't match with the sent one",
         )
@@ -145,7 +145,7 @@ if linux_only():
     async def test_installer_needs_forwarded_params(buck: Buck) -> None:
         res = await expect_failure(
             buck.install(
-                "fbcode//bz/tests/targets/rules/install:installer_server_requires_forwarded_params",
+                "//tests/targets/rules/install:installer_server_requires_forwarded_params",
             ),
             stderr_regex=r"-r_-e_-d_-s_-x_-a_-i_-w_-u_-k_must_be_passed_to_installer",
         )
@@ -169,7 +169,7 @@ if linux_only():
             "-w",
             "-u",
             "-k",
-            "fbcode//bz/tests/targets/rules/install:installer_server_requires_forwarded_params",
+            "//tests/targets/rules/install:installer_server_requires_forwarded_params",
         )
 
     @buck_test(inplace=True)
@@ -188,7 +188,7 @@ if linux_only():
             "--wait-for-debugger",
             "--uninstall",
             "--keep",
-            "fbcode//bz/tests/targets/rules/install:installer_server_requires_forwarded_params",
+            "//tests/targets/rules/install:installer_server_requires_forwarded_params",
         )
 
     @buck_test(inplace=True)
@@ -197,7 +197,7 @@ if linux_only():
     ) -> None:
         await buck.install(
             "-r",
-            "fbcode//bz/tests/targets/rules/install:installer_validates_extra_args_order",
+            "//tests/targets/rules/install:installer_validates_extra_args_order",
             "--",
             "--",
             "--expected-extra-arg",
@@ -208,7 +208,7 @@ if linux_only():
 async def test_fail_to_build_installer(buck: Buck) -> None:
     res = await expect_failure(
         buck.install(
-            "fbcode//bz/tests/targets/rules/install:bad_installer_target",
+            "//tests/targets/rules/install:bad_installer_target",
         ),
         stderr_regex=r"Failed to build installer",
     )

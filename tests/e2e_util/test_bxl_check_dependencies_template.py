@@ -34,7 +34,7 @@ if FLAVOR == "check_dependencies_test":  # noqa: C901
         )
         expect_failure_msg = os.environ["EXPECT_FAILURE_MSG"]
 
-        mode_argfile = os.environ.get("CHECK_DEPENDENCIES_TEST_FBCODE_BUILD_MODE")
+        mode_argfile = os.environ.get("CHECK_DEPENDENCIES_TEST_WORKSPACE_BUILD_MODE")
         if not mode_argfile:
             mode_argfile = get_mode_from_platform()
 
@@ -140,7 +140,7 @@ elif FLAVOR == "check_mutually_exclusive_dependencies_test":
         expect_failure_msg = os.environ["EXPECT_FAILURE_MSG"]
 
         # Build mode argfile is passed directly to buck2 as an argfile
-        # e.g., "@fbsource//arvr/mode/android/linux/opt"
+        # e.g., "@root//arvr/mode/android/linux/opt"
         build_mode_argfile = os.environ.get("BUILD_MODE_ARGFILE", "")
         additional_args = []
         if build_mode_argfile:

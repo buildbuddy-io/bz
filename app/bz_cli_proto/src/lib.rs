@@ -38,7 +38,7 @@ fn wrong_request_type(request_type: &'static str) -> bz_error::Error {
 }
 
 impl ConfigOverride {
-    /// Not `fbcode//config.key=value`
+    /// Not `root//config.key=value`
     pub fn flag_no_cell(s: &str) -> Self {
         Self::flag(s, None)
     }

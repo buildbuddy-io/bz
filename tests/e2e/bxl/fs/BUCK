@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests:bxl_test.bzl", "bxl_test")
+load("//tests:bxl_test.bzl", "bxl_test")
 
 oncall("build_infra")
 

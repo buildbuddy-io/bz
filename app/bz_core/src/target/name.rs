@@ -25,7 +25,7 @@ use crate::soft_error;
 pub const EQ_SIGN_SUBST: &str = "_eqsb_";
 
 /// 'TargetName' is the name given to a particular target.
-/// e.g. `foo` in the label `fbsource//package/path:foo`.
+/// e.g. `foo` in the label `root//package/path:foo`.
 #[derive(
     Clone,
     Debug,

@@ -1,18 +1,15 @@
-load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup", "buck_genrule")
-load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
-
 oncall("build_infra")
 
 # Runs lalrpop on grammar.lalrpop to generate grammar.rs
-buck_genrule(
+genrule(
     name = "grammar",
     srcs = ["src/syntax/grammar.lalrpop"],
     out = ".",
     # We can't use $SRCS, because in Buck1 that is absolute, and lalrpop --out-dir only works with relative sources
-    cmd = "$(exe fbsource//third-party/rust:lalrpop-lalrpop) src/syntax/grammar.lalrpop --out-dir $OUT",
+    cmd = "$(exe third_party//rust:lalrpop-lalrpop) src/syntax/grammar.lalrpop --out-dir $OUT",
 )
 
-buck_filegroup(
+filegroup(
     name = "testcases",
     srcs = glob([
         "src/**/*.golden",
@@ -31,7 +28,7 @@ rust_library(
         "--cfg=rust_nightly",
     ],
     test_deps = [
-        "fbsource//third-party/rust:serde_json",
+        "third_party//rust:serde_json",
     ],
     test_env = {
         # Some of our tests include testcase files relative to CARGO_MANIFEST_DIR.
@@ -45,27 +42,27 @@ rust_library(
         # If you need some feature requiring working with syntax tree, like a linter,
         # please implement it inside the `starlark` crate.
         # For codemods, use libCST.
-        "//bz/deps/starlark-rust/...",
+        "//deps/starlark-rust/...",
         # For faster incremental compilation of buck2,
         # we pull `starlark::Error` from this crate rather than from `starlark`.
-        "//bz/app/bz_error/...",
+        "//app/bz_error/...",
     ],
     deps = [
-        "fbsource//third-party/rust:annotate-snippets",
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:derivative",
-        "fbsource//third-party/rust:derive_more",
-        "fbsource//third-party/rust:lalrpop-util",
-        "fbsource//third-party/rust:logos",
-        "fbsource//third-party/rust:lsp-types",
-        "fbsource//third-party/rust:memchr",
-        "fbsource//third-party/rust:num-bigint",
-        "fbsource//third-party/rust:num-traits",
-        "fbsource//third-party/rust:once_cell",
-        "fbsource//third-party/rust:thiserror",
-        "//bz/deps/allocative/allocative:allocative",
-        "//bz/deps/gazebo/dupe:dupe",
-        "//bz/deps/pagable:pagable",
-        "//bz/deps/starlark-rust/starlark_map:starlark_map",
+        "third_party//rust:annotate-snippets",
+        "third_party//rust:anyhow",
+        "third_party//rust:derivative",
+        "third_party//rust:derive_more",
+        "third_party//rust:lalrpop-util",
+        "third_party//rust:logos",
+        "third_party//rust:lsp-types",
+        "third_party//rust:memchr",
+        "third_party//rust:num-bigint",
+        "third_party//rust:num-traits",
+        "third_party//rust:once_cell",
+        "third_party//rust:thiserror",
+        "//deps/allocative/allocative:allocative",
+        "//deps/gazebo/dupe:dupe",
+        "//deps/pagable:pagable",
+        "//deps/starlark-rust/starlark_map:starlark_map",
     ],
 )

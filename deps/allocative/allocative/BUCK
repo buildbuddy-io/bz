@@ -1,9 +1,7 @@
-load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup")
-load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("build_infra")
 
-buck_filegroup(
+filegroup(
     name = "testcases",
     srcs = glob([
         "src/**/*.svg",
@@ -38,13 +36,12 @@ rust_library(
         "triomphe",
     ] + select({
         "DEFAULT": ["tokio"],
-        # @oss-disable[end= ]: "ovr_config//runtime/constraints:wasm": [],
     }),
     rustc_flags = [
         "--cfg=rust_nightly",
     ],
     test_deps = [
-        "fbsource//third-party/rust:inferno",
+        "third_party//rust:inferno",
         ":testcases",
     ],
     test_env = {
@@ -52,28 +49,27 @@ rust_library(
         "CARGO_MANIFEST_DIR": "$(location :testcases)",
     },
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:bumpalo",
-        "fbsource//third-party/rust:compact_str",
-        "fbsource//third-party/rust:ctor",
-        "fbsource//third-party/rust:dashmap",
-        "fbsource//third-party/rust:either",
-        "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:hashbrown",
-        "fbsource//third-party/rust:indexmap",
-        "fbsource//third-party/rust:num-bigint",
-        "fbsource//third-party/rust:once_cell",
-        "fbsource//third-party/rust:parking_lot",
-        "fbsource//third-party/rust:prost-types",
-        "fbsource//third-party/rust:relative-path",
-        "fbsource//third-party/rust:serde_json",
-        "fbsource//third-party/rust:slab",
-        "fbsource//third-party/rust:smallvec",
-        "fbsource//third-party/rust:triomphe",
-        "//bz/deps/allocative/allocative_derive:allocative_derive",
+        "third_party//rust:anyhow",
+        "third_party//rust:bumpalo",
+        "third_party//rust:compact_str",
+        "third_party//rust:ctor",
+        "third_party//rust:dashmap",
+        "third_party//rust:either",
+        "third_party//rust:futures",
+        "third_party//rust:hashbrown",
+        "third_party//rust:indexmap",
+        "third_party//rust:num-bigint",
+        "third_party//rust:once_cell",
+        "third_party//rust:parking_lot",
+        "third_party//rust:prost-types",
+        "third_party//rust:relative-path",
+        "third_party//rust:serde_json",
+        "third_party//rust:slab",
+        "third_party//rust:smallvec",
+        "third_party//rust:triomphe",
+        "//deps/allocative/allocative_derive:allocative_derive",
         "//common/rust/shed/sorted_vector_map:sorted_vector_map",
     ] + select({
-        "DEFAULT": ["fbsource//third-party/rust:tokio"],
-        # @oss-disable[end= ]: "ovr_config//runtime/constraints:wasm": [],
+        "DEFAULT": ["third_party//rust:tokio"],
     }),
 )

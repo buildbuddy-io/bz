@@ -13,10 +13,7 @@ use std::ops::ControlFlow;
 use bz_data::error::ErrorTag;
 use once_cell::sync::Lazy;
 
-pub(crate) fn classify_server_stderr(
-    error: bz_error::Error,
-    stderr: &str,
-) -> bz_error::Error {
+pub(crate) fn classify_server_stderr(error: bz_error::Error, stderr: &str) -> bz_error::Error {
     let mut tag = if stderr.is_empty() {
         None
     } else if stderr.contains("<jemalloc>: size mismatch detected") {
@@ -80,7 +77,7 @@ pub(crate) fn classify_server_stderr(
 //    0: rust_begin_unwind
 //       at ./xplat/rust/toolchain/sysroot/1.80.1/library/std/src/panicking.rs:652:5
 //    1: <bz_server::daemon::server::BuckdServer as bz_cli_proto::daemon_api_server::DaemonApi>::unstable_crash::{closure#0}
-//       at ./fbcode/buck2/app/bz_server/src/daemon/crash.rs:18:13
+//       at ./workspace/buck2/app/bz_server/src/daemon/crash.rs:18:13
 static RUST_STACK_FRAME: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"^\s*\d*:\s*(.*)$").unwrap());
 static RUST_CONTEXT: Lazy<regex::Regex> = Lazy::new(|| regex::Regex::new(r"^\s*at \S*$").unwrap());
@@ -238,7 +235,7 @@ stack backtrace:
    1: core::panicking::panic_fmt
              at ./xplat/rust/toolchain/sysroot/1.80.1/library/core/src/panicking.rs:72:14
    2: <bz_server::daemon::server::BuckdServer as bz_cli_proto::daemon_api_server::DaemonApi>::unstable_crash::{closure#0}
-             at ./fbcode/buck2/app/bz_server/src/daemon/crash.rs:18:13
+             at ./workspace/buck2/app/bz_server/src/daemon/crash.rs:18:13
    3: <<bz_cli_proto::daemon_api_server::DaemonApiServer<_> as tower_service::Service<http::request::Request<_>>>::call::Unstable_CrashSvc<bz_server::daemon::server::BuckdServer> as tonic::server::service::UnaryService<bz_cli_proto::UnstableCrashRequest>>::call::{closure#0}
              at ./xplat/rust/toolchain/sysroot/1.80.1/library/core/src/future/future.rs:123:9
    4: <bz_cli_proto::daemon_api_server::DaemonApiServer<bz_server::daemon::server::BuckdServer> as tower_service::Service<http::request::Request<hyper::body::body::Body>>>::call::{closure#20}
@@ -275,7 +272,7 @@ stack backtrace:
 *** Aborted at 1724968759 (Unix time, try 'date -d @1724968759') ***
 *** Signal 6 (SIGABRT) (0x261c500150b2c) received by PID 1379116 (pthread TID 0x7f211b600640) (linux TID 1379195) (maybe from PID 1379116, UID 156101) (code: -6), stack trace: ***
     @ 00000000081eca3f folly::symbolizer::(anonymous namespace)::signalHandler(int, siginfo_t*, void*)
-                       ./fbcode/folly/debugging/symbolizer/SignalHandler.cpp:453
+                       ./workspace/folly/debugging/symbolizer/SignalHandler.cpp:453
     @ 000000000004455f (unknown)
                        /home/engshare/third-party2/glibc/2.34/src/glibc-2.34/signal/../sysdeps/unix/sysv/linux/libc_sigaction.c:8
                        -> /home/engshare/third-party2/glibc/2.34/src/glibc-2.34/signal/../sysdeps/unix/sysv/linux/x86_64/libc_sigaction.c
@@ -290,7 +287,7 @@ stack backtrace:
     @ 0000000007edad48 std::process::abort
                        xplat/rust/toolchain/sysroot/1.80.1/library/std/src/process.rs:2369
     @ 000000001875604b <bz_server::daemon::server::BuckdServer as bz_cli_proto::daemon_api_server::DaemonApi>::unstable_crash::{closure#0}
-                       fbcode/buck2/app/bz_server/src/daemon/crash.rs:27
+                       workspace/buck2/app/bz_server/src/daemon/crash.rs:27
     @ 0000000018e12834 <<bz_cli_proto::daemon_api_server::DaemonApiServer<_> as tower_service::Service<http::request::Request<_>>>::call::Unstable_CrashSvc<bz_server::daemon::server::BuckdServer> as tonic::server::service::UnaryService<bz_cli_proto::UnstableCrashRequest>>::call::{closure#0}
                        xplat/rust/toolchain/sysroot/1.80.1/library/core/src/future/future.rs:123
     @ 0000000018dff24b <bz_cli_proto::daemon_api_server::DaemonApiServer<bz_server::daemon::server::BuckdServer> as tower_service::Service<http::request::Request<hyper::body::body::Body>>>::call::{closure#20}

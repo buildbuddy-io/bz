@@ -799,19 +799,7 @@ impl ActionErrorDisplay<'_> {
                     );
                 }
                 Some(Command::RemoteCommand(remote_command)) => {
-                    if bz_core::is_open_source() {
-                        append!("Remote action digest: '{}'", remote_command.action_digest);
-                    } else {
-                        append!(
-                            "Remote action{}, reproduce with: `frecli cas download-action {}`",
-                            if remote_command.cache_hit {
-                                " cache hit"
-                            } else {
-                                ""
-                            },
-                            remote_command.action_digest
-                        );
-                    }
+                    append!("Remote action digest: '{}'", remote_command.action_digest);
                 }
                 Some(Command::OmittedLocalCommand(..)) | None => {
                     // Nothing to show in this case.

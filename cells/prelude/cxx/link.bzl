@@ -12,7 +12,6 @@ load(
     "make_artifact_tset",
     "project_artifacts",
 )
-# @oss-disable[end= ]: load("@prelude//apple/meta_only:shared_library_interfaces.bzl", "get_shared_library_interface_generation_linker_flags")
 load(
     "@prelude//cxx:cxx_bolt.bzl",
     "bolt",
@@ -313,7 +312,6 @@ def cxx_link_into(
         )
 
         shared_library_interface_generation_command.add(
-            # @oss-disable[end= ]: get_shared_library_interface_generation_linker_flags(shared_library_interface),
             cmd_args(),
         )
         ctx.actions.run(

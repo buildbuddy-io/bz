@@ -18,8 +18,6 @@ use bz_core::cells::external::external_cell_origin_for_cell;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
 
 pub mod dep_files;
-#[cfg(fbcode_build)]
-mod edenfs;
 pub mod file_watcher;
 mod fs_hash_crawler;
 pub mod mergebase;

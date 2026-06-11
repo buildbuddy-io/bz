@@ -1,16 +1,15 @@
 [cells]
-gh_facebook_buck2 = .
+bz = .
 prelude = cells/prelude
 bazel_tools = cells/bazel_tools
+third_party = third_party
 
 [cell_aliases]
-root = gh_facebook_buck2
+root = bz
+bz = bz
 prelude = prelude
 bazel_tools = bazel_tools
-
-[oss]
-internal_cell = fbcode
-stripped_root_dirs = buck2
+third_party = third_party
 
 [project]
 ignore = \

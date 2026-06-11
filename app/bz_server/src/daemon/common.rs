@@ -9,7 +9,6 @@
  */
 
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use async_trait::async_trait;
 use bz_build_api::actions::execute::dice_data::CommandExecutorResponse;
@@ -24,12 +23,12 @@ use bz_core::execution_types::executor_config::CommandGenerationOptions;
 use bz_core::execution_types::executor_config::Executor;
 use bz_core::execution_types::executor_config::HybridExecutionLevel;
 use bz_core::execution_types::executor_config::LocalExecutorOptions;
-use bz_core::execution_types::executor_config::MetaInternalExtraParams;
 use bz_core::execution_types::executor_config::PathSeparatorKind;
 use bz_core::execution_types::executor_config::ReGangWorker;
 use bz_core::execution_types::executor_config::RePlatformFields;
 use bz_core::execution_types::executor_config::RemoteEnabledExecutor;
 use bz_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
+use bz_core::execution_types::executor_config::RemoteExecutionExtraParams;
 use bz_core::execution_types::executor_config::RemoteExecutorDependency;
 use bz_core::execution_types::executor_config::RemoteExecutorOptions;
 use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
@@ -343,7 +342,7 @@ fn local_remote_enabled_executor_options_for_bazel_overrides(
         dependencies: Vec::new(),
         gang_workers: Vec::new(),
         custom_image: None,
-        meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
+        remote_execution_extra_params: RemoteExecutionExtraParams::default_arc(),
         priority: None,
     }
 }
@@ -464,31 +463,6 @@ impl HasCommandExecutor for CommandExecutorFactory {
                     local_action_cache_re_use_case,
                 ))
             };
-
-        if !bz_core::is_open_source() && !cfg!(fbcode_build) {
-            static WARN: OnceLock<()> = OnceLock::new();
-            WARN.get_or_init(|| {
-                tracing::warn!("Cargo build detected: disabling remote execution and caching!")
-            });
-
-            if self.strategy.ban_local() {
-                return Err(ExecutorCompatibilityError::LocalIncompatible(self.strategy).into());
-            }
-
-            let local_executor = Arc::new(local_executor_new(
-                &LocalExecutorOptions::default(),
-                RemoteExecutorUseCase::bz_default(),
-            ));
-            return Ok(CommandExecutorResponse {
-                executor: local_executor.dupe(),
-                platform: Default::default(),
-                action_cache_checker: local_executor,
-                remote_dep_file_cache_checker: Arc::new(NoOpCommandOptionalExecutor {}),
-                cache_uploader: Arc::new(NoOpCacheUploader {}),
-                output_trees_download_config: self.output_trees_download_config.dupe(),
-                remote_action_building_semaphore: self.remote_action_building_semaphore.dupe(),
-            });
-        }
 
         let remote_executor_new = |options: &RemoteExecutorOptions,
                                    re_use_case: &RemoteExecutorUseCase,
@@ -648,10 +622,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                             let re_max_input_files_bytes = remote
                                 .re_max_input_files_bytes
                                 .unwrap_or(DEFAULT_RE_MAX_INPUT_FILE_BYTES);
-                            let local = local_executor_new(
-                                local,
-                                remote_options.re_use_case,
-                            );
+                            let local = local_executor_new(local, remote_options.re_use_case);
                             let remote = remote_executor_new(
                                 remote,
                                 &remote_options.re_use_case,
@@ -792,28 +763,7 @@ impl ExecutionStrategyExt for ExecutionStrategy {
 
 /// This is used when execution platforms are not configured.
 pub fn get_default_executor_config(host_platform: HostPlatformOverride) -> CommandExecutorConfig {
-    let executor = if bz_core::is_open_source() {
-        Executor::Local(LocalExecutorOptions::default())
-    } else {
-        Executor::RemoteEnabled(RemoteEnabledExecutorOptions {
-            executor: RemoteEnabledExecutor::Hybrid {
-                local: LocalExecutorOptions::default(),
-                remote: RemoteExecutorOptions::default(),
-                level: HybridExecutionLevel::Limited,
-            },
-            re_properties: get_default_re_properties(host_platform),
-            re_use_case: RemoteExecutorUseCase::bz_default(),
-            re_action_key: None,
-            cache_upload_behavior: CacheUploadBehavior::Disabled,
-            remote_cache_enabled: true,
-            remote_dep_file_cache_enabled: false,
-            dependencies: vec![],
-            gang_workers: vec![],
-            custom_image: None,
-            meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
-            priority: None,
-        })
-    };
+    let executor = Executor::Local(LocalExecutorOptions::default());
 
     CommandExecutorConfig {
         executor,
@@ -979,7 +929,7 @@ mod tests {
                 dependencies: Vec::new(),
                 gang_workers: Vec::new(),
                 custom_image: None,
-                meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
+                remote_execution_extra_params: RemoteExecutionExtraParams::default_arc(),
                 priority: None,
             }),
             BazelRemoteEndpointOverrides::from_startup_config(&RemoteExecutionStartupConfig {
@@ -1023,7 +973,7 @@ mod tests {
                 dependencies: Vec::new(),
                 gang_workers: Vec::new(),
                 custom_image: None,
-                meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
+                remote_execution_extra_params: RemoteExecutionExtraParams::default_arc(),
                 priority: None,
             }),
             remote_executor_overrides(),

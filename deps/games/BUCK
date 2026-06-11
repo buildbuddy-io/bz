@@ -1,5 +1,3 @@
-load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
-load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("build_infra")
 
@@ -8,24 +6,24 @@ rust_library(
     srcs = glob(["src/**/*.rs"]) + glob(["src/**/*.txt"]) + glob(["sprites/**/*.png"]),
     crate_root = "src/lib.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:async-stream",
-        "fbsource//third-party/rust:async-trait",
-        "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:image",
-        "fbsource//third-party/rust:itertools",
-        "fbsource//third-party/rust:rand",
-        "fbsource//third-party/rust:serde",
-        "fbsource//third-party/rust:serde_json",
-        "fbsource//third-party/rust:tokio",
-        "//bz/deps/superconsole:superconsole",
+        "third_party//rust:anyhow",
+        "third_party//rust:async-stream",
+        "third_party//rust:async-trait",
+        "third_party//rust:futures",
+        "third_party//rust:image",
+        "third_party//rust:itertools",
+        "third_party//rust:rand",
+        "third_party//rust:serde",
+        "third_party//rust:serde_json",
+        "third_party//rust:tokio",
+        "//deps/superconsole:superconsole",
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:linux": [
-            "fbsource//third-party/rust:termios",
+            "third_party//rust:termios",
         ],
         "ovr_config//os:macos": [
-            "fbsource//third-party/rust:termios",
+            "third_party//rust:termios",
         ],
     }),
 )
@@ -35,11 +33,11 @@ rust_binary(
     srcs = ["bin/jump.rs"],
     crate_root = "bin/jump.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:tokio",
         ":games",
-        "//bz/deps/superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
 )
 
@@ -48,11 +46,11 @@ rust_binary(
     srcs = ["bin/breakout.rs"],
     crate_root = "bin/breakout.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:tokio",
         ":games",
-        "//bz/deps/superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
 )
 
@@ -61,11 +59,11 @@ rust_binary(
     srcs = ["bin/blocks.rs"],
     crate_root = "bin/blocks.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:tokio",
         ":games",
-        "//bz/deps/superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
 )
 
@@ -74,11 +72,11 @@ rust_binary(
     srcs = ["bin/minesweeper.rs"],
     crate_root = "bin/minesweeper.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:tokio",
         ":games",
-        "//bz/deps/superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
 )
 
@@ -87,12 +85,12 @@ rust_binary(
     srcs = ["bin/menu.rs"],
     crate_root = "bin/menu.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:futures",
+        "third_party//rust:tokio",
         ":games",
-        "//bz/deps/superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
 )
 
@@ -101,11 +99,11 @@ rust_binary(
     srcs = ["bin/life.rs"],
     crate_root = "bin/life.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:tokio",
         ":games",
-        "//bz/deps/superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
 )
 
@@ -114,11 +112,11 @@ rust_binary(
     srcs = ["bin/snake.rs"],
     crate_root = "bin/snake.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:tokio",
         ":games",
-        "//bz/deps/superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
 )
 
@@ -127,11 +125,11 @@ rust_binary(
     srcs = ["bin/sokoban.rs"],
     crate_root = "bin/sokoban.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:tokio",
         ":games",
-        "//bz/deps/superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
 )
 
@@ -140,8 +138,8 @@ rust_binary(
     srcs = ["bin/sokoban_gen.rs"],
     crate_root = "bin/sokoban_gen.rs",
     deps = [
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:rand",
+        "third_party//rust:clap",
+        "third_party//rust:rand",
     ],
 )
 
@@ -150,11 +148,11 @@ rust_binary(
     srcs = ["bin/static.rs"],
     crate_root = "bin/static.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:tokio",
         ":games",
-        "//bz/deps/superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
 )
 
@@ -163,10 +161,10 @@ rust_binary(
     srcs = ["bin/twenty48.rs"],
     crate_root = "bin/twenty48.rs",
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:tokio",
         ":games",
-        "//bz/deps/superconsole:superconsole",
+        "//deps/superconsole:superconsole",
     ],
 )

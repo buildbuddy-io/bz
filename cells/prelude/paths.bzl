@@ -20,7 +20,7 @@ NOTE: The functions in this module currently only support paths with Unix-style
 path separators (forward slash, "/"); they do not handle Windows-style paths
 with backslash separators or drive letters.
 
-The corresponding unittest file is: fbcode/buck2/tests/targets/starlib/paths_tests.bzl
+The corresponding unittest file is: workspace/buck2/tests/targets/starlib/paths_tests.bzl
 """
 
 def _basename(p: str) -> str:

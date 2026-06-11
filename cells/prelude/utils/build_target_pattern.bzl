@@ -11,7 +11,7 @@ _TARGET_SYMBOL = ":"
 _RECURSIVE_SYMBOL = "..."
 _PATH_SYMBOL = "/"
 
-# https://www.internalfb.com/intern/staticdocs/buck2/docs/concepts/build_target/
+# https://buck2.build/docs/concepts/build_target/
 # Anchors are needed here to ensure every character in "name" is valid
 _NAME_REGEX_PATTERN = "^[A-Za-z0-9_/.=,@~+-]+$"
 _NAME_REGEX = regex(_NAME_REGEX_PATTERN)

@@ -44,10 +44,6 @@ buck_kotlin_library(
     ],
     resources = glob(["plugin/stubsgen/resources/**"]),
     resources_root = "plugin/stubsgen/resources",
-    tests = [
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/integrationtest:integration-test",
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/stubsgen:stubsgen",
-    ],
     visibility = [
         "PUBLIC",
     ],
@@ -68,16 +64,11 @@ buck_kotlin_library(
     ],
     resources = glob(["plugin/stubsgen_k2/resources/**"]),
     resources_root = "plugin/stubsgen_k2/resources",
-    tests = [
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/integrationtest:integration-test",
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/stubsgen:stubsgen",
-    ],
     visibility = [
         "PUBLIC",
     ],
+    target_compatible_with = ["prelude//:none"],
     deps = [
-        "fbsource//fbandroid/java/com/facebook/kotlin/compilercompat:compilercompat",
-        "fbsource//fbandroid/java/com/facebook/kotlin/compilercompat:compilercompat_with_ka",
     ],
     exported_deps = [
         ":kosabi-common",
@@ -92,6 +83,7 @@ buck_java_binary(
 
 buck_java_binary(
     name = "stubsgen_k2",
+    target_compatible_with = ["prelude//:none"],
     visibility = ["PUBLIC"],
     deps = [":stubsgen-k2-plugin"],
 )

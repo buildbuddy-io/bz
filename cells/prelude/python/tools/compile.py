@@ -12,7 +12,7 @@
 Example usage (internal):
 $ cat inputs.manifest
 [["foo.py", "input/foo.py", "//my_rule:foo"]]
-$ buck build //fbcode//python/build/compile:compile --show-full-output
+$ buck build //root//python/build/compile:compile --show-full-output
 $ python <fulloutput/__main__.py> --output=out-dir --bytecode-manifest=output.manifest inputs.manifest
 $ find out-dir -type f
 out-dir/foo.pyc
@@ -68,13 +68,8 @@ def _stderr_print(msg: str) -> None:
 
 
 def _hyperlink(file: str, line: int, text: str) -> str:
-    from urllib.parse import urlencode
-
-    OSC = "\033]"
-    ST = "\033\\"
-    params = urlencode({"project": "fbsource", "paths[0]": file, "lines[0]": line})
-    uri = f"https://www.internalfb.com/intern/nuclide/open/arc/?{params}"
-    return f"{OSC}8;;{uri}{ST}{text}{OSC}8;;{ST}"
+    _unused = (file, line)
+    return text
 
 
 def pretty_exception(

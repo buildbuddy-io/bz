@@ -1,8 +1,7 @@
-load("@fbcode_macros//build_defs:go_package.bzl", "go_package")
-
 oncall("golang")
 
 prelude = native
+go_package = prelude.go_library
 
 prelude.cxx_library(
     name = "clib",

@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_core_tests")
+load("//tests:buck_e2e.bzl", "bz_core_tests")
 
 oncall("build_infra")
 
@@ -6,7 +6,7 @@ bz_core_tests(
     target_extra_attrs = {
         "test_console": {
             "env": {
-                "FIXTURES": "$(location //bz/tests/core/console/fixtures:fixtures)",
+                "FIXTURES": "$(location //tests/core/console/fixtures:fixtures)",
             },
         },
         "test_console_output_limit": {

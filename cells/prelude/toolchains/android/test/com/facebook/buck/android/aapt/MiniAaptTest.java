@@ -316,7 +316,7 @@ public class MiniAaptTest {
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
                 "<app-network xmlns:android=\"http://schemas.android.com/apk/res/android\">",
                 "  xmlns:fbui=\"http://schemas.android.com/apk/res-auto\"",
-                "  fbui:imageUri=\"http://facebook.com\"",
+                "  fbui:imageUri=\"http://example.com\"",
                 "  android:width=\"128px\"",
                 "  android:height=\"128px\"",
                 "  fbui:density=\"160\"",

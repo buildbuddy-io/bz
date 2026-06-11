@@ -1,11 +1,11 @@
-load("@fbcode//bz/tests/prelude:py_assertion.bzl", "py_assertion")
+load("//tests/prelude:py_assertion.bzl", "py_assertion")
 load(":make_script_link.bzl", "make_script_link")
 
 oncall("build_infra")
 
 make_script_link(
     name = "link_to_parent",
-    base = "fbcode//bz/tests/prelude/command_alias/symlinks/subdir:script",
+    base = "//tests/prelude/command_alias/symlinks/subdir:script",
     via_parent = True,
 )
 
@@ -37,7 +37,7 @@ else:
 
 make_script_link(
     name = "link_to_script",
-    base = "fbcode//bz/tests/prelude/command_alias/symlinks/subdir:script",
+    base = "//tests/prelude/command_alias/symlinks/subdir:script",
     via_parent = False,
 )
 

@@ -18,11 +18,10 @@ from buck2.tests.e2e_util.buck_workspace import buck_test
 # Tests to ensure that the log format for a few important fields hasn't
 # changed. This ensures compatibility with downstream processing tools.
 #
-# If this test needs to be updated, please sync with @athmasagar or the
-# fbcode_build_infra oncall to ensure that log parsers are also migrated.
+# If this test needs to be updated, make sure downstream log parsers are migrated too.
 @buck_test(inplace=True, skip_for_os=["windows"])
 async def test_log_format(buck: Buck) -> None:
-    await buck.build("fbcode//bz/tests/targets/rules/cxx/hello_world:welcome")
+    await buck.build("//tests/targets/rules/cxx/hello_world:welcome")
     out = await buck.log("show")
 
     lines = [line.strip() for line in out.stdout.splitlines()]

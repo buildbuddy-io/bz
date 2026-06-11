@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use bz_core::is_open_source;
 use bz_event_observer::humanized::HumanizedBytes;
 
 use crate::subscribers::recorder::process_memory;
@@ -25,36 +24,23 @@ pub(crate) struct LowDiskSpace {
     pub(crate) used_disk_space: u64,
 }
 
-pub const SYSTEM_MEMORY_REMEDIATION_LINK: &str = ": https://fburl.com/bz_mem_remediation";
-pub const DISK_REMEDIATION_LINK: &str = ": https://fburl.com/bz_disk_remediation";
-
 pub(crate) fn system_memory_exceeded_msg(memory_pressure: &MemoryPressureHigh) -> String {
     format!(
-        "High memory pressure: bz is using {} out of {}{}",
+        "High memory pressure: bz is using {} out of {}",
         HumanizedBytes::new(memory_pressure.process_memory),
         HumanizedBytes::new(memory_pressure.system_total_memory),
-        if is_open_source() {
-            ""
-        } else {
-            SYSTEM_MEMORY_REMEDIATION_LINK
-        }
     )
 }
 
 pub(crate) fn low_disk_space_msg(low_disk_space: &LowDiskSpace) -> String {
     format!(
-        "Low disk space: only {} remaining out of {}{}",
+        "Low disk space: only {} remaining out of {}",
         HumanizedBytes::new(
             low_disk_space
                 .total_disk_space
                 .saturating_sub(low_disk_space.used_disk_space)
         ),
         HumanizedBytes::new(low_disk_space.total_disk_space),
-        if is_open_source() {
-            ""
-        } else {
-            DISK_REMEDIATION_LINK
-        }
     )
 }
 

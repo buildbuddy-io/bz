@@ -14,16 +14,7 @@ use std::sync::atomic::Ordering;
 
 use fbinit::FacebookInit;
 
-#[cfg(fbcode_build)]
-mod fbcode {
-    pub use scribe_client::ScribeConfig;
-
-    pub use crate::sink::scribe::RemoteEventSink;
-    pub(crate) use crate::sink::scribe::scribe_category;
-}
-
-#[cfg(not(fbcode_build))]
-mod fbcode {
+mod workspace {
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -71,21 +62,14 @@ mod fbcode {
     }
 }
 
-pub use fbcode::*;
+pub use workspace::*;
 
-fn new_remote_event_sink_if_fbcode(
+fn new_remote_event_sink_if_available(
     fb: FacebookInit,
     config: ScribeConfig,
 ) -> bz_error::Result<Option<RemoteEventSink>> {
-    #[cfg(fbcode_build)]
-    {
-        Ok(Some(RemoteEventSink::new(fb, scribe_category()?, config)?))
-    }
-    #[cfg(not(fbcode_build))]
-    {
-        let _ = (fb, config);
-        Ok(None)
-    }
+    let _ = (fb, config);
+    Ok(None)
 }
 
 pub fn new_remote_event_sink_if_enabled(
@@ -93,7 +77,7 @@ pub fn new_remote_event_sink_if_enabled(
     config: ScribeConfig,
 ) -> bz_error::Result<Option<RemoteEventSink>> {
     if is_enabled() {
-        new_remote_event_sink_if_fbcode(fb, config)
+        new_remote_event_sink_if_available(fb, config)
     } else {
         Ok(None)
     }

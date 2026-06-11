@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests/prelude:py_assertion.bzl", "py_assertion")
+load("//tests/prelude:py_assertion.bzl", "py_assertion")
 
 oncall("golang")
 
@@ -7,7 +7,7 @@ prelude = native
 prelude.go_binary(
     name = "bin",
     srcs = ["main.go"],
-    deps = ["//bz/tests/prelude/go/cgo/include_dir/golib:golib"],
+    deps = ["//tests/prelude/go/cgo/include_dir/golib:golib"],
 )
 
 py_assertion(

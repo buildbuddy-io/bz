@@ -16,7 +16,7 @@ fn truncate(s: &str, max_bytes: usize) -> String {
     bz_util::truncate::truncate(s, max_bytes.min(MAX_STRING_BYTES))
 }
 
-#[cfg_attr(not(fbcode_build), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) fn smart_truncate_event(d: &mut bz_data::buck_event::Data) {
     use bz_data::buck_event::Data;
 
@@ -234,9 +234,7 @@ mod tests {
         })
     }
 
-    fn make_action_execution_end(
-        data: bz_data::ActionExecutionEnd,
-    ) -> bz_data::buck_event::Data {
+    fn make_action_execution_end(data: bz_data::ActionExecutionEnd) -> bz_data::buck_event::Data {
         bz_data::buck_event::Data::SpanEnd(bz_data::SpanEndEvent {
             data: Some(bz_data::span_end_event::Data::ActionExecution(Box::new(
                 data,

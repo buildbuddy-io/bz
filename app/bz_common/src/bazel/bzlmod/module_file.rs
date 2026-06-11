@@ -164,7 +164,7 @@ fn bzlmod_module_dialect() -> Dialect {
         enable_types: DialectTypes::Disable,
         enable_load_reexport: false,
         enable_top_level_stmt: false,
-        enable_f_strings: bz_core::is_open_source(),
+        enable_f_strings: true,
         ..Dialect::Standard
     }
 }

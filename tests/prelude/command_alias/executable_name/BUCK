@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests/prelude:py_assertion.bzl", "py_assertion")
+load("//tests/prelude:py_assertion.bzl", "py_assertion")
 
 # Test that the command alias trampoline script has the expected name, both when
 # using and not using the `executable_name` parameter.

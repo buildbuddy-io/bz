@@ -55,7 +55,7 @@ public class TestDataHelper {
     // If we're running this test in IJ, then this path doesn't exist. Fall back to one that does
     if (!Files.exists(result)) {
       result =
-          Paths.get("fbcode/buck2/prelude/toolchains/android/test")
+          Paths.get("workspace/buck2/prelude/toolchains/android/test")
               .resolve(testCaseClass.getPackage().getName().replace('.', '/'))
               .resolve("testdata");
     }

@@ -680,9 +680,7 @@ impl<'a> ConnectedInstaller<'a> {
                     bz_install_proto::ErrorCategory::try_from(error_detail.category)
                 {
                     match category {
-                        bz_install_proto::ErrorCategory::Unspecified => {
-                            ErrorTag::InstallerUnknown
-                        }
+                        bz_install_proto::ErrorCategory::Unspecified => ErrorTag::InstallerUnknown,
                         bz_install_proto::ErrorCategory::Tier0 => ErrorTag::InstallerTier0,
                         bz_install_proto::ErrorCategory::Input => ErrorTag::InstallerInput,
                         bz_install_proto::ErrorCategory::Environment => {

@@ -101,10 +101,7 @@ macro_rules! echo {
 }
 
 // Report only if at least double time has passed since reporting interval
-fn echo_system_warning_exponential(
-    warning: &HealthCheckType,
-    msg: &str,
-) -> bz_error::Result<()> {
+fn echo_system_warning_exponential(warning: &HealthCheckType, msg: &str) -> bz_error::Result<()> {
     if let Some((last_reported, every_x)) =
         ELAPSED_HEALTH_CHECK_MAP.lock().unwrap().get_mut(warning)
     {
@@ -371,69 +368,64 @@ where
 
     async fn handle_event_inner(&mut self, event: &BuckEvent) -> bz_error::Result<()> {
         match unpack_event(event)? {
-            bz_event_observer::unpack_event::UnpackedBuckEvent::SpanStart(_, _, data) => {
-                match data {
-                    bz_data::span_start_event::Data::Command(command) => {
-                        self.handle_command_start(command, event).await
-                    }
-                    _ => Ok(()),
+            bz_event_observer::unpack_event::UnpackedBuckEvent::SpanStart(_, _, data) => match data
+            {
+                bz_data::span_start_event::Data::Command(command) => {
+                    self.handle_command_start(command, event).await
                 }
-            }
-            bz_event_observer::unpack_event::UnpackedBuckEvent::SpanEnd(_, _, data) => {
-                match data {
-                    bz_data::span_end_event::Data::Command(command) => {
-                        self.handle_command_end(command, event).await
-                    }
-                    bz_data::span_end_event::Data::ActionExecution(action) => {
-                        self.handle_action_execution_end(action, event).await
-                    }
-                    bz_data::span_end_event::Data::FileWatcher(file_watcher) => {
-                        self.handle_file_watcher_end(file_watcher, event).await
-                    }
-                    _ => Ok(()),
+                _ => Ok(()),
+            },
+            bz_event_observer::unpack_event::UnpackedBuckEvent::SpanEnd(_, _, data) => match data {
+                bz_data::span_end_event::Data::Command(command) => {
+                    self.handle_command_end(command, event).await
                 }
-            }
-            bz_event_observer::unpack_event::UnpackedBuckEvent::Instant(_, _, data) => {
-                match data {
-                    bz_data::instant_event::Data::ConsoleMessage(message) => {
-                        self.handle_stderr(&message.message).await
+                bz_data::span_end_event::Data::ActionExecution(action) => {
+                    self.handle_action_execution_end(action, event).await
+                }
+                bz_data::span_end_event::Data::FileWatcher(file_watcher) => {
+                    self.handle_file_watcher_end(file_watcher, event).await
+                }
+                _ => Ok(()),
+            },
+            bz_event_observer::unpack_event::UnpackedBuckEvent::Instant(_, _, data) => match data {
+                bz_data::instant_event::Data::ConsoleMessage(message) => {
+                    self.handle_stderr(&message.message).await
+                }
+                bz_data::instant_event::Data::ConsoleWarning(message) => {
+                    self.handle_stderr(&message.message).await
+                }
+                bz_data::instant_event::Data::ReSession(session) => {
+                    let message = format!("RE Session: {}", session.session_id);
+                    self.handle_stderr(&message).await
+                }
+                bz_data::instant_event::Data::StructuredError(err) => {
+                    self.handle_structured_error(err, event).await
+                }
+                bz_data::instant_event::Data::TestDiscovery(discovery) => {
+                    self.handle_test_discovery(discovery, event).await
+                }
+                bz_data::instant_event::Data::TestResult(result) => {
+                    self.handle_test_result(result, event).await
+                }
+                bz_data::instant_event::Data::TagEvent(tags) => {
+                    if tags.tags.contains(&"which-dice:Legacy".to_owned()) {
+                        self.handle_stderr("Note: using deprecated legacy dice.")
+                            .await?;
                     }
-                    bz_data::instant_event::Data::ConsoleWarning(message) => {
-                        self.handle_stderr(&message.message).await
-                    }
-                    bz_data::instant_event::Data::ReSession(session) => {
-                        let message = format!("RE Session: {}", session.session_id);
-                        self.handle_stderr(&message).await
-                    }
-                    bz_data::instant_event::Data::StructuredError(err) => {
-                        self.handle_structured_error(err, event).await
-                    }
-                    bz_data::instant_event::Data::TestDiscovery(discovery) => {
-                        self.handle_test_discovery(discovery, event).await
-                    }
-                    bz_data::instant_event::Data::TestResult(result) => {
-                        self.handle_test_result(result, event).await
-                    }
-                    bz_data::instant_event::Data::TagEvent(tags) => {
-                        if tags.tags.contains(&"which-dice:Legacy".to_owned()) {
-                            self.handle_stderr("Note: using deprecated legacy dice.")
-                                .await?;
-                        }
 
-                        Ok(())
-                    }
-                    bz_data::instant_event::Data::ActionError(error) => {
-                        self.handle_action_error(error).await
-                    }
-                    bz_data::instant_event::Data::StreamingOutput(message) => {
-                        crate::stdio::print_bytes(message.message.as_bytes())?;
-                        crate::stdio::flush()?;
-                        self.notify_printed();
-                        Ok(())
-                    }
-                    _ => Ok(()),
+                    Ok(())
                 }
-            }
+                bz_data::instant_event::Data::ActionError(error) => {
+                    self.handle_action_error(error).await
+                }
+                bz_data::instant_event::Data::StreamingOutput(message) => {
+                    crate::stdio::print_bytes(message.message.as_bytes())?;
+                    crate::stdio::flush()?;
+                    self.notify_printed();
+                    Ok(())
+                }
+                _ => Ok(()),
+            },
             bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanStart(_, _)
             | bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanEnd(_, _)
             | bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedInstant(_, _) => {
@@ -462,11 +454,6 @@ where
     ) -> bz_error::Result<()> {
         if self.hide_build_id {
             return Ok(());
-        } else if cfg!(fbcode_build) {
-            echo!(
-                "Buck UI: https://www.internalfb.com/buck2/{}",
-                event.trace_id()?
-            )?;
         } else {
             echo!("Build ID: {}", event.trace_id()?)?;
         }
@@ -588,8 +575,7 @@ where
         if let Some(data) = &test_info.data {
             match data {
                 bz_data::test_discovery::Data::Session(bz_data::TestSessionInfo {
-                    info,
-                    ..
+                    info, ..
                 }) => {
                     echo!("Test session: {}", info)?;
                     self.notify_printed();

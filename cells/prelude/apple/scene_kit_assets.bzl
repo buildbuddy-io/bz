@@ -51,7 +51,6 @@ def compile_scene_kit_assets(ctx: AnalysisContext, specs: list[SceneKitAssetsSpe
 
     # Sandboxing and fs isolation on RE machines results in Xcode tools failing
     # when those are working in freshly created directories in buck-out.
-    # See https://fb.workplace.com/groups/1042353022615812/permalink/1872164996301273/
     # As a workaround create a directory in tmp, use it for Xcode tools, then
     # copy the result to buck-out.
     wrapper_script, _ = ctx.actions.write(

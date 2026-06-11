@@ -7,7 +7,6 @@
 # above-listed licenses.
 
 load("@prelude//python:python.bzl", "PythonLibraryInfo")
-# @oss-disable[end= ]: load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")
 load(
     ":manifest.bzl",
     "ManifestInfo",  # @unused Used as a type
@@ -15,7 +14,7 @@ load(
 )
 load(":python.bzl", "PythonLibraryManifestsTSet")
 
-DEFAULT_PY_VERSION = "3.12" # @oss-enable
+DEFAULT_PY_VERSION = "3.12"
 
 # Best-effort guess on what the host sys.platform is
 def get_default_sys_platform() -> str | None:

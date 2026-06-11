@@ -26,9 +26,9 @@ def _match_recursive_target_types(target: bxl.ConfiguredTargetNode, recursive_ta
 
 def _normalize_include_exclude_pattern(pattern):
     if pattern.startswith("//"):
-        pattern = "fbsource" + pattern
+        pattern = "root" + pattern
     elif "//" not in pattern:
-        pattern = "fbsource//" + pattern
+        pattern = "root//" + pattern
     return pattern.removesuffix("...")
 
 def _match_include_exclude_patterns(target: bxl.ConfiguredTargetNode, exclude_patterns, include_patterns, bxl_ctx):
@@ -65,7 +65,7 @@ def _main(bxl_ctx):
 
     References:
     https://buck2.build/docs/api/bxl/bxl.ConfiguredTargetNode/#bxlconfiguredtargetnoderesolved_attrs_eager
-    https://fb.workplace.com/groups/buck2dev/permalink/3745100652444646/
+
     https://buck2.build/docs/developers/dynamic_output/#dynamic-output
     """
     actions = bxl_ctx.bxl_actions().actions
@@ -73,11 +73,11 @@ def _main(bxl_ctx):
     explicit_targets = {}  # dict[TargetLabel, True]. Explicit target list from command line, i.e., not from target pattern expansion.
     for ulabel in bxl_ctx.cli_args.target:
         # Add explicit cell name when it's omitted as otherwise BXL will use cell name of BXL script, i.e., prelude.
-        if bxl_ctx.cli_args.fbsource and (":" in ulabel or "..." in ulabel):
+        if bxl_ctx.cli_args.workspace and (":" in ulabel or "..." in ulabel):
             if "//" not in ulabel:
-                ulabel = "fbsource//" + ulabel
+                ulabel = "root//" + ulabel
             elif ulabel.startswith("//"):
-                ulabel = "fbsource" + ulabel
+                ulabel = "root" + ulabel
 
         # Target label or alias.
         is_explicit_target = ((":" in ulabel) and (not ulabel.endswith(":"))) or ((":" not in ulabel) and ("/" not in ulabel))
@@ -275,9 +275,9 @@ main = bxl_main(
             default = [],
             doc = "Extra options passed to buck build command of generated project(s) build settings. Escape `-` with `\\-`.",
         ),
-        "fbsource": cli_args.bool(
+        "workspace": cli_args.bool(
             default = False,
-            doc = "Whether to turn on fbsource specific behaviors.",
+            doc = "Whether to turn on workspace specific behaviors.",
         ),
         "immediate_buck_options": cli_args.list(
             cli_args.string(),
@@ -290,7 +290,7 @@ main = bxl_main(
         ),
         "mode_files": cli_args.list(
             cli_args.string(),
-            default = ["fbsource//arvr/mode/win/dev"],
+            default = [],
             doc = "List of mode files to generate projects for.",
         ),
         "mode_hashes": cli_args.option(

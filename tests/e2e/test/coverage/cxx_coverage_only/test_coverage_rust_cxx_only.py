@@ -24,8 +24,8 @@ from .test_coverage_utils import collect_coverage_for
 async def test_rust_test_coverage(buck: Buck, tmp_path: Path) -> None:
     coverage_file = tmp_path / "coverage.txt"
     await buck.test(
-        "@fbcode//mode/dbgo-cov",
-        "fbcode//bz/tests/targets/rules/rust:tests_pass",
+        "@root//mode/dbgo-cov",
+        "//tests/targets/rules/rust:tests_pass",
         "--",
         "--collect-coverage",
         f"--coverage-output={coverage_file}",
@@ -34,7 +34,7 @@ async def test_rust_test_coverage(buck: Buck, tmp_path: Path) -> None:
     with open(coverage_file) as results:
         for line in results:
             paths.append(json.loads(line)["filepath"])
-    assert "fbcode/buck2/tests/targets/rules/rust/tests_pass.rs" in paths, str(paths)
+    assert "workspace/buck2/tests/targets/rules/rust/tests_pass.rs" in paths, str(paths)
 
 
 @buck_test(inplace=True)
@@ -45,11 +45,11 @@ async def test_rust_test_coverage_filtering_by_path_of_target(
     paths = await collect_coverage_for(
         buck,
         tmp_path,
-        "fbcode//bz/tests/targets/rules/rust:tests_pass",
+        "//tests/targets/rules/rust:tests_pass",
         ["buck2/tests"],
     )
 
-    unexpected_paths = [p for p in paths if not p.startswith("fbcode/buck2/tests")]
+    unexpected_paths = [p for p in paths if not p.startswith("workspace/buck2/tests")]
     assert len(unexpected_paths) == 0, str(paths)
 
 
@@ -65,10 +65,10 @@ async def test_rust_test_coverage_of_rust_library_filtering_by_path_outside_of_t
         ["testing_frameworks"],
     )
 
-    fbcode_filename = "fbcode/testing_frameworks/code_coverage/adder.rs"
-    expected_paths = [p for p in paths if p == fbcode_filename]
+    workspace_filename = "workspace/testing_frameworks/code_coverage/adder.rs"
+    expected_paths = [p for p in paths if p == workspace_filename]
     assert len(expected_paths) > 0, str(paths)
-    unexpected_paths = [p for p in paths if p != fbcode_filename]
+    unexpected_paths = [p for p in paths if p != workspace_filename]
     assert len(unexpected_paths) == 0, str(paths)
 
 
@@ -84,11 +84,11 @@ async def test_rust_test_coverage_of_cpp_file_filtering_by_file_with_cxx(
         [file_to_collect_coverage],
     )
 
-    fbcode_filename = f"fbcode/{file_to_collect_coverage}"
+    workspace_filename = f"workspace/{file_to_collect_coverage}"
     # cxx.h is a CXX bridge framework header whose buck-out path now resolves
     # to a source path due to -fcoverage-prefix-map; filter it out.
     paths = [p for p in paths if not p.endswith("/cxx.h")]
-    assert paths == [fbcode_filename], str(paths)
+    assert paths == [workspace_filename], str(paths)
 
 
 @buck_test(inplace=True)
@@ -103,9 +103,9 @@ async def test_rust_test_coverage_of_cpp_file_filtering_by_file_with_cxx_through
         [file_to_collect_coverage],
     )
 
-    fbcode_filename = f"fbcode/{file_to_collect_coverage}"
+    workspace_filename = f"workspace/{file_to_collect_coverage}"
     paths = [p for p in paths if not p.endswith("/cxx.h")]
-    assert paths == [fbcode_filename], str(paths)
+    assert paths == [workspace_filename], str(paths)
 
 
 @buck_test(inplace=True)
@@ -120,9 +120,9 @@ async def test_rust_test_coverage_of_cpp_file_filtering_by_file_with_cxx_on_auto
         [file_to_collect_coverage],
     )
 
-    fbcode_filename = f"fbcode/{file_to_collect_coverage}"
+    workspace_filename = f"workspace/{file_to_collect_coverage}"
     paths = [p for p in paths if not p.endswith("/cxx.h")]
-    assert paths == [fbcode_filename], str(paths)
+    assert paths == [workspace_filename], str(paths)
 
 
 @buck_test(inplace=True)
@@ -137,8 +137,8 @@ async def test_rust_test_coverage_of_cpp_file_filtering_by_file_with_bindgen_rus
         [file_to_collect_coverage],
     )
 
-    fbcode_filename = f"fbcode/{file_to_collect_coverage}"
-    assert paths == [fbcode_filename], str(paths)
+    workspace_filename = f"workspace/{file_to_collect_coverage}"
+    assert paths == [workspace_filename], str(paths)
 
 
 @buck_test(inplace=True)
@@ -153,8 +153,8 @@ async def test_rust_test_coverage_of_cpp_file_filtering_by_file_with_ligen_cpp_d
         [file_to_collect_coverage],
     )
 
-    fbcode_filename = f"fbcode/{file_to_collect_coverage}"
-    assert paths == [fbcode_filename], str(paths)
+    workspace_filename = f"workspace/{file_to_collect_coverage}"
+    assert paths == [workspace_filename], str(paths)
 
 
 def any_item_matches(items: List[str], regex: str) -> bool:
@@ -180,12 +180,12 @@ async def test_rust_test_coverage_of_cpp_file_filtering_by_header_with_cxx(
     paths = [p for p in paths if not p.endswith("/cxx.h")]
     assert len(paths) == 3, str(paths)
     assert (
-        "fbcode/testing_frameworks/code_coverage/rust/AdderWithHeaderCode.cpp" in paths
+        "workspace/testing_frameworks/code_coverage/rust/AdderWithHeaderCode.cpp" in paths
     ), str(paths)
     assert (
-        "fbcode/testing_frameworks/code_coverage/rust/AdderWithHeaderCode.h" in paths
+        "workspace/testing_frameworks/code_coverage/rust/AdderWithHeaderCode.h" in paths
     ), str(paths)
     assert any_item_matches(
         paths,
-        r"fbcode/testing_frameworks/code_coverage/rust/__tests_with_code_in_cpp_header-bridge_generated.cc__/[a-z0-9]+/out/generated.cc",
+        r"workspace/testing_frameworks/code_coverage/rust/__tests_with_code_in_cpp_header-bridge_generated.cc__/[a-z0-9]+/out/generated.cc",
     ), str(paths)

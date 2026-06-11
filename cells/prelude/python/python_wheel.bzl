@@ -69,7 +69,7 @@ def _link_deps(
     """
     Return transitive deps required to link dynamically against the given deps.
     This will following through deps of statically linked inputs and exported
-    deps of everything else (see https://fburl.com/diffusion/rartsbkw from v1).
+    deps of everything else, matching v1 behavior.
     """
 
     def find_deps(node: ConfiguredProvidersLabel):
@@ -442,7 +442,7 @@ def _impl(ctx: AnalysisContext) -> list[Provider]:
         #  * https://packaging.python.org/en/latest/specifications/recording-installed-packages/#the-dist-info-directory
         #  * https://packaging.python.org/en/latest/specifications/name-normalization/
         #
-        # Equivalent to fbcode/buck2/prelude/python/tools/wheel.py#normalize_name()
+        # Equivalent to workspace/buck2/prelude/python/tools/wheel.py#normalize_name()
         # but need to do it here since we need to set output path
 
         # PEP503 name normalization

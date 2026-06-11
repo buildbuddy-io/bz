@@ -262,14 +262,8 @@ public class GenerateManifest {
   }
 
   /**
-   * At the moment all apps using manifest.py in fbsource already handle how activity-alias are
-   * sorted to guarantee they are in the manifest after the activity they target thanks to the post
-   * processing happening in @link{<a href="https://fburl.com/code/fsiow1yu">the manifest.py</a>}.
-   *
-   * <p>In WA this is not the case and we want to guarantee the order is maintained until we are
-   * able to update the ManifestMerging plugin to more recent version. This is a link to a @link{<a
-   * href="https://fburl.com/workplace/byshefjr">discussion</a>} regarding this specific manifest
-   * merging issue.
+   * Keep activity-alias entries after the activity they target until the ManifestMerger plugin is
+   * updated to a version that preserves the required order.
    *
    * <p>Once the latest version of the ManifestMerger will be updated we can clean up this step and
    * the work is tracked in T239793438

@@ -9,7 +9,7 @@
 """
 Example:
 
-    buck_genrule(
+    genrule(
         name = "my-generated-data"
         bash = "something slow",
     )
@@ -49,10 +49,9 @@ applies to all of the following situations:
   - all building performed by IDE
 """
 
-load("@prelude//rust:link_info.bzl", "RustLinkInfo") # @oss-enable
-load("@prelude//prelude.bzl", prelude = "native") # @oss-enable
-load("@prelude//rust:sources.bzl", "RustSources") # @oss-enable
-# @oss-disable[end= ]: load("@fbcode//bz/facebook:autodeps_hacks.bzl", "RustLinkInfo", "RustSources", "prelude")
+load("@prelude//rust:link_info.bzl", "RustLinkInfo")
+load("@prelude//prelude.bzl", prelude = "native")
+load("@prelude//rust:sources.bzl", "RustSources")
 
 def _remove_rust_providers_impl(ctx: AnalysisContext) -> list[Provider]:
     out = []

@@ -422,13 +422,13 @@ done
             path,
         )
         .into()),
-        Some(status) => Err(bz_error::Error::from(
-            BazelRepositoryError::RepositoryPathReaddir {
+        Some(status) => Err(
+            bz_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
                 path: path.to_owned(),
                 error: format!("remote readdir returned malformed status `{status}`"),
-            },
-        )
-        .into()),
+            })
+            .into(),
+        ),
         None => Err(
             bz_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
                 path: path.to_owned(),

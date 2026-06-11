@@ -20,8 +20,7 @@ from manifold.clients.python.manifold_client_deprecated import Client as Manifol
 
 BUCKET_CONFIG = {"bucket": "bz_re_logs", "apikey": "bz_re_logs-key"}
 
-# This test was failing in macos sandcastle, so attempt fix suggested
-# here: https://fb.workplace.com/groups/fbpython/permalink/5214295275278464/
+# Use the system cert path on platforms where it is available.
 if sys.platform != "windows" and os.path.exists("/etc/ssl/cert.pem"):
     os.environ["SSL_CERT_FILE"] = "/etc/ssl/cert.pem"
 

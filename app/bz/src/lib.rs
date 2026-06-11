@@ -105,9 +105,7 @@ fn buildbuddy_api_key_from_env() -> Option<String> {
     buildbuddy_api_key_from_env_vars(|env_var| std::env::var(env_var).ok())
 }
 
-fn parse_remote_default_exec_property(
-    value: &str,
-) -> bz_error::Result<RemoteDefaultExecProperty> {
+fn parse_remote_default_exec_property(value: &str) -> bz_error::Result<RemoteDefaultExecProperty> {
     let (name, value) = value.split_once('=').ok_or_else(|| {
         bz_error!(
             ErrorTag::Input,
@@ -347,8 +345,7 @@ struct BeforeSubcommandOptions {
     remote_download_all: bool,
 
     /// Print buck wrapper help.
-    #[clap(skip)] // @oss-enable
-    // @oss-disable: #[clap(long)]
+    #[clap(skip)]
     help_wrapper: bool,
 }
 
@@ -455,8 +452,7 @@ fn help() -> &'static str {
     concat!(
         "A build system\n",
         "\n",
-        "Documentation: https://bzcli.com/docs/\n", // @oss-enable
-        // @oss-disable: "Documentation: https://internalfb.com/intern/staticdocs/buck2/docs/\n",
+        "Documentation: https://bzcli.com/docs/\n",
     )
 }
 
@@ -541,8 +537,7 @@ pub fn exec(process: ProcessContext<'_>) -> ExitResult {
 
     // If --client-metadata=? was not set and from_env did not find "id", then
     // if we are running in a terminal, we add id=terminal-fallback to
-    // opt.opt.common_opts.client_metadata to transmit to scuba that the client
-    // is an end user: https://fburl.com/scuba/bz_builds/n4klo51d
+    // opt.opt.common_opts.client_metadata to indicate that the client is an end user.
     let has_client_id = opt
         .opt
         .common_opts
@@ -637,8 +632,7 @@ pub(crate) enum CommandKind {
     Aquery(AqueryCommand),
     Build(BuildCommand),
     Bxl(BxlCommand),
-    // TODO(nga): implement `bz help-buckconfig` too
-    //   https://www.internalfb.com/tasks/?t=183528129
+    // TODO(nga): implement `bz help-buckconfig` too.
     HelpEnv(HelpEnvCommand),
     Test(TestCommand),
     Cquery(CqueryCommand),
@@ -669,7 +663,7 @@ pub(crate) enum CommandKind {
     Docs(bz_cmd_docs_client::DocsCommand),
     #[clap(subcommand)]
     Profile(ProfileCommand),
-    #[clap(hide(true))] // @oss-enable
+    #[clap(hide(true))]
     Rage(RageCommand),
     Clean(CleanCommand),
     #[clap(subcommand)]
@@ -743,7 +737,7 @@ impl CommandKind {
             }
         }
 
-        let fb = bz_common::fbinit::get_or_init_fbcode_globals();
+        let fb = bz_common::fbinit::get_or_init_build_globals();
 
         let ProcessContext {
             trace_id,

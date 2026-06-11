@@ -82,7 +82,7 @@ def __install_path_propagating_finder() -> None:
     """Install a meta-path finder that grafts the unpack tree onto package __path__.
 
     Standalone PARs extract .so files (but not .py / .pyc / .pyo) into the
-    unpack dir at FB_PAR_RUNTIME_FILES / FB_PAR_UNZIP_LOCATION. For ext-bearing
+    unpack dir at BZ_PAR_RUNTIME_FILES / BZ_PAR_UNZIP_LOCATION. For ext-bearing
     packages, __init__.py lives only in the PAR zip while the .so lives only
     in the unpack dir; zipimport cannot load .so from a zip. This finder
     appends the matching unpack subdirectory to a parent package's __path__ on
@@ -97,8 +97,8 @@ def __install_path_propagating_finder() -> None:
     if any(getattr(f, _PATH_PROPAGATING_FINDER_SENTINEL, False) for f in sys.meta_path):
         return
 
-    expanded_par_tree = os.environ.get("FB_PAR_RUNTIME_FILES") or os.environ.get(
-        "FB_PAR_UNZIP_LOCATION"
+    expanded_par_tree = os.environ.get("BZ_PAR_RUNTIME_FILES") or os.environ.get(
+        "BZ_PAR_UNZIP_LOCATION"
     )
     if not expanded_par_tree or not os.path.isdir(expanded_par_tree):
         return
@@ -156,10 +156,10 @@ def _extract_sitecustomize() -> str | None:
     if not isinstance(__loader__, zipimport.zipimporter):
         return None
 
-    unpack_dir = os.environ.get("FB_PAR_RUNTIME_FILES") or os.environ.get(
-        "FB_PAR_UNZIP_LOCATION"
+    unpack_dir = os.environ.get("BZ_PAR_RUNTIME_FILES") or os.environ.get(
+        "BZ_PAR_UNZIP_LOCATION"
     )
-    par_filename = os.environ.get("FB_PAR_FILENAME") or __loader__.archive
+    par_filename = os.environ.get("BZ_PAR_FILENAME") or __loader__.archive
     if not unpack_dir or not par_filename:
         return None
 
@@ -195,7 +195,7 @@ def __patch_spawn(var_names: list[str], saved_env: dict[str, str]) -> None:
         for var in var_names:
             val = os.environ.get(var, None)
             if val is not None:
-                os.environ["FB_SAVED_" + var] = val
+                os.environ["BZ_SAVED_" + var] = val
             saved_val = saved_env.get(var, None)
             if saved_val is not None:
                 os.environ[var] = saved_val
@@ -256,8 +256,8 @@ def _resolve_path_entries(path: list[str], dirs_only: bool = False) -> list[str]
         elif entry.startswith("/dev/fd/"):
             # On macOS, /dev/fd/N is not a symlink (it has dup() semantics),
             # so os.readlink doesn't work.  Resolve to the original PAR path
-            # via the FB_PAR_FILENAME environment variable.
-            par_filename = os.environ.get("FB_PAR_FILENAME", "")
+            # via the BZ_PAR_FILENAME environment variable.
+            par_filename = os.environ.get("BZ_PAR_FILENAME", "")
             if par_filename:
                 entry = par_filename
         if not dirs_only or os.path.isdir(entry):
@@ -406,7 +406,7 @@ def __add_win_dll_directories() -> None:
     """
     if sys.platform != "win32":
         return
-    dll_dirs = os.environ.get("FB_PAR_WIN_DLL_DIRS", "")
+    dll_dirs = os.environ.get("BZ_PAR_WIN_DLL_DIRS", "")
     if not dll_dirs:
         return
     for d in dll_dirs.split(os.pathsep):
@@ -460,7 +460,7 @@ def __clear_env(
         curr_val = os.environ.pop(var, None)
         if curr_val is not None:
             saved_env[var] = curr_val
-        val = os.environ.pop("FB_SAVED_" + var, None)
+        val = os.environ.pop("BZ_SAVED_" + var, None)
         if val is not None:
             os.environ[var] = val
 
@@ -478,11 +478,11 @@ def __startup__() -> None:
         # pyre-fixme[21]: Could not find module `__par__.__startup_function_loader__`.
         from __par__.__startup_function_loader__ import load_startup_functions
     except ImportError:
-        par = os.environ.get("FB_PAR_FILENAME", "")
+        par = os.environ.get("BZ_PAR_FILENAME", "")
         if par and os.path.isfile(par) and par not in sys.path:
             sys.path.insert(0, par)
             # pex requires bootstrap dir to be in the path
-            bootstrap = os.environ.get("FB_PAR_BOOTSTRAP_DIR", "")
+            bootstrap = os.environ.get("BZ_PAR_BOOTSTRAP_DIR", "")
             if bootstrap and bootstrap not in sys.path:
                 sys.path.append(bootstrap)
             try:

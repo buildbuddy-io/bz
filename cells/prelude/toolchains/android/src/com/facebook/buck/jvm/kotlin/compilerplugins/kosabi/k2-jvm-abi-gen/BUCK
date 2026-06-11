@@ -22,8 +22,8 @@ buck_kotlin_library(
     visibility = [
         "PUBLIC",
     ],
+    target_compatible_with = ["prelude//:none"],
     deps = [
-        "fbsource//fbandroid/java/com/facebook/kotlin/compilercompat:compilercompat",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/common:common",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/kosabi/common/stub:stub",
         "prelude//toolchains/android/third-party:kotlin-metadata-jvm",
@@ -34,6 +34,7 @@ buck_kotlin_library(
 
 buck_java_binary(
     name = "k2-jvm-abi-gen",
+    target_compatible_with = ["prelude//:none"],
     visibility = ["PUBLIC"],
     deps = [":k2-jvm-abi-gen-lib"],
 )

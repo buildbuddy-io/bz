@@ -10,8 +10,7 @@ load("@prelude//cxx:cxx_toolchain_types.bzl", "LinkerInfo", "LinkerType")
 load("@prelude//utils:arglike.bzl", "ArgLike")
 load("@prelude//utils:expect.bzl", "expect")
 
-# Platform-specific linker flags handling.  Modeled after the `Linker` abstraction
-# in v1 (https://fburl.com/diffusion/kqd2ylcy).
+# Platform-specific linker flags handling. Modeled after the `Linker` abstraction in v1.
 # TODO(T110378136): It might make more sense to pass these in via the toolchain.
 Linker = record(
     # Given the soname for the shared library, how to format the install name argument

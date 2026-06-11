@@ -13,4 +13,4 @@ set -e
 $1 explain --output /dev/null --fbs-dump /tmp/fbs
 cd $(dirname "$0")
 echo "export const DATA = '$(cat /tmp/fbs)';" > src/data.ts
-cp -rfX "$(bz build //bz/app/bz_explain:schema_ts --show-full-simple-output)" src
+cp -rfX "$(bz build //app/bz_explain:schema_ts --show-full-simple-output)" src

@@ -201,7 +201,7 @@ main = bxl_main(
     impl = _main,
     cli_args = {
         "log_level": cli_args.int(default = 30),
-        "mode_files": cli_args.list(cli_args.string(), default = ["fbsource//arvr/mode/win/dev"]),
+        "mode_files": cli_args.list(cli_args.string(), default = []),
         "target": cli_args.target_label(),
     },
 )

@@ -23,11 +23,11 @@ async def test_cancel_test_if_re_queue_longer_than_threshold(buck: Buck) -> None
     ]
     result = await buck.test(
         *args,
-        "fbcode//bz/tests/targets/rules/sh_test:test_remote_explicit_stays_in_queue",
+        "//tests/targets/rules/sh_test:test_remote_explicit_stays_in_queue",
         env={"BUCK2_TEST_RE_QUEUE_ESTIMATE_S": "100"},
     )
     assert (
-        "Omitted: fbcode//bz/tests/targets/rules/sh_test:test_remote_explicit_stays_in_queue - main"
+        "Omitted: //tests/targets/rules/sh_test:test_remote_explicit_stays_in_queue - main"
         in result.stderr
     )
     assert (

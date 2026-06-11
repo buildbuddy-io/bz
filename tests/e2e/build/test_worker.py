@@ -19,7 +19,7 @@ from buck2.tests.e2e_util.buck_workspace import buck_test
 from buck2.tests.e2e_util.helper.utils import read_what_ran
 
 
-package = "fbcode//bz/tests/targets/rules/worker_grpc"
+package = "//tests/targets/rules/worker_grpc"
 
 worker_args = [
     "-c",

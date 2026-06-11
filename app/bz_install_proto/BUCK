@@ -1,5 +1,5 @@
-load("@fbcode//bz:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
-load("@fbcode//grpc_fb/codegen:buck_macros.bzl", "grpc_library")
+load("//:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
+load("//rules:grpc.bzl", "grpc_library")
 
 oncall("build_infra")
 

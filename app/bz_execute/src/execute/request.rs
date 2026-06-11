@@ -15,8 +15,8 @@ use allocative::Allocative;
 use bz_common::file_ops::metadata::TrackedFileDigest;
 use bz_common::local_resource_state::LocalResourceState;
 use bz_core::content_hash::ContentBasedPathHash;
-use bz_core::execution_types::executor_config::MetaInternalExtraParams;
 use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RemoteExecutionExtraParams;
 use bz_core::execution_types::executor_config::RemoteExecutorCustomImage;
 use bz_core::execution_types::executor_config::RemoteExecutorDependency;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
@@ -516,7 +516,7 @@ pub struct CommandExecutionRequest {
     /// RE custom tupperware image.
     remote_execution_custom_image: Option<RemoteExecutorCustomImage>,
     /// RE execution policy.
-    meta_internal_extra_params: Arc<MetaInternalExtraParams>,
+    remote_execution_extra_params: Arc<RemoteExecutionExtraParams>,
     /// Failed action outputs to materialize
     outputs_for_error_handler: Vec<BuildArtifactPath>,
     /// String representation of a key that uniquely identifies a RunAction
@@ -567,7 +567,7 @@ impl CommandExecutionRequest {
             re_gang_workers: Vec::new(),
             remote_execution_dependencies: Vec::new(),
             remote_execution_custom_image: None,
-            meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
+            remote_execution_extra_params: RemoteExecutionExtraParams::default_arc(),
             outputs_for_error_handler: Vec::new(),
             run_action_key: None,
             bazel_shared_action_primary_output: None,
@@ -828,16 +828,16 @@ impl CommandExecutionRequest {
         &self.remote_execution_custom_image
     }
 
-    pub fn with_meta_internal_extra_params(
+    pub fn with_remote_execution_extra_params(
         mut self,
-        meta_internal_extra_params: Arc<MetaInternalExtraParams>,
+        remote_execution_extra_params: Arc<RemoteExecutionExtraParams>,
     ) -> Self {
-        self.meta_internal_extra_params = meta_internal_extra_params;
+        self.remote_execution_extra_params = remote_execution_extra_params;
         self
     }
 
-    pub fn meta_internal_extra_params(&self) -> &MetaInternalExtraParams {
-        &self.meta_internal_extra_params
+    pub fn remote_execution_extra_params(&self) -> &RemoteExecutionExtraParams {
+        &self.remote_execution_extra_params
     }
 
     pub fn with_run_action_key(mut self, run_action_key: Option<String>) -> Self {

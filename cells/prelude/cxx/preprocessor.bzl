@@ -211,8 +211,8 @@ def cxx_attr_exported_preprocessor_flags(ctx: AnalysisContext) -> list[typing.An
 
 def cxx_inherited_preprocessor_infos(first_order_deps: list[Dependency]) -> list[CPreprocessorInfo]:
     # We filter out nones because some non-cxx rule without such providers could be a dependency, for example
-    # cxx_binary "fbcode//one_world/cli/util/process_wrapper:process_wrapper" depends on
-    # python_library "fbcode//third-party-buck/$platform/build/glibc:__project__"
+    # cxx_binary "root//one_world/cli/util/process_wrapper:process_wrapper" depends on
+    # python_library "root//third-party-buck/$platform/build/glibc:__project__"
     return filter_and_map_idx(CPreprocessorInfo, first_order_deps)
 
 def cxx_merge_cpreprocessors(actions: AnalysisActions, own: list[CPreprocessor], xs: list[CPreprocessorInfo]) -> CPreprocessorInfo:

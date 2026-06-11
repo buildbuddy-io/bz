@@ -33,12 +33,6 @@ impl Component for SessionInfoComponent<'_> {
         if self.hide_build_id || matches!(mode, DrawMode::Final) {
             // The build event stream prints an invocation URL for this trace id.
             // The final build summary also reprints the build id after superconsole exits.
-        } else if cfg!(fbcode_build) {
-            headers.push(Line::unstyled("Buck UI:")?);
-            ids.push(Span::new_unstyled(format!(
-                "https://www.internalfb.com/buck2/{}",
-                self.session_info.trace_id
-            ))?);
         } else {
             headers.push(Line::unstyled("Build ID:")?);
             ids.push(Span::new_unstyled(&self.session_info.trace_id)?);

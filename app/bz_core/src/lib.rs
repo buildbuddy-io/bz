@@ -64,23 +64,3 @@ pub use bz_env::soft_error::soft_error;
 pub use bz_env::soft_error::tag_error;
 #[doc(inline)]
 pub use bz_env::soft_error::tag_result;
-
-/// Marker for things that are only sensible to use inside Facebook,
-/// not intended to be complete, but intended to be useful to audit
-/// en-mass at some point in the future.
-pub fn facebook_only() {}
-
-/// Emit one expression or another depending on whether this is an open source or internal build.
-#[macro_export]
-macro_rules! if_else_opensource {
-    ($opensource:expr, $internal:expr $(,)?
-    ) => {
-        // @oss-disable: $internal
-        $opensource // @oss-enable
-    };
-}
-
-#[inline]
-pub fn is_open_source() -> bool {
-    if_else_opensource!(true, false)
-}

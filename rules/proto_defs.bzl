@@ -6,10 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode_macros//build_defs:native_rules.bzl", "alias", "buck_genrule")
-load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
-load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
-
 def rust_protobuf_library(
         name,
         srcs,
@@ -28,8 +24,8 @@ def rust_protobuf_library(
         "0.14",
         protos,
         [
-            "fbsource//third-party/rust:tonic",
-            "fbsource//third-party/rust:tonic-prost",
+            "third_party//rust:tonic",
+            "third_party//rust:tonic-prost",
         ] + (deps or []),
         test_deps,
         doctests,
@@ -39,7 +35,7 @@ def rust_protobuf_library(
     )
 
     # Set up an alias to the default version of prost to avoid breaking callers
-    alias(
+    native.alias(
         name = name,
         actual = ":" + name + "_prost",
     )
@@ -63,7 +59,7 @@ def _rust_protobuf_library(
     build_name = name + "-build-" + versioned_prost_target
     proto_name = name + "-proto-" + versioned_prost_target
 
-    rust_binary(
+    native.rust_binary(
         name = build_name,
         srcs = [build_script],
         allocator = "jemalloc",
@@ -72,19 +68,19 @@ def _rust_protobuf_library(
         link_group_map = [],
         link_style = "static",
         deps = [
-            "fbcode//bz/app/bz_protoc_dev:" + bz_protoc_dev,
+            "//app/bz_protoc_dev:" + bz_protoc_dev,
         ],
     )
 
     build_env = build_env or {}
     build_env.update({
-        "PROTOC": "$(exe fbsource//third-party/protobuf:protoc)",
-        "PROTOC_INCLUDE": "$(location fbsource//third-party/protobuf:google.protobuf)",
+        "PROTOC": "$(exe third_party//protobuf:protoc)",
+        "PROTOC_INCLUDE": "$(location third_party//protobuf:google.protobuf)",
     })
     if proto_srcs:
         build_env["BUCK_PROTO_SRCS"] = "$(location {})".format(proto_srcs)
 
-    buck_genrule(
+    native.genrule(
         name = proto_name,
         srcs = protos,
         # The binary doesn't look at the command line, but with Buck1, if we don't have $OUT
@@ -95,10 +91,10 @@ def _rust_protobuf_library(
     )
 
     new_deps = [{
-        "0.14": "fbsource//third-party/rust:prost",
+        "0.14": "third_party//rust:prost",
     }[prost_version]] + (deps or [])
 
-    rust_library(
+    native.rust_library(
         name = name + "_" + versioned_prost_target,
         crate = crate_name or name,
         srcs = srcs,

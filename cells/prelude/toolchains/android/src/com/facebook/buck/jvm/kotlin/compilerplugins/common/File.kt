@@ -28,13 +28,13 @@ import org.jetbrains.kotlin.psi.KtFile
  * NOTE: A KtFile without a virtual file will result in an NPE when the next plugin (e.g. kapt)
  * tries to read files.
  *
- * Inspired by [the arrow-meta compiler plugin](https://fburl.com/qbeodjkr).
+ * Inspired by [the arrow-meta compiler plugin](
  *
  * @param fileManager The PsiManager for file. A common way to acquire is from existing [KtFile] by
  *   [KtFile.getManager].
  * @param outputDir The directory to put the new file. For compiler plugin, a common way is to get
  *   it from buck by a plugin option with value `__codegen_dir__`. See
- *   [example](https://fburl.com/diffusion/1aczk9lk).
+ *   [example](
  * @param name Name for new file
  * @param content Content for new file
  * @param writable Boolean whether to make the file writable or not. Default is false.

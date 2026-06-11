@@ -18,10 +18,6 @@ buck_kotlin_library(
     ],
     resources = glob(["resources/**"]),
     resources_root = "resources",
-    tests = [
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/integrationtest:integration-test",
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/stubsgen/standalone:standalone",
-    ],
     visibility = [
         "PUBLIC",
     ],

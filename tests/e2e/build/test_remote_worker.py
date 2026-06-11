@@ -20,7 +20,7 @@ from buck2.tests.e2e_util.helper.utils import (
 
 @buck_test(inplace=True)
 async def test_remote_worker(buck: Buck) -> None:
-    target = "fbcode//bz/tests/targets/rules/remote_worker:run_two_worker_rules"
+    target = "//tests/targets/rules/remote_worker:run_two_worker_rules"
     result = await buck.build(
         target,
         "-c",
@@ -51,7 +51,7 @@ async def test_remote_worker(buck: Buck) -> None:
 
 @buck_test(inplace=True)
 async def test_remote_worker_caches(buck: Buck) -> None:
-    target = "fbcode//bz/tests/targets/rules/remote_worker:run_remote_worker_1"
+    target = "//tests/targets/rules/remote_worker:run_remote_worker_1"
     args = [
         target,
     ]

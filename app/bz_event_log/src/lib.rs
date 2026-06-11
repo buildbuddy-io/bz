@@ -31,14 +31,7 @@ pub mod write;
 pub mod writer;
 
 pub fn should_upload_log() -> bz_error::Result<bool> {
-    if bz_core::is_open_source() {
-        return Ok(false);
-    }
-    Ok(!bz_env!(
-        "BUCK2_TEST_DISABLE_LOG_UPLOAD",
-        bool,
-        applicability = testing
-    )?)
+    Ok(false)
 }
 
 pub fn should_block_on_log_upload() -> bz_error::Result<bool> {

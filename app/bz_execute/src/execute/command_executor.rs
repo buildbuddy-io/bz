@@ -16,7 +16,7 @@ use bz_common::file_ops::metadata::TrackedFileDigest;
 use bz_core::execution_types::executor_config::CommandGenerationOptions;
 use bz_core::execution_types::executor_config::OutputPathsBehavior;
 use bz_core::execution_types::executor_config::ReGangWorker;
-use bz_core::execution_types::executor_config::RemoteExecutorCafFbpkg;
+use bz_core::execution_types::executor_config::RemoteExecutorCafPackage;
 use bz_core::execution_types::executor_config::RemoteExecutorCustomImage;
 use bz_core::execution_types::executor_config::RemoteExecutorDependency;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
@@ -368,12 +368,12 @@ impl CommandExecutor {
                 request.re_gang_workers(),
                 request.remote_execution_custom_image(),
                 &request
-                    .meta_internal_extra_params()
-                    .remote_execution_caf_fbpkgs,
+                    .remote_execution_extra_params()
+                    .remote_execution_caf_packages,
                 request.remote_worker(),
                 re_outputs_required,
                 request
-                    .meta_internal_extra_params()
+                    .remote_execution_extra_params()
                     .allow_unsandboxed_action_cache_uploads,
             )?;
 
@@ -395,14 +395,14 @@ fn re_create_action(
     do_not_cache: bool,
     digest_config: DigestConfig,
     output_paths_behavior: OutputPathsBehavior,
-    unique_input_inodes: bool,
+    _unique_input_inodes: bool,
     remote_execution_dependencies: &Vec<RemoteExecutorDependency>,
     re_gang_workers: &Vec<ReGangWorker>,
-    remote_execution_custom_image: &Option<RemoteExecutorCustomImage>,
-    remote_execution_caf_fbpkgs: &[RemoteExecutorCafFbpkg],
+    _remote_execution_custom_image: &Option<RemoteExecutorCustomImage>,
+    _remote_execution_caf_packages: &[RemoteExecutorCafPackage],
     worker: &Option<RemoteWorkerSpec>,
-    re_outputs_required: bool,
-    allow_unsandboxed_action_cache_uploads: bool,
+    _re_outputs_required: bool,
+    _allow_unsandboxed_action_cache_uploads: bool,
 ) -> bz_error::Result<PreparedAction> {
     let (worker_tool_init_action, command_args) = if let Some(worker) = worker {
         let mut action_and_blobs = ActionDigestAndBlobsBuilder::new(digest_config);
@@ -488,19 +488,8 @@ fn re_create_action(
             }
         }
         OutputPathsBehavior::OutputPaths => {
-            #[cfg(fbcode_build)]
-            {
-                return Err(bz_error!(
-                    bz_error::ErrorTag::Input,
-                    "output_paths is not supported in fbcode_build"
-                ));
-            }
-
-            #[cfg(not(fbcode_build))]
-            {
-                for (output, _output_type) in outputs {
-                    command.output_paths.push(output.as_str().to_owned());
-                }
+            for (output, _output_type) in outputs {
+                command.output_paths.push(output.as_str().to_owned());
             }
         }
     }
@@ -518,74 +507,8 @@ fn re_create_action(
             .transpose()
             .buck_error_context("Cannot convert timeout to GRPC")?,
         do_not_cache,
-        #[cfg(fbcode_build)]
-        allow_unsandboxed_action_cache_uploads,
-        #[cfg(fbcode_build)]
-        worker_tool_action_digest: worker_tool_init_action.clone().map(|a| a.action.to_grpc()),
         ..Default::default()
     };
-
-    #[cfg(fbcode_build)]
-    if let Some(custom_image) = remote_execution_custom_image {
-        action.caf_image_fbpkg = Some(RE::CafImageFbpkg {
-            id: Some(RE::CafFbpkgIdentifier {
-                name: custom_image.identifier.name.clone(),
-                uuid: custom_image.identifier.uuid.clone(),
-                ..Default::default()
-            }),
-            drop_host_mount_globs: custom_image.drop_host_mount_globs.clone(),
-            ..Default::default()
-        });
-    }
-
-    #[cfg(not(fbcode_build))]
-    {
-        let _unused = remote_execution_custom_image;
-    }
-
-    #[cfg(fbcode_build)]
-    {
-        action.caf_fbpkgs = remote_execution_caf_fbpkgs
-            .iter()
-            .map(|caf_fbpkg| RE::CafFbpkg {
-                id: Some(RE::CafFbpkgIdentifier {
-                    name: caf_fbpkg.name.clone(),
-                    uuid: caf_fbpkg.uuid.clone(),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })
-            .collect();
-    }
-
-    #[cfg(not(fbcode_build))]
-    {
-        let _unused = remote_execution_caf_fbpkgs;
-    }
-
-    if unique_input_inodes {
-        #[cfg(fbcode_build)]
-        {
-            action.copy_policy_resolver = RE::CopyPolicyResolver::SingleHardLinking.into();
-        }
-    }
-
-    #[cfg(fbcode_build)]
-    {
-        action.respect_exec_bit = true;
-    }
-
-    #[cfg(fbcode_build)]
-    {
-        action.outputs_required = re_outputs_required;
-    }
-
-    #[cfg(not(fbcode_build))]
-    {
-        let _unused = &mut action;
-        let _unused = re_outputs_required;
-        let _unused = allow_unsandboxed_action_cache_uploads;
-    }
 
     let action_and_blobs = action_and_blobs.build(&action);
 

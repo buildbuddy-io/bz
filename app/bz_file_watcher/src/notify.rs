@@ -81,8 +81,7 @@ impl NotifyFileData {
         cells: &CellResolver,
         ignore_specs: &StdBuckHashMap<CellName, IgnoreSet>,
     ) -> bz_error::Result<()> {
-        let event =
-            event.map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::NotifyWatcher))?;
+        let event = event.map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::NotifyWatcher))?;
 
         for path in &event.paths {
             // Testing shows that we get absolute paths back from the `notify` library.

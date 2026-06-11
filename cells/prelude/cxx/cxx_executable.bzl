@@ -763,7 +763,7 @@ def cxx_executable(ctx: AnalysisContext, impl_params: CxxRuleConstructorParams, 
     )
     sub_targets[XCODE_DATA_SUB_TARGET] = xcode_data_default_info
 
-    # Info about dynamic-linked libraries for fbpkg integration:
+    # Info about dynamic-linked libraries for package integration:
     # - the symlink dir that's part of RPATH
     # - sub-sub-targets that reference shared library dependencies and their respective dwp
     # - [shared-libraries] - a json map that references the above rules.

@@ -21,7 +21,7 @@ from buck2.tests.e2e_util.helper.utils import random_string, read_what_ran
 @buck_test()
 async def test_executor_with_dependencies(buck: Buck) -> None:
     # Smoke test: run on RE and correctly pass the `remote_execution_dependencies` parameter specified in the platform
-    # The RE external dependency (https://fburl.com/wiki/e55nloow) is purposefully wrong as the smc_tier is non existent,
+    # The RE external dependency is purposefully wrong as the smc_tier is non existent,
     # We just want to check that the parameter is passed correctly to RE
     await expect_failure(
         buck.build(

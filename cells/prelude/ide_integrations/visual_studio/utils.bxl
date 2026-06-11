@@ -159,8 +159,8 @@ def get_project_file_path(target_label, extension):
 def get_mode_config_path(mode_name):
     if mode_name.startswith("//"):
         mode_name = mode_name[2:]
-    elif mode_name.startswith("fbsource//"):
-        mode_name = mode_name[len("fbsource//"):]
+    elif mode_name.startswith("root//"):
+        mode_name = mode_name[len("root//"):]
     return mode_name.replace("/", "_") + ".props"
 
 def get_root_path_relative_to(target_label):

@@ -163,9 +163,7 @@ SwiftDebugInfo = record(
     shared = list[ArtifactTSet],
 )
 
-_IS_USER_BUILD = True # @oss-enable
-# @oss-disable: # To determine whether we're running on CI or not, we expect user.sandcastle_alias to be set.
-# @oss-disable[end= ]: _IS_USER_BUILD = (read_root_config("user", "sandcastle_alias", None) == None)
+_IS_USER_BUILD = True
 
 # Whether we're running on a Mac, so that we may decide to execute locally vs running on Mac RE.
 _IS_MAC_HOST = host_info().os.is_macos
@@ -627,7 +625,6 @@ def _compile_swiftmodule(
         category: str) -> CompileArgsfiles:
     argfile_cmd = cmd_args(shared_flags)
     argfile_cmd.add([
-        "-disable-cmo",
         "-wmo",
     ])
 
@@ -917,7 +914,6 @@ def _compile_index_store(
         "-index-store-path",
         index_store_output.as_output(),
         "-c",
-        "-disable-batch-mode",
         "-Xwrapper",
         "-ignore-errors",
     ])
@@ -1089,13 +1085,11 @@ def _get_shared_flags(
         "-Xfrontend",
         "-enable-cross-import-overlays",
         "-Xfrontend",
-        "-disable-cxx-interop-requirement-at-import",
         "-Xfrontend",
         "-emit-clang-header-nonmodular-includes",
         # RE actions are run in a sandbox, which will fail to run macros as
         # you cannot nest sandbox actions.
         # https://github.com/swiftlang/swift/pull/70079
-        "-disable-sandbox",
     )
 
     if parse_as_library:
@@ -1267,7 +1261,6 @@ def _add_swift_deps_flags(
             "-Xcc",
             "-fno-implicit-module-maps",
             "-Xfrontend",
-            "-disable-implicit-swift-modules",
         ])
     else:
         depset = ctx.actions.tset(SwiftCompiledModuleTset, children = _get_swift_paths_tsets(is_macro, ctx.attrs.deps + getattr(ctx.attrs, "exported_deps", [])))

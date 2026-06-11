@@ -237,7 +237,7 @@ def _compiled_go_files(load_mode: LoadMode, go_list_out: GoListOut, td: TargetDa
     return compiled_go_files, set()
 
 # map import names to packages ID, for non-buck packages like stdlib leave names as is
-# Example {"foo/bar": "fbcode//foo/bar:bar"}
+# Example {"foo/bar": "root//foo/bar:bar"}
 def _imports(go_list_out: GoListOut, import_table: dict[str, str]) -> dict[str, str]:
     # todo: make it work when deps are not requested
 
@@ -330,7 +330,7 @@ driver = bxl_main(
     # @unsorted-dict-items
     cli_args = {
         # packages.Load queries
-        # Note: relative paths have similar syntax to buck targets, e.q. fbcode//foo/bar.go
+        # Note: relative paths have similar syntax to buck targets, e.q. root//foo/bar.go
         "files": cli_args.option(cli_args.list(cli_args.string())),
         "target_exprs": cli_args.option(cli_args.list(cli_args.target_expr())),
 

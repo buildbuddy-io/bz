@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests/prelude:py_assertion.bzl", "py_assertion")
+load("//tests/prelude:py_assertion.bzl", "py_assertion")
 
 oncall("build_infra")
 

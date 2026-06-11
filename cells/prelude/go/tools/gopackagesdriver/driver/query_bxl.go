@@ -44,7 +44,7 @@ func queryBXL(ctx context.Context, req *packages.DriverRequest, bucker Bucker, p
 		if errors.As(err, &ee) {
 			// Create ad-hoc package with information about the error
 			// This is likely will be done inside BXL
-			// once  https://fburl.com/workplace/q79a59rn implemented
+			// once implemented
 			actionErrors := retriveActionErrors(ee.Stderr)
 			if len(actionErrors) > 0 {
 				slog.Warn("failed to query BXL, but we have action errors", "err", err)

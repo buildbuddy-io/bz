@@ -38,7 +38,7 @@ meta_python_test(
         "test_resources/*",
     ]),
     deps = [
-        "fbsource//third-party/pypi/importlib-resources:importlib-resources",
+        "third_party//pypi/importlib-resources:importlib-resources",
         ":lib",
     ],
 )

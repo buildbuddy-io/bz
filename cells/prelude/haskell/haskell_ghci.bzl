@@ -100,7 +100,7 @@ def _write_final_ghci_script(
         [
             paths.normalize(
                 paths.join(
-                    paths.relativize(str(ctx.label.path), "fbcode"),
+                    paths.relativize(str(ctx.label.path), "workspace"),
                     s,
                 ),
             )
@@ -150,13 +150,6 @@ def _write_final_ghci_script(
 
 def _build_haskell_omnibus_so(ctx: AnalysisContext) -> HaskellOmnibusData:
     link_style = LinkStyle("static_pic")
-    if False:
-        # TODO(nga): typechecker raises issue here.
-        def unknown():
-            pass
-
-        link_style = unknown()
-
     # pic_behavior = PicBehavior("always_enabled")
     pic_behavior = PicBehavior("supported")
     preload_deps = ctx.attrs.preload_deps

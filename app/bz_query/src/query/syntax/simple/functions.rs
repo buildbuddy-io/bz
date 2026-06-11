@@ -199,7 +199,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// We recommend using it with the `--output-format=dot` parameter to generate a [Graphviz](https://graphviz.org/) [DOT](https://graphviz.org/doc/info/lang.html) file that can then be rendered as an image.
     ///
     /// ```text
-    /// $ bz uquery "allpaths(//bz:bz, //bz/app/bz_validation:bz_validation)" --output-format=dot > result.dot
+    /// $ bz uquery "allpaths(//:bz, //app/bz_validation:bz_validation)" --output-format=dot > result.dot
     /// $ dot -Tpng result.dot -o image.png
     /// ```
     /// produces the following image:
@@ -236,12 +236,12 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// For example:
     ///
     /// ```text
-    /// $ bz uquery 'somepath(//bz:bz, //bz/app/bz_node:bz_node)'
+    /// $ bz uquery 'somepath(//:bz, //app/bz_node:bz_node)'
     ///
-    /// //bz:bz
-    /// //bz/app/bz:bz-bin
-    /// //bz/app/bz_analysis:bz_analysis
-    /// //bz/app/bz_node:bz_node
+    /// //:bz
+    /// //app/bz:bz-bin
+    /// //app/bz_analysis:bz_analysis
+    /// //app/bz_node:bz_node
     /// ```
     async fn somepath(
         &self,
@@ -274,13 +274,13 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     ///
     /// For example:
     /// ```text
-    /// $ bz uquery "attrfilter(deps, '//bz/app/bz_validation:bz_validation', '//...')"
+    /// $ bz uquery "attrfilter(deps, '//app/bz_validation:bz_validation', '//...')"
     ///
-    /// //bz/app/bz:bz-bin
-    /// //bz/app/bz_server:bz_server
-    /// //bz/app/bz_server:bz_server-unittest
+    /// //app/bz:bz-bin
+    /// //app/bz_server:bz_server
+    /// //app/bz_server:bz_server-unittest
     /// ```
-    /// returns targets that contain `//bz/app/bz_validation:bz_validation` target in their `deps` attribute.
+    /// returns targets that contain `//app/bz_validation:bz_validation` target in their `deps` attribute.
     async fn attrfilter(
         &self,
         attr: String,
@@ -327,9 +327,9 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// ```text
     /// $ bz uquery "attrregexfilter(deps, '.+validation$', '//...')"
     ///
-    /// //bz/app/bz:bz-bin
-    /// //bz/app/bz_server:bz_server
-    /// //bz/app/bz_server:bz_server-unittest
+    /// //app/bz:bz-bin
+    /// //app/bz_server:bz_server
+    /// //app/bz_server:bz_server-unittest
     /// ```
     /// returns targets whose `deps` attribute contains at least one target suffixed with 'validation'.
     async fn attrregexfilter(
@@ -350,7 +350,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     ///
     /// For example:
     /// ```text
-    /// $ bz uquery 'buildfile(//bz:bz)'
+    /// $ bz uquery 'buildfile(//:bz)'
     ///
     /// bz/BUCK
     /// ```
@@ -358,7 +358,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// In order to find the build file associated with a source file, combine the owner operator with buildfile.
     /// Examples:
     /// ```text
-    /// $ bz uquery "buildfile(//bz/app/bz_action_impl_tests:bz_action_impl_tests)"
+    /// $ bz uquery "buildfile(//app/bz_action_impl_tests:bz_action_impl_tests)"
     /// ```
     /// and
     /// ```text
@@ -375,7 +375,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     ///
     /// For example:
     /// ```text
-    /// $ bz uquery "rbuildfiles(//bz/BUCK, //bz/rules/defs.bzl)"
+    /// $ bz uquery "rbuildfiles(//BUCK, //rules/defs.bzl)"
     ///
     /// bz/rules/defs.bzl
     /// bz/BUCK
@@ -439,9 +439,9 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// For example following uquery:
     ///
     /// ```text
-    /// $ bz uquery "deps(//bz:bz, 1)"
+    /// $ bz uquery "deps(//:bz, 1)"
     /// ```
-    /// returns all targets that `//bz:bz` depends on directly.
+    /// returns all targets that `//:bz` depends on directly.
     async fn deps(
         &self,
         evaluator: &QueryEvaluator<'_, Env>,
@@ -470,11 +470,11 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     ///
     /// For example:
     /// ```text
-    /// $ bz uquery "filter(validation$, //bz/app/...)"
+    /// $ bz uquery "filter(validation$, //app/...)"
     ///
-    /// //bz/app/bz_validation:bz_validation
+    /// //app/bz_validation:bz_validation
     /// ```
-    /// returns all targets within `//bz/app` that have a label with a `validation` suffix.
+    /// returns all targets within `//app` that have a label with a `validation` suffix.
     async fn filter(&self, regex: String, set: QueryValueSet<Env::Target>) -> QueryFuncResult<Env> {
         match set {
             QueryValueSet::TargetSet(targets) => Ok(self
@@ -496,9 +496,9 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     ///
     /// For example:
     /// ```text
-    /// $ bz uquery "inputs(//bz/deps/dice/...)"
+    /// $ bz uquery "inputs(//deps/dice/...)"
     /// ```
-    /// returns the direct inputs for the `//bz/deps/dice/...` targets.
+    /// returns the direct inputs for the `//deps/dice/...` targets.
     async fn inputs(&self, targets: TargetSet<Env::Target>) -> QueryFuncResult<Env> {
         Ok(self.implementation.inputs(&targets)?.into())
     }
@@ -541,8 +541,8 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// ```text
     /// $ bz uquery "owner('app/bz/src/lib.rs')"
     ///
-    /// //bz/app/bz:bz-unittest
-    /// //bz/app/bz:bz
+    /// //app/bz:bz-unittest
+    /// //app/bz:bz
     /// ```
     async fn owner(&self, env: &Env, files: FileSet) -> QueryFuncResult<Env> {
         Ok(self.implementation.owner(env, &files).await?.into())
@@ -556,11 +556,11 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     ///
     /// For example:
     /// ```text
-    /// $ bz uquery 'targets_in_buildfile(buildfile(//bz:bz))'
+    /// $ bz uquery 'targets_in_buildfile(buildfile(//:bz))'
     ///
-    /// //bz:bz
-    /// //bz:bz_bundle
-    /// //bz:symlinked_buck2_and_tpx
+    /// //:bz
+    /// //:bz_bundle
+    /// //:symlinked_buck2_and_tpx
     /// ```
     async fn targets_in_buildfile(&self, env: &Env, files: FileSet) -> QueryFuncResult<Env> {
         Ok(self
@@ -581,9 +581,9 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     /// For example following uquery:
     ///
     /// ```text
-    /// $ bz uquery "rdeps(//bz/..., //bz/deps/dice/dice:dice, 1)"
+    /// $ bz uquery "rdeps(//..., //deps/dice/dice:dice, 1)"
     /// ```
-    /// returns all targets under `//bz/...` that depend on `//bz/deps/dice/dice:dice`.
+    /// returns all targets under `//...` that depend on `//deps/dice/dice:dice`.
     async fn rdeps(
         &self,
         evaluator: &QueryEvaluator<'_, Env>,
@@ -612,21 +612,21 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     ///
     /// For example:
     /// ```text
-    /// $ bz uquery "testsof(set(//bz/deps/dice/dice:dice //bz/app/bz:bz))"
+    /// $ bz uquery "testsof(set(//deps/dice/dice:dice //app/bz:bz))"
     ///
-    /// //bz/deps/dice/dice:dice-unittest
-    /// //bz/app/bz:bz-unittest
+    /// //deps/dice/dice:dice-unittest
+    /// //app/bz:bz-unittest
     /// ```
-    /// returns the tests associated with both `//bz/deps/dice/dice:dice` and `//bz/app/bz:bz`.
+    /// returns the tests associated with both `//deps/dice/dice:dice` and `//app/bz:bz`.
     ///
     /// To obtain all the tests associated with the target and its dependencies,
     /// you can combine the `testsof()` function with the [`deps()`](#deps) function.
     ///
     /// For example:
     /// ```text
-    /// $ bz uquery "testsof(deps(//bz/app/bz:bz))"
+    /// $ bz uquery "testsof(deps(//app/bz:bz))"
     /// ```
-    /// first finds the transitive closure of `//bz/app/bz:bz`,
+    /// first finds the transitive closure of `//app/bz:bz`,
     /// and then lists all the tests associated with the targets in this transitive closure.
     async fn testsof(&self, env: &Env, targets: TargetSet<Env::Target>) -> QueryFuncResult<Env> {
         Ok(self.implementation.testsof(env, &targets).await?.into())

@@ -7,9 +7,6 @@
 
 load("@prelude//:prelude.bzl", "native")
 
-# NB: Meta engineers should not use this! Please use tp2 instead:
-# https://fburl.com/wiki/oyy0fi5j
-#
 # If a system has a package installed and that package provides a `.pc` file
 # this rule can be used to make that library visible to other rules. The `name`
 # of this rule should be the pkg-config name. For example, if

@@ -872,15 +872,11 @@ impl CommonBuildConfigurationOptions {
             vec![
                 Self::bazel_command_line_single_list_build_setting(
                     BAZEL_ACTION_ENV,
-                    &format!(
-                        "{LLVM_MACOS_AARCH64_CFLAGS_ENV}={LLVM_CARGO_CC_RS_LINKER_FLAG}"
-                    ),
+                    &format!("{LLVM_MACOS_AARCH64_CFLAGS_ENV}={LLVM_CARGO_CC_RS_LINKER_FLAG}"),
                 ),
                 Self::bazel_command_line_single_list_build_setting(
                     BAZEL_ACTION_ENV,
-                    &format!(
-                        "{LLVM_MACOS_AARCH64_CXXFLAGS_ENV}={LLVM_CARGO_CC_RS_LINKER_FLAG}"
-                    ),
+                    &format!("{LLVM_MACOS_AARCH64_CXXFLAGS_ENV}={LLVM_CARGO_CC_RS_LINKER_FLAG}"),
                 ),
             ],
         ))
@@ -962,10 +958,7 @@ impl CommonBuildConfigurationOptions {
         )
     }
 
-    fn cwd_alias_available(
-        immediate_ctx: &ImmediateConfigContext<'_>,
-        alias: &str,
-    ) -> bool {
+    fn cwd_alias_available(immediate_ctx: &ImmediateConfigContext<'_>, alias: &str) -> bool {
         immediate_ctx.resolve_alias_to_path_in_cwd(alias).is_ok()
     }
 
@@ -1173,8 +1166,7 @@ impl CommonBuildConfigurationOptions {
             false
         };
 
-        if let Some(settings) =
-            self.llvm_toolchain_override_settings(matches, rules_rust_available)
+        if let Some(settings) = self.llvm_toolchain_override_settings(matches, rules_rust_available)
         {
             bazel_command_line_build_setting_args.push(settings);
         }
@@ -1515,9 +1507,9 @@ pub struct CommonStarlarkOptions {
     ///    load/cell//build_defs/json.bzl
     ///    load/prelude//playground/test.bxl
     ///    load/cell//build_defs/json.bzl@other_cell
-    ///    load_buildfile/fbcode//third-party-buck/platform010/build/ncurses
-    ///    load_packagefile/fbcode//cli/rust/cli_delegate
-    ///    anon_analysis/anon//:_anon_link_rule (anon: 766183dc9b6f680a) (fbcode//bz/platform/execution:linux-x86_64#08961b14cfb182aa)
+    ///    load_buildfile/root//third-party-buck/platform010/build/ncurses
+    ///    load_packagefile/root//cli/rust/cli_delegate
+    ///    anon_analysis/anon//:_anon_link_rule (anon: 766183dc9b6f680a) (//platform/execution:linux-x86_64#08961b14cfb182aa)
     ///    bxl/prelude//playground/test.bxl:playground
     ///
     /// You can pass `--profile-patterns=.*` to enable no-op profiling for everything (additionally pass `--profile-patterns-mode=none` to

@@ -126,14 +126,11 @@ class SourceModifierExtension(
 
           val rangesToStrip = calculateRangesToStrip(file).map { it to "" }
           val rangesToReplace = calculateRangesToReplace(file).map { it to "TODO()" }
-          // @oss-disable: val rangesForTypealiasReplace =
-              // @oss-disable: calculateKnownTypealiasImportsReplace(file)
           // This is temporary solution for Parcelable
           val generateCodeInParcelable = generateFakeParcelableCodegen(file)
           val replacesRanges =
               (rangesToStrip +
                       rangesToReplace +
-                      // @oss-disable: rangesForTypealiasReplace +
                       generateCodeInParcelable)
                   .sortedByDescending { it.first.first }
 

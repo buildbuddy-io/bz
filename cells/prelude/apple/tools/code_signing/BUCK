@@ -50,8 +50,6 @@ python_library(
     deps = [
         "prelude//apple/tools:plistlib_utils",
         "prelude//apple/tools/info_plist_processor:process",
-        # @oss-disable[end= ]: "prelude//apple/tools/meta_only:codesign_diagnostics_text_lib",
-        # @oss-disable[end= ]: "prelude//apple/tools/meta_only/entitlements_mismatch:check_entitlements_lib",
         ":apple_platform_lib",
     ],
 )
@@ -63,7 +61,7 @@ meta_python_test(
         "test_resources/*",
     ]),
     deps = [
-        "fbsource//third-party/pypi/setuptools:setuptools",
+        "third_party//pypi/setuptools:setuptools",
         ":lib",
     ],
 )
@@ -73,7 +71,7 @@ python_binary(
     main = "main.py",
     visibility = ["PUBLIC"],
     deps = [
-        "fbsource//third-party/pypi/typed-argument-parser:typed-argument-parser",
+        "third_party//pypi/typed-argument-parser:typed-argument-parser",
         ":lib",
     ],
 )

@@ -1,4 +1,3 @@
-load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("build_infra")
 
@@ -8,16 +7,16 @@ rust_library(
         ["src/**/*.rs"],
     ),
     test_deps = [
-        "fbsource//third-party/rust:assert_matches",
+        "third_party//rust:assert_matches",
     ],
     deps = [
-        "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:once_cell",
-        "fbsource//third-party/rust:parking_lot",
-        "fbsource//third-party/rust:pin-project",
-        "fbsource//third-party/rust:slab",
-        "fbsource//third-party/rust:thiserror",
-        "fbsource//third-party/rust:tokio",
-        "//bz/deps/gazebo/dupe:dupe",
+        "third_party//rust:futures",
+        "third_party//rust:once_cell",
+        "third_party//rust:parking_lot",
+        "third_party//rust:pin-project",
+        "third_party//rust:slab",
+        "third_party//rust:thiserror",
+        "third_party//rust:tokio",
+        "//deps/gazebo/dupe:dupe",
     ],
 )

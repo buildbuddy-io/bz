@@ -21,7 +21,7 @@ static PLATFORM_REGEX_SET: OnceLock<RegexSet> = OnceLock::new();
 
 fn is_platform_flavor(flavor: &str) -> bool {
     let regex_set = PLATFORM_REGEX_SET.get_or_init(|| {
-        // copied from https://fburl.com/code/sgxwq68n and modified for our needs
+        // Copied from buckv1 and modified for our needs.
         RegexSet::new([
             r"^android-.*$",
             r"^(linux-.*|platform[0-9]{3}-(clang|clang-12|gcc)(-nosan)?(-split-dwarf)?)$",
@@ -75,7 +75,7 @@ pub fn map_flavors(flavors: &str, full_target: &str) -> bz_error::Result<Provide
                     return Ok(ProvidersName::Default);
                 }
 
-                // android_binary intermediate/secondary outputs. See https://fburl.com/diffusion/jd3cmnfw
+                // android_binary intermediate/secondary outputs.
                 ["package_string_assets"] => "package_string_assets".to_owned(),
                 ["aapt2_link"] => "aapt2_link".to_owned(),
                 ["unstripped_native_libraries"] => "unstripped_native_libraries".to_owned(),
@@ -101,7 +101,7 @@ pub fn map_flavors(flavors: &str, full_target: &str) -> bz_error::Result<Provide
                 // so just ignore it for now. D27984137 aims to add it back properly.
                 ["strip-debug"] => return Ok(ProvidersName::Default),
 
-                // Used in JEX builder script (https://fburl.com/code/2w2gjkey)
+                // Used in JEX builder script.
                 ["shared"] => "shared".to_owned(),
 
                 // Used by Nullsafe for (android|java)_libraries

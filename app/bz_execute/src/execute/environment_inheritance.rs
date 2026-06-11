@@ -13,10 +13,7 @@ use std::sync::OnceLock;
 
 use dupe::Dupe;
 
-#[cfg(fbcode_build)]
-const ENV_ALLOW_LIST: &[&str] = test_env_allowlist::LEGACY_TESTPILOT_ALLOW_LIST;
-
-#[cfg(all(unix, not(fbcode_build)))]
+#[cfg(unix)]
 const ENV_ALLOW_LIST: &[&str] = &[
     "PATH",
     "USER",
@@ -29,7 +26,7 @@ const ENV_ALLOW_LIST: &[&str] = &[
 
 // The standard (built-in) variables.
 // https://ss64.com/nt/syntax-variables.html
-#[cfg(all(windows, not(fbcode_build)))]
+#[cfg(windows)]
 const ENV_ALLOW_LIST: &[&str] = &[
     "ALLUSERSPROFILE",
     "APPDATA",
@@ -75,8 +72,8 @@ pub struct EnvironmentInheritance {
 
 impl EnvironmentInheritance {
     pub fn test_allowlist() -> Self {
-        // This is made to be a list of lists in case we want to include lists from different
-        // provenances, like the test_env_allowlist::ENV_LIST_HACKY.
+        // Keep this as a list of lists so more allowlists can be added without
+        // changing the merge logic below.
         let allowlists = &[ENV_ALLOW_LIST];
 
         // We create this *once* since getenv is actually not cheap (being O(n) of the environment

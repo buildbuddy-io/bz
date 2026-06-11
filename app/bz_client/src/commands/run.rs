@@ -51,8 +51,8 @@ use bz_wrapper_common::BUCK2_WRAPPER_ENV_VAR;
 use serde::Serialize;
 
 use crate::commands::build::has_bes_results_url;
-use crate::commands::build::print_buck_ui_and_rating;
 use crate::commands::build::print_build_failed;
+use crate::commands::build::print_build_id_after_superconsole;
 use crate::commands::build::print_build_result;
 use crate::commands::build::print_build_succeeded;
 
@@ -156,11 +156,7 @@ impl StreamingCommand for RunCommand {
             // and if not print a warning.
             !self.extra_run_args.is_empty() && !ctx.expanded_argv_has_separator();
 
-        let parsed_run_under = self
-            .run_under
-            .as_deref()
-            .map(parse_run_under)
-            .transpose()?;
+        let parsed_run_under = self.run_under.as_deref().map(parse_run_under).transpose()?;
         let target_patterns = run_target_patterns(&self.target, parsed_run_under.as_ref());
         let context = ctx.client_context(matches, &self)?;
         let has_target_universe = !self.target_cfg.target_universe.is_empty();
@@ -219,8 +215,11 @@ impl StreamingCommand for RunCommand {
             );
         }
 
-        let (build_target, run_under_target) =
-            select_run_targets(&response.build_targets, &self.target, parsed_run_under.as_ref())?;
+        let (build_target, run_under_target) = select_run_targets(
+            &response.build_targets,
+            &self.target,
+            parsed_run_under.as_ref(),
+        )?;
         let run_spec = build_target
             .run
             .as_ref()
@@ -228,9 +227,12 @@ impl StreamingCommand for RunCommand {
         let mut run_args = build_run_args(run_spec, ctx, &self.extra_run_args)?;
         let project_root = ctx.paths()?.project_root().root().as_path().to_path_buf();
         materialize_runfiles_tree(run_spec, &project_root)?;
-        if let Some(run_under_prefix) =
-            run_under_prefix(parsed_run_under.as_ref(), run_under_target, ctx, &project_root)?
-        {
+        if let Some(run_under_prefix) = run_under_prefix(
+            parsed_run_under.as_ref(),
+            run_under_target,
+            ctx,
+            &project_root,
+        )? {
             run_args = apply_run_under(run_under_prefix.as_str(), run_args)?;
         }
         let (run_environment, run_environment_to_clear) =
@@ -244,7 +246,7 @@ impl StreamingCommand for RunCommand {
 
         let printed_bes_results_url =
             has_bes_results_url(&self.common_opts.event_log_opts, ctx.buildbuddy_bes());
-        print_buck_ui_and_rating(
+        print_build_id_after_superconsole(
             &console,
             ctx,
             events_ctx.used_superconsole,
@@ -371,7 +373,10 @@ struct CommandArgsFile {
 #[derive(Clone, Debug)]
 enum ParsedRunUnder {
     Prefix(String),
-    Target { target: String, options: Vec<String> },
+    Target {
+        target: String,
+        options: Vec<String>,
+    },
 }
 
 fn parse_run_under(run_under: &str) -> bz_error::Result<ParsedRunUnder> {
@@ -467,8 +472,7 @@ fn build_run_args(
     ctx: &ClientCommandContext<'_>,
     extra_run_args: &[String],
 ) -> bz_error::Result<Vec<String>> {
-    let mut run_args =
-        Vec::with_capacity(1 + run_spec.target_args.len() + extra_run_args.len());
+    let mut run_args = Vec::with_capacity(1 + run_spec.target_args.len() + extra_run_args.len());
     run_args.push(resolve_run_spec_executable(run_spec, ctx)?);
     run_args.extend(run_spec.target_args.iter().cloned());
     run_args.extend(extra_run_args.iter().cloned());

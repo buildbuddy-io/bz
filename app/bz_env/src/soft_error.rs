@@ -129,9 +129,6 @@ static HARD_ERROR_PANIC_ALLOWLIST: Lazy<SmallSet<String>> =
 ///   (used to report as a key).
 /// * The error is a `bz_error::Error`.
 ///
-/// Soft errors from Meta internal runs can be viewed
-/// [in logview](https://www.internalfb.com/logview/overview/buck2).
-///
 /// You'll get the error back as the Ok() value if it wasn't thrown, otherwise you get a Err() to
 /// propagate.
 ///
@@ -298,9 +295,7 @@ pub fn handle_soft_error(
         return Err(err.context("Upgraded warning to failure via $BUCK2_HARD_ERROR"));
     }
 
-    // @oss-disable: let is_open_source = false;
-    let is_open_source = true; // @oss-enable
-    if is_open_source && error_on_oss {
+    if error_on_oss {
         // In open source builds, only deprecation/migration soft errors (those with
         // error_on_oss: true) are promoted to hard errors. Monitoring/logging soft errors
         // are no-ops, matching internal behavior.

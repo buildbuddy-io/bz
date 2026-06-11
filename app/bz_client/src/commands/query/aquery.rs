@@ -24,7 +24,6 @@ use bz_client_ctx::daemon::client::StdoutPartialResultHandler;
 use bz_client_ctx::events_ctx::EventsCtx;
 use bz_client_ctx::exit_result::ExitResult;
 use bz_client_ctx::streaming::StreamingCommand;
-use bz_core::if_else_opensource;
 
 use crate::commands::query::common::CommonQueryOptions;
 
@@ -38,10 +37,7 @@ action.
 
 Run `bz docs aquery` or
 "#,
-        if_else_opensource!(
-            "https://buck2.build/docs/users/query/aquery/",
-            "https://www.internalfb.com/intern/staticdocs/buck2/docs/users/query/aquery/",
-        ),
+        "https://buck2.build/docs/users/query/aquery/",
         r#"
 for more documentation about the functions available in aquery
 expressions.

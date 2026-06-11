@@ -158,8 +158,6 @@ type Error<'a> = (&'a str, ArgParseError);
 type Result<'a, T> = result::Result<(T, &'a str), Error<'a>>;
 
 // We diverge slightly from buckv1 here.
-//
-// See https://www.internalfb.com/diffs/D3917438?transaction_fbid=1890520777849195 where that decision in v1 was questioned.
 
 fn consume_whitespace(input: &str) -> &str {
     input.trim_start_matches(|c: char| c.is_ascii_whitespace())

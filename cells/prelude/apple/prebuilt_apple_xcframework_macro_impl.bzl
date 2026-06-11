@@ -100,7 +100,7 @@ def _generate_mac_select_maps(prebuilt_xcframework_args, **kwargs):
         prebuilt_xcframework_args = prebuilt_xcframework_args,
         platform_filter = lambda platform: platform["platform"] == "macos",
         default_arch = None,
-        default_target_platform = "ovr_config//platform/macos:arm64-fbsource",
+        default_target_platform = "ovr_config//platform/macos:arm64-workspace",
         **kwargs
     )
 

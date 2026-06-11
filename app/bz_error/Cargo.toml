@@ -40,7 +40,6 @@ allocative = { workspace = true }
 dice_error = { workspace = true }
 dupe = { workspace = true }
 superconsole = { version = "0.2.0", path = "../../deps/superconsole" }
-# @oss-disable: watchman_client.path = "../../../watchman/rust/watchman_client"
 watchman_client.version = "0.9.0"
 
 bz_data = { workspace = true }

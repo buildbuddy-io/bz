@@ -118,8 +118,6 @@ async fn upload_to_manifold(
     manifold_filename: &str,
 ) -> bz_error::Result<()> {
     if !cfg!(target_os = "windows") {
-        bz_core::facebook_only();
-
         let tar = async_background_command("tar")
             .arg("-c")
             .arg(dump_folder)

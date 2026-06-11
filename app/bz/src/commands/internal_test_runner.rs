@@ -37,28 +37,18 @@ impl InternalTestRunnerCommand {
     ) -> ExitResult {
         events_ctx.log_invocation_record = false;
 
-        // Internal test runner should only be used in the open source version of Buck2.
-        if bz_core::is_open_source()
-            || std::env::var("BUCK2_ALLOW_INTERNAL_TEST_RUNNER_DO_NOT_USE").is_ok()
-        {
-            let runtime = Runtime::new().expect("Failed to create Tokio runtime");
-            runtime
-                .block_on(async move {
-                    #[cfg(unix)]
-                    {
-                        self.unix_runner.run().await
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        self.tcp_runner.run().await
-                    }
-                })
-                .into()
-        } else {
-            bz_error::bz_error!(
-                ErrorTag::Input,
-                "Cannot use internal test runner. Config value must be provided for test.v2_test_executor."
-            ).into()
-        }
+        let runtime = Runtime::new().expect("Failed to create Tokio runtime");
+        runtime
+            .block_on(async move {
+                #[cfg(unix)]
+                {
+                    self.unix_runner.run().await
+                }
+                #[cfg(not(unix))]
+                {
+                    self.tcp_runner.run().await
+                }
+            })
+            .into()
     }
 }

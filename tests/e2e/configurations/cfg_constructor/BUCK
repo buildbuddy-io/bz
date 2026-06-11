@@ -1,6 +1,5 @@
 # @noautodeps
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
-load("@fbcode_macros//build_defs:python_library.bzl", "python_library")
+load("//tests:buck_e2e.bzl", "bz_e2e_test")
 load("@prelude//cfg/modifier:name.bzl", "NAMED_CONSTRAINT_SETTINGS")
 load(":constraint_setting_group.bzl", "constraint_setting_group")
 
@@ -58,5 +57,5 @@ bz_e2e_test(
 python_library(
     name = "modifiers_util",
     srcs = ["modifiers_util.py"],
-    deps = ["//bz/tests/e2e_util/api:api"],
+    deps = ["//tests/e2e_util/api:api"],
 )

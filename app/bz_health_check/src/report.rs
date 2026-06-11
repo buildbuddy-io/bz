@@ -8,8 +8,6 @@
  * above-listed licenses.
  */
 
-use bz_core::is_open_source;
-
 use crate::interface::HealthCheckType;
 
 /// Severity of the issue reported by a health check.
@@ -99,24 +97,10 @@ impl std::fmt::Display for Message {
 
 impl std::fmt::Display for HealthIssue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let remediation = if is_open_source() {
-            String::new()
-        } else {
-            match &self.remediation {
-                Some(Remediation::Message(message)) => {
-                    format!(". {message}")
-                }
-                Some(Remediation::Link(link)) => {
-                    format!(". Refer to {link}")
-                }
-                None => String::new(),
-            }
-        };
-        write!(f, "{}{}", self.message, remediation)
+        write!(f, "{}", self.message)
     }
 }
 
-#[cfg(fbcode_build)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,7 +112,7 @@ mod tests {
             remediation: Some(Remediation::Message("Fix this by doing X".to_owned())),
         };
 
-        assert_eq!(report.to_string(), "This is a warning. Fix this by doing X");
+        assert_eq!(report.to_string(), "This is a warning");
     }
 
     #[test]
@@ -139,10 +123,7 @@ mod tests {
             remediation: Some(Remediation::Link("https://example.com/help".to_owned())),
         };
 
-        assert_eq!(
-            report.to_string(),
-            "Information message. Refer to https://example.com/help"
-        );
+        assert_eq!(report.to_string(), "Information message");
     }
 
     #[test]

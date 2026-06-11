@@ -383,7 +383,6 @@ impl ExitResultVariant {
         // Global destructors in C++ dependencies destroy global state,
         // while running background threads rely on this state.
         // So the result is non-reproducible crash of the bz client.
-        // https://fburl.com/7u7kizm7
         // So let's disable global destructors.
         // Global destructors are hard (if even possible) to do safely anyway.
 

@@ -22,7 +22,7 @@ export BUILDBUDDY_API_KEY=...
 
 On CI the API key is not available for pipelines initiated from forks of the
 main Buck2 repository. The corresponding tests will be skipped in that case. A
-Meta engineer can manually initiate a pipeline run with the token set.
+A maintainer can manually initiate a pipeline run with the token set.
 
 [direnv]: https://direnv.net/
 [BuildBuddy]: https://www.buildbuddy.io/

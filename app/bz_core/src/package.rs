@@ -21,7 +21,7 @@
 //!
 //! Example:
 //! ```ignore
-//! fbsource
+//! workspace
 //! +-- .buck
 //! +-- package1
 //! |   +-- TARGETS

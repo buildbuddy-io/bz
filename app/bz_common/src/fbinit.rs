@@ -14,32 +14,7 @@ use fbinit::FacebookInit;
 
 fn run_init() -> FacebookInit {
     // SAFETY: Only called within a oncelock
-    let fb = unsafe { fbinit::perform_init() };
-
-    #[cfg(fbcode_build)]
-    {
-        use gflags::GflagValue;
-
-        // There are two sources of log spew when building buck2 with Buck and linking against fbcode:
-        //   1. folly/logging/xlog, which can be configured via a special configuration string, which we use to
-        //      log only critical-level logs. https://github.com/facebook/folly/blob/master/folly/logging/docs/Config.md
-        //   2. google log (glog), which is older but still used, which can configured using a flag at runtime.
-        //
-        // This first call handles the folly config.
-        logging::update_logging_config(fb, "CRITICAL");
-        drop(gflags::set_gflag_value(
-            fb,
-            "minloglevel",
-            GflagValue::U32(5),
-        ));
-        drop(gflags::set_gflag_value(
-            fb,
-            "stderrthreshold",
-            GflagValue::U32(5),
-        ));
-    }
-
-    fb
+    unsafe { fbinit::perform_init() }
 }
 
 /// Gets an fbinit token.
@@ -49,7 +24,7 @@ fn run_init() -> FacebookInit {
 ///     function is primarily intended for a very early point in buck2's lifecycle where fbinit
 ///     initialization is lazy.
 ///  2. This function may not be called before any forks, as it may spawn threads.
-pub fn get_or_init_fbcode_globals() -> FacebookInit {
+pub fn get_or_init_build_globals() -> FacebookInit {
     static FB: OnceLock<fbinit::FacebookInit> = OnceLock::new();
 
     *FB.get_or_init(run_init)

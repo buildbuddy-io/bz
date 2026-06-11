@@ -2,7 +2,7 @@
 
 A build system
 
-Documentation: https://internalfb.com/intern/staticdocs/buck2/docs/
+Documentation: https://buck2.build/docs/
 
 Usage: bz [OPTIONS] <COMMAND>
 

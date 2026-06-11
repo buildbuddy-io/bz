@@ -147,7 +147,7 @@ impl FrozenExternalRunnerTestInfo {
             .unwrap()
             .unwrap()
             .into_option()
-            .unwrap_or_else(bz_core::is_open_source)
+            .unwrap_or(true)
     }
 
     pub fn run_from_project_root(&self) -> bool {

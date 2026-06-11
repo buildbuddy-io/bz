@@ -1,20 +1,20 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
+load("//tests:buck_e2e.bzl", "bz_e2e_test")
 
 oncall("build_infra")
 
 bz_e2e_test(
     name = "test_build_isolated",
     srcs = ["test_build_isolated.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
     serialize_test_cases = False,
     deps = [
-        "fbcode//bz/tests/e2e_util:assert_occurrences",
-        "fbcode//bz/tests/e2e_util:utils",
-        "fbsource//third-party/pypi/aiohttp:aiohttp",  # @autodeps2-fixme-manual
+        "//tests/e2e_util:assert_occurrences",
+        "//tests/e2e_util:utils",
+        "third_party//pypi/aiohttp:aiohttp",  # @autodeps2-fixme-manual
     ],
 )
 
@@ -23,7 +23,7 @@ bz_e2e_test(
     srcs = ["test_build_inplace.py"],
     require_nano_prelude = True,
     deps = [
-        "//bz/tests/e2e_util:utils",
+        "//tests/e2e_util:utils",
     ],
 )
 
@@ -32,7 +32,7 @@ bz_e2e_test(
     srcs = ["test_worker.py"],
     labels = ["long_running"],
     deps = [
-        "//bz/tests/e2e_util:utils",
+        "//tests/e2e_util:utils",
     ],
 )
 
@@ -46,14 +46,13 @@ bz_e2e_test(
     ],
     test_with_deployed_buck2 = False,
     use_compiled_bz_client_and_tpx = True,
-    deps = ["//bz/tests/e2e_util:utils"],
+    deps = ["//tests/e2e_util:utils"],
 )
 
 bz_e2e_test(
     name = "test_action_digest",
     srcs = ["test_action_digest.py"],
-    # This test is currently broken on Windows due to rustc_link non-determinism
-    # https://fb.workplace.com/groups/346627374465346/permalink/511477684646980/
+    # This test is currently broken on Windows due to rustc_link non-determinism.
     skip_for_os = [
         "windows",
     ],
@@ -62,7 +61,7 @@ bz_e2e_test(
     # Changing it will prevent the test from working properly
     test_with_compiled_buck2 = True,
     deps = [
-        "//bz/tests/e2e_util:utils",
+        "//tests/e2e_util:utils",
     ],
 )
 
@@ -71,6 +70,6 @@ bz_e2e_test(
     srcs = ["test_rust_build_reproducibility.py"],
     skip_for_os = ["windows"],
     deps = [
-        "//bz/tests/e2e_util:utils",
+        "//tests/e2e_util:utils",
     ],
 )

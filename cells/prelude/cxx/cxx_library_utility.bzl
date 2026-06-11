@@ -91,8 +91,8 @@ def cxx_inherited_link_info(first_order_deps: list[Dependency]) -> list[MergedLi
     """
 
     # We filter out nones because some non-cxx rule without such providers could be a dependency, for example
-    # cxx_binary "fbcode//one_world/cli/util/process_wrapper:process_wrapper" depends on
-    # python_library "fbcode//third-party-buck/$platform/build/glibc:__project__"
+    # cxx_binary "root//one_world/cli/util/process_wrapper:process_wrapper" depends on
+    # python_library "root//third-party-buck/$platform/build/glibc:__project__"
     return filter_and_map_idx(MergedLinkInfo, first_order_deps)
 
 # Linker flags

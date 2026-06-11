@@ -6,7 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load(
     "@prelude//cxx:cxx_toolchain_types.bzl",
     "AsCompilerInfo",
@@ -332,20 +331,7 @@ def cxx_toolchain_extra_attributes(is_toolchain_rule):
         "thin_lto_premerger_enabled": attrs.bool(default = False),
         "use_archiver_flags": attrs.bool(default = True),
         "use_dep_files": attrs.option(attrs.bool(), default = None),
-        # TODO(scottcao): Figure out a slightly better way to integrate this. In theory, this is only needed for clang toolchain.
-        # If we were using msvc, we should be able to use dumpbin directly.
-        "_dumpbin_toolchain_path": attrs.default_only(attrs.option(dep_type(providers = [DefaultInfo]), default = select({
-            "DEFAULT": None,
-            "ovr_config//os:windows": select({
-                # Unfortunately, it seems like an unresolved select when resolve exec platforms causes the whole resolution
-                # to fail, so I need a DEFAULT here when some target without cpu constraint tries to configure against the
-                # windows exec platform.
-                "DEFAULT": None,
-                # FIXME: prelude// should be standalone (not refer to fbsource//)
-                "ovr_config//cpu:x86_32": "fbsource//third-party/toolchains/visual_studio:cl_x86_and_tools",
-                "ovr_config//cpu:x86_64": "fbsource//third-party/toolchains/visual_studio:cl_x64_and_tools",
-            }),
-        }) if is_full_meta_repo() else None)),
+        "_dumpbin_toolchain_path": attrs.default_only(attrs.option(dep_type(providers = [DefaultInfo]), default = None)),
         "_msvc_hermetic_exec": attrs.default_only(dep_type(providers = [RunInfo], default = "prelude//windows/tools:msvc_hermetic_exec")),
     } | cxx_toolchain_allow_cache_upload_args()
 

@@ -26,7 +26,7 @@ def _impl(ctx):
     # compromise solution. The upside is that it avoids introducing any unnecessary compatibility
     # constraints. The downside is that it's still slightly wrong - because of the exec transition,
     # the returned artifacts won't correctly obey opt level/sanitizer/platform constraints in the
-    # target configuration. However, this matches the behavior in fbsource today.
+    # target configuration. However, this matches the behavior in workspace today.
     #
     # Once config modifiers are implemented and roll out, it should not be too hard to get the fully
     # correct behavior

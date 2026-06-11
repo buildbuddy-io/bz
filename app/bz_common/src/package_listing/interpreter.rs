@@ -287,27 +287,27 @@ impl GatherPackageListingError {
 impl std::fmt::Display for GatherPackageListingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         /*
-         package `fbsource//foo/target/x/y/lmnop:` does not exist
+         package `root//foo/target/x/y/lmnop:` does not exist
                   ^--------------------^
-             dir `fbsource//foo/target/x` does not exist
+             dir `root//foo/target/x` does not exist
 
-         package `fbsource//foo/target/x/y/lmnop:` does not exist
+         package `root//foo/target/x/y/lmnop:` does not exist
                   ^--------------------^
-             dir `fbsource//foo/target/x` is ignored (config project.ignore contains `foo/target/ **`)
+             dir `root//foo/target/x` is ignored (config project.ignore contains `foo/target/ **`)
 
-         package `fbsource//fbcode/target/x/y/lmnop:` does not exist
+         package `root//workspace/target/x/y/lmnop:` does not exist
                   ^--------------^
-             this package is using the wrong cell, use `fbcode//target/x/y/lmnop:` instead
+             this package is using the wrong cell, use `root//target/x/y/lmnop:` instead
 
 
-         package `fbsource//foo/target/x/y/lmnop:` does not exist
+         package `root//foo/target/x/y/lmnop:` does not exist
                   ^--------------------^
-            path `fbsource//foo/target/x` is a file, not a directory
+            path `root//foo/target/x` is a file, not a directory
 
-         package `fbsource//foo/target/x/y/lmnop:` does not exist
+         package `root//foo/target/x/y/lmnop:` does not exist
              missing `TARGETS` file (also missing alternatives `TARGETS.v2`, `BUCK`, `BUCK.v2`)
 
-         error loading package `fbsource//foo/target/x/y/lmnop:`
+         error loading package `root//foo/target/x/y/lmnop:`
               ... # just display the bz_error for now
         */
 

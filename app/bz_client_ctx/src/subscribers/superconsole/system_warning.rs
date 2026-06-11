@@ -33,11 +33,7 @@ pub(crate) struct SystemWarningComponent<'a> {
 impl Component for SystemWarningComponent<'_> {
     type Error = bz_error::Error;
 
-    fn draw_unchecked(
-        &self,
-        _dimensions: Dimensions,
-        _mode: DrawMode,
-    ) -> bz_error::Result<Lines> {
+    fn draw_unchecked(&self, _dimensions: Dimensions, _mode: DrawMode) -> bz_error::Result<Lines> {
         let mut lines = Vec::new();
 
         if let Some(memory_pressure) =

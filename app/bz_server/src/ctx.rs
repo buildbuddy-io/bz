@@ -81,7 +81,6 @@ use bz_core::cells::cell_path::CellPath;
 use bz_core::cells::paths::CellRelativePathBuf;
 use bz_core::execution_types::executor_config::CommandExecutorConfig;
 use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
-use bz_core::facebook_only;
 use bz_core::fs::project::ProjectRoot;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -1457,7 +1456,6 @@ struct ConfigMetadataHolder(StdBuckHashMap<String, String>);
 
 fn collect_config_metadata_into(config: &LegacyBuckConfig, data: &mut UserComputationData) {
     // Facebook only: metadata collection for Scribe writes
-    facebook_only();
 
     fn add_config(
         map: &mut StdBuckHashMap<String, String>,
@@ -1546,14 +1544,15 @@ fn collect_config_metadata_into(config: &LegacyBuckConfig, data: &mut UserComput
                  because it invalidates the DICE graph which causes performance loss. \
                  Please migrate to `--client-metadata=id={}` instead. \
                  This will become a hard error in a future bz release. \
-                 For more information, see: https://internalfb.com/intern/staticdocs/buck2/docs/rule_authors/client_metadata/",
+                 For more information, see: https://buck2.build/docs/rule_authors/client_metadata/",
                 client_id,
                 client_id
             ),
             quiet: false,
             deprecation: true,
             error_on_oss: true,
-        ).ok();
+        )
+        .ok();
     }
 
     if let Ok(schedule_type) = SandcastleScheduleType::new() {
@@ -1661,7 +1660,6 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
     /// Gathers metadata to attach to events for when a command starts and stops.
     async fn request_metadata(&self) -> bz_error::Result<StdBuckHashMap<String, String>> {
         // Facebook only: metadata collection for Scribe writes
-        facebook_only();
 
         let mut metadata = metadata::collect(&self.base_context.daemon.daemon_id);
 

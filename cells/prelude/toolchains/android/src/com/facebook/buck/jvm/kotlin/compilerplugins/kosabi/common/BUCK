@@ -8,11 +8,7 @@ source_listing()
 kotlin_bootstrap_library(
     name = "common",
     srcs = glob(["*.kt"]),
-    tests = [
-        "fbsource//fbandroid/javatests/com/facebook/kotlin/compilerplugins/kosabi/common:common",
-    ],
     visibility = [
-        "fbsource//fbandroid/javatests/...",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/compilerplugins/...",
     ],
 )

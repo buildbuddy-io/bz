@@ -19,7 +19,7 @@ def set_cfg_modifiers(
     Args:
         cfg_modifiers:
             A list of modifiers to set. The simplest modifier is a constraint value target.
-            For example, to change the OS to linux in fbsource, this can be specified as `["ovr_config//os/constraints:linux"]`.
+            For example, to change the OS to linux in workspace, this can be specified as `["ovr_config//os/constraints:linux"]`.
         extra_cfg_modifiers_per_rule:
             A dictionary of rule name to a list of modifiers to set. This is applied on top of modifiers from `cfg_modifiers` parameter
             if a target's rule name matches the key, so it can override any modifier from `cfg_modifiers` parameter in the same PACKAGE.

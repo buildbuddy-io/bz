@@ -318,7 +318,7 @@ public class KaptStepsBuilder {
     // was fixed on Kotlin 1.6 (https://youtrack.jetbrains.com/issue/KT-47583)
     //
     // Once we have our supported AOSP versions on a later Kotlin version, we can remove this.
-    // AOSP 12 uses Kotlin 1.4.2 => https://fburl.com/code/94fkfr6r
+    // AOSP 12 uses Kotlin 1.4.2 =>
     return languageVersion.getSupportsLanguageVersion();
   }
 

@@ -95,8 +95,6 @@ pub struct RageCommand {
 
 impl RageCommand {
     pub fn exec(self, _matches: BuckArgMatches<'_>, ctx: ClientCommandContext<'_>) -> ExitResult {
-        bz_core::facebook_only();
-
         ctx.with_runtime(|ctx| async move {
             self.exec_impl(ctx).await?;
             ExitResult::success()
@@ -658,10 +656,7 @@ where
     }
 }
 
-fn print_log_summary(
-    index: usize,
-    log_summary: &Option<EventLogSummary>,
-) -> bz_error::Result<()> {
+fn print_log_summary(index: usize, log_summary: &Option<EventLogSummary>) -> bz_error::Result<()> {
     if let Some(log_summary) = log_summary {
         let cmd = crate::build_info::format_cmd(&log_summary.invocation);
 
@@ -694,7 +689,7 @@ async fn output_rage(no_paste: bool, output: &str) -> bz_error::Result<()> {
                 bz_client_ctx::println!("{}", output)?;
             }
             Ok(paste) => bz_client_ctx::eprintln!(
-                "\nPlease post in https://fb.workplace.com/groups/buck2users with the following link:\n\n{}\n",
+                "\nAttach the following link to your bug report:\n\n{}\n",
                 paste
             )?,
         }
@@ -767,9 +762,7 @@ async fn upload_thread_dump(
     }
 }
 
-async fn get_trace_id(
-    invocation: &Option<EventLogPathBuf>,
-) -> bz_error::Result<Option<TraceId>> {
+async fn get_trace_id(invocation: &Option<EventLogPathBuf>) -> bz_error::Result<Option<TraceId>> {
     let invocation_id = match invocation {
         None => None,
         Some(invocation) => Some(invocation.uuid_from_filename()?),

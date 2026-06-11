@@ -39,7 +39,7 @@ LinkerInfo = provider(
         "extra_outputs": provider_field(list[str], default = []),
         "generate_linker_maps": provider_field(typing.Any, default = None),  # bool
         "generate_gc_sections": provider_field(typing.Any, default = None),  # bool
-        # Whether to run native links locally.  We support this for fbcode platforms
+        # Whether to run native links locally.  We support this for workspace platforms
         # to avoid issues with C++ static links (see comment in
         # `platform/cxx_toolchains.bzl` for details).
         "link_binaries_locally": provider_field(typing.Any, default = None),
@@ -242,7 +242,7 @@ CxxToolchainInfo = provider(
         "c_compiler_info": provider_field(typing.Any, default = None),
         # Maps cell names to their repo-relative path prefix. Used by coverage
         # prefix maps to translate cell-relative paths to repo-relative paths.
-        # e.g. {"fbcode": "fbcode"} means cell "fbcode" maps to the "fbcode/"
+        # e.g. {"workspace": "workspace"} means cell "workspace" maps to the "workspace/"
         # subdirectory. Cells not in the map are assumed to be the repo root.
         "cell_to_path_prefix_map": provider_field(dict[str, str], default = {}),
         "clang_llvm_statistics": provider_field(typing.Any, default = None),

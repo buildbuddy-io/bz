@@ -300,10 +300,7 @@ impl PackageRelativePath {
     /// # bz_error::Ok(())
     /// ```
     #[inline]
-    pub fn strip_prefix<'a, P>(
-        &'a self,
-        base: &'a P,
-    ) -> bz_error::Result<&'a ForwardRelativePath>
+    pub fn strip_prefix<'a, P>(&'a self, base: &'a P) -> bz_error::Result<&'a ForwardRelativePath>
     where
         P: ?Sized + AsRef<PackageRelativePath>,
     {

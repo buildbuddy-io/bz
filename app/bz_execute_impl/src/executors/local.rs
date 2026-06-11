@@ -4212,13 +4212,12 @@ pub async fn materialize_inputs(
     let mut copied_artifact_path_aliases_to_materialize = Vec::new();
     let mut artifact_path_alias_copies = Vec::new();
     for alias in &shared_artifact_path_aliases {
-        let is_external_root_alias =
-            bazel_external_repo_root_alias(
-                artifact_fs,
-                alias.source_path.as_ref(),
-                alias.path.as_ref(),
-            )?
-                .is_some();
+        let is_external_root_alias = bazel_external_repo_root_alias(
+            artifact_fs,
+            alias.source_path.as_ref(),
+            alias.path.as_ref(),
+        )?
+        .is_some();
         let source_is_generated = buck_artifact_store_path(alias.source_path.as_ref());
         let source_is_generated_file = source_is_generated
             && matches!(
@@ -4316,13 +4315,11 @@ pub async fn materialize_inputs(
         if copied_artifact_path_aliases.contains(&alias.path) {
             continue;
         }
-        if let Some((source_root, alias_root)) =
-            bazel_external_repo_root_alias(
-                artifact_fs,
-                alias.source_path.as_ref(),
-                alias.path.as_ref(),
-            )?
-        {
+        if let Some((source_root, alias_root)) = bazel_external_repo_root_alias(
+            artifact_fs,
+            alias.source_path.as_ref(),
+            alias.path.as_ref(),
+        )? {
             if external_cell_root_aliases.insert((source_root.clone(), alias_root.clone())) {
                 paths.push(alias_root.clone());
                 external_cell_root_aliases_to_materialize.push(ExternalCellRootAlias {
@@ -5488,7 +5485,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(fbcode_build)]
     #[tokio::test]
     async fn test_exec_cmd_timeout() -> bz_error::Result<()> {
         let (executor, _, _tmpdir) = test_executor()?;

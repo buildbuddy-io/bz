@@ -10,8 +10,8 @@
 
 use std::io::Cursor;
 
-use bz_error::bz_error;
 use bytes::BytesMut;
+use bz_error::bz_error;
 use tokio_util::codec::Decoder;
 
 /// Splits length-prefixed protobuf.
@@ -29,10 +29,7 @@ impl Decoder for ProtobufSplitter {
             Err(..) => {
                 // 10 bytes is the largest length of an encoded size
                 if orig_len > 10 {
-                    return Err(bz_error!(
-                        bz_error::ErrorTag::Tier0,
-                        "Corrupted stream"
-                    ));
+                    return Err(bz_error!(bz_error::ErrorTag::Tier0, "Corrupted stream"));
                 } else {
                     return Ok(None);
                 }

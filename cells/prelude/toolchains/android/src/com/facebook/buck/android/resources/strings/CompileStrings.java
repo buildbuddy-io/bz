@@ -99,10 +99,7 @@ public class CompileStrings {
   public static final Pattern R_DOT_TXT_STRING_RESOURCE_PATTERN =
       Pattern.compile("^int (string|plurals|array) (\\w+) 0x([0-9a-f]+)$");
 
-  /**
-   * The pattern to be bypassed if we see mcc qualifier in the path. See more context in:
-   * https://fb.workplace.com/groups/i18n.QandA/permalink/4066577280057523/
-   */
+  /** The pattern to be bypassed if we see mcc qualifier in the path. */
   private static final Pattern BYPASSING_STRING_PATH_PATTERN =
       Pattern.compile(".*res/values-mcc[0-9]{3}/strings.xml");
 

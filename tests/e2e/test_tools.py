@@ -16,24 +16,24 @@ from buck2.tests.e2e_util.api.buck import Buck
 from buck2.tests.e2e_util.buck_workspace import buck_test, env
 
 
-# builds targets in an fbcode target configuration, unsupported on mac RE workers
-def fbcode_linux_only() -> bool:
+# builds targets in an workspace target configuration, unsupported on mac RE workers
+def workspace_linux_only() -> bool:
     return sys.platform == "linux"
 
 
-if fbcode_linux_only():
+if workspace_linux_only():
 
     @buck_test(inplace=True, skip_for_os=["windows"])
     async def test_swig_pp(buck: Buck) -> None:
         await buck.build(
-            "fbcode//security/ca/lib:CAUtils-py-gen",
+            "root//security/ca/lib:CAUtils-py-gen",
         )
 
     @buck_test(inplace=True)
     @env("BUCK2_KEEP_DEP_FILE_DIRECTORIES", "true")
     async def test_arvr_cuda_dep_files(buck: Buck) -> None:
-        target = "fbsource//arvr/tools/buck/tests/cuda:test_cuda_arvr"
-        mode_file = "@fbsource//arvr/mode/platform010/cuda12_5/opt"
+        target = "root//arvr/tools/buck/tests/cuda:test_cuda_arvr"
+        mode_file = "@root//arvr/mode/platform010/cuda12_5/opt"
         await buck.build(mode_file, target)
         res = await buck.audit_dep_files(target, "cuda_compile", "main.cu", mode_file)
         out = res.stdout
@@ -60,7 +60,7 @@ if fbcode_linux_only():
 @buck_test(inplace=True, skip_for_os=["windows"])
 async def test_swig_pp_unit(buck: Buck) -> None:
     await buck.test(
-        "fbcode//tools/build/buck:swig_filter_test",
+        "root//tools/build/buck:swig_filter_test",
     )
 
 

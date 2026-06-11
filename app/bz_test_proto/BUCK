@@ -1,5 +1,4 @@
-load("@fbcode//bz:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
-load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
+load("//:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 
 oncall("build_infra")
 
@@ -9,9 +8,9 @@ rust_protobuf_library(
     build_script = "build.rs",
     proto_srcs = ":bz_test_proto.proto",
     deps = [
-        "fbsource//third-party/rust:prost-types",
-        "//bz/app/bz_data:bz_data",
-        "//bz/app/bz_host_sharing_proto:bz_host_sharing_proto",
+        "third_party//rust:prost-types",
+        "//app/bz_data:bz_data",
+        "//app/bz_host_sharing_proto:bz_host_sharing_proto",
     ],
 )
 
@@ -23,6 +22,6 @@ proto_srcs(
     ],
     visibility = ["PUBLIC"],
     deps = [
-        translate_target("//bz/app/bz_data:data_proto"),
+        "//app/bz_data:data_proto",
     ],
 )

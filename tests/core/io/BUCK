@@ -1,11 +1,11 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_core_tests")
+load("//tests:buck_e2e.bzl", "bz_core_tests")
 
 oncall("build_infra")
 
 bz_core_tests(
     extra_attrs = {
         "deps": [
-            "//bz/tests/core/common:io",
+            "//tests/core/common:io",
         ],
     },
 )

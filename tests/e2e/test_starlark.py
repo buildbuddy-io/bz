@@ -32,4 +32,4 @@ async def test_typecheck_prelude_lightweight(buck: Buck) -> None:
 
 @buck_test(inplace=True)
 async def test_typecheck_prelude_compiler(buck: Buck) -> None:
-    await buck.uquery("fbcode//bz:bz", "--unstable-typecheck")
+    await buck.uquery("//:bz", "--unstable-typecheck")

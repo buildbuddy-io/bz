@@ -7,12 +7,3 @@
  * of this source tree. You may select, at your option, one of the
  * above-listed licenses.
  */
-
-#[cfg(fbcode_build)]
-impl From<edenfs_clients::errors::ListMountsError> for crate::Error {
-    #[cold]
-    #[track_caller]
-    fn from(value: edenfs_clients::errors::ListMountsError) -> Self {
-        crate::conversion::from_any_with_tag(value, crate::ErrorTag::IoEdenListMounts)
-    }
-}

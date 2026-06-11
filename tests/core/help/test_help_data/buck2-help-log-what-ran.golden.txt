@@ -5,7 +5,7 @@ the last buck invocation from this isolation directory.
 
 The output is presented as a series of tab-delimited records with the following structure:
 
-build    fbsource//your:target    local    clang foo.c
+build    root//your:target    local    clang foo.c
 
 1: The reason for executing a given command. That's either to build or to test.
 

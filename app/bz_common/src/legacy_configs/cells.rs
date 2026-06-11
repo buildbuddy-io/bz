@@ -79,8 +79,7 @@ const BAZEL_PROJECT_ROOT_MARKERS: &[&str] = &["WORKSPACE.bazel", "WORKSPACE"];
 pub struct ExternalBuckconfigData {
     // The result of parsing the buckconfigs coming from either global (e.g. /etc/buckconfig.d) or
     // user (e.g. ~/.buckconfig.d or $home_dir/.buckconfig.local) files/dirs outside of the repo
-    // The order matters here and reflects the same order these are processed in buck, see
-    // https://fburl.com/code/8ue78p1j
+    // The order matters here and reflects the same order these are processed in buck.
     external_path_configs: Vec<ExternalPathBuckconfigData>,
     // The result of parsing the buckconfigs coming from command line args (e.g. --config or --config-file)
     args: Vec<ResolvedLegacyConfigArg>,
@@ -1701,7 +1700,7 @@ mod tests {
                 section: "parser",
                 property: "target_platform_detector_spec",
             }),
-            Some("target:gh_facebook_buck2//...->platforms//host:host"),
+            Some("target:bz//...->platforms//host:host"),
         );
 
         Ok(())
@@ -1716,11 +1715,11 @@ mod tests {
                 indoc!(
                     r#"
                     [cells]
-                        gh_facebook_buck2 = .
+                        bz = .
                         prelude = prelude
 
                     [cell_aliases]
-                        root = gh_facebook_buck2
+                        root = bz
                 "#
                 ),
             ),
@@ -1736,10 +1735,7 @@ mod tests {
 
         let cells = BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[]).await?;
         let root_config = cells
-            .parse_single_cell_with_file_ops(
-                CellName::testing_new("gh_facebook_buck2"),
-                &mut file_ops,
-            )
+            .parse_single_cell_with_file_ops(CellName::testing_new("bz"), &mut file_ops)
             .await?;
 
         assert_eq!(
@@ -1754,7 +1750,7 @@ mod tests {
                 section: "cell_aliases",
                 property: "root",
             }),
-            Some("gh_facebook_buck2"),
+            Some("bz"),
         );
         assert_eq!(
             root_config.get(BuckconfigKeyRef {
@@ -1782,8 +1778,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bazel_cell_alias_resolver_preserves_magic_bazel_tools() -> bz_error::Result<()>
-    {
+    async fn test_bazel_cell_alias_resolver_preserves_magic_bazel_tools() -> bz_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".buckconfig",
             indoc!(
@@ -1821,11 +1816,11 @@ mod tests {
             indoc!(
                 r#"
                     [cells]
-                        gh_facebook_buck2 = .
+                        bz = .
                         prelude = prelude
 
                     [cell_aliases]
-                        root = gh_facebook_buck2
+                        root = bz
                 "#
             ),
         )])?;
@@ -1840,7 +1835,7 @@ mod tests {
             &config,
         )?;
 
-        assert_eq!("gh_facebook_buck2", resolver.resolve("root")?.as_str());
+        assert_eq!("bz", resolver.resolve("root")?.as_str());
         assert!(resolver.resolve("bazel_tools").is_err());
 
         Ok(())

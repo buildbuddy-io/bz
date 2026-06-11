@@ -101,7 +101,7 @@ def get_packages_info(
         packagedb_args.add(hidden_args)
 
     # These we need to add for all the packages/dependencies, i.e.
-    # direct and transitive (e.g. `fbcode-common-hs-util-hs-array`)
+    # direct and transitive (e.g. `workspace-common-hs-util-hs-array`)
     packagedb_args.add([cmd_args("-package-db", x) for x in packagedb_set])
 
     haskell_direct_deps_lib_infos = attr_deps_haskell_lib_infos(

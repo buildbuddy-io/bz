@@ -17,4 +17,4 @@ this is not one $$$$$\$(macro)
 \$(macro) should not have a backslash
 $\(macro) in v1 wouldn't have a backslash, we do
 
-$(@query_targets "kind('^cxx_library$', deps(:fbandroid_exo-native)) - attrregexfilter(labels, '^(fb_xplat_cxx_library|fbcode_macros)$', kind('^cxx_library$', deps(:fbandroid_exo-native)))")
+$(@query_targets "kind('^cxx_library$', deps(:fbandroid_exo-native)) - attrregexfilter(labels, '^(xplat_cxx_library|local_macros)$', kind('^cxx_library$', deps(:fbandroid_exo-native)))")

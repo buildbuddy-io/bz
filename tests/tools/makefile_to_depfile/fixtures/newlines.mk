@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-buck-out/v2/gen/fbsource/999b02f9444004c1/some/path/gtest.pic.o: \
+buck-out/v2/gen/workspace/999b02f9444004c1/some/path/gtest.pic.o: \
   third-party/googletest/1.14.0/googletest/googletest/src/gtest-all.cc \
   third-party/googletest/1.14.0/googletest/googletest/src/gtest.cc \
   third-party/googletest/1.14.0/googletest/googletest/src/gtest-internal-inl.h \

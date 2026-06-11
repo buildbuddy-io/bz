@@ -23,7 +23,7 @@ from buck2.tests.core.common.io.file_watcher_tests import (
 from buck2.tests.e2e_util.api.buck import Buck
 
 
-# Setup repo structure to test these conditions: https://www.internalfb.com/excalidraw/EX346258
+# Setup repo structure to test SCM file-watcher transitions.
 async def setup_file_watcher_scm_test(buck: Buck) -> tuple[str, str, str, str]:
     # Run after setup_file_watcher_test to create a simple stack of commits
     commit_a = subprocess.check_output(["sl", "whereami"], cwd=buck.cwd).decode()
@@ -98,8 +98,7 @@ async def run_checkout_mergebase_changes_test(
         FileWatcherProvider.FS_HASH_CRAWLER,
         FileWatcherProvider.RUST_NOTIFY,
     ]:
-        # Stats only records the first 100 events (https://fburl.com/code/x9esqun4)
-        # so we can't verify the results when making commit transitions
+        # Stats only records the first 100 events, so we can't verify the results when making commit transitions.
         assert not is_fresh_instance
     else:
         # We might have some events even for a fresh instance, so we ignore

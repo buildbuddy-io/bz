@@ -6,8 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# @oss-disable[end= ]: load("@fbcode_macros//build_defs:platform_utils.bzl", "platform_utils")
-load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
+load("//rules:ci.bzl", "ci")
 
 def _impl(ctx: AnalysisContext) -> list[Provider]:
     out = ctx.actions.declare_output(ctx.attrs.name, dir = True, has_content_based_path = False)
@@ -34,12 +33,8 @@ download_rpm_impl = rule(
 def download_rpm(**kwargs):
     prelude = native
 
-    platform_utils = None # @oss-enable
-    dtp = platform_utils.get_cxx_platform_for_base_path(prelude.package_name()).target_platform if platform_utils else None
-
     download_rpm_impl(
-        download_tool = "fbcode//bz/deps/rpm_download:download.sh",
-        default_target_platform = dtp,
+        download_tool = "//deps/rpm_download:download.sh",
         visibility = ["PUBLIC"],
         labels = ci.remove_labels(
             ci.windows(),

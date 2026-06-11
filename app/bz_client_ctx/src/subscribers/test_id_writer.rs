@@ -147,12 +147,10 @@ mod tests {
             bz_data::buck_event::Data::Instant(bz_data::InstantEvent {
                 data: Some(
                     bz_data::TestDiscovery {
-                        data: Some(bz_data::test_discovery::Data::Tests(
-                            bz_data::TestSuite {
-                                test_names: vec!["test_foo".to_owned()],
-                                ..Default::default()
-                            },
-                        )),
+                        data: Some(bz_data::test_discovery::Data::Tests(bz_data::TestSuite {
+                            test_names: vec!["test_foo".to_owned()],
+                            ..Default::default()
+                        })),
                     }
                     .into(),
                 ),
@@ -167,7 +165,7 @@ mod tests {
         let mut writer = TestIdWriter::new(path.clone());
 
         let event = test_discovery_session_event(
-            "https://www.internalfb.com/intern/testinfra/testrun/10414574293803519",
+            "https://example.com/testrun/10414574293803519",
             Some("10414574293803519"),
         );
         writer.handle_events(&[event]).await?;
@@ -250,10 +248,7 @@ mod tests {
         let path = AbsPathBuf::new(dir.path().join("test_id.txt"))?;
         let mut writer = TestIdWriter::new(path.clone());
 
-        let event = test_discovery_session_event(
-            "https://www.internalfb.com/intern/testinfra/testrun/12345",
-            None,
-        );
+        let event = test_discovery_session_event("https://example.com/testrun/12345", None);
         let result = writer.handle_events(&[event]).await;
 
         assert!(result.is_err());
@@ -267,10 +262,7 @@ mod tests {
         let path = AbsPathBuf::new(dir.path().join("test_id.txt"))?;
         let mut writer = TestIdWriter::new(path.clone());
 
-        let event = test_discovery_session_event(
-            "https://www.internalfb.com/intern/testinfra/testrun/12345",
-            Some(""),
-        );
+        let event = test_discovery_session_event("https://example.com/testrun/12345", Some(""));
         let result = writer.handle_events(&[event]).await;
 
         assert!(result.is_err());

@@ -105,7 +105,7 @@ fn starlark_analysis_result_methods(builder: &mut MethodsBuilder) {
     /// Each struct has three fields:
     /// - `name`: The provider type name (e.g., `"DefaultInfo"`, `"FooInfo"`)
     /// - `path`: The cell path of the `.bzl` file where the provider was defined
-    ///   (e.g., `"fbcode//pkg/defs.bzl"`), or `None` for built-in providers
+    ///   (e.g., `"root//pkg/defs.bzl"`), or `None` for built-in providers
     /// - `value`: The provider instance itself
     ///
     /// This enables BXL scripts to enumerate all providers on a target without

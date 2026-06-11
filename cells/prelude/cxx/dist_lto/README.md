@@ -40,8 +40,7 @@ flowchart LR;
     c.o --> main;
 ```
 
-([Rendered](https://fburl.com/mermaid/rzup8o32). Compilation and optimization of
-a, b, and c can proceed in parallel.)
+Compilation and optimization of a, b, and c can proceed in parallel.
 
 In cases where absolute performance is required, though, the inability to
 perform cross-translation-unit (or "cross-module", in LLVM parlance)
@@ -84,10 +83,9 @@ flowchart LR;
     main.o --> |ld| main
 ```
 
-([Rendered](https://fburl.com/mermaid/kid35io9). `a.bc`, `b.bc`, and `c.bc` are
-LLVM bitcode; they are all merged together into a single module,
+`a.bc`, `b.bc`, and `c.bc` are LLVM bitcode; they are all merged together into a single module,
 `a_b_c_optimized.bc`, which is then optimized and codegen'd into a final
-binary.)
+binary.
 
 The idea of ThinLTO comes from a desire to maintain the ability to optimize
 modules in parallel while still allowing for profitable cross-module
@@ -130,8 +128,6 @@ flowchart LR;
     c.o --> main;
 ```
 
-([Rendered](https://fburl.com/mermaid/56oc99t5))
-
 The `index` step looks like a link step. However, it does not produce a final
 binary; instead, it looks at every compiler IR input file that it receives and
 heuristically determines which other IR modules it should be optimized with in
@@ -155,8 +151,7 @@ compilation by pushing the majority of work to the parallel `opt` phase of
 execution. When LLVM performs ThinLTO by default, it will launch a thread pool
 and process independent modules in parallel. ThinLTO does not produce as
 performant a binary as a monolithic LTO; however, in practice, ThinLTO binaries
-[paired with AutoFDO](https://fburl.com/wiki/q480euco) perform comparably to
-monolithic LTO. Furthermore, ThinLTO's greater efficiency allows for more
+paired with AutoFDO perform comparably to monolithic LTO. Furthermore, ThinLTO's greater efficiency allows for more
 expensive optimization passes to be run, which can further improve code quality
 near that of a monolithic LTO.
 
@@ -173,8 +168,7 @@ actions that directly mirrors the graph that the `index` step outputs. The graph
 that the `index` step outputs is entirely dynamic and, as such, the build system
 is only aware of what the graph could be after the `index` step is complete.
 Unlike Buck1 (or even Blaze/Bazel), Buck2 has explicit support for this paradigm
-[("dynamic dependencies")](https://fburl.com/gdoc/zklwhkll). Therefore, for
-Buck2, the basic strategy looks like:
+("dynamic dependencies"). Therefore, for Buck2, the basic strategy looks like:
 
 1. Invoke `clang` to act as `index`. `index` will output a file for every object
    file that indicates what other modules need to be present when running `opt`

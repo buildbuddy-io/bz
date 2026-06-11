@@ -63,10 +63,7 @@ impl ArtifactFs {
             .resolve_gen_configuration_hash_path(path)
     }
 
-    pub fn resolve_cell_path(
-        &self,
-        path: CellPathRef,
-    ) -> bz_error::Result<ProjectRelativePathBuf> {
+    pub fn resolve_cell_path(&self, path: CellPathRef) -> bz_error::Result<ProjectRelativePathBuf> {
         self.cell_resolver.resolve_path(path)
     }
 

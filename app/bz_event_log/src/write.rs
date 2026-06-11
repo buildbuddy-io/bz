@@ -258,8 +258,7 @@ async fn start_persist_event_log_subprocess(
 ) -> bz_error::Result<NamedEventLogWriter> {
     let current_exe = std::env::current_exe().buck_error_context("No current_exe")?;
     let mut command = bz_util::process::async_background_command(current_exe);
-    // @oss-disable: #[cfg(unix)]
-    #[cfg(all(tokio_unstable, unix))] // @oss-enable
+    #[cfg(all(tokio_unstable, unix))]
     {
         // Ensure that if we get CTRL-C, the persist-event-logs process does not get it.
         command.process_group(0);
@@ -494,12 +493,10 @@ mod tests {
             Some(SpanId::next()),
             None,
             bz_data::buck_event::Data::SpanStart(SpanStartEvent {
-                data: Some(bz_data::span_start_event::Data::Load(
-                    LoadBuildFileStart {
-                        module_id: "foo".to_owned(),
-                        cell: "bar".to_owned(),
-                    },
-                )),
+                data: Some(bz_data::span_start_event::Data::Load(LoadBuildFileStart {
+                    module_id: "foo".to_owned(),
+                    cell: "bar".to_owned(),
+                })),
             }),
         )
     }

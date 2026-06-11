@@ -8,8 +8,6 @@
 # above-listed licenses.
 
 
-# credits to implementation in https://www.internalfb.com/code/fbsource/fbcode/eden/addons/build-tar.py
-
 import argparse
 import atexit
 import functools

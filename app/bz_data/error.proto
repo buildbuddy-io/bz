@@ -253,7 +253,7 @@ enum ErrorTag {
 
   ///// Remote Execution
   RE_UNKNOWN_TCODE = 1300;
-  // RE TCode values: https://fburl.com/code/1ael5pmz
+  // RE TCode values.
   RE_CANCELLED = 1301;
   RE_UNKNOWN = 1302;
   RE_INVALID_ARGUMENT = 1303;
@@ -281,13 +281,13 @@ enum ErrorTag {
   RE_CAS_ARTIFACT_EXPIRED = 1325;
   RE_INVALID_GET_CAS_RESPONSE = 1326;
 
-  // TCodeReasonGroup values: https://fburl.com/code/pvsy2jgv
+  // TCodeReasonGroup values.
   RE_CONNECTION = 1340;
   RE_USER_QUOTA = 1341;
   RE_USER_BAD_CERTS = 1342;
 
   // Dice Errors
-  // Value: https://fburl.com/code/5dxzaw41
+  // Value.
   DICE_DUPLICATED_CHANGE = 1400;
   DICE_CHANGED_TO_INVALID = 1401;
   DICE_INJECTED_KEY_GOT_INVALIDATION = 1402;

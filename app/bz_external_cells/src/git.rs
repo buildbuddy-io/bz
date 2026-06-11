@@ -90,7 +90,7 @@ impl IoRequest for GitFetchIoRequest {
         fs_util::create_dir_all(path.clone())?;
 
         // FIXME(JakobDegen): Ideally we'd use libgit2 directly here instead of shelling out, but
-        // unfortunately the third party situation for that library in fbsource isn't great, so
+        // unfortunately the third party situation for that library in workspace isn't great, so
         // let's do this for now
         fn run_git(cwd: &AbsNormPath, f: impl FnOnce(&mut Command)) -> bz_error::Result<()> {
             let mut cmd = background_command("git");

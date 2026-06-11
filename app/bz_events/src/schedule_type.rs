@@ -20,13 +20,11 @@ impl SandcastleScheduleType {
     const SCHEDULE_TYPE_DIFF: &'static str = "diff";
 
     pub fn new() -> bz_error::Result<Self> {
-        // Same as RE does https://fburl.com/code/sj13r130
-        let schedule_type =
-            if let Some(env) = bz_env!("SCHEDULE_TYPE", applicability = internal)? {
-                Some(env)
-            } else {
-                bz_env!("SANDCASTLE_SCHEDULE_TYPE", applicability = internal)?
-            };
+        let schedule_type = if let Some(env) = bz_env!("SCHEDULE_TYPE", applicability = internal)? {
+            Some(env)
+        } else {
+            bz_env!("SANDCASTLE_SCHEDULE_TYPE", applicability = internal)?
+        };
         Ok(Self { schedule_type })
     }
 

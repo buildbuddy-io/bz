@@ -17,8 +17,6 @@ use bz_common::init::DaemonStartupConfig;
 use bz_common::invocation_roots::InvocationRoots;
 use bz_common::invocation_roots::find_invocation_roots;
 use bz_common::legacy_configs::cells::BuckConfigBasedCells;
-#[cfg(fbcode_build)]
-use bz_common::legacy_configs::key::BuckconfigKeyRef;
 use bz_core::bz_env;
 use bz_core::cells::CellAliasResolver;
 use bz_core::cells::CellResolver;
@@ -39,8 +37,6 @@ struct ImmediateConfig {
     cell_resolver: CellResolver,
     cwd_cell_alias_resolver: CellAliasResolver,
     daemon_startup_config: DaemonStartupConfig,
-    #[cfg(fbcode_build)]
-    show_sentiment: bool,
 }
 
 impl ImmediateConfig {
@@ -62,14 +58,6 @@ impl ImmediateConfig {
             cwd_cell_alias_resolver,
             daemon_startup_config: DaemonStartupConfig::new(&cells.root_config)
                 .buck_error_context("Error loading daemon startup config")?,
-            #[cfg(fbcode_build)]
-            show_sentiment: cells
-                .root_config
-                .get(BuckconfigKeyRef {
-                    section: "experiments",
-                    property: "sentiment",
-                })
-                .is_some_and(|v| v == "true"),
         })
     }
 }
@@ -81,8 +69,6 @@ struct ImmediateConfigContextData {
     cwd_cell_alias_resolver: CellAliasResolver,
     daemon_startup_config: DaemonStartupConfig,
     project_filesystem: ProjectRoot,
-    #[cfg(fbcode_build)]
-    show_sentiment: bool,
 }
 
 pub struct ImmediateConfigContext<'a> {
@@ -117,11 +103,6 @@ impl<'a> ImmediateConfigContext<'a> {
         Ok(&self.data()?.daemon_startup_config)
     }
 
-    #[cfg(fbcode_build)]
-    pub fn show_sentiment(&self) -> bool {
-        self.data().map(|d| d.show_sentiment).unwrap_or(false)
-    }
-
     /// Resolves a cell path (i.e., contains `//`) into an absolute path. The cell path must have
     /// been split into two components: `cell_alias` and `cell_path`. For example, if the cell path
     /// is `cell//path/to/file`, then:
@@ -150,10 +131,7 @@ impl<'a> ImmediateConfigContext<'a> {
             .resolve(data.cell_resolver.resolve_path(path)?))
     }
 
-    pub fn resolve_alias_to_path_in_cwd(
-        &self,
-        alias: &str,
-    ) -> bz_error::Result<CellRootPathBuf> {
+    pub fn resolve_alias_to_path_in_cwd(&self, alias: &str) -> bz_error::Result<CellRootPathBuf> {
         let data = self.data()?;
         let cell = data.cwd_cell_alias_resolver.resolve(alias)?;
         Ok(data.cell_resolver.get(cell)?.path().to_buf())
@@ -190,8 +168,6 @@ impl<'a> ImmediateConfigContext<'a> {
                     cwd_cell_alias_resolver: cfg.cwd_cell_alias_resolver,
                     daemon_startup_config,
                     project_filesystem: roots.project_root,
-                    #[cfg(fbcode_build)]
-                    show_sentiment: cfg.show_sentiment,
                 })
             })
             .buck_error_context("Error creating cell resolver")
@@ -234,8 +210,8 @@ fn is_paranoid_enabled(path: &AbsPath) -> bz_error::Result<bool> {
         None => return Ok(false),
     };
 
-    let info = bz_cli_proto::ParanoidInfo::decode(bytes.as_slice())
-        .buck_error_context("Invalid data ")?;
+    let info =
+        bz_cli_proto::ParanoidInfo::decode(bytes.as_slice()).buck_error_context("Invalid data ")?;
 
     let now = SystemTime::now();
     let expires_at = SystemTime::try_from(

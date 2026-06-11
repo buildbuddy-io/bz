@@ -14,7 +14,5 @@ pub(crate) mod channel;
 pub mod error_on_event;
 pub mod null;
 pub mod remote;
-#[cfg(fbcode_build)]
-pub(crate) mod scribe;
 pub(crate) mod smart_truncate_event;
 pub mod tee;

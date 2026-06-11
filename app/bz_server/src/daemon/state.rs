@@ -39,10 +39,8 @@ use bz_core::bz_env;
 use bz_core::cells::cell_root_path::CellRootPath;
 use bz_core::cells::external::ExternalCellOrigin;
 use bz_core::cells::name::CellName;
-use bz_core::facebook_only;
 use bz_core::fs::project::ProjectRoot;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
-use bz_core::is_open_source;
 use bz_core::rollout_percentage::RolloutPercentage;
 use bz_core::tag_result;
 use bz_error::BuckErrorContext;
@@ -429,13 +427,8 @@ impl DaemonState {
             let default_digest_algorithm =
                 bz_env!("BUCK_DEFAULT_DIGEST_ALGORITHM", type=DigestAlgorithmFamily)?;
 
-            let default_digest_algorithm = default_digest_algorithm.unwrap_or_else(|| {
-                if bz_core::is_open_source() {
-                    DigestAlgorithmFamily::Sha256
-                } else {
-                    DigestAlgorithmFamily::Sha1
-                }
-            });
+            let default_digest_algorithm =
+                default_digest_algorithm.unwrap_or(DigestAlgorithmFamily::Sha256);
 
             let digest_algorithms = init_ctx
                 .daemon_startup_config
@@ -801,11 +794,6 @@ impl DaemonState {
                 format!("paranoid:{}", paranoid.is_some()),
                 format!("remote-dep-files:{}", remote_dep_files_enabled),
                 format!("local-action-cache:{}", local_action_cache_enabled),
-                #[cfg(fbcode_build)]
-                format!(
-                    "respect-file-symlinks:{}",
-                    static_metadata.respect_file_symlinks
-                ),
                 format!(
                     "disable-eager-write-dispatch-v2:{}",
                     disable_eager_write_dispatch,
@@ -902,7 +890,6 @@ impl DaemonState {
         fb: FacebookInit,
         config: ScribeConfig,
     ) -> bz_error::Result<Option<Arc<dyn EventSinkWithStats>>> {
-        facebook_only();
         remote::new_remote_event_sink_if_enabled(fb, config)
             .map(|maybe_scribe| maybe_scribe.map(|scribe| Arc::new(scribe) as _))
     }
@@ -914,7 +901,6 @@ impl DaemonState {
         trace_id: TraceId,
     ) -> bz_error::Result<(ChannelEventSource, EventDispatcher)> {
         // facebook only: logging events to Scribe.
-        facebook_only();
         let (events, sink) = bz_events::create_source_sink_pair();
         let data = self.data();
         let dispatcher = if let Some(scribe_sink) = data.scribe_sink.dupe() {
@@ -1007,55 +993,6 @@ impl DaemonState {
     }
 
     pub fn validate_buck_out_mount(&self) -> bz_error::Result<()> {
-        #[cfg(fbcode_build)]
-        {
-            use bz_core::soft_error;
-            use bz_fs::error::IoResultExt;
-            use bz_fs::fs_util;
-
-            let project_root = self.paths.project_root().root();
-            if !detect_eden::is_eden(project_root.to_path_buf())? {
-                return Ok(());
-            }
-
-            let buck_out_root = project_root.join(InvocationPaths::buck_out_dir_prefix());
-
-            if let Some(buck_out_root_meta) = fs_util::symlink_metadata_if_exists(buck_out_root)? {
-                // If buck-out is a symlink, we'll be happy with that.
-                if buck_out_root_meta.is_symlink() {
-                    return Ok(());
-                }
-
-                // If we are on UNIX, then buck-out could also be on a different device from the repo.
-                // We don't check which kind of device, we just assume it's not mounted completely
-                // wrong.
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-
-                    let project_device = fs_util::symlink_metadata(project_root)
-                        .categorize_internal()?
-                        .dev();
-                    let buck_out_device = buck_out_root_meta.dev();
-
-                    if project_device != buck_out_device {
-                        return Ok(());
-                    }
-                }
-            }
-
-            soft_error!(
-                "eden_buck_out",
-                bz_error::bz_error!(
-                    bz_error::ErrorTag::Environment,
-                    "Buck is running in an Eden repository, but `buck-out` is not redirected. \
-                     This will likely lead to failed or slow builds. \
-                     To remediate, run `eden redirect fixup`."
-                ),
-                quiet:false
-            )?;
-        }
-
         Ok(())
     }
 }
@@ -1066,21 +1003,13 @@ fn convert_algorithm_kind(kind: DigestAlgorithmFamily) -> bz_error::Result<Diges
         DigestAlgorithmFamily::Sha256 => DigestAlgorithm::Sha256,
         DigestAlgorithmFamily::Blake3 => DigestAlgorithm::Blake3,
         DigestAlgorithmFamily::Blake3Keyed => {
-            #[cfg(fbcode_build)]
-            {
-                DigestAlgorithm::Blake3Keyed
-            }
-
-            #[cfg(not(fbcode_build))]
-            {
-                // We probably should just add it as a separate buckconfig, there is
-                // zero reason not to.
-                return Err(bz_error::bz_error!(
-                    bz_error::ErrorTag::Input,
-                    "{} is not supported in the open source build",
-                    kind
-                ));
-            }
+            // We probably should just add it as a separate buckconfig, there is
+            // zero reason not to.
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
+                "{} is not supported in standalone builds",
+                kind
+            ));
         }
     })
 }
@@ -1094,11 +1023,7 @@ const DEFAULT_READ_TIMEOUT_MS: u64 = 10000;
 async fn http_client_from_startup_config(
     config: &DaemonStartupConfig,
 ) -> bz_error::Result<HttpClientBuilder> {
-    let mut builder = if is_open_source() {
-        HttpClientBuilder::oss().await?
-    } else {
-        HttpClientBuilder::internal().await?
-    };
+    let mut builder = HttpClientBuilder::oss().await?;
     builder.with_max_redirects(config.http.max_redirects.unwrap_or(DEFAULT_MAX_REDIRECTS));
     builder.with_http2(config.http.http2);
     builder.with_max_concurrent_requests(config.http.max_concurrent_requests);

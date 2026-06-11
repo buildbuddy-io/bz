@@ -1,4 +1,4 @@
-load("@fbcode//bz:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
+load("//:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 
 oncall("build_infra")
 
@@ -8,9 +8,9 @@ rust_protobuf_library(
     build_script = "build.rs",
     proto_srcs = ":bz_downward_api_proto.proto",
     deps = [
-        "fbsource//third-party/rust:tracing",
-        "//bz/app/bz_error:bz_error",
-        "//bz/deps/bz_hash:bz_hash",
+        "third_party//rust:tracing",
+        "//app/bz_error:bz_error",
+        "//deps/bz_hash:bz_hash",
     ],
 )
 

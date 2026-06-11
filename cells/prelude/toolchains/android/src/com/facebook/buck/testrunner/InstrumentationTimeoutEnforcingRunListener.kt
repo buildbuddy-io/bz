@@ -99,8 +99,7 @@ class InstrumentationTimeoutEnforcingRunListener(private val xmlListener: ITestR
 
     val message =
         "Test timed out after ${timeoutMs}ms. " +
-            "If your test needs to run longer than ${timeoutMs / 1000} seconds, add the tpx long_running or glacial tag in the labels section of the BUCK target. " +
-            "See https://fb.workplace.com/groups/android.testing.fyi/permalink/2679204925789466/ for more details"
+            "If your test needs to run longer than ${timeoutMs / 1000} seconds, add the tpx long_running or glacial tag in the labels section of the BUCK target."
     System.err.println(message)
 
     // Notify the XML listener about the failure

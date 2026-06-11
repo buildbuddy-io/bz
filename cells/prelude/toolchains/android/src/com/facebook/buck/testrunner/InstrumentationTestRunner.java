@@ -1161,7 +1161,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
   }
 
   public Path createTRALogcatLog(String description, String name) throws IOException {
-    // Use Logcat type(id = 4 https://fburl.com/code/8xzvasdf)
+    // Use Logcat type(id = 4
     String annotationTemplate =
         String.format(
             "{\"type\": {\"formatted_log\": {\"log_source\": 4}}, \"description\": \"%s\"}",
@@ -1170,7 +1170,7 @@ public class InstrumentationTestRunner extends DeviceRunner {
   }
 
   public Path createTRAPlainTextLog(String description, String name) throws IOException {
-    // Use PLAIN_TEXT type(id = 5 https://fburl.com/code/8xzvasdf)
+    // Use PLAIN_TEXT type(id = 5
     String annotationTemplate =
         String.format(
             "{\"type\": {\"formatted_log\": {\"log_source\": 5}}, \"description\": \"%s\"}",

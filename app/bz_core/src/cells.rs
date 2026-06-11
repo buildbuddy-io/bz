@@ -385,8 +385,8 @@ impl CellResolver {
     }
 
     /// Get a `CellName` from a path by finding the best matching cell path that
-    /// is a prefix of the current path relative to the project root. e.g. `fbcode/foo/bar` matches
-    /// cell path `fbcode`.
+    /// is a prefix of the current path relative to the project root. e.g. `workspace/foo/bar` matches
+    /// cell path `workspace`.
     pub fn find<P: AsRef<ProjectRelativePath> + ?Sized>(&self, path: &P) -> CellName {
         *self
             .0
@@ -457,10 +457,7 @@ impl CellResolver {
     ///
     /// # bz_error::Ok(())
     /// ```
-    pub fn resolve_path(
-        &self,
-        cell_path: CellPathRef,
-    ) -> bz_error::Result<ProjectRelativePathBuf> {
+    pub fn resolve_path(&self, cell_path: CellPathRef) -> bz_error::Result<ProjectRelativePathBuf> {
         Ok(self.get(cell_path.cell())?.path().join(cell_path.path()))
     }
 

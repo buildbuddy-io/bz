@@ -7,9 +7,6 @@
 [cell_aliases]
   config = prelude
   ovr_config = prelude
-  fbcode = none
-  fbsource = none
-  fbcode_macros = none
   buck = none
 
 # Uses a copy of the prelude bundled with the buck2 binary. You can alternatively delete this

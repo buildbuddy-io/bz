@@ -67,14 +67,8 @@ impl ReStdStream {
     }
 
     fn download_blob_help(digest: &TDigest, digest_config: DigestConfig) -> String {
-        if bz_core::is_open_source() {
-            String::new()
-        } else {
-            format!(
-                " - to view type `frecli cas download-blob {}`",
-                FileDigest::from_re(digest, digest_config).as_display()
-            )
-        }
+        let _unused = (digest, digest_config);
+        String::new()
     }
 
     pub(crate) async fn to_lossy(

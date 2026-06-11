@@ -31,9 +31,9 @@ async def collect_coverage_for(
     buck_args.extend(
         [
             "--config",
-            "fbcode.coverage_selective=true",
+            "workspace.coverage_selective=true",
             "--config",
-            f"fbcode.cxx_coverage_only={filter_str}",
+            f"workspace.cxx_coverage_only={filter_str}",
             target,
             "--",
             "--collect-coverage",

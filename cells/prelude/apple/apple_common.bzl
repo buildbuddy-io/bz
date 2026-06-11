@@ -11,7 +11,6 @@
 # the generated docs, and so those should be verified to be accurate and
 # well-formatted (and then delete this TODO)
 
-load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load(":apple_toolchain_types.bzl", "AppleToolchainInfo", "AppleToolsInfo")
 
 def _headers_arg():
@@ -174,27 +173,7 @@ def _uses_explicit_modules_arg():
     }
 
 def _meta_apple_library_validation_enabled_default_value():
-    if not is_full_meta_repo():
-        return False
-
-    meta_apple_library_validation_enabled_default = (read_root_config("apple", "meta_apple_library_validation", "false").lower() == "true")
-
-    is_arvr_build = (read_root_config("fb", "arvr_build", "false").lower() == "true")
-    if is_arvr_build:
-        # Not all arvr builds have `arvr_mode_enabled` constraint, so under arvr
-        # build mode, always disable suffixing checks as those graphs are not suffixed
-        return False
-
-    return select({
-        "DEFAULT": select({
-            "DEFAULT": meta_apple_library_validation_enabled_default,
-            "config//features/apple:fb_xplat_suffixing_check_disabled": False,
-            "config//features/apple:fb_xplat_suffixing_check_enabled": True,
-        }),
-        # arvr targets do not use suffixed targets, as any xplat target deps
-        # get rewritten without the Apple-specific suffixes.
-        "config//build_mode:arvr_mode[enabled]": False,
-    })
+    return False
 
 def _meta_apple_library_validation_enabled_arg():
     return {
@@ -202,14 +181,7 @@ def _meta_apple_library_validation_enabled_arg():
     }
 
 def _skip_universal_resource_dedupe_default_value():
-    if not is_full_meta_repo():
-        return False
-
-    return select({
-        "DEFAULT": False,
-        "config//features/apple:skip_universal_resource_dedupe_disabled": False,
-        "config//features/apple:skip_universal_resource_dedupe_enabled": True,
-    })
+    return False
 
 def _skip_universal_resource_dedupe_arg():
     return {
@@ -217,12 +189,7 @@ def _skip_universal_resource_dedupe_arg():
     }
 
 def _apple_sanitizer_compatibility_arg():
-    if not is_full_meta_repo():
-        return {}
-
-    return {
-        "_sanitizer_compatibility": attrs.default_only(attrs.dep(default = "fbsource//tools/build_defs/apple/sanitizers:sanitizer_compatibility")),
-    }
+    return {}
 
 def _apple_tools_arg():
     return {
@@ -268,7 +235,7 @@ def _asset_catalogs_compilation_options_arg():
     }
 
 def _apple_installer_arg():
-    installer_target = "fbsource//xplat/buck2/platform/apple/python_installer:apple_installer"
+    installer_target = "prelude//apple/tools:apple_installer"
     return {
         "installer": attrs.default_only(attrs.exec_dep(default = installer_target)),
     }

@@ -8,7 +8,7 @@ source_listing()
 standard_java_test(
     name = "testresultsoutput",
     vm_args = [
-        # Needed for "fbsource//third-party/java/system-rules:system-rules"
+        # Needed for "third_party//java/system-rules:system-rules"
         "--add-opens=java.base/java.util=ALL-UNNAMED",
     ],
     deps = [

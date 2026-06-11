@@ -44,7 +44,7 @@ impl HelpEnvCommand {
             .filter(|x| match x.applicability {
                 Applicability::All => true,
                 Applicability::Testing => self.self_testing,
-                Applicability::Internal => !bz_core::is_open_source(),
+                Applicability::Internal => false,
             })
             .collect();
         env_info.sort();

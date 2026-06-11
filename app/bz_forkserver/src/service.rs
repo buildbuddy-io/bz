@@ -222,12 +222,6 @@ impl UnixForkserverService {
         if validated_cmd.network_access == Some(bz_data::NetworkAccess::None)
             && validated_cmd.command_cgroup.is_some()
         {
-            #[cfg(fbcode_build)]
-            {
-                cmd.env("INSIDE_NETWORK_ISOLATION", "1");
-                cmd.env("DOTSLASH_OFFLINE", "1");
-            }
-
             use std::os::unix::process::CommandExt;
             // Safety: unshare() is async-signal-safe.
             // It only makes a single syscall with no memory allocation.
@@ -392,17 +386,7 @@ struct MiniperfContainer {
 
 impl MiniperfContainer {
     fn new(forkserver_state_dir: &AbsNormPath) -> bz_error::Result<Option<Self>> {
-        let miniperf_bin: Option<&'static [u8]>;
-
-        #[cfg(all(fbcode_build, target_os = "linux"))]
-        {
-            miniperf_bin = Some(bz_miniperf_data::get());
-        }
-
-        #[cfg(not(all(fbcode_build, target_os = "linux")))]
-        {
-            miniperf_bin = None;
-        }
+        let miniperf_bin: Option<&'static [u8]> = None;
 
         let miniperf_bin = match miniperf_bin {
             Some(m) => m,

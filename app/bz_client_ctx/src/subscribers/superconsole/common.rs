@@ -63,11 +63,7 @@ pub(crate) struct StaticStringComponent<S: AsRef<str>> {
 impl<S: AsRef<str>> Component for StaticStringComponent<S> {
     type Error = bz_error::Error;
 
-    fn draw_unchecked(
-        &self,
-        _dimensions: Dimensions,
-        _mode: DrawMode,
-    ) -> bz_error::Result<Lines> {
+    fn draw_unchecked(&self, _dimensions: Dimensions, _mode: DrawMode) -> bz_error::Result<Lines> {
         Ok(Lines(vec![Line::unstyled(self.header.as_ref())?]))
     }
 }

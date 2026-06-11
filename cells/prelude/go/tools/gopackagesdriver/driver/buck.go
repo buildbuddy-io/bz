@@ -75,8 +75,8 @@ func fixupRelPathLine(projectDir, line string) string {
 }
 
 // fixRePath updates lines like
-// "//line fbcode/third-party-go/vendor/github.com/aquasecurity/libbpfgo/libbpfgo.go:1:1"
-// to "//line /home/user1/fbsource/fbcode/third-party-go/vendor/github.com/aquasecurity/libbpfgo/libbpfgo.go:1:1"
+// "//line workspace/third-party-go/vendor/github.com/aquasecurity/libbpfgo/libbpfgo.go:1:1"
+// to "//line /home/user1/workspace/workspace/third-party-go/vendor/github.com/aquasecurity/libbpfgo/libbpfgo.go:1:1"
 // to proper full path to local checkout
 func fixRePath(platform Platform, file string) error {
 	content, err := os.ReadFile(file)
@@ -143,7 +143,7 @@ func (b *buckShell) BXL(ctx context.Context, label string, args []string) ([]byt
 	return data, nil
 }
 
-// Use this hacky way to get errors until https://fburl.com/workplace/q79a59rn implemented
+// Use this hacky way to get errors until implemented
 func retriveActionErrors(buckStderr []byte) string {
 	logPrefix := regexp.MustCompile(`^\[\S+\]\s*`)
 	scanner := bufio.NewScanner(bytes.NewReader(buckStderr))

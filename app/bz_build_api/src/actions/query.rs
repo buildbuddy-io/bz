@@ -329,7 +329,7 @@ impl QueryTarget for ActionQueryNode {
         Cow::Owned(self.node_key().to_string())
     }
 
-    /// Return the path to the buildfile that defines this target, e.g. `fbcode//foo/bar/TARGETS`
+    /// Return the path to the buildfile that defines this target, e.g. `root//foo/bar/TARGETS`
     fn buildfile_path(&self) -> &BuildFilePath {
         // TODO(cjhopman): In addition to implementing this, we should be able to return an bz_error::Error here rather than panicking.
         unimplemented!("buildfile not yet implemented in aquery")

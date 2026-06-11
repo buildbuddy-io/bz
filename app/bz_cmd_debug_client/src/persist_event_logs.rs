@@ -77,7 +77,6 @@ impl PersistEventLogsCommand {
         ctx: ClientCommandContext<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
-        bz_core::facebook_only();
         events_ctx.log_invocation_record = false;
         let sink = create_scribe_sink(&ctx)?;
         let trace_id = self.trace_id.clone();
@@ -114,10 +113,7 @@ impl PersistEventLogsCommand {
             Err(e) => {
                 return (
                     Err(e),
-                    Err(bz_error::bz_error!(
-                        bz_error::ErrorTag::Tier0,
-                        "Not tried"
-                    )),
+                    Err(bz_error::bz_error!(bz_error::ErrorTag::Tier0, "Not tried")),
                 );
             }
         };

@@ -10,9 +10,8 @@
 
 package com.facebook.kotlin.compilerplugins.kosabi.stubsgen.plugin.stubsgen_k2
 
-import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.generators.StubsGenAPI // @oss-enable
+import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.generators.StubsGenAPI
 import com.facebook.kotlin.compilercompat.FirAnalysisHandlerExtensionCompat
-// @oss-disable: import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.generators.meta_only.StubsGenApiImpl
 import java.io.File
 import kotlin.collections.component1
 import kotlin.collections.component2
@@ -43,8 +42,7 @@ class StubsCodegenK2FirAnalysisHandlerExtension(
               EnvironmentConfigFiles.JVM_CONFIG_FILES,
           )
       val ktFiles = environment.getSourceFiles()
-      StubsGenAPI( // @oss-enable
-      // @oss-disable: StubsGenApiImpl(
+      StubsGenAPI(
               stubsDumpDir,
               stubsClassOutputDir,
               classPaths,

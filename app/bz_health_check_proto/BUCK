@@ -1,6 +1,5 @@
-load("@fbcode//bz:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
-load("@fbcode//grpc_fb/codegen:buck_macros.bzl", "grpc_library")
-load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
+load("//:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
+load("//rules:grpc.bzl", "grpc_library")
 
 oncall("build_infra")
 
@@ -10,8 +9,8 @@ rust_protobuf_library(
     build_script = "build.rs",
     proto_srcs = ":bz_health_check_proto.proto",
     deps = [
-        "fbsource//third-party/rust:prost-types",
-        "//bz/app/bz_data:bz_data",
+        "third_party//rust:prost-types",
+        "//app/bz_data:bz_data",
     ],
 )
 
@@ -20,7 +19,7 @@ proto_srcs(
     srcs = ["health_check.proto"],
     visibility = ["PUBLIC"],
     deps = [
-        translate_target("//bz/app/bz_data:data_proto"),
+        "//app/bz_data:data_proto",
     ],
 )
 
@@ -28,9 +27,9 @@ grpc_library(
     name = "health_check",
     srcs = [
         "health_check.proto",
-        "//bz/app/bz_data:data.proto",
-        "//bz/app/bz_data:error.proto",
-        "//bz/app/bz_host_sharing_proto:host_sharing_proto",
+        "//app/bz_data:data.proto",
+        "//app/bz_data:error.proto",
+        "//app/bz_host_sharing_proto:host_sharing_proto",
     ],
     languages = [
         "py",

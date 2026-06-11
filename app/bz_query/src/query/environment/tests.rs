@@ -144,10 +144,7 @@ impl NodeLookup<TestTarget> for TestEnv {
 
 #[async_trait]
 impl AsyncNodeLookup<TestTarget> for TestEnv {
-    async fn get(
-        &self,
-        label: &<TestTarget as LabeledNode>::Key,
-    ) -> bz_error::Result<TestTarget> {
+    async fn get(&self, label: &<TestTarget as LabeledNode>::Key) -> bz_error::Result<TestTarget> {
         self.graph
             .get(label)
             .duped()
@@ -173,10 +170,7 @@ impl QueryEnvironment for TestEnv {
         unimplemented!()
     }
 
-    async fn eval_literals(
-        &self,
-        _literal: &[&str],
-    ) -> bz_error::Result<TargetSet<Self::Target>> {
+    async fn eval_literals(&self, _literal: &[&str]) -> bz_error::Result<TargetSet<Self::Target>> {
         unimplemented!()
     }
 

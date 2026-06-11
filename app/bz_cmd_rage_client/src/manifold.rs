@@ -19,7 +19,7 @@ use bz_fs::paths::abs_path::AbsPath;
 pub(crate) fn manifold_leads(bucket: &Bucket, filename: String) -> String {
     let full_path = bucket.path(filename.as_str());
     let command = format!("manifold get {full_path}");
-    let url = bucket.intern_url(filename.as_str());
+    let url = bucket.artifact_url(filename.as_str());
     format!("{command}\n{url}")
 }
 

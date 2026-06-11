@@ -92,7 +92,6 @@ members = [
     "app/bz_critical_path",
     "app/bz_build_signals",
     "app/bz_build_signals_impl",
-    "app/bz_eden",
     "app/bz_validation",
     "app/bz_host_sharing_proto",
     "deps/dice/dice",
@@ -100,9 +99,7 @@ members = [
     "deps/dice/dice_examples",
     "deps/dice/dice_futures",
     "deps/dice/dice_tests",
-    # @oss-disable: "deps/dice/fuzzy_dice",
     "deps/dice/read_dump",
-    # @oss-disable: "deps/host_sharing",
     "deps/games",
     "deps/gazebo/display_container",
     "deps/gazebo/cmp_any",
@@ -138,7 +135,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/facebook/buck2"
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(fbcode_build)', 'cfg(buck_build)'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(buck_build)'] }
 
 [workspace.dependencies]
 anyhow = "1.0.98"
@@ -353,10 +350,8 @@ xz2 = "0.1.7"
 zstd = "0.13.3"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 
-# @oss-disable: fbinit.path = "../common/rust/shed/fbinit"
 fbinit.version = "0.2"
-# @oss-disable: sorted_vector_map.path = "../common/rust/shed/sorted_vector_map"
-sorted_vector_map.git = "https://github.com/facebookexperimental/rust-shed" # @oss-enable
+sorted_vector_map.git = "https://github.com/facebookexperimental/rust-shed"
 sorted_vector_map.version = "0.2"
 
 allocative.features = ["anyhow", "bumpalo", "dashmap", "either", "futures", "hashbrown", "indexmap", "num-bigint", "once_cell", "parking_lot", "prost-types", "relative-path", "serde_json", "slab", "smallvec", "compact_str", "sorted_vector_map", "tokio", "triomphe"]
@@ -429,7 +424,6 @@ bz_data = { path = "app/bz_data" }
 bz_directory = { path = "app/bz_directory" }
 bz_downward_api = { path = "app/bz_downward_api" }
 bz_downward_api_proto = { path = "app/bz_downward_api_proto" }
-bz_eden = { path = "app/bz_eden" }
 bz_env = { path = "app/bz_env" }
 bz_error = { path = "app/bz_error" }
 bz_error_derive = { path = "app/bz_error_derive" }

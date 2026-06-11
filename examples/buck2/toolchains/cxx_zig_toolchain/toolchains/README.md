@@ -18,7 +18,7 @@ To build it within the open source tree of buck2 to you need to
   --- a/cells/prelude/cxx/tools/TARGETS.v2
   +++ b/cells/prelude/cxx/tools/TARGETS.v2
   @@ -1,4 +1,3 @@
-  -load("@fbcode_macros//build_defs/lib:python_common.bzl", "get_ldflags", "get_strip_mode")
+  -load("@local_macros//build_defs/lib:python_common.bzl", "get_ldflags", "get_strip_mode")
    load(":defs.bzl", "cxx_hacks", "omnibus_environment")
 
    prelude = native

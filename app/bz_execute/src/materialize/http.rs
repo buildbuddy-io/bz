@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use allocative::Allocative;
 use async_compression::tokio::bufread::GzipDecoder;
+use bytes::Bytes;
 use bz_common::cas_digest::CasDigestConfig;
 use bz_common::cas_digest::DigestAlgorithmFamily;
 use bz_common::cas_digest::SHA1_SIZE;
@@ -36,7 +37,6 @@ use bz_http::retries::HttpError;
 use bz_http::retries::HttpErrorForRetry;
 use bz_http::retries::IntoBuck2Error;
 use bz_http::retries::http_retry;
-use bytes::Bytes;
 use digest::DynDigest;
 use dupe::Dupe;
 use futures::TryStreamExt;
@@ -282,7 +282,7 @@ impl HttpErrorForRetry for HttpDownloadError {
                 // Normally, invalid checksums don't make sense to retry, but the HTTP servers we
                 // talk to internally tend to happily return 200s and give you the error in the
                 // message body... so it's a good idea to retry those.
-                cfg!(fbcode_build)
+                false
             }
             Self::IoError(..) | Self::MaybeNotAllowedOnVpnless { .. } => false,
         }

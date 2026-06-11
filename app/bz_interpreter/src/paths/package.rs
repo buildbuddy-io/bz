@@ -22,7 +22,7 @@ use pagable::Pagable;
 /// by providing a PACKAGE file. This file is evaluated prior to the BUCK file and
 /// can specify per-package values accessible via Starlark.
 ///
-/// Example of a valid PACKAGE file path: `fbsource//path/to/PACKAGE`
+/// Example of a valid PACKAGE file path: `root//path/to/PACKAGE`
 ///
 /// Find more details in the [Buck2 documentation](https://buck2.build/docs/rule_authors/package_files/).
 #[derive(

@@ -32,7 +32,6 @@ impl BuckSubcommand for UploadReLogsCommand {
         ctx: ClientCommandContext<'_>,
         events_ctx: &mut bz_client_ctx::events_ctx::EventsCtx,
     ) -> ExitResult {
-        bz_core::facebook_only();
         events_ctx.log_invocation_record = false;
         let manifold = ManifoldClient::new().await?;
         // TODO: This should receive the path from the caller.

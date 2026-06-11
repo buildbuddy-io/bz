@@ -65,15 +65,15 @@ class Test(unittest.TestCase):
         self.assertEqual(
             focused_paths,
             [
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__Foo__/libFoo.a(Foo.mm.o)",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__Foo__/libFoo.a(Foo.mm.o)",
             ],
         )
         self.assertEqual(
             scrubbed_paths,
             [
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/AppDelegate.m.o",
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/RootViewController.m.o",
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/main.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/AppDelegate.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/RootViewController.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/main.m.o",
             ],
         )
 
@@ -85,15 +85,15 @@ class Test(unittest.TestCase):
         self.assertEqual(
             focused_paths,
             [
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__Foo__/libFoo.a(Foo.mm.o)",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__Foo__/libFoo.a(Foo.mm.o)",
             ],
         )
         self.assertEqual(
             scrubbed_paths,
             [
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/AppDelegate.m.o",
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/RootViewController.m.o",
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/main.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/AppDelegate.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/RootViewController.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/main.m.o",
             ],
         )
 
@@ -133,10 +133,10 @@ class Test(unittest.TestCase):
         self.assertEqual(
             focused_paths,
             [
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/AppDelegate.m.o",
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/RootViewController.m.o",
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/main.m.o",
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__Foo__/libFoo.a(Foo.mm.o)",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/AppDelegate.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/RootViewController.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/main.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__Foo__/libFoo.a(Foo.mm.o)",
             ],
         )
         self.assertEqual(
@@ -156,10 +156,10 @@ class Test(unittest.TestCase):
         self.assertEqual(
             scrubbed_paths,
             [
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/AppDelegate.m.o",
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/RootViewController.m.o",
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/main.m.o",
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__Foo__/libFoo.a(Foo.mm.o)",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/AppDelegate.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/RootViewController.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__HelloWorld__/__objects__/srcs/main.m.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/buck2/samples/focused_debugging/__Foo__/libFoo.a(Foo.mm.o)",
             ],
         )
 
@@ -172,56 +172,56 @@ class Test(unittest.TestCase):
             True,
             should_scrub_with_focused_targets_output_paths(
                 focused_targets_output_paths,
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/some/path/__baz__/libbar.a(baz.mm.o)",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/some/path/__baz__/libbar.a(baz.mm.o)",
             ),
         )
         self.assertEqual(
             True,
             should_scrub_with_focused_targets_output_paths(
                 focused_targets_output_paths,
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/some/path/__baz__/__objects__/baz.mm.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/some/path/__baz__/__objects__/baz.mm.o",
             ),
         )
         self.assertEqual(
             True,
             should_scrub_with_focused_targets_output_paths(
                 focused_targets_output_paths,
-                "buck-out/v2/gen/fbsource/fbobjc/some/path/__baz__/__objects__/56628b5feecfab0a/baz.mm.o",
+                "buck-out/v2/gen/workspace/fbobjc/some/path/__baz__/__objects__/56628b5feecfab0a/baz.mm.o",
             ),
         )
         self.assertEqual(
             False,
             should_scrub_with_focused_targets_output_paths(
                 focused_targets_output_paths,
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/some/path/__foo__/libbar.a(baz.mm.o)",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/some/path/__foo__/libbar.a(baz.mm.o)",
             ),
         )
         self.assertEqual(
             False,
             should_scrub_with_focused_targets_output_paths(
                 focused_targets_output_paths,
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/some/path/__foo__/__objects__/baz.mm.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/some/path/__foo__/__objects__/baz.mm.o",
             ),
         )
         self.assertEqual(
             False,
             should_scrub_with_focused_targets_output_paths(
                 focused_targets_output_paths,
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/some/path/__foo__/lib.a",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/some/path/__foo__/lib.a",
             ),
         )
         self.assertEqual(
             False,
             should_scrub_with_focused_targets_output_paths(
                 focused_targets_output_paths,
-                "buck-out/v2/gen/fbsource/fbobjc/some/path/__foo__/56628b5feecfab0a/lib.a",
+                "buck-out/v2/gen/workspace/fbobjc/some/path/__foo__/56628b5feecfab0a/lib.a",
             ),
         )
         self.assertEqual(
             False,
             should_scrub_with_focused_targets_output_paths(
                 focused_targets_output_paths,
-                "buck-out/v2/gen/fbsource/56628b5feecfab0a/fbobjc/some/path/__foo__/__objects__/bar.o",
+                "buck-out/v2/gen/workspace/56628b5feecfab0a/fbobjc/some/path/__foo__/__objects__/bar.o",
             ),
         )
         self.assertEqual(

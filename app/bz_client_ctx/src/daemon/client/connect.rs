@@ -262,8 +262,7 @@ impl Interceptor for BuckAddAuthTokenInterceptor {
 pub async fn new_daemon_api_client(
     endpoint: ConnectionType,
     auth_token: String,
-) -> bz_error::Result<DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>>
-{
+) -> bz_error::Result<DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>> {
     let channel = get_channel(endpoint, true).await?;
     Ok(DaemonApiClient::with_interceptor(
         channel,
@@ -349,12 +348,15 @@ impl<'a> BuckdLifecycle<'a> {
         let mut daemon_env_vars = Vec::new();
 
         daemon_env_vars.push((OsStr::new("RUST_BACKTRACE"), OsStr::new("1")));
-        daemon_env_vars.push((OsStr::new("BZ_SUPPRESS_UNOPTIMIZED_WARNING"), OsStr::new("1")));
+        daemon_env_vars.push((
+            OsStr::new("BZ_SUPPRESS_UNOPTIMIZED_WARNING"),
+            OsStr::new("1"),
+        ));
 
         // TODO(nga): We create too many backtraces during `attrs.source()` coercion. Can be
         //   reproduced with this command:
         //   ```
-        //   bz --isolation-dir=xx audit providers fbcode//bz:bz --quiet
+        //   bz --isolation-dir=xx audit providers //:bz --quiet
         //   ```
         //   Which regresses from 15s to 80s when `RUST_LIB_BACKTRACE` is set. So we disable
         //   backtraces in the daemon unless the user has explicitly asked for them. We
@@ -615,11 +617,9 @@ impl BootstrapBuckdClient {
         let cgroup_path_of_bz_daemon = {
             #[cfg(target_os = "linux")]
             {
-                bz_resource_control::buck_cgroup_tree::read_cgroup_path_of_bz_daemon(
-                    self.info.pid,
-                )
-                .ok()
-                .flatten()
+                bz_resource_control::buck_cgroup_tree::read_cgroup_path_of_bz_daemon(self.info.pid)
+                    .ok()
+                    .flatten()
             }
             #[cfg(not(target_os = "linux"))]
             {
@@ -1026,9 +1026,7 @@ pub struct BuckdProcessInfo<'a> {
 
 impl<'a> BuckdProcessInfo<'a> {
     /// Utility method for places that want to match on the overall result of those two operations.
-    async fn load_and_create_channel(
-        daemon_dir: &'a DaemonDir,
-    ) -> bz_error::Result<BuckdChannel> {
+    async fn load_and_create_channel(daemon_dir: &'a DaemonDir) -> bz_error::Result<BuckdChannel> {
         Self::load(daemon_dir)?.create_channel().await
     }
 
@@ -1174,10 +1172,7 @@ enum BuckdConnectError {
     },
 }
 
-async fn daemon_connect_error(
-    error: bz_error::Error,
-    paths: &InvocationPaths,
-) -> bz_error::Error {
+async fn daemon_connect_error(error: bz_error::Error, paths: &InvocationPaths) -> bz_error::Error {
     let error_report: Result<bz_data::ErrorReport, RetryError<bz_error::Error>> = retrying(
         Duration::from_millis(50),
         Duration::from_millis(100),

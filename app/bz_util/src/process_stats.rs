@@ -170,13 +170,6 @@ mod tests {
     #[test]
     fn test_process_stats() {
         let process_stats = process_stats();
-        if cfg!(unix) {
-            // Sometimes tests start too quickly and CPU counters are zero.
-            if false {
-                assert!(process_stats.user_cpu_us.unwrap() > 0);
-                assert!(process_stats.system_cpu_us.unwrap() > 0);
-            }
-        }
         assert!(process_stats.max_rss_bytes.unwrap() > 0);
         if cfg!(target_os = "linux") || cfg!(target_os = "windows") {
             let rss_bytes = process_stats.rss_bytes.unwrap();

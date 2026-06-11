@@ -6,8 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
-
 # Combine the attributes we generate, we the custom implementations we have.
 load("@prelude//:rules_impl.bzl", "categorized_extra_attributes", "categorized_rule_decl_records", "extra_implemented_rules", "toolchain_rule_names")
 load("@prelude//apple:apple_platforms.bzl", "APPLE_PLATFORMS_KEY")
@@ -38,10 +36,8 @@ def _mk_rule(rule_spec: typing.Any, extra_attrs: dict[str, typing.Any] = dict(),
             if toolchain_attr in attributes:
                 fat_platform_compatible = False
 
-    # Fat platforms is an idea specific to our toolchains, so doesn't apply to
-    # open source. Ideally this restriction would be done at the toolchain level.
-    if not is_full_meta_repo():
-        fat_platform_compatible = True
+    # Fat platforms are specific to internal Meta toolchains.
+    fat_platform_compatible = True
 
     attributes = dict(attributes)
     attributes.update(extra_attrs)

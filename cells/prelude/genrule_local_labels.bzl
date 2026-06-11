@@ -100,7 +100,6 @@ _GENRULE_LOCAL_LABELS = set([
     "uses_unity",
 
     # mksquashfs isn't available in RE, so run these locally
-    # (https://fb.workplace.com/groups/buck2users/permalink/3023630007893360/)
     "uses_mksquashfs",
 
     # PXL rules can't yet run on RE.
@@ -127,8 +126,8 @@ _GENRULE_LOCAL_LABELS = set([
     # Use local GPUs with latest Nvidia libs which are not available in RE yet
     "uses_lower_locally",
 
-    # Uses fbpkg outside of the repo
-    "uses_fbpkg",
+    # Uses package outside of the repo
+    "uses_package",
 
     # Makes recursive calls to buck
     "uses_buck",
@@ -223,7 +222,7 @@ _GENRULE_LOCAL_LABELS = set([
     "zeratul_windows_capacity_hog",
 
     # The compilation databases produced by Buck have paths relative to the root of
-    # fbsource. This isn't compatible with RE.
+    # workspace. This isn't compatible with RE.
     "uses_compilation_database",
 
     # Uses checkpolicy which is not on RE

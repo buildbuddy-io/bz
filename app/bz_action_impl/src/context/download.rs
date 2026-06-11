@@ -94,10 +94,8 @@ pub(crate) fn analysis_actions_methods_download(methods: &mut MethodsBuilder) {
     ///   enough (preferably, in years).
     /// * `is_executable`: indicates the resulting file should be marked with executable
     ///   permissions
-    /// * `is_tree`: digest must point to a blob of type
-    ///   [RE.Tree](https://fburl.com/code/95rqgju0)
-    /// * `is_directory`: digest must point to a blob of type
-    ///   [RE.Directory](https://fburl.com/code/4eg40nnp)
+    /// * `is_tree`: digest must point to a remote execution Tree blob.
+    /// * `is_directory`: digest must point to a remote execution Directory blob.
     fn cas_artifact<'v>(
         this: &AnalysisActions<'v>,
         #[starlark(require = pos)] output: OutputArtifactArg<'v>,

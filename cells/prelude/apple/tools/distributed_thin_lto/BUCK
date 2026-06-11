@@ -16,21 +16,7 @@ cxx_binary(
     linker_flags = [
         "-lc",
     ],
-    tests = [
-        "fbsource//xplat/buck2/tests/apple/rules/dist_lto:main-alias-iphonesimulator-arm64-pika-fat-lld-platform-distributed-thin-lto",
-    ],
+    target_compatible_with = ["prelude//:none"],
     visibility = ["PUBLIC"],
-    deps = [
-        "fbcode//common/files:files",
-        "fbcode//folly:file_util",
-        "fbcode//folly:json",
-        "fbcode//folly:subprocess",
-        "fbcode//folly/coro:blocking_wait",
-        "fbcode//folly/coro:collect",
-        "fbcode//folly/coro:shared_mutex",
-        "fbcode//folly/coro:task",
-        "fbcode//folly/executors:global_executor",
-        "fbcode//folly/executors:io_thread_pool_executor",
-        "fbcode//folly/init:init",
-    ],
+    deps = [],
 )

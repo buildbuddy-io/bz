@@ -188,7 +188,6 @@ fn format_directory_entry_leaves(
             DirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => Some(&f.digest),
             _ => {
                 // We only download files from RE, not symlinks or directories.
-                // https://fburl.com/code/3o8ht6b6.
                 None
             }
         })

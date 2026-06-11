@@ -16,7 +16,7 @@ load("@prelude//utils:expect.bzl", "expect")
 # for are specified by the `cpu_filters` attribute on the binary rule.
 
 # In order to build our native libraries for the correct platform(s), we do a (split) transition
-# (https://www.internalfb.com/intern/staticdocs/buck2/docs/rule_authors/configuration_transitions)
+# (https://buck2.build/docs/rule_authors/configuration_transitions)
 # on the `deps` of the binary, and have each of the resulting configured sub-graphs be responsible
 # for building the native libraries for one of the specified platforms.
 

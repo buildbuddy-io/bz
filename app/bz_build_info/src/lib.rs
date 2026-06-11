@@ -41,15 +41,7 @@ pub fn win_internal_version() -> Option<&'static str> {
 
 /// Get the time at which this binary was built, if available.
 pub fn time_iso8601() -> Option<&'static str> {
-    #[cfg(fbcode_build)]
-    {
-        Some(build_info::BuildInfo::get_time_iso8601())
-    }
-
-    #[cfg(not(fbcode_build))]
-    {
-        None
-    }
+    None
 }
 
 /// A timestamp for this release. Notionally this is similar to time_iso8601, except a) the format

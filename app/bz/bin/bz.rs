@@ -40,7 +40,7 @@ use superconsole::Stdin;
 
 const BZ_SUPPRESS_UNOPTIMIZED_WARNING: &str = "BZ_SUPPRESS_UNOPTIMIZED_WARNING";
 
-// fbcode likes to set its own allocator in fbcode.default_allocator
+// workspace likes to set its own allocator in workspace.default_allocator
 // So when we set our own allocator, buck build buck2 or bz build buck2 often breaks.
 // Making jemalloc the default only when we do a cargo build.
 #[global_allocator]
@@ -67,31 +67,10 @@ fn init_logging() -> bz_error::Result<Arc<dyn LogConfigurationReloadHandle>> {
         _ => init_tracing_for_writer(io::stderr),
     }?;
 
-    #[cfg(fbcode_build)]
-    {
-        use bz_event_log::should_upload_log;
-        use bz_events::sink::remote;
-
-        if !should_upload_log()? {
-            remote::disable();
-        }
-    }
-
     Ok(handle)
 }
 
-// When using a cargo build, some essential services (e.g. RE, scribe)
-// fall back to slow paths that give terrible performance.
-// Therefore, if we are using cargo, warn strongly.
-fn check_cargo() {
-    if !cfg!(fbcode_build) && !bz_core::is_open_source() {
-        eprintln!("=====================================================================");
-        eprintln!("WARNING: You are using Buck v2 compiled with `cargo`, not `buck`.");
-        eprintln!("         Some operations may go slower and logging may be impaired.");
-        eprintln!("=====================================================================");
-        eprintln!();
-    }
-}
+fn check_cargo() {}
 
 fn check_unoptimized() {
     if cfg!(debug_assertions) && std::env::var_os(BZ_SUPPRESS_UNOPTIMIZED_WARNING).is_none() {

@@ -10,13 +10,13 @@
 
 # IMPORTANT: Don't land your change without running these tests!
 # ```
-# buck2 build --num-threads 4 $(buck2 uquery "kind('ocaml_binary', 'fbcode//hphp/...')")
+# buck2 build --num-threads 4 $(buck2 uquery "kind('ocaml_binary', 'root//hphp/...')")
 # ```
 #
 # If you are really, really keen, this command builds all hack, not just the
 # OCaml binaries.
 # ```
-# buck2 build --num-threads 4 fbcode//hphp/hack/...
+# buck2 build --num-threads 4 root//hphp/hack/...
 # ```
 
 # To avoid name collisions (where '/' designates the build output
@@ -272,7 +272,7 @@ def _compiler_cmd(ctx: AnalysisContext, compiler: cmd_args, cc: cmd_args) -> cmd
     cmd.add(ctx.attrs.compiler_flags)
 
     # Now, add in `COMMON_OCAML_WARNING_FLAGS` (defined by
-    # 'fbcode/tools/build/buck/gen_modes.py') e.g.
+    # 'workspace/tools/build/buck/gen_modes.py') e.g.
     # -4-29-35-41-42-44-45-48-50 to selective disable warnings.
     attr_warnings = ctx.attrs.warnings_flags if ctx.attrs.warnings_flags != None else ""
     cmd.add("-w", ocaml_toolchain.warnings_flags + attr_warnings)
@@ -974,7 +974,7 @@ def ocaml_shared_impl(ctx: AnalysisContext) -> list[Provider]:
 
     # 'ocamlopt.opt' with '-cc' fails to propagate '-shared' (and potentially
     # other required flags - see the darwin "dylib" specific block below) to the
-    # linker. See https://www.internalfb.com/phabricator/paste/view/P596226070.
+    # linker.
     # This is a workaround.
     shared_args = ["-shared"]
     if host_info().os.is_macos:

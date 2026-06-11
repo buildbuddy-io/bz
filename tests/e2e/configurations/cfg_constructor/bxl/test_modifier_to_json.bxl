@@ -6,14 +6,14 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//bz/app:modifier.bzl", "modifiers")
+load("//app:modifier.bzl", "modifiers")
 load("@prelude//:asserts.bzl", "asserts")
 load("@prelude//cfg/modifier:common.bzl", "json_to_tagged_modifiers", "tagged_modifiers_to_json")
 load("@prelude//cfg/modifier:types.bzl", "ModifierPackageLocation", "ModifierTargetLocation", "TaggedModifiers")
 
 def _impl(_ctx: bxl.Context):
     for location in (
-        ModifierPackageLocation(package_path = "fbcode//bz/PACKAGE"),
+        ModifierPackageLocation(package_path = "//PACKAGE"),
         ModifierTargetLocation(),
     ):
         tagged_modifiers = TaggedModifiers(

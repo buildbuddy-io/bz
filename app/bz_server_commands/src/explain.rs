@@ -18,9 +18,6 @@ use bz_server_ctx::template::run_server_command;
 use dice::DiceTransaction;
 use tonic::async_trait;
 
-#[cfg(fbcode_build)]
-use crate::explain_code::explain;
-
 pub(crate) async fn explain_command(
     ctx: &dyn ServerCommandContextTrait,
     partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>,
@@ -46,16 +43,7 @@ impl ServerCommandTemplate for ExplainServerCommand {
         _partial_result_dispatcher: PartialResultDispatcher<Self::PartialResult>,
         ctx: DiceTransaction,
     ) -> bz_error::Result<Self::Response> {
-        // TODO iguridi: make it work for OSS
-        #[cfg(fbcode_build)]
-        {
-            explain(server_ctx, ctx, &self.req).await?;
-        }
-        #[cfg(not(fbcode_build))]
-        {
-            // "use" unused
-            let _unused = (server_ctx, ctx, &self.req);
-        }
+        let _unused = (server_ctx, ctx, &self.req);
         Ok(ExplainResponse {})
     }
 

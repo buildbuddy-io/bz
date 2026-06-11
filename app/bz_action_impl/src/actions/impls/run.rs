@@ -82,9 +82,9 @@ use bz_core::configuration::data::BazelBuildSettingValue;
 use bz_core::content_hash::ContentBasedPathHash;
 use bz_core::deferred::base_deferred_key::BaseDeferredKey;
 use bz_core::deferred::key::DeferredHolderKey;
-use bz_core::execution_types::executor_config::MetaInternalExtraParams;
 use bz_core::execution_types::executor_config::PathSeparatorKind;
 use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RemoteExecutionExtraParams;
 use bz_core::execution_types::executor_config::RemoteExecutorCustomImage;
 use bz_core::execution_types::executor_config::RemoteExecutorDependency;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
@@ -306,7 +306,7 @@ pub(crate) struct UnregisteredRunAction {
     // Since this is usually None, use a Box to avoid using memory that is the size
     // of RemoteExecutorCustomImage.
     pub(crate) remote_execution_custom_image: Option<Box<RemoteExecutorCustomImage>>,
-    pub(crate) meta_internal_extra_params: Arc<MetaInternalExtraParams>,
+    pub(crate) remote_execution_extra_params: Arc<RemoteExecutionExtraParams>,
     pub(crate) expected_eligible_for_dedupe: Option<bool>,
     pub(crate) timeout: Option<Duration>,
     pub(crate) bazel_use_default_shell_env: Option<bool>,
@@ -3239,10 +3239,7 @@ impl RunAction {
                 {
                     command_line_digest_for_dep_files.push_arg(key.to_owned());
                     command_line_digest_for_dep_files.push_arg(
-                        bazel_normalize_and_map_buck_owned_exec_paths(
-                            value,
-                            bazel_path_mapping,
-                        ),
+                        bazel_normalize_and_map_buck_owned_exec_paths(value, bazel_path_mapping),
                     );
                     command_line_digest_for_dep_files.push_count();
                 }
@@ -3934,9 +3931,9 @@ impl RunAction {
                     "bin",
                 )?;
 
-                if fs_util::try_exists(artifact_fs.fs().resolve(source_root.join(
-                    ForwardRelativePathBuf::unchecked_new("lib".to_owned()),
-                )))? {
+                if fs_util::try_exists(artifact_fs.fs().resolve(
+                    source_root.join(ForwardRelativePathBuf::unchecked_new("lib".to_owned())),
+                ))? {
                     Self::add_bazel_external_repo_path_alias(
                         inputs,
                         &mut aliases,
@@ -3985,7 +3982,11 @@ impl RunAction {
             return Ok(());
         }
 
-        let source_abs_path = artifact_fs.fs().resolve(&source_path).as_path().to_path_buf();
+        let source_abs_path = artifact_fs
+            .fs()
+            .resolve(&source_path)
+            .as_path()
+            .to_path_buf();
         inputs.push(CommandExecutionInput::ArtifactPathAlias {
             source_path,
             source_requires_materialization: false,
@@ -4744,7 +4745,7 @@ impl RunAction {
         action_cache_add_debug(&mut action_key, &self.inner.remote_execution_dependencies);
         action_cache_add_debug(&mut action_key, &self.inner.re_gang_workers);
         action_cache_add_debug(&mut action_key, &self.inner.remote_execution_custom_image);
-        action_cache_add_debug(&mut action_key, &self.inner.meta_internal_extra_params);
+        action_cache_add_debug(&mut action_key, &self.inner.remote_execution_extra_params);
 
         action_cache_add_str(&mut action_key, "command_line");
         action_cache_add_bytes(&mut action_key, command_line_digest.as_bytes());
@@ -5163,7 +5164,7 @@ impl RunAction {
             .with_remote_execution_custom_image(
                 self.inner.remote_execution_custom_image.clone().map(|s| *s),
             )
-            .with_meta_internal_extra_params(self.inner.meta_internal_extra_params.clone())
+            .with_remote_execution_extra_params(self.inner.remote_execution_extra_params.clone())
             .with_force_remote_input_reupload(ctx.force_remote_input_reupload())
             .with_outputs_for_error_handler(outputs_for_error_handler);
 

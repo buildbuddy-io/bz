@@ -11,9 +11,8 @@ buck_kotlin_library(
         "**/*.kt",
         "**/*.java",
     ]),
-    labels = ["codegen_rule"],  # see: https://fburl.com/workplace/fhud6fe6
+    labels = ["codegen_rule"],  # see:
     visibility = [
-        "prelude//toolchains/android/meta_only/src/com/facebook/buck/jvm/kotlin/cd/logger/...",
         "prelude//toolchains/android/src/com/facebook/buck/jvm/kotlin/cd/analytics/...",
         "prelude//toolchains/android/test/com/facebook/buck/jvm/kotlin/cd/analytics/...",
     ],

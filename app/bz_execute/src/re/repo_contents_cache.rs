@@ -110,10 +110,9 @@ fn synthetic_command() -> RE::Command {
         platform: Some(RE::Platform::default()),
         ..Default::default()
     };
-    // The fbcode RE types predate REAPI v2.1 and do not have `output_paths`
+    // The workspace RE types predate REAPI v2.1 and do not have `output_paths`
     // (see `OutputPathsBehavior::OutputPaths` in `execute/command_executor.rs`).
     // This protocol is only used with OSS REAPI backends.
-    #[cfg(not(fbcode_build))]
     {
         command.output_paths = vec![
             REPO_CONTENTS_CACHE_MARKER_FILE_PATH.to_owned(),
@@ -154,10 +153,8 @@ fn action_blob(
     predeclared_input_hash: &str,
     digest_config: DigestConfig,
 ) -> (ActionDigest, TrackedFileDigest, ActionMetadataBlobData) {
-    let blob = ActionMetadataBlobData::from_message(&build_action(
-        predeclared_input_hash,
-        digest_config,
-    ));
+    let blob =
+        ActionMetadataBlobData::from_message(&build_action(predeclared_input_hash, digest_config));
     let digest = TrackedFileDigest::from_content(&blob.0, digest_config.cas_digest_config());
     let action_digest: ActionDigest = digest.data().dupe().coerce();
     (action_digest, digest, blob)
@@ -224,7 +221,8 @@ impl ManagedRemoteExecutionClient {
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
     ) -> bz_error::Result<Option<RepoContentsCacheHit>> {
-        let action_digest = repo_contents_cache_action_digest(predeclared_input_hash, digest_config);
+        let action_digest =
+            repo_contents_cache_action_digest(predeclared_input_hash, digest_config);
 
         // `action_cache` already maps NOT_FOUND (and other lookup errors) to
         // `None` and retries transient errors.
@@ -349,8 +347,10 @@ impl ManagedRemoteExecutionClient {
         let (action_digest, action_blob_digest, action_blob) =
             action_blob(predeclared_input_hash, digest_config);
 
-        let recorded_inputs_digest =
-            TrackedFileDigest::from_content(recorded_inputs_json, digest_config.cas_digest_config());
+        let recorded_inputs_digest = TrackedFileDigest::from_content(
+            recorded_inputs_json,
+            digest_config.cas_digest_config(),
+        );
 
         // Metadata blobs referenced by the action / action result. Like the
         // action cache uploader (`bz_execute_impl/src/executors/caching.rs`),

@@ -1,6 +1,4 @@
-load("@fbcode//bz:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
-load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
-load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
+load("//:rules/proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 
 oncall("build_infra")
 
@@ -10,20 +8,20 @@ rust_protobuf_library(
     build_script = "build.rs",
     proto_srcs = ":bz_cli_proto.proto",
     test_deps = [
-        "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:tokio",
+        "third_party//rust:futures",
+        "third_party//rust:tokio",
     ],
     deps = [
-        "fbsource//third-party/rust:bytes",
-        "fbsource//third-party/rust:prost-types",
-        "fbsource//third-party/rust:serde",
-        "fbsource//third-party/rust:tokio-util",
-        "//bz/deps/allocative/allocative:allocative",
-        "//bz/app/bz_core:bz_core",
-        "//bz/app/bz_data:bz_data",
-        "//bz/app/bz_error:bz_error",
-        "//bz/app/bz_fs:bz_fs",
-        "//bz/app/bz_subscription_proto:bz_subscription_proto",
+        "third_party//rust:bytes",
+        "third_party//rust:prost-types",
+        "third_party//rust:serde",
+        "third_party//rust:tokio-util",
+        "//deps/allocative/allocative:allocative",
+        "//app/bz_core:bz_core",
+        "//app/bz_data:bz_data",
+        "//app/bz_error:bz_error",
+        "//app/bz_fs:bz_fs",
+        "//app/bz_subscription_proto:bz_subscription_proto",
     ],
 )
 
@@ -32,8 +30,8 @@ proto_srcs(
     srcs = ["daemon.proto"],
     visibility = ["PUBLIC"],
     deps = [
-        translate_target("//bz/app/bz_data:data_proto"),
-        translate_target("//bz/app/bz_subscription_proto:bz_subscription_proto.proto"),
+        "//app/bz_data:data_proto",
+        "//app/bz_subscription_proto:bz_subscription_proto.proto",
     ],
 )
 

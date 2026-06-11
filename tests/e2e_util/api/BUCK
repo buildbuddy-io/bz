@@ -1,9 +1,7 @@
-load("@fbcode_macros//build_defs:python_library.bzl", "python_library")
-# @oss-disable[end= ]: load(":visibility.fb.bzl", "visibility")
 
 oncall("build_infra")
 
-visibility = ["PUBLIC"] # @oss-enable
+visibility = ["PUBLIC"]
 
 python_library(
     name = "api",

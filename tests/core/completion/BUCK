@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_core_tests")
+load("//tests:buck_e2e.bzl", "bz_core_tests")
 
 oncall("build_infra")
 
@@ -6,7 +6,7 @@ bz_core_tests(
     target_extra_attrs = {
         "test_completion": {
             "env": {
-                "BUCK2_COMPLETION_VERIFY": "$(location //bz/deps/completion_verify:completion_verify)",
+                "BUCK2_COMPLETION_VERIFY": "$(location //deps/completion_verify:completion_verify)",
             },
             "skip_for_os": ["windows"],
         },

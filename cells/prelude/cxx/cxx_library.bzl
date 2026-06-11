@@ -1165,7 +1165,7 @@ def cxx_library_parameterized(ctx: AnalysisContext, impl_params: CxxRuleConstruc
     if impl_params.generate_providers.template_placeholders:
         templ_vars = {}
 
-        # Some rules, e.g. fbcode//thrift/lib/cpp:thrift-core-module
+        # Some rules, e.g. root//thrift/lib/cpp:thrift-core-module
         # define preprocessor flags as things like: -DTHRIFT_PLATFORM_CONFIG=<thrift/facebook/PlatformConfig.h>
         # and unless they get quoted, they break shell syntax.
         cxx_compiler_info = get_cxx_toolchain_info(ctx).cxx_compiler_info
@@ -1317,13 +1317,6 @@ def cxx_library_parameterized(ctx: AnalysisContext, impl_params: CxxRuleConstruc
         providers.append(xplugins_debug_info)
 
     if impl_params.generate_providers.default:
-        if False:
-            # TODO(nga): `default_output.unstripped` is never `None`.
-            def unknown():
-                pass
-
-            default_output = unknown()
-
         default_info = DefaultInfo(
             default_output = default_output.default if default_output != None else None,
             other_outputs = default_output.other if default_output != None else [],
@@ -2087,12 +2080,6 @@ def _static_library(
     archive = make_archive(ctx, name, objects, impl_params.extra_hidden)
 
     bitcode_bundle = _bitcode_bundle(ctx, bitcode_objects, optimized, debuggable, pic, stripped)
-    if False:
-        # TODO(nga): bitcode_bundle.artifact
-        def unknown():
-            pass
-
-        bitcode_bundle = unknown()
     if bitcode_bundle != None and bitcode_bundle.artifact != None:
         bitcode_artifact = bitcode_bundle.artifact
     else:

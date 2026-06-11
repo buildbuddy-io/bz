@@ -420,8 +420,7 @@ impl Display for IncompatiblePlatformReason {
         match &self.cause {
             IncompatiblePlatformReasonCause::UnsatisfiedConfig(unsatisfied_config) => write!(
                 f,
-                // WARN: CI uses this message to filter targets
-                // If you change this message, please also update https://fburl.com/code/nvdg28nv
+                // WARN: CI uses this message to filter targets.
                 "{}\n    is incompatible with {} ({} unsatisfied), check the target's compatibility attributes",
                 self.target.unconfigured(),
                 self.target.cfg(),

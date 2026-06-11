@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_core_tests")
+load("//tests:buck_e2e.bzl", "bz_core_tests")
 
 oncall("build_infra")
 
@@ -6,9 +6,9 @@ bz_core_tests(
     target_extra_attrs = {
         "test_install": {
             "env": {
-                "EXTRA_ARGS_VALIDATOR_BIN": "$(location fbcode//bz/tests/targets/rules/install:server_validates_extra_args_order)",
-                "FORWARDED_PARAMS_INSTALLER_BIN": "$(location fbcode//bz/tests/targets/rules/install:server_requires_forwarded_params)",
-                "INSTALLER_BIN": "$(location fbcode//bz/tests/targets/rules/install:installer)",
+                "EXTRA_ARGS_VALIDATOR_BIN": "$(location //tests/targets/rules/install:server_validates_extra_args_order)",
+                "FORWARDED_PARAMS_INSTALLER_BIN": "$(location //tests/targets/rules/install:server_requires_forwarded_params)",
+                "INSTALLER_BIN": "$(location //tests/targets/rules/install:installer)",
             },
             "skip_for_os": [
                 "darwin",

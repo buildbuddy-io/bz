@@ -10,7 +10,6 @@ load("@prelude//:paths.bzl", "paths")
 load("@prelude//:validation_deps.bzl", "get_validation_deps_outputs")
 load("@prelude//apple:apple_stripping.bzl", "apple_strip_args")
 load("@prelude//apple:apple_utility.bzl", "get_module_name")
-# @oss-disable[end= ]: load("@prelude//apple/meta_only:linker_outputs.bzl", "extra_distributed_thin_lto_opt_outputs_merger", "get_extra_linker_output_flags", "get_extra_linker_outputs")
 load(
     "@prelude//apple/swift:swift_compilation.bzl",
     "compile_swift",
@@ -188,9 +187,6 @@ def apple_binary_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
 
         if stripped:
             unstripped_binary = cxx_output.unstripped_binary
-            if False:
-                # TODO(nga): `unstripped_binary` is never `None`.
-                unstripped_binary = None
             expect(unstripped_binary != None, "Expect to save unstripped_binary when stripped is enabled")
             unstripped_binary = cxx_output.unstripped_binary
         else:
@@ -283,17 +279,14 @@ def apple_binary_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
 
 def _get_extra_linker_outputs(ctx: AnalysisContext, extra_linker_output_category: ExtraLinkerOutputCategory = ExtraLinkerOutputCategory("produced-during-local-link")) -> ExtraLinkerOutputs:
     _ = ctx  # buildifier: disable=unused-variable
-    # @oss-disable[end= ]: return get_extra_linker_outputs(ctx, extra_linker_output_category)
-    return ExtraLinkerOutputs() # @oss-enable
+    return ExtraLinkerOutputs()
 
 def _get_extra_linker_outputs_flags(ctx: AnalysisContext, outputs: dict[str, Artifact], extra_linker_output_category: ExtraLinkerOutputCategory = ExtraLinkerOutputCategory("produced-during-local-link")) -> list[ArgLike]:
     _ = ctx  # buildifier: disable=unused-variable
-    # @oss-disable[end= ]: return get_extra_linker_output_flags(ctx, outputs, extra_linker_output_category)
-    return [] # @oss-enable
+    return []
 
 def _extra_distributed_thin_lto_opt_outputs_merger(ctx: AnalysisContext, outputs_to_bind: dict[str, Artifact], outputs_to_merge: list[dict[str, Artifact]]):
-    # @oss-disable[end= ]: return extra_distributed_thin_lto_opt_outputs_merger(ctx, outputs_to_bind, outputs_to_merge)
-    return # @oss-enable
+    return
 
 def _filter_swift_srcs(ctx: AnalysisContext) -> (list[CxxSrcWithFlags], list[CxxSrcWithFlags]):
     cxx_srcs = []
@@ -309,7 +302,6 @@ def _get_bridging_header_flags(ctx: AnalysisContext) -> list[ArgLike]:
     if ctx.attrs.bridging_header:
         objc_bridging_header_flags = [
             # Disable bridging header -> PCH compilation to mitigate an issue in Xcode 13 beta.
-            "-disable-bridging-pch",
             "-import-objc-header",
             cmd_args(ctx.attrs.bridging_header),
         ]

@@ -21,7 +21,7 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use bz_core::async_once_cell::AsyncOnceCell;
 use bz_core::bz_env;
-use bz_core::execution_types::executor_config::MetaInternalExtraParams;
+use bz_core::execution_types::executor_config::RemoteExecutionExtraParams;
 use bz_core::execution_types::executor_config::RemoteExecutorDependency;
 use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use bz_core::fs::project::ProjectRoot;
@@ -443,7 +443,7 @@ impl ManagedRemoteExecutionClient {
         re_max_queue_time: Option<Duration>,
         re_resource_units: Option<i64>,
         knobs: &ExecutorGlobalKnobs,
-        meta_internal_extra_params: &MetaInternalExtraParams,
+        remote_execution_extra_params: &RemoteExecutionExtraParams,
         worker_tool_action_digest: Option<ActionDigest>,
         priority: Option<i32>,
     ) -> bz_error::Result<ExecuteResponseOrCancelled> {
@@ -463,7 +463,7 @@ impl ManagedRemoteExecutionClient {
                 re_max_queue_time,
                 re_resource_units,
                 knobs,
-                meta_internal_extra_params,
+                remote_execution_extra_params,
                 worker_tool_action_digest,
                 priority,
             )

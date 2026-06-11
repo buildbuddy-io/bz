@@ -325,11 +325,9 @@ pub(crate) fn scribe_category() -> bz_error::Result<String> {
     const DEFAULT_SCRIBE_CATEGORY: &str = "bz_events";
     // Note that both daemon and client are emitting events, and that changing this variable has
     // no effect on the daemon until buckd is restarted but has effect on the client.
-    Ok(
-        bz_env!("BUCK2_SCRIBE_CATEGORY", applicability = internal)?
-            .unwrap_or(DEFAULT_SCRIBE_CATEGORY)
-            .to_owned(),
-    )
+    Ok(bz_env!("BUCK2_SCRIBE_CATEGORY", applicability = internal)?
+        .unwrap_or(DEFAULT_SCRIBE_CATEGORY)
+        .to_owned())
 }
 
 #[cfg(test)]

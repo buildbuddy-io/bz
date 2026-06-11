@@ -10,10 +10,9 @@
 
 package com.facebook.buck.jvm.kotlin.buildtools
 
-import org.jetbrains.kotlin.buildtools.api.KotlinLogger // @oss-enable
+import org.jetbrains.kotlin.buildtools.api.KotlinLogger
 import com.facebook.buck.core.util.log.Logger
 import com.facebook.buck.jvm.kotlin.cd.analytics.KotlinCDLoggingContext
-// @oss-disable: import com.facebook.kotlin.compilercompat.KotlinLoggerCompat
 import java.io.PrintStream
 import java.util.logging.Level
 
@@ -21,8 +20,7 @@ internal class BuckKotlinLogger(
     private val stdErr: PrintStream,
     private val loggingContext: KotlinCDLoggingContext,
 )
-: KotlinLogger // @oss-enable
-// @oss-disable: : KotlinLoggerCompat()
+: KotlinLogger
 {
 
   override val isDebugEnabled: Boolean

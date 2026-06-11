@@ -31,7 +31,6 @@ load(
     "@prelude//cxx:link_groups_types.bzl",
     "LinkGroupInfo",  # @unused Used as a type
 )
-# @oss-disable[end= ]: load("@prelude//cxx/meta_only:linker_outputs.bzl", "get_extra_linker_output_flags", "get_extra_linker_outputs")
 load("@prelude//graphql:graphql.bzl", "graphql_providers")
 load("@prelude//linking:execution_preference.bzl", "LinkExecutionPreference")
 load(
@@ -259,8 +258,6 @@ def cxx_library_generate(ctx: AnalysisContext, rule_type: str) -> list[Provider]
         coverage_profile_list = ctx.attrs.coverage_profile_list[DefaultInfo].default_outputs[0] if ctx.attrs.coverage_profile_list else None,
         separate_debug_info = ctx.attrs.separate_debug_info,
         cuda_compile_style = CudaCompileStyle(ctx.attrs.cuda_compile_style),
-        # @oss-disable[end= ]: extra_linker_outputs_factory = get_extra_linker_outputs,
-        # @oss-disable[end= ]: extra_linker_outputs_flags_factory = get_extra_linker_output_flags,
         supports_stripping = ctx.attrs.supports_stripping,
         expect_eligible_for_dedupe = getattr(ctx.attrs, "expect_eligible_for_dedupe", False),
     )
@@ -1024,7 +1021,7 @@ def cxx_test_impl(ctx: AnalysisContext) -> list[Provider]:
             default_executor = re_executor,
             executor_overrides = executor_overrides,
             # We implicitly make this test via the project root, instead of
-            # the cell root (e.g. fbcode root).
+            # the cell root (e.g. workspace root).
             run_from_project_root = (
                 "bz_run_from_project_root" in (ctx.attrs.labels or []) or
                 re_executor != None

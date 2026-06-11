@@ -204,7 +204,7 @@ def _cleanup_flags(clang_opt_flags: List[str]) -> List[str]:
 
 
 # Flags that fbcc consumes and does NOT pass through to the compiler.
-# See fbcode/tools/build/buck/wrappers/fbcc.py for the full list.
+# See workspace/tools/build/buck/wrappers/fbcc.py for the full list.
 _FBCC_CONSUMED_PREFIXES = (
     "--log-fbcc",
     "--fbcc-create-external-debug-info=",
@@ -278,7 +278,7 @@ def main(argv: List[str]) -> int:
     #   3. the "--cc" arg pointing to the compiler we use
     #   4. (optional) fbcc-consumed args like "--log-fbcc"
     #   5. (optional) pass-through args like "--target=" (from buckified toolchains)
-    # EXAMPLE: ['--', 'buck-out/v2/gen/fbcode/8e3db19fe005003a/tools/build/buck/wrappers/__fbcc__/fbcc', '--cc=fbcode/third-party-buck/platform010/build/llvm-fb/<ver>/bin/clang++', '--log-fbcc=False', '--target=x86_64-redhat-linux-gnu', ...]
+    # EXAMPLE: ['--', 'buck-out/v2/gen/workspace/8e3db19fe005003a/tools/build/buck/wrappers/__fbcc__/fbcc', '--cc=workspace/third-party-buck/platform010/build/llvm-fb/<ver>/bin/clang++', '--log-fbcc=False', '--target=x86_64-redhat-linux-gnu', ...]
     clang_cc1_flags = _cleanup_flags(args.opt_args[2:] + clang_opt_flags)
     if clang_cc1_flags is None:
         return EXIT_FAILURE

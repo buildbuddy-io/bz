@@ -35,13 +35,13 @@ class LegacyOutputsTest(unittest.TestCase):
                 build_map=FullBuildMap(
                     {
                         "a.py": SourceInfo(
-                            source_path="fbcode/a.py", target=Target("//test:foo")
+                            source_path="workspace/a.py", target=Target("//test:foo")
                         ),
                         "b.py": SourceInfo(
-                            source_path="fbcode/b.py", target=Target("//test:bar")
+                            source_path="workspace/b.py", target=Target("//test:bar")
                         ),
                         "c.py": SourceInfo(
-                            source_path="fbcode/c.py", target=Target("//test:foo")
+                            source_path="workspace/c.py", target=Target("//test:foo")
                         ),
                     }
                 ),
@@ -50,25 +50,25 @@ class LegacyOutputsTest(unittest.TestCase):
                         Target("//test:baz"): ConflictInfo(
                             conflict_with=Target("//test:foo"),
                             artifact_path="a.py",
-                            preserved_source_path="fbcode/a.py",
-                            dropped_source_path="fbcode/another/a.py",
+                            preserved_source_path="workspace/a.py",
+                            dropped_source_path="workspace/another/a.py",
                         ),
                     }
                 ),
             ).to_json(),
             {
                 "build_map": {
-                    "a.py": "fbcode/a.py",
-                    "b.py": "fbcode/b.py",
-                    "c.py": "fbcode/c.py",
+                    "a.py": "workspace/a.py",
+                    "b.py": "workspace/b.py",
+                    "c.py": "workspace/c.py",
                 },
                 "built_targets_count": 2,
                 "dropped_targets": {
                     "//test:baz": {
                         "artifact_path": "a.py",
                         "conflict_with": "//test:foo",
-                        "dropped_source_path": "fbcode/another/a.py",
-                        "preserved_source_path": "fbcode/a.py",
+                        "dropped_source_path": "workspace/another/a.py",
+                        "preserved_source_path": "workspace/a.py",
                     }
                 },
             },

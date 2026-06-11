@@ -85,7 +85,7 @@ impl ActionStats {
     }
 
     pub fn update(&mut self, action: &bz_data::ActionExecutionEnd) {
-        // TODO(ezgi): consolidate with InvocationRecord creation at https://fburl.com/code/c8iitvvy
+        // TODO(ezgi): consolidate with InvocationRecord creation.
         if action.kind != bz_data::ActionKind::Run as i32 {
             return;
         }

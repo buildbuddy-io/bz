@@ -14,9 +14,6 @@ load("@prelude//apple:apple_library.bzl", "AppleLibraryAdditionalParams", "apple
 load("@prelude//apple:apple_test_device_types.bzl", "AppleTestDeviceType", "get_default_test_device", "tpx_label_for_test_device_type")
 load("@prelude//apple:apple_test_frameworks_utility.bzl", "get_test_frameworks_bundle_parts")
 load("@prelude//apple:apple_toolchain_types.bzl", "AppleToolchainInfo")
-# @oss-disable[end= ]: load("@prelude//apple/meta_only:apple_test_local_execution.bzl", "local_test_execution_is_available")
-# @oss-disable[end= ]: load("@prelude//apple/meta_only:apple_test_re_capabilities.bzl", "apple_test_re_capabilities")
-# @oss-disable[end= ]: load("@prelude//apple/meta_only:apple_test_re_use_case.bzl", "apple_test_re_use_case")
 load("@prelude//apple/swift:swift_compilation.bzl", "get_swift_anonymous_targets")
 load("@prelude//apple/swift:swift_helpers.bzl", "uses_explicit_modules")
 load(
@@ -65,7 +62,6 @@ def apple_test_impl(ctx: AnalysisContext) -> [list[Provider], Promise]:
 
         objc_bridging_header_flags = [
             # Disable bridging header -> PCH compilation to mitigate an issue in Xcode 13 beta.
-            "-disable-bridging-pch",
             "-import-objc-header",
             cmd_args(ctx.attrs.bridging_header),
         ] if ctx.attrs.bridging_header else []
@@ -250,18 +246,10 @@ def _get_test_info(ctx: AnalysisContext, xctest_bundle: Artifact, test_host_app_
         test_device_type = get_default_test_device(sdk = sdk_name, platform = ctx.attrs.default_target_platform)
     labels.append(tpx_label_for_test_device_type(test_device_type))
 
-    remote_execution_properties = None # @oss-enable
-    remote_execution_use_case = None # @oss-enable
+    remote_execution_properties = None
+    remote_execution_use_case = None
 
-    # @oss-disable[end= ]: if ctx.attrs.test_re_capabilities:
-        # @oss-disable[end= ]: remote_execution_properties = ctx.attrs.test_re_capabilities
-    # @oss-disable[end= ]: else:
-        # @oss-disable[end= ]: uses_test_host = test_host_app_bundle != None or ui_test_target_app_bundle != None
-        # @oss-disable[end= ]: remote_execution_properties = apple_test_re_capabilities(test_device_type = test_device_type, uses_test_host = uses_test_host)
-    # @oss-disable[end= ]: remote_execution_use_case = ctx.attrs.test_re_use_case or apple_test_re_use_case(test_device_type = test_device_type)
 
-    # @oss-disable[end= ]: if local_test_execution_is_available():
-        # @oss-disable[end= ]: labels.append("tpx:apple_test:local_execution_available")
 
     return ExternalRunnerTestInfo(
         type = "custom",  # We inherit a label via the macro layer that overrides this.

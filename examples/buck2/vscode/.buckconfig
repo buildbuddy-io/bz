@@ -6,8 +6,6 @@ none = none
 
 [cell_aliases]
 config = prelude
-fbcode = none
-fbsource = none
 buck = none
 
 [external_cells]

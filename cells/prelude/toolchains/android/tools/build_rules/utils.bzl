@@ -6,7 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load("@prelude//:native.bzl", "native")
 
 def add_os_labels(**kwargs):
@@ -20,7 +19,6 @@ def add_os_labels(**kwargs):
     if native.host_info().os.is_windows:
         kwargs["labels"] += ["tpx:platform:windows"]
 
-    if not is_full_meta_repo():
-        kwargs["labels"] += ["tpx:is_oss_build"]
+    kwargs["labels"] += ["tpx:is_standalone_build"]
 
     return kwargs

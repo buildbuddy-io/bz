@@ -11,7 +11,6 @@ load(
     "make_artifact_tset",
 )
 load("@prelude//apple:apple_utility.bzl", "get_apple_architecture")
-# @oss-disable[end= ]: load("@prelude//apple/meta_only:shared_library_interfaces.bzl", "get_shared_library_interface_generation_linker_flags")
 load(
     "@prelude//apple/swift:swift_incremental_support.bzl",
     "get_uses_content_based_paths",
@@ -311,8 +310,8 @@ def complete_distributed_link_with_expanded_archive_link_data(
                 )
                 raw_link_data.append(data)
             elif isinstance(linkable, FrameworksLinkable) or isinstance(linkable, SwiftmoduleLinkable):
-                # These linkables are handled separately for flag deduplication purposes, as in append_linkable_args:
-                # https://www.internalfb.com/code/fbsource/[c6d2c820b394]/fbcode/buck2/prelude/linking/link_info.bzl?lines=271-278
+                # These linkables are handled separately for flag deduplication purposes,
+                # as in append_linkable_args.
                 pass
             else:
                 fail("Unhandled linkable type: {}".format(str(linkable)))
@@ -670,8 +669,8 @@ def generate_shared_library_interface(
             elif isinstance(linkable, SharedLibLinkable):
                 append_linkable_args(dynamic_libraries, linkable)
             elif isinstance(linkable, FrameworksLinkable) or isinstance(linkable, SwiftmoduleLinkable):
-                # These linkables are handled separately for flag deduplication purposes, as in append_linkable_args:
-                # https://www.internalfb.com/code/fbsource/[c6d2c820b394]/fbcode/buck2/prelude/linking/link_info.bzl?lines=271-278
+                # These linkables are handled separately for flag deduplication purposes,
+                # as in append_linkable_args.
                 pass
             else:
                 fail("Unhandled linkable type: {}".format(str(linkable)))
@@ -696,7 +695,6 @@ def generate_shared_library_interface(
     interface_generation_linker_invocation.add(cmd_args(interface_generation_linker_argsfile, format = "@{}"))
 
     interface_generation_linker_invocation.add(
-        # @oss-disable[end= ]: get_shared_library_interface_generation_linker_flags(shared_library_interface_out),
         cmd_args(),
     )
     ctx.actions.run(interface_generation_linker_invocation, category = "generate_shared_library_interface", identifier = identifier)

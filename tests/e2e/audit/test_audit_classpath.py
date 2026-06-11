@@ -25,7 +25,7 @@ def _classpath_jars(classpaths: Iterable[str]) -> Set[str]:
 @buck_test(inplace=True, skip_for_os=["windows"])
 async def test_audit_classpath(buck: Buck) -> None:
     await expect_failure(
-        buck.audit("classpath", "fbsource//fbandroid/buck2/tests/good/classpath:top"),
+        buck.audit("classpath", "root//fbandroid/buck2/tests/good/classpath:top"),
         stderr_regex=r"Using `audit classpath` is no longer supported. Use the `\[classpath\]` or `\[classpath_targets\]` sub-targets instead.",
     )
 
@@ -33,15 +33,15 @@ async def test_audit_classpath(buck: Buck) -> None:
 @buck_test(inplace=True, skip_for_os=["windows"])
 async def test_audit_classpath_binary(buck: Buck) -> None:
     await expect_failure(
-        buck.audit("classpath", "fbsource//fbandroid/buck2/tests/good/classpath:apk"),
+        buck.audit("classpath", "root//fbandroid/buck2/tests/good/classpath:apk"),
         stderr_regex=r"Using `audit classpath` is no longer supported. Use the `\[classpath\]` or `\[classpath_targets\]` sub-targets instead.",
     )
 
 
 @buck_test(inplace=True, skip_for_os=["windows"])
 async def test_audit_classpath_json(buck: Buck) -> None:
-    top = "fbsource//fbandroid/buck2/tests/good/classpath:top"
-    direct_dep = "fbsource//fbandroid/buck2/tests/good/classpath:direct_dep"
+    top = "root//fbandroid/buck2/tests/good/classpath:top"
+    direct_dep = "root//fbandroid/buck2/tests/good/classpath:direct_dep"
 
     await expect_failure(
         buck.audit("classpath", top, direct_dep, "--json"),

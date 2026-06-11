@@ -34,7 +34,7 @@ fn make_golden<T: Allocative>(value: &T) -> (String, String) {
     let mut builder = FlameGraphBuilder::default();
     builder.visit_root(value);
     let flamegraph = builder.finish_and_write_flame_graph();
-    // Because crate name is `allocative_unittest` in fbcode buck2 tests.
+    // Because crate name is `allocative_unittest` in workspace buck2 tests.
     let flamegraph = flamegraph.replace("allocative_unittest::", "allocative::");
     let mut flamegraph_svg: Vec<u8> = Vec::new();
     let mut inferno_options = inferno::flamegraph::Options::default();

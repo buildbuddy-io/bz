@@ -1,4 +1,4 @@
-load("@fbcode//bz:rules/proto_defs.bzl", "rust_protobuf_library")
+load("//:rules/proto_defs.bzl", "rust_protobuf_library")
 
 oncall("build_infra")
 
@@ -8,8 +8,8 @@ rust_protobuf_library(
     build_script = "build.rs",
     protos = glob(["proto/**/*.proto"]),
     deps = [
-        "fbsource//third-party/rust:prost-types",
-        "fbsource//third-party/rust:serde",
-        "//bz/app/bz_data:bz_data",
+        "third_party//rust:prost-types",
+        "third_party//rust:serde",
+        "//app/bz_data:bz_data",
     ],
 )

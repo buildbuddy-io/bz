@@ -64,8 +64,8 @@ use bz_core::execution_types::executor_config::CommandExecutorConfig;
 use bz_core::execution_types::executor_config::CommandGenerationOptions;
 use bz_core::execution_types::executor_config::Executor;
 use bz_core::execution_types::executor_config::LocalExecutorOptions;
-use bz_core::execution_types::executor_config::MetaInternalExtraParams;
 use bz_core::execution_types::executor_config::PathSeparatorKind;
+use bz_core::execution_types::executor_config::RemoteExecutionExtraParams;
 use bz_core::execution_types::executor_config::RemoteExecutorCustomImage;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::fs::buck_out_path::BuckOutTestPath;
@@ -630,7 +630,7 @@ impl<'a> BuckTestOrchestrator<'a> {
             required_resources,
             worker,
             test_executor.re_dynamic_image(),
-            test_executor.meta_internal_extra_params(),
+            test_executor.remote_execution_extra_params(),
             network_access,
         )
         .boxed()
@@ -1039,7 +1039,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
             vec![],
             worker,
             test_executor.re_dynamic_image(),
-            test_executor.meta_internal_extra_params(),
+            test_executor.remote_execution_extra_params(),
             network_access,
         )
         .await?;
@@ -1723,7 +1723,7 @@ impl BuckTestOrchestrator<'_> {
         required_local_resources: Vec<LocalResourceState>,
         worker: Option<WorkerSpec>,
         re_dynamic_image: Option<RemoteExecutorCustomImage>,
-        meta_internal_extra_params: Arc<MetaInternalExtraParams>,
+        remote_execution_extra_params: Arc<RemoteExecutionExtraParams>,
         network_access: Option<NetworkAccess>,
     ) -> bz_error::Result<CommandExecutionRequest> {
         let mut inputs = ensured_inputs
@@ -1732,7 +1732,7 @@ impl BuckTestOrchestrator<'_> {
             .collect_vec();
         inputs.extend(runfiles_inputs);
 
-        // NOTE: This looks a bit awkward, that's because fbcode's rustfmt and ours slightly
+        // NOTE: This looks a bit awkward, that's because workspace's rustfmt and ours slightly
         // disagree about format here...
         let outputs = declared_outputs
             .into_iter()
@@ -1766,7 +1766,7 @@ impl BuckTestOrchestrator<'_> {
             .with_disable_miniperf(!has_resource_control)
             .with_worker(worker)
             .with_remote_execution_custom_image(re_dynamic_image)
-            .with_meta_internal_extra_params(meta_internal_extra_params)
+            .with_remote_execution_extra_params(remote_execution_extra_params)
             .with_required_local_resources(required_local_resources)?
             .with_network_access(network_access)
             .with_is_test();
@@ -2715,11 +2715,11 @@ impl TestExecutor {
         }
     }
 
-    pub fn meta_internal_extra_params(&self) -> Arc<MetaInternalExtraParams> {
+    pub fn remote_execution_extra_params(&self) -> Arc<RemoteExecutionExtraParams> {
         if let Executor::RemoteEnabled(options) = &self.executor_config.executor {
-            options.meta_internal_extra_params.clone()
+            options.remote_execution_extra_params.clone()
         } else {
-            MetaInternalExtraParams::default_arc()
+            RemoteExecutionExtraParams::default_arc()
         }
     }
 }

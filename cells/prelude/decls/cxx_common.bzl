@@ -339,7 +339,7 @@ def _runtime_dependency_handling_arg():
 
 def _use_fbcc_rust_wrapper_arg():
     return {
-        "use_fbcc_rust_wrapper": attrs.bool(default = False, doc = "Opt-in for the rust version of the fbcode C++ Compiler wrapper (replacing the existing fbcc.py)"),
+        "use_fbcc_rust_wrapper": attrs.bool(default = False, doc = "Opt-in for the rust version of the workspace C++ Compiler wrapper (replacing the existing fbcc.py)"),
     }
 
 def _use_content_based_paths_arg():

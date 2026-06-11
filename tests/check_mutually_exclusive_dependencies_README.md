@@ -13,19 +13,19 @@ Add this to your BUCK file:
 
 ```python
 load(
-    "@fbsource//tools/build_defs:check_dependencies_test.bzl",
+    "@root//tools/build_defs:check_dependencies_test.bzl",
     "check_mutually_exclusive_dependencies_test",
 )
 
 check_mutually_exclusive_dependencies_test(
     name = "no_conflicting_volk_deps",
-    target = "fbsource//your/target:name",
-    contacts = ["your-oncall@xmail.facebook.com"],
+    target = "root//your/target:name",
+    contacts = ["your-oncall@example.com"],
     mutually_exclusive_group = [
         # Only one of these should be present in the dependency tree
-        "fbsource//third-party/volk:volk",
-        "fbsource//third-party/volk:volk-header",
-        "fbsource//third-party/toolchains:vulkan",
+        "third_party//volk:volk",
+        "third_party//volk:volk-header",
+        "third_party//toolchains:vulkan",
     ],
 )
 ```
@@ -37,15 +37,15 @@ Each pattern in the group can be a specific target or a regex pattern:
 ```python
 check_mutually_exclusive_dependencies_test(
     name = "no_mixed_dependencies",
-    target = "fbsource//your/target:name",
-    contacts = ["your-oncall@xmail.facebook.com"],
+    target = "root//your/target:name",
+    contacts = ["your-oncall@example.com"],
     mutually_exclusive_group = [
         # Match specific targets
-        "fbsource//third-party/lib-v1:specific_target",
+        "third_party//lib-v1:specific_target",
         # Use regex to match multiple targets
-        "fbsource//third-party/lib-v2:.*",
+        "third_party//lib-v2:.*",
         # Another regex pattern
-        "fbsource//third-party/lib-v3/.*",
+        "third_party//lib-v3/.*",
     ],
 )
 ```
@@ -66,20 +66,20 @@ check_mutually_exclusive_dependencies_test(
 Like other `check_dependencies_test` variants, this test can be configured to run in CI using the `labels` parameter:
 
 ```python
-load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
+load("@root//tools/target_determinator/macros:ci.bzl", "ci")
 
 check_mutually_exclusive_dependencies_test(
     name = "no_conflicting_deps",
-    target = "fbsource//your/target:name",
+    target = "root//your/target:name",
     contacts = [read_oncall()],
     mutually_exclusive_group = [
-        "fbsource//third-party/volk:volk",
-        "fbsource//third-party/volk:volk-header",
-        "fbsource//third-party/toolchains:vulkan",
+        "third_party//volk:volk",
+        "third_party//volk:volk-header",
+        "third_party//toolchains:vulkan",
     ],
     labels = ci.labels(
         [
-            ci.mode("fbsource//arvr/mode/fb-linux-nh/cuda12_5/opt"),
+            ci.mode("root//arvr/mode/fb-linux-nh/cuda12_5/opt"),
         ],
         overwrite = True,
     ),

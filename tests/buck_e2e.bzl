@@ -6,11 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//bz/app:modifier.bzl", "bz_modifiers")
-load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup")
-load("@fbcode_macros//build_defs:python_pytest.bzl", "python_pytest")
-load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
-load("@fbsource//tools/target_determinator/macros:ci_hint.bzl", "ci_hint")
+load("//app:modifier.bzl", "bz_modifiers")
+load("//rules:ci.bzl", "ci", "ci_hint")
 
 def buck_e2e_test(
         name,
@@ -75,8 +72,7 @@ def buck_e2e_test(
     heavyweight_threads = "8"
 
     # Running multiple bucks are expensive. This label specifies that each test gets 4 or 8 CPU slots
-    # when TPX schedules them. See different possible values for heavyweight label here:
-    # https://www.internalfb.com/wiki/TAE/tpx/Tpx_user_guide/#tests-that-oom-or-time-o.
+    # when TPX schedules them.
     labels.append(heavyweight_label)
 
     # Use little threads. We don't do much work in tests but we do run lots of Bucks.
@@ -95,7 +91,7 @@ def buck_e2e_test(
     if data_dir:
         if not data_dir.startswith("test_") or not data_dir.endswith("_data"):
             fail("Data dirs must be of the form `test_.*_data`, not {}".format(data_dir))
-        buck_filegroup(
+        native.filegroup(
             name = data_dir,
             srcs = [data_dir],
             copy = False,
@@ -109,43 +105,36 @@ def buck_e2e_test(
     if require_nano_prelude == None:
         require_nano_prelude = data_dir != None
     if require_nano_prelude:
-        env["NANO_PRELUDE"] = "$(location fbcode//bz/tests/e2e_util/nano_prelude:nano_prelude)"
+        env["NANO_PRELUDE"] = "$(location //tests/e2e_util/nano_prelude:nano_prelude)"
 
     deps += [
-        "fbsource//third-party/pypi/pytest:pytest",
-        "fbsource//third-party/pypi/pytest-asyncio:pytest-asyncio",
-        "fbcode//bz/tests/e2e_util:utilities",
+        "third_party//pypi/pytest:pytest",
+        "third_party//pypi/pytest-asyncio:pytest-asyncio",
+        "//tests/e2e_util:utilities",
     ]
     if use_buck_api:
-        deps += ["fbcode//bz/tests/e2e_util/api:api"]
+        deps += ["//tests/e2e_util/api:api"]
     resources = resources or {}
 
     # Let users of the macro define their own configuration for pytest. This allow for reusing all
     # the fixture code for tools building e2e tests that also need a working buck environment.
     if not "conftest.py" in resources.values():
-        resources["fbcode//bz/tests/e2e_util:conftest.py"] = "conftest.py"
+        resources["//tests/e2e_util:conftest.py"] = "conftest.py"
 
     if "darwin" in skip_for_os:
         labels += ci.remove_labels(ci.mac(ci.aarch64(ci.opt())))
     if "windows" in skip_for_os:
         labels += ci.remove_labels(ci.windows(ci.opt()))
 
-    python_pytest(
+    native.python_test(
         name = name,
         base_module = base_module,
         srcs = srcs,
         labels = labels,
         deps = deps,
         env = env,
-        emails = contacts,
+        contacts = contacts,
         resources = resources,
-        skip_on_mode_mac = "darwin" in skip_for_os,
-        skip_on_mode_win = "windows" in skip_for_os,
-        pytest_config = pytest_config,
-        pytest_marks = pytest_marks,
-        pytest_expr = pytest_expr,
-        pytest_confcutdir = pytest_confcutdir,
-        modifiers = cfg_modifiers,
         compatible_with = compatible_with,
     )
 
@@ -154,20 +143,12 @@ def buck_e2e_test(
         # that they depend on many of the macros in the repo. Intentionally
         # don't do this for other users of `bz_e2e_test` in the repo
         BUCK2_E2E_TEST_CI_SRCS = [
-            "fbandroid/buck2/**",
-            "fbcode/buck2/cfg/**",
-            "fbcode/buck2/cells/prelude/**",
-            "fbcode/buck2/platform/**",
-            "fbcode/buck2/toolchains/**",
-            "fbcode/buck2/tests/targets/**",
-            "fbobjc/buck2/**",
-            "xplat/buck2/**",
-            "xplat/toolchains/**",
-            "fbcode/hermetic_infra/fdb/**",
-            "tools/build_defs/**",
-            "arvr/tools/build_defs/config/**",
+            "app/**",
+            "cells/prelude/**",
+            "deps/**",
+            "rules/**",
+            "tests/targets/**",
             ".buckconfig",
-            "tools/buckconfigs/**",
         ]
         ci_srcs = ci_srcs + BUCK2_E2E_TEST_CI_SRCS
     if ci_srcs or ci_deps:
@@ -267,13 +248,13 @@ def bz_e2e_test(
         compiled_env["BUCK2_TPX"] = "$BUCK2_BINARY_DIR/buck2-tpx"
 
         if use_compiled_bz_client_and_tpx:
-            base_exe = "$(location fbcode//bz:symlinked_buck2_and_tpx)/buck2"
+            base_exe = "$(location //:symlinked_buck2_and_tpx)/buck2"
             exe = select({
                 "DEFAULT": base_exe,
                 "ovr_config//os:windows": base_exe + ".exe",
             })
         else:
-            exe = "$(location fbcode//bz:bz)"
+            exe = "$(location //:bz)"
 
         buck_e2e_test(
             # deployed buck2 test target retains the original target name so that when user runs `buck test <test target>`,
@@ -294,10 +275,6 @@ def bz_e2e_test(
     if test_with_deployed_buck2:
         deps = deps or []
 
-        # Add a buck2 version file as dep so we can run deployed buck2 tests on version bumps.
-        # Skip this dependency if skip_deployed_buck2_version_dep is True (e.g., for bxl tests).
-        if not skip_deployed_buck2_version_dep:
-            deps += ["fbsource//tools/buck2-versions:stable"]
         buck_e2e_test(
             name = name,
             env = deployed_env,
@@ -364,8 +341,8 @@ def bz_core_tests(
                 attrs["srcs"] = [item]
 
             IMPLICIT_DEPS = [
-                "//bz/tests/e2e_util:utils",
-                "//bz/tests/e2e_util:golden",
+                "//tests/e2e_util:utils",
+                "//tests/e2e_util:golden",
             ]
             attrs["deps"] = list(attrs.get("deps") or [])
             attrs["deps"].extend(IMPLICIT_DEPS)

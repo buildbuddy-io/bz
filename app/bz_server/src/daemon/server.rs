@@ -303,19 +303,6 @@ impl BuckdServer {
             .await?,
         );
 
-        #[cfg(fbcode_build)]
-        {
-            let root_path =
-                std::path::PathBuf::from(&daemon_state.paths.project_root().root().as_os_str());
-            if !bz_env!("BUCK2_DISABLE_EDEN_HEALTH_CHECK", bool)?
-                && detect_eden::is_eden(root_path).unwrap_or(false)
-            {
-                tracing::trace!("EdenFS root detected; starting health check job");
-                eden_health::edenfs_health_check(fb, daemon_state.paths.roots.project_root.dupe())
-                    .await;
-            }
-        }
-
         let auth_token = process_info.auth_token.clone();
         let api_server = BuckdServer(Arc::new(BuckdServerData {
             stop_accepting_requests: AtomicBool::new(false),
@@ -694,9 +681,9 @@ fn convert_positive_duration(proto_duration: &prost_types::Duration) -> Result<D
 
 fn error_to_command_result(e: bz_error::Error) -> CommandResult {
     CommandResult {
-        result: Some(command_result::Result::Error(
-            bz_data::ErrorReport::from(&e),
-        )),
+        result: Some(command_result::Result::Error(bz_data::ErrorReport::from(
+            &e,
+        ))),
     }
 }
 
@@ -1432,10 +1419,7 @@ impl DaemonApi for BuckdServer {
 
         let res: bz_error::Result<_> = try {
             let client_ctx = req.get_ref().client_context()?;
-            let trace_id = client_ctx
-                .trace_id
-                .parse()
-                .map_err(bz_error::Error::from)?;
+            let trace_id = client_ctx.trace_id.parse().map_err(bz_error::Error::from)?;
             let (event_source, dispatcher) = self.0.daemon_state.prepare_events(trace_id).await?;
             let active_command = ActiveCommand::new(&dispatcher, client_ctx.sanitized_argv.clone());
             (event_source, dispatcher, active_command)
@@ -1731,74 +1715,6 @@ async fn certs_validation_background_job(cert_state: CertState) {
             *valid = result.is_ok();
         }
     });
-}
-
-#[cfg(fbcode_build)]
-mod eden_health {
-    use std::time::Duration;
-
-    use bz_core::fs::project::ProjectRoot;
-    use bz_core::soft_error;
-    use bz_eden::connection::EdenConnectionManager;
-    use bz_eden::error::ErrorFromHangingMount;
-    use bz_eden::semaphore;
-    use bz_error::bz_error;
-
-    pub(crate) async fn edenfs_health_check(fb: fbinit::FacebookInit, root: ProjectRoot) {
-        tokio::task::spawn(async move {
-            const HEALTH_CHECK_INTERVAL: u64 = 60 * 10; // 10 minutes
-            tracing::trace!(
-                "spawned EdenFS health check that runs every {} seconds",
-                HEALTH_CHECK_INTERVAL
-            );
-            loop {
-                tokio::time::sleep(Duration::from_secs(HEALTH_CHECK_INTERVAL)).await;
-                match EdenConnectionManager::new(fb, &root, Some(semaphore::bz_default())) {
-                    Ok(Some(conn)) => {
-                        let info = conn
-                            .with_eden(|eden| {
-                                tracing::trace!("running getDaemonInfo() on EdenFS service");
-                                eden.getDaemonInfo()
-                            })
-                            .await;
-                        match info {
-                            Err(e) if e.is_caused_by_hanging_mount() => {
-                                tracing::error!(
-                                    "check hit an EdenFS error caused by a hanging mount: {:#}",
-                                    e
-                                );
-                                soft_error!(
-                                    "eden_thrift_health_check_failed",
-                                    bz_error!(bz_error::ErrorTag::Input, "check failed with: {:#}", e),
-                                    quiet: true
-                                )
-                                .ok();
-                            }
-                            _ => {
-                                tracing::debug!("check determined EdenFS is not hanging");
-                            }
-                        }
-                    }
-                    // Only occurs if the .eden dir doesn't exist (indicative of an unmounted mount).
-                    // Ignore this case since it's not related to a hanging Eden daemon.
-                    Ok(None) => {
-                        tracing::debug!("failed to run check: .eden dir does not exist");
-                    }
-                    // Can occur for a number of reasons, including IO into the Eden mount failing.
-                    // This _could_ signal a hanging mount, so we'll report a possible hang.
-                    Err(e) => {
-                        tracing::error!("check failed to create an EdenFS client: {:#}", e);
-                        soft_error!(
-                            "eden_thrift_client_creation_failed",
-                            bz_error!(bz_error::ErrorTag::Input, "client creation failed with: {:#}", e),
-                            quiet: true
-                        )
-                        .ok();
-                    }
-                }
-            }
-        });
-    }
 }
 
 /// No-op set of command options.

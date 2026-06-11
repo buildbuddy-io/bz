@@ -590,14 +590,7 @@ async fn test_targets(
         ];
         args.extend(external_runner_args);
 
-        if cfg!(fbcode_build) {
-            // Our OSS test runner does not support `--experiment` flags, so only pass these flags internally.
-            args.extend(
-                tpx_experiments
-                    .iter()
-                    .flat_map(|experiment| ["--experiment".to_owned(), experiment.to_owned()]),
-            );
-        }
+        let _unused = tpx_experiments;
 
         args
     };
@@ -1260,8 +1253,7 @@ async fn build_target_result(
     build_run_info: bool,
 ) -> bz_error::Result<(BuildTargetResult, FrozenProviderCollectionValue)> {
     // NOTE: We fail if we hit an incompatible target here. This can happen if we reach an
-    // incompatible target via `tests = [...]`. This should perhaps change, but that's how it works
-    // in v1: https://fb.workplace.com/groups/buckeng/posts/8520953297953210
+    // incompatible target via `tests = [...]`. This should perhaps change, but that's how v1 works.
     let providers = ctx
         .get()
         .get_providers(&label)

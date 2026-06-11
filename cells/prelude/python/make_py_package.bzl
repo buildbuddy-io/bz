@@ -555,7 +555,7 @@ def _make_py_package_impl(
 
     # For standalone builds, or builds setting make_py_package we generate args for calling make_par.py
     if standalone or make_py_package_cmd != None:
-        # We support building _standalone_ packages locally to e.g. support fbcode's
+        # We support building _standalone_ packages locally to e.g. support workspace's
         # current style of build info stamping (e.g. T10696178).
         prefer_local = (not getattr(ctx.attrs, "optimize_for_action_throughput", False)) and standalone and package_python_locally(ctx, python_toolchain)
         prefer_remote = getattr(ctx.attrs, "optimize_for_action_throughput", False)
@@ -1186,7 +1186,7 @@ def _hidden_resources_error_message(current_target: ConfiguredProvidersLabel, hi
         "Cannot package hidden srcs/resources in a {} python_binary. ".format(style_name) +
         'Eliminate resources in non-Python dependencies of this python binary, set `package_style = "inplace"` on ' +
         str(current_target.raw_target()) + ", " +
-        'use `strip_mode="full"` or turn off Split DWARF `-c fbcode.split-dwarf=false` on C++ binary resources.\n'
+        'use `strip_mode="full"` or turn off Split DWARF `-c workspace.split-dwarf=false` on C++ binary resources.\n'
     )
 
     for (rule, resources) in owner_to_artifacts.items():
@@ -1248,9 +1248,7 @@ def _add_dep_metadata_to_manifest_module(
     Updates manifest_module_entries with link metadata if they exist.
     """
 
-    # FIXME(JakobDegen): Hack: Outside of the fbcode macros, we don't pass `--no-manifest` to the
-    # par builder which means that we can't generate any manifest data in the prelude
-    if python_toolchain.manifest_module_entries == None or "fbcode_macros" not in ctx.attrs.labels:
+    if python_toolchain.manifest_module_entries == None:
         if ctx.attrs.manifest_module_entries == None:
             return None
         manifest_module_entries = dict(ctx.attrs.manifest_module_entries)

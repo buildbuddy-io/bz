@@ -30,7 +30,7 @@ use bz_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use bz_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueUnpack;
 use bz_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use bz_build_api::interpreter::rule_defs::command_executor_config::parse_custom_re_image;
-use bz_build_api::interpreter::rule_defs::command_executor_config::parse_meta_internal_extra_params;
+use bz_build_api::interpreter::rule_defs::command_executor_config::parse_remote_execution_extra_params;
 use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileAction;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::cc_info::BazelCcCompileCommandLine;
@@ -623,10 +623,7 @@ fn bazel_run_weight_from_resource_set<'v>(
     let _local_test = bazel_resource_number(&dict, "local_test", 1.0)?;
     let permits = cpu.max(1.0).ceil() as u32;
     Ok(WeightClass::Permits(permits.try_into().map_err(|e| {
-        bz_error::bz_error!(
-            bz_error::ErrorTag::Input,
-            "Invalid resource_set cpu: {e}"
-        )
+        bz_error::bz_error!(bz_error::ErrorTag::Input, "Invalid resource_set cpu: {e}")
     })?))
 }
 
@@ -740,7 +737,7 @@ fn register_bazel_run_action<'v>(
         remote_execution_dependencies: ThinBoxSlice::empty(),
         re_gang_workers: ThinBoxSlice::empty(),
         remote_execution_custom_image: None,
-        meta_internal_extra_params: parse_meta_internal_extra_params(None)?,
+        remote_execution_extra_params: parse_remote_execution_extra_params(None)?,
         expected_eligible_for_dedupe: None,
         timeout: None,
         bazel_use_default_shell_env: Some(use_default_shell_env),
@@ -1025,7 +1022,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
     ///     specific set of actions: action runtime is often variable so setting
     ///     a timeout to try and enforce a specific runtime goal will inevitably
     ///     result in flaky failures for end users running builds.
-    ///  * `meta_internal_extra_params`: a dictionary to pass extra parameters to RE, can add more keys in the future:
+    ///  * `remote_execution_extra_params`: a dictionary to pass extra parameters to RE, can add more keys in the future:
     ///     * `remote_execution_policy`: refer to TExecutionPolicy.
     ///  * `error_handler`: an optional function that analyzes action failures and produces structured error information.
     ///     * Type signature: `def error_handler(ctx: ActionErrorCtx) -> list[ActionSubError]`
@@ -1122,7 +1119,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         >,
         #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
         #[starlark(require = named, default = NoneOr::None)] timeout_seconds: NoneOr<u32>,
-        #[starlark(require = named, default = NoneOr::None)] meta_internal_extra_params: NoneOr<
+        #[starlark(require = named, default = NoneOr::None)] remote_execution_extra_params: NoneOr<
             DictRef<'v>,
         >,
         // Note: Intentionally don't support frozen output artifacts
@@ -1409,12 +1406,10 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                         v.insert(Arc::from(key));
                     }
                     small_map::Entry::Occupied(o) => {
-                        return Err(bz_error::Error::from(
-                            RunActionError::ConflictingDepFiles {
-                                first: (**o.get()).to_owned(),
-                                second: (*key).to_owned(),
-                            },
-                        )
+                        return Err(bz_error::Error::from(RunActionError::ConflictingDepFiles {
+                            first: (**o.get()).to_owned(),
+                            second: (*key).to_owned(),
+                        })
                         .into());
                     }
                 }
@@ -1504,7 +1499,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         )?;
 
         let extra_params =
-            parse_meta_internal_extra_params(meta_internal_extra_params.into_option())?;
+            parse_remote_execution_extra_params(remote_execution_extra_params.into_option())?;
 
         let timeout = match timeout_seconds.into_option() {
             Some(t) => {
@@ -1547,7 +1542,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             remote_execution_dependencies: re_dependencies,
             re_gang_workers,
             remote_execution_custom_image: re_custom_image,
-            meta_internal_extra_params: extra_params,
+            remote_execution_extra_params: extra_params,
             expected_eligible_for_dedupe: expect_eligible_for_dedupe.into_option(),
             timeout,
             bazel_use_default_shell_env: None,

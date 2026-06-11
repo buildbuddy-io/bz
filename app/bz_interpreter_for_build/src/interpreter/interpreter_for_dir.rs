@@ -375,11 +375,7 @@ fn parse_glob_prefix(prefix: &str) -> GlobListingPrefix {
 }
 
 pub fn get_starlark_warning_link() -> &'static str {
-    if bz_core::is_open_source() {
-        "https://buck2.build/docs/users/faq/starlark_peak_mem"
-    } else {
-        "https://fburl.com/starlark_peak_mem_warning"
-    }
+    "https://buck2.build/docs/users/faq/starlark_peak_mem"
 }
 /// Interpreter for build files.
 ///
@@ -475,7 +471,7 @@ impl LoadResolver for InterpreterLoadResolver {
             });
         }
 
-        // If you load the same .bzl file twice via different aliases (e.g. fbcode//bz/prelude/foo.bzl and prelude.bzl)
+        // If you load the same .bzl file twice via different aliases (e.g. //prelude/foo.bzl and prelude.bzl)
         // then anything doing pointer equality (t-sets, provider identities) will go wrong.
         let project_path = self
             .config
@@ -759,9 +755,7 @@ impl InterpreterForDir {
         self.implicit_import_paths.root_import.clone()
     }
 
-    fn cell_default_prelude_import(
-        prelude_import: &PreludePath,
-    ) -> bz_error::Result<ImportPath> {
+    fn cell_default_prelude_import(prelude_import: &PreludePath) -> bz_error::Result<ImportPath> {
         let prelude_file = CellRelativePathBuf::unchecked_new("prelude.bzl".to_owned());
         ImportPath::new_same_cell(CellPath::new(prelude_import.prelude_cell(), prelude_file))
     }

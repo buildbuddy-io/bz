@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allocative::Allocative;
-use bz_error::BuckErrorContext;
 use bytes::Bytes;
+use bz_error::BuckErrorContext;
 use dupe::Dupe;
 use futures::StreamExt;
 use futures::TryStreamExt;
@@ -928,14 +928,13 @@ mod tests {
     }
 }
 
-// TODO(skarlage, T160529958): Debug why these tests fail on CircleCI
-#[cfg(all(test, fbcode_build))]
+#[cfg(test)]
 mod proxy_tests {
     use std::net::ToSocketAddrs;
     use std::time::Duration;
 
-    use bz_error::BuckErrorContext;
     use bytes::Bytes;
+    use bz_error::BuckErrorContext;
     use http::Method;
     use httptest::Expectation;
     use httptest::matchers::*;

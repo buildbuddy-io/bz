@@ -137,7 +137,7 @@ fn package_pattern_matches(
 /// at the moment of writing.)
 #[derive(Debug, Allocative, Pagable)]
 pub struct Package {
-    /// The build file which defined this target, e.g. `fbcode//foo/bar/TARGETS`
+    /// The build file which defined this target, e.g. `root//foo/bar/TARGETS`
     pub buildfile_path: Arc<BuildFilePath>,
     /// The oncall attribute, if set
     pub oncall: Option<Oncall>,

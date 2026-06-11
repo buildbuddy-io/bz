@@ -655,23 +655,7 @@ impl InvocationRecorder {
             .as_ref()
             .map(|path| path.resolve(&ctx.working_dir));
 
-        let filesystem;
-        #[cfg(fbcode_build)]
-        {
-            let is_eden = paths.is_some_and(|paths| {
-                let root = std::path::Path::to_owned(paths.project_root().root().to_buf().as_ref());
-                detect_eden::is_eden(root).unwrap_or(false)
-            });
-            if is_eden {
-                filesystem = "eden".to_owned();
-            } else {
-                filesystem = "default".to_owned();
-            }
-        }
-        #[cfg(not(fbcode_build))]
-        {
-            filesystem = "default".to_owned();
-        }
+        let filesystem = "default".to_owned();
         let build_count = paths.and_then(|p| match BuildCountManager::new(p.build_count_dir()) {
             Ok(manager) => Some(manager),
             Err(e) => {
@@ -1409,13 +1393,12 @@ impl InvocationRecorder {
             bz_data::command_end::Data::Build(..)
             | bz_data::command_end::Data::Test(..)
             | bz_data::command_end::Data::Install(..) => {
-                let build_completed = if let Some(bz_data::BuildResult { build_completed }) =
-                    command.build_result
-                {
-                    build_completed
-                } else {
-                    false
-                };
+                let build_completed =
+                    if let Some(bz_data::BuildResult { build_completed }) = command.build_result {
+                        build_completed
+                    } else {
+                        false
+                    };
                 match self
                     .build_count(build_completed, command_data.variant_name())
                     .await
@@ -1736,10 +1719,7 @@ impl InvocationRecorder {
         Ok(())
     }
 
-    fn handle_system_info(
-        &mut self,
-        system_info: &bz_data::SystemInfo,
-    ) -> bz_error::Result<()> {
+    fn handle_system_info(&mut self, system_info: &bz_data::SystemInfo) -> bz_error::Result<()> {
         self.system_info = system_info.clone();
         Ok(())
     }
@@ -2171,8 +2151,7 @@ impl InvocationRecorder {
         duration: Option<&prost_types::Duration>,
         _event: &BuckEvent,
     ) -> bz_error::Result<()> {
-        // We might receive this event twice, so ... deal with it by merging the two.
-        // See: https://fb.workplace.com/groups/buck2dev/permalink/3396726613948720/
+        // We might receive this event twice, so deal with it by merging the two.
         self.file_watcher_stats =
             merge_file_watcher_stats(self.file_watcher_stats.take(), file_watcher.stats.clone());
         if let Some(duration) = duration.copied().and_then(|x| Duration::try_from(x).ok()) {
@@ -2209,10 +2188,7 @@ impl InvocationRecorder {
         Ok(())
     }
 
-    fn handle_structured_error(
-        &mut self,
-        err: &bz_data::StructuredError,
-    ) -> bz_error::Result<()> {
+    fn handle_structured_error(&mut self, err: &bz_data::StructuredError) -> bz_error::Result<()> {
         if let Some(soft_error_category) = err.soft_error_category.as_ref() {
             self.soft_error_categories
                 .insert(soft_error_category.to_owned());
@@ -2455,9 +2431,7 @@ impl InvocationRecorder {
                     bz_data::instant_event::Data::VersionControlRevision(revision) => {
                         self.handle_version_control(revision)
                     }
-                    bz_data::instant_event::Data::PreviousCommandWithMismatchedConfig(
-                        command,
-                    ) => {
+                    bz_data::instant_event::Data::PreviousCommandWithMismatchedConfig(command) => {
                         self.previous_uuid_with_mismatched_config = Some(command.trace_id.clone());
                         Ok(())
                     }
@@ -2613,7 +2587,7 @@ impl EventSubscriber for InvocationRecorder {
     async fn finalize(mut self: Box<Self>) -> bz_error::Result<()> {
         // Can't set this before the daemon forks.
         // Typically initialized already unless the command failed early.
-        let fb = bz_common::fbinit::get_or_init_fbcode_globals();
+        let fb = bz_common::fbinit::get_or_init_build_globals();
         let event = self.create_record_event();
         if let Some(scribe_sink) = new_remote_event_sink_if_enabled(
             fb,

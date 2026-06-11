@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_core_tests")
+load("//tests:buck_e2e.bzl", "bz_core_tests")
 
 oncall("build_infra")
 
@@ -6,7 +6,7 @@ bz_core_tests(
     target_extra_attrs = {
         "test_actions": {
             "deps": [
-                "fbsource//third-party/pypi/aiohttp:aiohttp",
+                "third_party//pypi/aiohttp:aiohttp",
             ],
             "env": {
                 # `cpe::x2p` resolves `localhost` incorrectly, and test fails.

@@ -55,7 +55,7 @@ import com.facebook.litho.Component;
 
 ```
 AutodepsTool(
-  file_path="/data/sandcastle/boxes/fbsource/fbandroid/java/com/instagram/feed/FeedRenderer.java",
+  file_path="/data/sandcastle/boxes/workspace/fbandroid/java/com/instagram/feed/FeedRenderer.java",
   remove_unused_deps=false
 )
 ```

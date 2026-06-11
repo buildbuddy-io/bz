@@ -6,8 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# @lint-ignore-every FBCODEBZLADDLOADS
-
 # A test that you can recursively keep adding more anon targets,
 # or use anon_targets
 

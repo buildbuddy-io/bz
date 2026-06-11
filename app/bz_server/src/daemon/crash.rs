@@ -30,7 +30,6 @@ pub(crate) async fn crash(req: UnstableCrashRequest) -> bz_error::Result<Generic
             // Crash with SIGABRT.
             // Should trigger folly signal handler to dump stack trace.
             // SIGSEGV,SIGTERM,SIGBUS,SIGILL,etc. should behave similarly.
-            // https://fburl.com/code/ap385ats
             std::process::abort();
         }
         CrashType::Oom => allocate_memory(req.bytes).await,

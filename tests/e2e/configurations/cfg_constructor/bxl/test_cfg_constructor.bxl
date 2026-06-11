@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//bz/app:modifier.bzl", "modifiers")
+load("//app:modifier.bzl", "modifiers")
 load("@prelude//:asserts.bzl", "asserts")
 load("@prelude//cfg/modifier:cfg_constructor.bzl", "cfg_constructor_post_constraint_analysis", "cfg_constructor_pre_constraint_analysis")
 load("@prelude//cfg/modifier:common.bzl", "tagged_modifiers_to_json")
@@ -20,7 +20,7 @@ load(":util.bxl", "ALIASES", "TestRefs", "get_test_refs")
 
 # These tests run `cfg_constructor_pre_constraint_analysis` and `cfg_constructor_post_constraint_analysis` with test arguments
 # and check if they return the expected PlatformInfo. They act like unit tests except for the fact that they use certain
-# constraint targets from the repo (listed below), which requires running from within fbsource.
+# constraint targets from the repo (listed below), which requires running from within workspace.
 # TODO(scottcao): Make this test runnable as isolated test.
 
 def _run_cfg_constructor(
@@ -116,7 +116,7 @@ def test_cfg_constructor_with_package_modifiers(
         package_modifiers = [
             TaggedModifiers(
                 modifiers = ["ovr_config//cpu/constraints:x86_64", "ovr_config//os/constraints:linux"],
-                location = ModifierPackageLocation(package_path = "fbcode//PACKAGE"),
+                location = ModifierPackageLocation(package_path = "root//PACKAGE"),
                 rule_name = None,
             ),
         ],
@@ -138,7 +138,7 @@ def test_cfg_constructor_with_all_modifiers(
         package_modifiers = [
             TaggedModifiers(
                 modifiers = ["ovr_config//os/constraints:linux"],
-                location = ModifierPackageLocation(package_path = "fbcode//PACKAGE"),
+                location = ModifierPackageLocation(package_path = "root//PACKAGE"),
                 rule_name = None,
             ),
         ],
@@ -163,7 +163,7 @@ def test_cfg_constructor_with_modifiers_match(
             modifiers = [modifiers.match({
                 "ovr_config//os/constraints:macos": "ovr_config//cpu/constraints:arm64",
             }), "ovr_config//os/constraints:linux"],
-            location = ModifierPackageLocation(package_path = "fbcode//PACKAGE"),
+            location = ModifierPackageLocation(package_path = "root//PACKAGE"),
             rule_name = None,
         ),
     ]
@@ -289,7 +289,7 @@ def test_cfg_constructor_with_single_constraint_config_setting_modifier(
         package_modifiers = [
             TaggedModifiers(
                 modifiers = ["ovr_config//os:linux"],
-                location = ModifierPackageLocation(package_path = "fbcode//PACKAGE"),
+                location = ModifierPackageLocation(package_path = "root//PACKAGE"),
                 rule_name = None,
             ),
         ],
@@ -309,12 +309,12 @@ def test_cfg_constructor_with_tagged_modifiers_per_rule1(
         package_modifiers = [
             TaggedModifiers(
                 modifiers = ["ovr_config//cpu/constraints:arm64"],
-                location = ModifierPackageLocation(package_path = "fbcode//PACKAGE"),
+                location = ModifierPackageLocation(package_path = "root//PACKAGE"),
                 rule_name = None,
             ),
             TaggedModifiers(
                 modifiers = ["ovr_config//cpu/constraints:x86_64"],
-                location = ModifierPackageLocation(package_path = "fbcode//PACKAGE"),
+                location = ModifierPackageLocation(package_path = "root//PACKAGE"),
                 rule_name = "python_binary",
             ),
         ],
@@ -335,12 +335,12 @@ def test_cfg_constructor_with_tagged_modifiers_per_rule2(
         package_modifiers = [
             TaggedModifiers(
                 modifiers = ["ovr_config//cpu/constraints:arm64"],
-                location = ModifierPackageLocation(package_path = "fbcode//PACKAGE"),
+                location = ModifierPackageLocation(package_path = "root//PACKAGE"),
                 rule_name = None,
             ),
             TaggedModifiers(
                 modifiers = ["ovr_config//cpu/constraints:x86_64"],
-                location = ModifierPackageLocation(package_path = "fbcode//PACKAGE"),
+                location = ModifierPackageLocation(package_path = "root//PACKAGE"),
                 rule_name = "python_binary",
             ),
         ],
@@ -360,7 +360,7 @@ def test_cfg_constructor_with_multiple_modifier_alias(test_refs: TestRefs):
         package_modifiers = [
             TaggedModifiers(
                 modifiers = ["ovr_config//cpu/constraints:arm64"],
-                location = ModifierPackageLocation(package_path = "fbcode//PACKAGE"),
+                location = ModifierPackageLocation(package_path = "root//PACKAGE"),
                 rule_name = None,
             ),
         ],

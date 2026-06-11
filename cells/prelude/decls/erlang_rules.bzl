@@ -12,7 +12,7 @@ load(":common.bzl", "buck", "prelude_rule")
 load(":re_test_common.bzl", "re_test_common")
 
 def re_test_args():
-    # remove reference to fbcode targets
+    # remove reference to workspace targets
     args = re_test_common.test_args()
     return {"remote_execution": args["remote_execution"]}
 
@@ -97,8 +97,7 @@ rules_attributes = {
                 applications.
 
                 The main use-case are the applications listed in `third-party/`. This option should not be used by other applications
-                without consultation. Please ask in the [WhatsApp Dev Infra Q&A](https://fb.workplace.com/groups/728545201114362)
-                workplace group for support.
+                without first confirming that they can handle beam bytecode preloading.
             """),
         "extra_includes": attrs.list(attrs.dep(providers = [ErlangAppIncludeInfo]), default = [], doc = """
                 In some cases we might have the situation, where an application `app_a` depends through the `applications` and

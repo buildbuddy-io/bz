@@ -95,7 +95,7 @@ pub trait QueryTarget: LabeledNode + Dupe + Send + Sync + 'static {
 
     fn name(&self) -> Cow<'_, str>;
 
-    /// Return the path to the buildfile that defines this target, e.g. `fbcode//foo/bar/TARGETS`
+    /// Return the path to the buildfile that defines this target, e.g. `root//foo/bar/TARGETS`
     fn buildfile_path(&self) -> &BuildFilePath;
 
     fn deps<'a>(&'a self) -> impl Iterator<Item = &'a Self::Key> + Send + 'a;
@@ -163,8 +163,7 @@ pub trait QueryEnvironment: Send + Sync {
     ) -> bz_error::Result<MaybeCompatible<Self::Target>>;
 
     /// Evaluates a literal target pattern. See bz_common::pattern
-    async fn eval_literals(&self, literal: &[&str])
-    -> bz_error::Result<TargetSet<Self::Target>>;
+    async fn eval_literals(&self, literal: &[&str]) -> bz_error::Result<TargetSet<Self::Target>>;
 
     /// Evaluates a file literal
     async fn eval_file_literal(&self, literal: &str) -> bz_error::Result<FileSet>;

@@ -217,7 +217,11 @@ fn push_status_spans(spans: &mut Vec<Span>, status: &str) {
         if !main.is_empty() {
             spans.push(styled_span(main, Some(Color::Grey), false));
         }
-        spans.push(styled_span(&status[detail_start..], Some(Color::Grey), false));
+        spans.push(styled_span(
+            &status[detail_start..],
+            Some(Color::Grey),
+            false,
+        ));
         return;
     }
 
@@ -248,11 +252,7 @@ struct LinesComponent(Lines);
 impl Component for LinesComponent {
     type Error = bz_error::Error;
 
-    fn draw_unchecked(
-        &self,
-        _dimensions: Dimensions,
-        _mode: DrawMode,
-    ) -> bz_error::Result<Lines> {
+    fn draw_unchecked(&self, _dimensions: Dimensions, _mode: DrawMode) -> bz_error::Result<Lines> {
         Ok(self.0.clone())
     }
 }

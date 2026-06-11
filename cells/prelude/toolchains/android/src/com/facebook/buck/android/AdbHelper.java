@@ -351,7 +351,7 @@ public class AdbHelper implements AndroidDevicesHelper {
           String.format(
               "You are trying to install %s%s onto a device with the following CPU(s): %s. "
                   + "Please try again with a correct one. If you used an alias, "
-                  + "some default aliases may have changed: https://fburl.com/workplace/p4ty6uvo.",
+                  + "some default aliases may have changed.",
               apk.getName(),
               String.format(" (CPU(s): %s)", String.join(", ", apkAbis)),
               String.join(", ", abis));

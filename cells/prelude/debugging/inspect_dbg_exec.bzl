@@ -15,8 +15,8 @@ def inspect_dbg_exec(ctx: bxl.Context, actions: AnalysisActions, target: bxl.Con
     if not pointer_name.endswith("_fdb"):
         pointer_name = "{}_fdb".format(pointer_name)
 
-    fbsource_alias_target = ctx.configured_targets(pointer_name)
-    providers = ctx.analysis(fbsource_alias_target).providers()
+    workspace_alias_target = ctx.configured_targets(pointer_name)
+    providers = ctx.analysis(workspace_alias_target).providers()
     fdb_helper = providers[RunInfo]
     fdb_helper_out = actions.declare_output("fdb_helper.json", has_content_based_path = False)
     cmd = cmd_args(fdb_helper, settings.args)

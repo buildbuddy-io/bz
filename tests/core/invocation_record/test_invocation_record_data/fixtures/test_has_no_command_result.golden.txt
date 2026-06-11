@@ -1,6 +1,6 @@
 # This file is @generated, regenerate by re-running test with `-- --env BUCK2_UPDATE_GOLDEN=1` appended to the test command
 
-[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+[<TIMESTAMP>] Build ID: <UUID>
 BUILD FAILED
 Command failed: Buck daemon event bus encountered an error, the root cause (if available) is displayed above this message.
 

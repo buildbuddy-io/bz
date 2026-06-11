@@ -32,22 +32,21 @@ pub(crate) async fn check_daemon_oom_killed(
     cgroup_path_of_bz_daemon: &str,
     since: SystemTime,
 ) -> bz_error::Result<bool> {
-    let cgroup_path_of_bz_daemon =
-        match cgroup_path_of_bz_daemon.strip_prefix("/sys/fs/cgroup/") {
-            Some(rel) => rel,
-            None => {
-                let _unused = soft_error!(
-                    "oom_cgroup_path_unexpected_prefix",
-                    bz_error::bz_error!(
-                        bz_error::ErrorTag::Environment,
-                        "cgroup path does not start with /sys/fs/cgroup/: {}",
-                        cgroup_path_of_bz_daemon
-                    ),
-                    quiet: true
-                );
-                return Ok(false);
-            }
-        };
+    let cgroup_path_of_bz_daemon = match cgroup_path_of_bz_daemon.strip_prefix("/sys/fs/cgroup/") {
+        Some(rel) => rel,
+        None => {
+            let _unused = soft_error!(
+                "oom_cgroup_path_unexpected_prefix",
+                bz_error::bz_error!(
+                    bz_error::ErrorTag::Environment,
+                    "cgroup path does not start with /sys/fs/cgroup/: {}",
+                    cgroup_path_of_bz_daemon
+                ),
+                quiet: true
+            );
+            return Ok(false);
+        }
+    };
 
     // Check kernel OOM killer messages in dmesg.
     // The kernel writes these synchronously when OOM killing, so they are
@@ -246,11 +245,11 @@ mod tests {
             Buck2CgroupMatcher::new(bz_cgroup).dmesg_line_matches_oom_kill(line)
         };
 
-        let line = "[Thu Jan  1 00:00:00 2025] oom-kill:constraint=CONSTRAINT_MEMCG,task_memcg=/user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope,task=buck2,pid=1234,uid=1000";
+        let line = "[Thu Jan  1 00:00:00 2025] oom-kill:constraint=CONSTRAINT_MEMCG,task_memcg=/user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope,task=buck2,pid=1234,uid=1000";
 
         assert!(matches(
             line,
-            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope"
+            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope"
         ));
         assert!(matches(
             line,
@@ -258,21 +257,21 @@ mod tests {
         ));
         assert!(matches(
             line,
-            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope/child"
+            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope/child"
         ));
 
         // Sibling cgroup that shares a prefix should not match
         assert!(!matches(
             line,
-            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope_sibling"
+            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope_sibling"
         ));
 
         // oomd kill line format
-        let oomd_line = "[1813654.116643] oomd kill: 81.28 80.05 42.78 user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope 137490391040 ruleset:[protection against low swap] detectorgroup:[free swap goes below 5%] killCommand: build";
+        let oomd_line = "[1813654.116643] oomd kill: 81.28 80.05 42.78 user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope 137490391040 ruleset:[protection against low swap] detectorgroup:[free swap goes below 5%] killCommand: build";
 
         assert!(matches(
             oomd_line,
-            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope"
+            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope"
         ));
         assert!(matches(
             oomd_line,
@@ -280,13 +279,13 @@ mod tests {
         ));
         assert!(matches(
             oomd_line,
-            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope/daemon"
+            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope/daemon"
         ));
 
         // Sibling cgroup that shares a prefix should not match
         assert!(!matches(
             oomd_line,
-            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope_sibling"
+            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope_sibling"
         ));
     }
 
@@ -301,19 +300,19 @@ mod tests {
         // while the buck2 client reads the daemon's cgroup path from
         // inside a container's cgroup namespace
         // (starts at `task/...`). A parent of the daemon's cgroup is killed.
-        let od_oomd_line = "[1813654.116643] oomd kill: 81.28 80.05 42.78 workload.slice/workload-tw.slice/workload-tw-twcli_fake_uuid.a36daf.allotment.slice/fbcode_154651.0_od0473.vll6_65021946483df_252.task.xx._650219bcdd5a4_258.tw.task.service/task/user.slice/user-29230.slice/user@29230.service/buck2.slice 137490391040 ruleset:[protection against low swap] detectorgroup:[free swap goes below 5%] killCommand: build";
+        let od_oomd_line = "[1813654.116643] oomd kill: 81.28 80.05 42.78 workload.slice/workload-tw.slice/workload-tw-twcli_fake_uuid.a36daf.allotment.slice/workspace_154651.0_od0473.vll6_65021946483df_252.task.xx._650219bcdd5a4_258.tw.task.service/task/user.slice/user-29230.slice/user@29230.service/buck2.slice 137490391040 ruleset:[protection against low swap] detectorgroup:[free swap goes below 5%] killCommand: build";
 
         assert!(matches(
             od_oomd_line,
-            "task/user.slice/user-29230.slice/user@29230.service/buck2.slice/bz_daemon.fbsource.v2.f73409b0_6cb5_4f25_8d82_55a1c4a2d4ba.scope/daemon"
+            "task/user.slice/user-29230.slice/user@29230.service/buck2.slice/bz_daemon.workspace.v2.f73409b0_6cb5_4f25_8d82_55a1c4a2d4ba.scope/daemon"
         ));
 
         // Daemon's own cgroup is killed
-        let od_oomd_line_daemon_killed = "[1813654.116643] oomd kill: 81.28 80.05 42.78 workload.slice/workload-tw.slice/workload-tw-twcli_fake_uuid.a36daf.allotment.slice/fbcode_154651.0_od0473.vll6_65021946483df_252.task.xx._650219bcdd5a4_258.tw.task.service/task/user.slice/user-29230.slice/user@29230.service/buck2.slice/bz_daemon.fbsource.v2.f73409b0_6cb5_4f25_8d82_55a1c4a2d4ba.scope/daemon 137490391040 ruleset:[protection against low swap] detectorgroup:[free swap goes below 5%] killCommand: build";
+        let od_oomd_line_daemon_killed = "[1813654.116643] oomd kill: 81.28 80.05 42.78 workload.slice/workload-tw.slice/workload-tw-twcli_fake_uuid.a36daf.allotment.slice/workspace_154651.0_od0473.vll6_65021946483df_252.task.xx._650219bcdd5a4_258.tw.task.service/task/user.slice/user-29230.slice/user@29230.service/buck2.slice/bz_daemon.workspace.v2.f73409b0_6cb5_4f25_8d82_55a1c4a2d4ba.scope/daemon 137490391040 ruleset:[protection against low swap] detectorgroup:[free swap goes below 5%] killCommand: build";
 
         assert!(matches(
             od_oomd_line_daemon_killed,
-            "task/user.slice/user-29230.slice/user@29230.service/buck2.slice/bz_daemon.fbsource.v2.f73409b0_6cb5_4f25_8d82_55a1c4a2d4ba.scope/daemon"
+            "task/user.slice/user-29230.slice/user@29230.service/buck2.slice/bz_daemon.workspace.v2.f73409b0_6cb5_4f25_8d82_55a1c4a2d4ba.scope/daemon"
         ));
 
         // Negative: matched_cgroup tail looks like `bz_cgroup` but not at a
@@ -323,7 +322,7 @@ mod tests {
 
         assert!(!matches(
             bad_boundary_line,
-            "task/user.slice/user-29230.slice/user@29230.service/buck2.slice/bz_daemon.fbsource.v2.f73409b0_6cb5_4f25_8d82_55a1c4a2d4ba.scope/daemon"
+            "task/user.slice/user-29230.slice/user@29230.service/buck2.slice/bz_daemon.workspace.v2.f73409b0_6cb5_4f25_8d82_55a1c4a2d4ba.scope/daemon"
         ));
 
         // Negative: totally unrelated host cgroup (no overlap at all).
@@ -331,7 +330,7 @@ mod tests {
 
         assert!(!matches(
             unrelated_line,
-            "task/user.slice/user-29230.slice/user@29230.service/buck2.slice/bz_daemon.fbsource.v2.f73409b0_6cb5_4f25_8d82_55a1c4a2d4ba.scope/daemon"
+            "task/user.slice/user-29230.slice/user@29230.service/buck2.slice/bz_daemon.workspace.v2.f73409b0_6cb5_4f25_8d82_55a1c4a2d4ba.scope/daemon"
         ));
     }
 
@@ -341,12 +340,12 @@ mod tests {
             Buck2CgroupMatcher::new(bz_cgroup).dmesg_line_matches_oom_kill(line)
         };
 
-        let line = "[858172.042162] Killed /user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope due to memory pressure for /user.slice being 76.55% > 70.00% for > 3min with reclaim activity";
+        let line = "[858172.042162] Killed /user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope due to memory pressure for /user.slice being 76.55% > 70.00% for > 3min with reclaim activity";
 
         // Exact cgroup match
         assert!(matches(
             line,
-            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope"
+            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope"
         ));
 
         // Parent cgroup match
@@ -358,13 +357,13 @@ mod tests {
         // Child cgroup match
         assert!(matches(
             line,
-            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope/child"
+            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope/child"
         ));
 
         // Sibling cgroup that shares a prefix should not match
         assert!(!matches(
             line,
-            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.fbsource.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope_sibling"
+            "user.slice/user-190155.slice/user@190155.service/buck2.slice/bz_daemon.workspace.v2.1ac02af6_d3c8_4eb1_bb72_c351ba823628.scope_sibling"
         ));
     }
 }

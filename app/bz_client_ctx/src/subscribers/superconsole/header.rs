@@ -148,11 +148,7 @@ struct CountComponent<'s> {
 impl Component for CountComponent<'_> {
     type Error = bz_error::Error;
 
-    fn draw_unchecked(
-        &self,
-        _dimensions: Dimensions,
-        mode: DrawMode,
-    ) -> bz_error::Result<Lines> {
+    fn draw_unchecked(&self, _dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         match mode {
             DrawMode::Normal => {
                 let remaining = CommaSeparatedCount::new(self.data.remaining);
@@ -1439,8 +1435,7 @@ mod tests {
         assert!(is_executed);
         assert_eq!(&executed[start..end], "[2,943 / 2,943]");
 
-        let loaded =
-            "            217  Loaded                                                       478 dirs read, 22,335 targets declared";
+        let loaded = "            217  Loaded                                                       478 dirs read, 22,335 targets declared";
         let (start, end, is_executed) = progress_count_range(loaded).unwrap();
         assert!(!is_executed);
         assert_eq!(&loaded[start..end], "217");

@@ -1,9 +1,7 @@
-load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("build_infra")
 
-# @oss-disable[end= ]: _is_oss = False
-_is_oss = True # @oss-enable
+_is_oss = True
 
 rust_library(
     name = "bz_util",
@@ -17,38 +15,38 @@ rust_library(
         "ovr_config//build_mode:sanitizer_type[asan]": ["--cfg=bz_asan"],
     }) if not _is_oss else []),
     test_deps = [
-        "fbcode//bz/deps/three_billion_instructions:three_billion_instructions",
-        "fbsource//third-party/rust:serde_json",
+        "//deps/three_billion_instructions:three_billion_instructions",
+        "third_party//rust:serde_json",
     ],
     deps = [
-        "fbsource//third-party/rust:blake3",
-        "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:serde",
-        "fbsource//third-party/rust:static_assertions",
-        "fbsource//third-party/rust:sysinfo",
-        "fbsource//third-party/rust:tokio",
-        "fbsource//third-party/rust:tracing",
-        "fbsource//third-party/rust:triomphe",
-        "//bz/deps/allocative/allocative:allocative",
-        "//bz/app/bz_env:bz_env",
-        "//bz/app/bz_error:bz_error",
-        "//bz/app/bz_wrapper_common:bz_wrapper_common",
-        "//bz/deps/gazebo/dupe:dupe",
-        "//bz/deps/gazebo/strong_hash:strong_hash",
-        "//bz/deps/pagable:pagable",
-        "//bz/deps/bz_hash:bz_hash",
-        "//bz/deps/starlark-rust/starlark_map:starlark_map",
+        "third_party//rust:blake3",
+        "third_party//rust:futures",
+        "third_party//rust:serde",
+        "third_party//rust:static_assertions",
+        "third_party//rust:sysinfo",
+        "third_party//rust:tokio",
+        "third_party//rust:tracing",
+        "third_party//rust:triomphe",
+        "//deps/allocative/allocative:allocative",
+        "//app/bz_env:bz_env",
+        "//app/bz_error:bz_error",
+        "//app/bz_wrapper_common:bz_wrapper_common",
+        "//deps/gazebo/dupe:dupe",
+        "//deps/gazebo/strong_hash:strong_hash",
+        "//deps/pagable:pagable",
+        "//deps/bz_hash:bz_hash",
+        "//deps/starlark-rust/starlark_map:starlark_map",
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:linux": [
-            "fbsource//third-party/rust:libc",
-            "fbsource//third-party/rust:perf-event",
+            "third_party//rust:libc",
+            "third_party//rust:perf-event",
         ],
         "ovr_config//os:macos": [
-            "fbsource//third-party/rust:libc",
+            "third_party//rust:libc",
         ],
         "ovr_config//os:windows": [
-            "fbsource//third-party/rust:windows-sys",
+            "third_party//rust:windows-sys",
         ],
     }),
 )

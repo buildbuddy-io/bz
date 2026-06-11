@@ -47,7 +47,7 @@ use crate::transform_format;
 ///
 /// The output is presented as a series of tab-delimited records with the following structure:
 ///
-/// build    fbsource//your:target    local    clang foo.c
+/// build    root//your:target    local    clang foo.c
 ///
 /// 1: The reason for executing a given command. That's either to build or to test.
 ///
@@ -387,12 +387,10 @@ impl WhatRanOutputWriter for OutputFormatWithWriter<'_> {
                             digest: &cache_hit.action_digest,
                             action_key: cache_hit.action_key.as_deref(),
                         },
-                        bz_data::CacheType::RemoteDepFileCache => {
-                            JsonReproducer::ReDepFileCache {
-                                digest: &cache_hit.action_digest,
-                                action_key: cache_hit.action_key.as_deref(),
-                            }
-                        }
+                        bz_data::CacheType::RemoteDepFileCache => JsonReproducer::ReDepFileCache {
+                            digest: &cache_hit.action_digest,
+                            action_key: cache_hit.action_key.as_deref(),
+                        },
                     },
                     CommandReproducer::LocalDepFileCacheHit => JsonReproducer::LocalDepFileCache,
                     CommandReproducer::ReExecute(re_execute) => {

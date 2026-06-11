@@ -6,27 +6,22 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# @oss-disable[end= ]: load("@prelude//apple/meta_only:apple_extra_error_categories.bzl", "APPLE_CXX_FLAG_MESSAGES", "APPLE_CXX_MESSAGE_CATEGORIES", "APPLE_CXX_STDERR_CATEGORIES", "APPLE_META_STDERR_ERROR_CATEGORIES", "SWIFT_CATEGORY_REMEDIATION", "SWIFT_STDERR_CATEGORIES")
 load("@prelude//apple/swift:swift_toolchain.bzl", "get_swift_toolchain_info")
 load("@prelude//cxx:cxx_context.bzl", "get_cxx_toolchain_info")
 load("@prelude//error_handler:error_enricher_types.bzl", "ErrorEnricher")
 
-APPLE_CXX_FLAG_MESSAGES = {} # @oss-enable
-APPLE_CXX_MESSAGE_CATEGORIES = [] # @oss-enable
-APPLE_CXX_STDERR_CATEGORIES = [] # @oss-enable
-APPLE_META_STDERR_ERROR_CATEGORIES = [] # @oss-enable
-SWIFT_CATEGORY_REMEDIATION = {} # @oss-enable
-SWIFT_STDERR_CATEGORIES = [] # @oss-enable
+APPLE_CXX_FLAG_MESSAGES = {}
+APPLE_CXX_MESSAGE_CATEGORIES = []
+APPLE_CXX_STDERR_CATEGORIES = []
+APPLE_META_STDERR_ERROR_CATEGORIES = []
+SWIFT_CATEGORY_REMEDIATION = {}
+SWIFT_STDERR_CATEGORIES = []
 
 _APPLE_STDERR_ERROR_CATEGORIES = [
 
-    # STOP! @oss-disable
-    # If you work at Meta, you probably want to include things in APPLE_META_STDERR_ERROR_CATEGORIES   @oss-disable
-    # so you can include a link to an internal resource (wiki, task, etc)                              @oss-disable
-    # I would only add additional categories here if you think someone in open-source would benefit    @oss-disable
 
     # codesigning issues
-    ErrorEnricher(matcher = "codesignprovisioningerror", category = "code_sign_error"), # @oss-enable
+    ErrorEnricher(matcher = "codesignprovisioningerror", category = "code_sign_error"),
     ErrorEnricher(matcher = "the timestamp service is not available", category = "code_sign_error"),
 
     # compilation issues

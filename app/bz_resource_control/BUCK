@@ -1,4 +1,3 @@
-load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("build_infra")
 
@@ -8,36 +7,35 @@ rust_library(
         ["src/**/*.rs"],
     ),
     test_deps = [
-        # @oss-disable[end= ]: "//common/rust/environment:environment",
     ],
     test_env = {
-        "PREP_CGROUP_SCRIPT": "$(location fbcode//bz/deps/cgroups:prep_cgroup)",
-        "USE_SOME_MEMORY_BIN": "$(location //bz/deps/cgroups/use_some_memory:use_some_memory)",
+        "PREP_CGROUP_SCRIPT": "$(location //deps/cgroups:prep_cgroup)",
+        "USE_SOME_MEMORY_BIN": "$(location //deps/cgroups/use_some_memory:use_some_memory)",
     },
     deps = [
-        "fbsource//third-party/rust:derive_more",
-        "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:ref-cast",
-        "fbsource//third-party/rust:tokio",
-        "fbsource//third-party/rust:tokio-util",
-        "//bz/deps/allocative/allocative:allocative",
-        "//bz/app/bz_common:bz_common",
-        "//bz/app/bz_core:bz_core",
-        "//bz/app/bz_data:bz_data",
-        "//bz/app/bz_error:bz_error",
-        "//bz/app/bz_events:bz_events",
-        "//bz/app/bz_fs:bz_fs",
-        "//bz/app/bz_util:bz_util",
-        "//bz/app/bz_wrapper_common:bz_wrapper_common",
-        "//bz/deps/gazebo/dupe:dupe",
-        "//bz/deps/bz_hash:bz_hash",
+        "third_party//rust:derive_more",
+        "third_party//rust:futures",
+        "third_party//rust:ref-cast",
+        "third_party//rust:tokio",
+        "third_party//rust:tokio-util",
+        "//deps/allocative/allocative:allocative",
+        "//app/bz_common:bz_common",
+        "//app/bz_core:bz_core",
+        "//app/bz_data:bz_data",
+        "//app/bz_error:bz_error",
+        "//app/bz_events:bz_events",
+        "//app/bz_fs:bz_fs",
+        "//app/bz_util:bz_util",
+        "//app/bz_wrapper_common:bz_wrapper_common",
+        "//deps/gazebo/dupe:dupe",
+        "//deps/bz_hash:bz_hash",
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:linux": [
-            "fbsource//third-party/rust:nix",
+            "third_party//rust:nix",
         ],
         "ovr_config//os:macos": [
-            "fbsource//third-party/rust:nix",
+            "third_party//rust:nix",
         ],
     }),
 )

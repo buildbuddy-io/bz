@@ -1,11 +1,9 @@
-load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup")
-# @oss-disable[end= ]: load("//bz/tests/e2e_util/api:visibility.fb.bzl", "visibility")
 
 oncall("build_infra")
 
-visibility = ["PUBLIC"] # @oss-enable
+visibility = ["PUBLIC"]
 
-buck_filegroup(
+filegroup(
     name = "nano_prelude",
     srcs = glob(["*.bzl"]),
     visibility = visibility,

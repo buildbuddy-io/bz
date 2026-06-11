@@ -9,50 +9,12 @@
 # pyre-strict
 
 
-import asyncio
 import json
-import signal
-from pathlib import Path
 
 from buck2.tests.e2e_util.api.buck import Buck
 from buck2.tests.e2e_util.asserts import expect_failure
 from buck2.tests.e2e_util.buck_workspace import buck_test
 from buck2.tests.e2e_util.helper.golden import golden, sanitize_stderr
-from buck2.tests.e2e_util.helper.utils import read_invocation_record
-
-# FIXME(JakobDegen): Flakey in CI
-if False:
-
-    @buck_test(skip_for_os=["windows"])  # TODO(T154836875)
-    async def test_has_end_of_stream_false(buck: Buck, tmp_path: Path) -> None:
-        hang_path = tmp_path / "hang_path"
-        record = tmp_path / "record.json"
-
-        cmd = await buck.build(
-            ":hang",
-            "-c",
-            f"test.hang_path={hang_path}",
-            "--unstable-write-invocation-record",
-            str(record),
-            "--local-only",
-            "--no-remote-cache",
-        ).start()
-
-        for _ in range(10):
-            if hang_path.exists():
-                break
-            await asyncio.sleep(1)
-        else:
-            print(await cmd.communicate())
-            raise Exception(f"Signal file never created: {hang_path}")
-
-        cmd.send_signal(signal.SIGINT)
-        await cmd.communicate()
-
-        record = read_invocation_record(record)
-
-        assert not record["has_end_of_stream"]
-        assert not record["has_command_result"]
 
 
 @buck_test(write_invocation_record=True)

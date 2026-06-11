@@ -37,7 +37,7 @@ HaskellLibraryInfo = record(
     libs = field(list[Artifact], []),
     # Package version, used to specify the full package when exposing it,
     # e.g. filepath-1.4.2.1, deepseq-1.4.4.0.
-    # Internal packages default to 1.0.0, e.g. `fbcode-dsi-logger-hs-types-1.0.0`.
+    # Internal packages default to 1.0.0, e.g. `workspace-dsi-logger-hs-types-1.0.0`.
     version = str,
     is_prebuilt = bool,
     profiling_enabled = bool,

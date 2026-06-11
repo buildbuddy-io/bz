@@ -120,19 +120,19 @@ impl ProjectRoot {
     /// use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
     ///
     /// if cfg!(not(windows)) {
-    ///     let root = AbsNormPathBuf::from("/usr/local/fbsource/".into())?;
+    ///     let root = AbsNormPathBuf::from("/usr/local/workspace/".into())?;
     ///     let fs = ProjectRoot::new_unchecked(root);
     ///
     ///     assert_eq!(
-    ///         AbsNormPathBuf::from("/usr/local/fbsource/buck/BUCK".into())?,
+    ///         AbsNormPathBuf::from("/usr/local/workspace/buck/BUCK".into())?,
     ///         fs.resolve(ProjectRelativePath::new("buck/BUCK")?)
     ///     );
     /// } else {
-    ///     let root = AbsNormPathBuf::from("c:/open/fbsource/".into())?;
+    ///     let root = AbsNormPathBuf::from("c:/open/workspace/".into())?;
     ///     let fs = ProjectRoot::new_unchecked(root);
     ///
     ///     assert_eq!(
-    ///         AbsNormPathBuf::from("c:/open/fbsource/buck/BUCK".into())?,
+    ///         AbsNormPathBuf::from("c:/open/workspace/buck/BUCK".into())?,
     ///         fs.resolve(ProjectRelativePath::new("buck/BUCK")?)
     ///     );
     /// }
@@ -154,9 +154,9 @@ impl ProjectRoot {
     /// use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
     ///
     /// let root = if cfg!(not(windows)) {
-    ///     AbsNormPathBuf::from("/usr/local/fbsource/".into())?
+    ///     AbsNormPathBuf::from("/usr/local/workspace/".into())?
     /// } else {
-    ///     AbsNormPathBuf::from("c:/open/fbsource/".into())?
+    ///     AbsNormPathBuf::from("c:/open/workspace/".into())?
     /// };
     /// let fs = ProjectRoot::new_unchecked(root);
     ///
@@ -187,29 +187,29 @@ impl ProjectRoot {
     /// use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
     ///
     /// if cfg!(not(windows)) {
-    ///     let root = AbsNormPathBuf::from("/usr/local/fbsource/".into())?;
+    ///     let root = AbsNormPathBuf::from("/usr/local/workspace/".into())?;
     ///     let fs = ProjectRoot::new_unchecked(root);
     ///
     ///     assert_eq!(
     ///         Cow::Borrowed(ProjectRelativePath::new("src/buck.java")?),
-    ///         fs.relativize(AbsNormPath::new("/usr/local/fbsource/src/buck.java")?)?
+    ///         fs.relativize(AbsNormPath::new("/usr/local/workspace/src/buck.java")?)?
     ///     );
     ///     assert!(fs.relativize(AbsNormPath::new("/other/path")?).is_err());
     /// } else {
-    ///     let root = AbsNormPathBuf::from("c:/open/fbsource/".into())?;
+    ///     let root = AbsNormPathBuf::from("c:/open/workspace/".into())?;
     ///     let fs = ProjectRoot::new_unchecked(root);
     ///
     ///     assert_eq!(
     ///         Cow::Borrowed(ProjectRelativePath::new("src/buck.java")?),
-    ///         fs.relativize(AbsNormPath::new("c:/open/fbsource/src/buck.java")?)?
+    ///         fs.relativize(AbsNormPath::new("c:/open/workspace/src/buck.java")?)?
     ///     );
     ///     assert_eq!(
     ///         Cow::Borrowed(ProjectRelativePath::new("src/buck.java")?),
-    ///         fs.relativize(AbsNormPath::new(r"C:\open\fbsource\src\buck.java")?)?
+    ///         fs.relativize(AbsNormPath::new(r"C:\open\workspace\src\buck.java")?)?
     ///     );
     ///     assert_eq!(
     ///         Cow::Borrowed(ProjectRelativePath::new("src/buck.java")?),
-    ///         fs.relativize(AbsNormPath::new(r"\\?\C:\open\fbsource\src\buck.java")?)?
+    ///         fs.relativize(AbsNormPath::new(r"\\?\C:\open\workspace\src\buck.java")?)?
     ///     );
     ///     assert!(fs.relativize(AbsNormPath::new("c:/other/path")?).is_err());
     /// }

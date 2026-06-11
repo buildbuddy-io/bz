@@ -314,7 +314,6 @@ def _eden_base_cmd(eden_dir: Path) -> List[str]:
 
 # Adapted from Eden integration test, didn't use their code because Eden uses the compiled binary in their buck-out
 # which we don't have, extracting that part out would be more work than what was done below.
-# https://www.internalfb.com/code/fbsource/[45334ead4a72]/fbcode/eden/integration/lib/testcase.py?lines=123
 def _setup_eden(
     eden_dir: Path,
     project_dir: Path,
@@ -461,8 +460,8 @@ def _maybe_setup_prelude_and_ovr_config(path: Path) -> None:
     )
 
     _copytree(
-        Path(os.pardir, "tools", "build_defs", "fbcode_macros"),
-        Path(path, "tools", "build_defs", "fbcode_macros"),
+        Path(os.pardir, "tools", "build_defs", "local_macros"),
+        Path(path, "tools", "build_defs", "local_macros"),
     )
 
     with Path(path, ".buckconfig").open("a") as f:
@@ -472,13 +471,13 @@ def _maybe_setup_prelude_and_ovr_config(path: Path) -> None:
         print("# Following lines are added by buck_workspace.py", file=f)
         print("[repositories]", file=f)
         print("ovr_config = arvr/tools/build_defs/config", file=f)
-        print("fbcode_macros = tools/build_defs/fbcode_macros", file=f)
+        print("local_macros = tools/build_defs/local_macros", file=f)
         print("config = arvr/tools/build_defs/config", file=f)
     with Path(path, "arvr", "tools", "build_defs", "config", ".buckconfig").open(
         "w"
     ) as f:
         pass
-    with Path(path, "tools", "build_defs", "fbcode_macros", ".buckconfig").open(
+    with Path(path, "tools", "build_defs", "local_macros", ".buckconfig").open(
         "w"
     ) as f:
         pass
@@ -511,7 +510,7 @@ def buck_test(
             the sandbox repo will be initialized with the contents of that directory. This can be
             disabled by setting `data_dir = None` on the test, or the test can set
             `data_dir = "subdir"` to just use the contents of a subdirectory.
-            If true, runs test in fbsource.
+            If true, runs test in workspace.
         data_dir:
             data_dir is an optional string.
             If data_dir is set, then data_dir is the directory that contains test project data to
@@ -649,6 +648,6 @@ def get_mode_from_platform(
             return "opt"
 
     if prefix:
-        return f"@fbcode//mode/{modefile_basename()}"
+        return f"@root//mode/{modefile_basename()}"
 
     return modefile_basename()

@@ -1,5 +1,3 @@
-load("@fbcode_macros//build_defs:native_rules.bzl", "buck_genrule")
-load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("build_infra")
 
@@ -9,50 +7,50 @@ rust_library(
         ["src/*"],
     ),
     mapped_srcs = {
-        "//bz/app/bz_explain/js:html": "src/explain.html",
-        "//bz/app/bz_explain/output_format_js:html": "src/output_format.html",
+        "//app/bz_explain/js:html": "src/explain.html",
+        "//app/bz_explain/output_format_js:html": "src/output_format.html",
         ":output_format_schema_rust[output_format_generated.rs]": "src/output_format_generated.rs",
         ":schema_rust[explain_generated.rs]": "src/explain_generated.rs",
     },
     test_deps = [
-        "//bz/app/bz_interpreter_for_build:bz_interpreter_for_build",
-        "//bz/app/bz_util:bz_util",
-        "//bz/deps/gazebo/dupe:dupe",
-        "//bz/deps/starlark-rust/starlark:starlark",
+        "//app/bz_interpreter_for_build:bz_interpreter_for_build",
+        "//app/bz_util:bz_util",
+        "//deps/gazebo/dupe:dupe",
+        "//deps/starlark-rust/starlark:starlark",
     ],
     deps = [
-        "fbsource//third-party/rust:base64",
-        "fbsource//third-party/rust:flatbuffers",
-        "//bz/app/bz_common:bz_common",
-        "//bz/app/bz_core:bz_core",
-        "//bz/app/bz_error:bz_error",
-        "//bz/app/bz_fs:bz_fs",
-        "//bz/app/bz_node:bz_node",
-        "//bz/app/bz_query:bz_query",
-        "//bz/deps/bz_hash:bz_hash",
+        "third_party//rust:base64",
+        "third_party//rust:flatbuffers",
+        "//app/bz_common:bz_common",
+        "//app/bz_core:bz_core",
+        "//app/bz_error:bz_error",
+        "//app/bz_fs:bz_fs",
+        "//app/bz_node:bz_node",
+        "//app/bz_query:bz_query",
+        "//deps/bz_hash:bz_hash",
     ],
 )
 
-buck_genrule(
+genrule(
     name = "output_format_schema_rust",
     srcs = [
-        "//bz/app/bz_explain/output_format_js:output_format.fbs",
+        "//app/bz_explain/output_format_js:output_format.fbs",
     ],
     outs = {
         "output_format_generated.rs": ["output_format_generated.rs"],
     },
-    cmd = "$(exe fbsource//third-party/flatbuffers-23.5.26:flatc) --rust -o ${OUT} ${SRCS}",
+    cmd = "$(exe third_party//flatbuffers:flatc) --rust -o ${OUT} ${SRCS}",
     default_outs = ["."],
 )
 
-buck_genrule(
+genrule(
     name = "schema_rust",
     srcs = [
-        "//bz/app/bz_explain/js:explain.fbs",
+        "//app/bz_explain/js:explain.fbs",
     ],
     outs = {
         "explain_generated.rs": ["explain_generated.rs"],
     },
-    cmd = "$(exe fbsource//third-party/flatbuffers-23.5.26:flatc) --rust -o ${OUT} ${SRCS}",
+    cmd = "$(exe third_party//flatbuffers:flatc) --rust -o ${OUT} ${SRCS}",
     default_outs = ["."],
 )

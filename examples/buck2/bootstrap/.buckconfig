@@ -9,8 +9,6 @@ none = none
 config = prelude
 ovr_config = prelude
 buck = none
-fbcode = none
-fbsource = none
 
 [external_cells]
   prelude = bundled

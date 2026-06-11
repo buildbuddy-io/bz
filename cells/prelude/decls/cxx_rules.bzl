@@ -33,7 +33,7 @@ BUILD_INFO_ATTR = attrs.dict(
     value = attrs.option(attrs.any()),
     sorted = False,
     default = {},
-    doc = "Build info that is passed along here will be late-stamped into a fb_build_info section on the output binary",
+    doc = "Build info that is passed along here will be late-stamped into a bz_build_info section on the output binary",
 )
 
 def _cxx_binary_and_test_attrs():

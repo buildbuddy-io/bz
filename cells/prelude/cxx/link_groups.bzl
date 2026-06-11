@@ -548,8 +548,7 @@ def get_filtered_labels_to_links_map(
             return
 
         # In some flows, we may not have access to the actual link group lib
-        # in our dep tree (e.g. https://fburl.com/code/pddmkptb), so just bail
-        # in this case.
+        # in our dep tree, so just bail in this case.
         # NOTE(agallagher): This case seems broken, as we're not going to set
         # DT_NEEDED tag correctly, or detect missing syms at link time.
         link_group_lib = build_context.link_group_libs.get(target_group)

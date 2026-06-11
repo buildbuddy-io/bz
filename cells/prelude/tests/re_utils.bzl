@@ -17,13 +17,13 @@ ReArg = record(
 )
 
 def _get_re_arg(ctx: AnalysisContext) -> ReArg:
-    force_local = read_config("fbcode", "disable_re_tests", default = False)
+    force_local = read_config("test", "disable_re_tests", default = False)
     if force_local or not hasattr(ctx.attrs, "remote_execution"):
         # NOTE: this is kinda weird, we take this path if the attr is missing completely
         # Even if the value is None we still follow. Adding force.local to give users
         # some means of bypassing.
         # Example usecase: SGW wants to run kotlin_test targets on MBP/OSX locally
-        # eg: buck2 test --local-only -c fbcode.disable_re_tests=True //signals/cloudbridge/v2/libs/cb-meters:test
+        # eg: buck2 test --local-only -c test.disable_re_tests=True //signals/cloudbridge/v2/libs/cb-meters:test
         return ReArg(re_props = None, default_run_as_bundle = False)
 
     if ctx.attrs.remote_execution != None:
@@ -65,7 +65,7 @@ def get_re_executors_from_props(ctx: AnalysisContext, dynamic_image_override: [d
     Args:
         ctx: The analysis context.
         dynamic_image_override: If provided, overrides the `remote_execution_dynamic_image`
-            from `remote_execution` props. Use this to inject a resolved snapshotted fbpkg
+            from `remote_execution` props. Use this to inject a resolved snapshotted package
             image (with pinned uuid) at analysis time.
 
     Returns (default_executor, executor_overrides).
@@ -100,9 +100,9 @@ def get_re_executors_from_props(ctx: AnalysisContext, dynamic_image_override: [d
         unexpected_props = ", ".join(re_props_copy.keys())
         fail("found unexpected re props: " + unexpected_props)
 
-    meta_internal_extra_params = None
+    remote_execution_extra_params = None
     if re_gang != None:
-        meta_internal_extra_params = {
+        remote_execution_extra_params = {
             "remote_execution_gang": re_gang,
         }
 
@@ -116,7 +116,7 @@ def get_re_executors_from_props(ctx: AnalysisContext, dynamic_image_override: [d
         remote_execution_gang_workers = re_gang_workers,
         remote_execution_resource_units = re_resource_units,
         remote_execution_dynamic_image = re_dynamic_image,
-        meta_internal_extra_params = meta_internal_extra_params,
+        remote_execution_extra_params = remote_execution_extra_params,
     )
 
     listing_executor = default_executor
@@ -129,6 +129,6 @@ def get_re_executors_from_props(ctx: AnalysisContext, dynamic_image_override: [d
             remote_cache_enabled = remote_cache_enabled,
             remote_execution_resource_units = re_listing_resource_units,
             remote_execution_dynamic_image = re_dynamic_image,
-            meta_internal_extra_params = meta_internal_extra_params,
+            remote_execution_extra_params = remote_execution_extra_params,
         )
     return default_executor, {"listing": listing_executor}

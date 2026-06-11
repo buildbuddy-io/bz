@@ -6,5 +6,15 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-def is_full_meta_repo() -> bool:
-    return read_root_config("buck2", "is_full_meta_repo", None) == "true"
+# pyre-strict
+
+
+from buck2.tests.e2e_util.api.buck import Buck
+from buck2.tests.e2e_util.buck_workspace import buck_test
+
+
+@buck_test(inplace=True)
+async def test_lsp_starts_workspace(buck: Buck) -> None:
+    async with await buck.lsp() as lsp:
+        # Will fail if the initialize response is not received
+        await lsp.init_connection()

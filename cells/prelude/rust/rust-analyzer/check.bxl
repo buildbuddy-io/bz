@@ -22,7 +22,7 @@ def _check_targets_impl(ctx: bxl.Context) -> list[bxl.EnsuredArtifact]:
     artifacts = []
     for a in analysis:
         o = a.providers()[RustcExtraOutputsInfo]
-        # Temporarily disabled due to ICE reports in https://fb.workplace.com/groups/rust.analyzer/posts/1512577186779084
+        # Temporarily disabled due to ICE reports in
         # and https://github.com/rust-lang/rust/issues/141540
         # if ctx.cli_args.use_clippy:
         #     artifacts.append(o.clippy_incr.compile_output.diag_json)

@@ -78,7 +78,6 @@ buck_prebuilt_jar(
 # buck build prelude//toolchains/android/src/com/facebook/buck/util/zip:zip_scrubber_main --show-simple-output | xargs frecli --use-case android_build_infra_tools cas upload-blob
 buck_prebuilt_artifact(
     name = "zip_scrubber_main.jar",
-    # @oss-disable[end= ]: cas_digest = "9cec24a193a236fc5acdaff4fae66769f22c56af19c1e9204affad545d0ec7ab:10388458",
     oss_sha1 = "23c85d8db2958ad502c1cd1eb3bbcd1342c37c7d",
     oss_url = "https://github.com/facebook/buck2/releases/download/androidToolchain%2F2025-04-03/zip_scrubber_main.jar",
 )
@@ -124,7 +123,6 @@ buck_prebuilt_jar(
 # buck build prelude//toolchains/android/src/com/facebook/buck/util/zip:jar_builder_main --show-simple-output | xargs frecli --use-case android_build_infra_tools cas upload-blob
 buck_prebuilt_artifact(
     name = "jar_builder_main.jar",
-    # @oss-disable[end= ]: cas_digest = "73149775903042a6a323255a7b40862323c8afc35afd582c4b8861ff77d8fbe9:23604183",
     oss_sha1 = "18f839ebb58babae4ae35900ef33cdf065d0cbc5",
     oss_url = "https://github.com/facebook/buck2/releases/download/androidToolchain%2F2025-04-03/jar_builder_main.jar",
 )

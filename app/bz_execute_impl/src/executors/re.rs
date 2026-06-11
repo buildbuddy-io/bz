@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bz_core::execution_types::executor_config::MetaInternalExtraParams;
 use bz_core::execution_types::executor_config::ReGangWorker;
+use bz_core::execution_types::executor_config::RemoteExecutionExtraParams;
 use bz_core::execution_types::executor_config::RemoteExecutorDependency;
 use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_core::fs::project::ProjectRoot;
@@ -189,7 +189,7 @@ impl ReExecutor {
         platform: &RE::Platform,
         dependencies: impl IntoIterator<Item = &'a RemoteExecutorDependency>,
         re_gang_workers: &[bz_core::execution_types::executor_config::ReGangWorker],
-        meta_internal_extra_params: &MetaInternalExtraParams,
+        remote_execution_extra_params: &RemoteExecutionExtraParams,
         worker_tool_action_digest: Option<ActionDigest>,
         force_skip_cache_read: bool,
     ) -> ControlFlow<CommandExecutionResult, (CommandExecutionManager, ExecuteResponseWithQueueStats)>
@@ -218,7 +218,7 @@ impl ReExecutor {
                 self.re_max_queue_time,
                 self.re_resource_units,
                 &self.knobs,
-                meta_internal_extra_params,
+                remote_execution_extra_params,
                 worker_tool_action_digest,
                 self.priority,
             );
@@ -495,13 +495,11 @@ impl PreparedCommandExecutor for ReExecutor {
                     .iter()
                     .chain(remote_execution_dependencies.iter()),
                 &re_gang_workers,
-                command.request.meta_internal_extra_params(),
+                command.request.remote_execution_extra_params(),
                 worker_tool_action_digest,
                 false,
             )
             .await?;
-
-        #[cfg(not(fbcode_build))]
         if response.execute_response.cached_result {
             let missing_output =
                 missing_mandatory_output(request.paths(), request.working_directory(), &response);
@@ -531,7 +529,7 @@ impl PreparedCommandExecutor for ReExecutor {
                             .iter()
                             .chain(remote_execution_dependencies.iter()),
                         &re_gang_workers,
-                        command.request.meta_internal_extra_params(),
+                        command.request.remote_execution_extra_params(),
                         worker_tool_action_digest,
                         true,
                     )
@@ -603,7 +601,7 @@ impl PreparedCommandExecutor for ReExecutor {
                                 .iter()
                                 .chain(remote_execution_dependencies.iter()),
                             &re_gang_workers,
-                            command.request.meta_internal_extra_params(),
+                            command.request.remote_execution_extra_params(),
                             worker_tool_action_digest,
                             true,
                         )
@@ -674,31 +672,12 @@ fn as_missing_outputs_error(err: &remote_execution::TStatus) -> Option<&str> {
 }
 
 fn is_timeout_error(err: &remote_execution::TStatus) -> bool {
-    #[cfg(fbcode_build)]
-    {
-        // Not ideal, but DEADLINE_EXCEEDED will show up if you e.g. timeout connecting to RE, so we
-        // need to actually match on the message :(
-        err.code == TCode::DEADLINE_EXCEEDED && err.message.contains("Execution timed out")
-    }
-
-    #[cfg(not(fbcode_build))]
-    {
-        // Not obvious what this looks like in the GRPC API.
-        let _ignored = err;
-        false
-    }
+    // Not obvious what this looks like in the GRPC API.
+    let _ignored = err;
+    false
 }
 
 fn is_re_queue_full(e: &bz_error::Error) -> bool {
-    #[cfg(all(fbcode_build, target_os = "linux"))]
-    let enabled = justknobs::eval(
-        "buck2/remote_execution:re_queue_full_as_cancelled",
-        None,
-        None,
-    )
-    .unwrap_or(false);
-
-    #[cfg(not(all(fbcode_build, target_os = "linux")))]
     let enabled = true;
 
     if !enabled {

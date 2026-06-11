@@ -19,7 +19,6 @@ use bz_core::execution_types::executor_config::Executor;
 use bz_core::execution_types::executor_config::HybridExecutionLevel;
 use bz_core::execution_types::executor_config::ImagePackageIdentifier;
 use bz_core::execution_types::executor_config::LocalExecutorOptions;
-use bz_core::execution_types::executor_config::MetaInternalExtraParams;
 use bz_core::execution_types::executor_config::PathSeparatorKind;
 use bz_core::execution_types::executor_config::ReGang;
 use bz_core::execution_types::executor_config::ReGangLocality;
@@ -27,8 +26,9 @@ use bz_core::execution_types::executor_config::ReGangWorker;
 use bz_core::execution_types::executor_config::RePlatformFields;
 use bz_core::execution_types::executor_config::RemoteEnabledExecutor;
 use bz_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
+use bz_core::execution_types::executor_config::RemoteExecutionExtraParams;
 use bz_core::execution_types::executor_config::RemoteExecutionPolicy;
-use bz_core::execution_types::executor_config::RemoteExecutorCafFbpkg;
+use bz_core::execution_types::executor_config::RemoteExecutorCafPackage;
 use bz_core::execution_types::executor_config::RemoteExecutorCustomImage;
 use bz_core::execution_types::executor_config::RemoteExecutorDependency;
 use bz_core::execution_types::executor_config::RemoteExecutorOptions;
@@ -64,9 +64,9 @@ enum CommandExecutorConfigErrors {
     #[error("expected a dict, got `{0}` (type `{1}`)")]
     RePolicyNotADict(String, String),
     #[error("expected an list, got `{0}` (type `{1}`)")]
-    ReCafFbpkgsNotAList(String, String),
+    ReCafPackagesNotAList(String, String),
     #[error("expected an dict, got `{0}` (type `{1}`)")]
-    ReCafFbpkgNotADict(String, String),
+    ReCafPackageNotADict(String, String),
     #[error("`remote_execution_gang` and `remote_execution_gang_workers` are mutually exclusive")]
     GangAndGangWorkersExclusive,
     #[error(
@@ -127,10 +127,10 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
     /// * `remote_execution_dependencies`: Dependencies for remote execution for this platform
     /// * `remote_execution_gang_workers`: Gang workers for gang scheduling in remote execution (enumerated gang spec)
     /// * `remote_execution_custom_image`: Custom Tupperware image for remote execution for this platform
-    /// * `meta_internal_extra_params`: Json dict of extra params to pass to RE related to Meta internal infra.
+    /// * `remote_execution_extra_params`: Json dict of extra params to pass to RE.
     ///   Supports the following keys:
     ///   - `remote_execution_policy`: Policy settings for remote execution
-    ///   - `remote_execution_caf_fbpkgs`: CAF fbpkgs configuration
+    ///   - `remote_execution_caf_packages`: CAF packages configuration
     ///   - `remote_execution_gang`: Constrained gang for gang scheduling in remote execution. A dict with keys:
     ///     - `capabilities`: A dict of capability key-value pairs (required)
     ///     - `num_of_workers`: Number of workers in the gang (required, integer)
@@ -171,7 +171,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
         #[starlark(default=UnpackList::default(), require = named)]
         remote_execution_gang_workers: UnpackList<SmallMap<&'v str, &'v str>>,
         #[starlark(default = NoneType, require = named)] remote_execution_dynamic_image: Value<'v>,
-        #[starlark(default = NoneOr::None, require = named)] meta_internal_extra_params: NoneOr<
+        #[starlark(default = NoneOr::None, require = named)] remote_execution_extra_params: NoneOr<
             DictRef<'v>,
         >,
         #[starlark(default = NoneOr::None, require = named)] priority: NoneOr<i32>,
@@ -224,7 +224,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
             )?;
 
             let extra_params =
-                parse_meta_internal_extra_params(meta_internal_extra_params.into_option())?;
+                parse_remote_execution_extra_params(remote_execution_extra_params.into_option())?;
 
             if extra_params.gang.is_some() && !re_gang_workers.is_empty() {
                 return Err(bz_error::Error::from(
@@ -310,11 +310,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
             // FIXME: This should probably default to `remote_enabled` and not `true`, but
             // historically this has been `true`, so we should probably migrate our defs to set
             // `remote_cache_enabled = True` explicitly first.
-            let remote_cache_default = if bz_core::is_open_source() {
-                remote_enabled
-            } else {
-                true
-            };
+            let remote_cache_default = remote_enabled;
             let remote_cache_enabled = remote_cache_enabled
                 .into_option()
                 .unwrap_or(remote_cache_default);
@@ -347,7 +343,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                         dependencies: re_dependencies,
                         gang_workers: re_gang_workers,
                         custom_image: re_dynamic_image,
-                        meta_internal_extra_params: extra_params,
+                        remote_execution_extra_params: extra_params,
                         priority,
                     })
                 }
@@ -365,7 +361,7 @@ pub fn register_command_executor_config(builder: &mut GlobalsBuilder) {
                         dependencies: re_dependencies,
                         gang_workers: re_gang_workers,
                         custom_image: re_dynamic_image,
-                        meta_internal_extra_params: extra_params,
+                        remote_execution_extra_params: extra_params,
                         priority,
                     })
                 }
@@ -507,24 +503,24 @@ fn parse_remote_execution_policy(policy: Option<Value>) -> bz_error::Result<Remo
     }
 }
 
-fn parse_remote_execution_caf_fbpkgs(
-    caf_fbpkgs: Option<Value>,
-) -> bz_error::Result<Vec<RemoteExecutorCafFbpkg>> {
-    match caf_fbpkgs {
+fn parse_remote_execution_caf_packages(
+    caf_packages: Option<Value>,
+) -> bz_error::Result<Vec<RemoteExecutorCafPackage>> {
+    match caf_packages {
         None => Ok(vec![]),
-        Some(caf_fbpkgs) => {
-            let re_caf_fbpkgs_list =
-                ListRef::from_value(caf_fbpkgs.to_value()).ok_or_else(|| {
-                    bz_error::Error::from(CommandExecutorConfigErrors::ReCafFbpkgsNotAList(
-                        caf_fbpkgs.to_value().to_repr(),
-                        caf_fbpkgs.to_value().get_type().to_owned(),
+        Some(caf_packages) => {
+            let re_caf_packages_list =
+                ListRef::from_value(caf_packages.to_value()).ok_or_else(|| {
+                    bz_error::Error::from(CommandExecutorConfigErrors::ReCafPackagesNotAList(
+                        caf_packages.to_value().to_repr(),
+                        caf_packages.to_value().get_type().to_owned(),
                     ))
                 })?;
 
-            Ok(re_caf_fbpkgs_list
+            Ok(re_caf_packages_list
                 .iter()
-                .map(|caf_fbpkg| match DictRef::from_value(caf_fbpkg) {
-                    Some(dict_ref) => Ok(RemoteExecutorCafFbpkg {
+                .map(|caf_package| match DictRef::from_value(caf_package) {
+                    Some(dict_ref) => Ok(RemoteExecutorCafPackage {
                         name: dict_ref
                             .get_str("name")
                             .ok_or(CommandExecutorConfigErrors::MissingField("name"))?
@@ -537,22 +533,22 @@ fn parse_remote_execution_caf_fbpkgs(
                         permissions: dict_ref.get_str("permissions").map(|v| v.to_str()),
                     }),
                     None => Err(bz_error::Error::from(
-                        CommandExecutorConfigErrors::ReCafFbpkgNotADict(
-                            caf_fbpkg.to_repr(),
-                            caf_fbpkg.get_type().to_owned(),
+                        CommandExecutorConfigErrors::ReCafPackageNotADict(
+                            caf_package.to_repr(),
+                            caf_package.get_type().to_owned(),
                         ),
                     )),
                 })
-                .collect::<bz_error::Result<Vec<RemoteExecutorCafFbpkg>>>()?)
+                .collect::<bz_error::Result<Vec<RemoteExecutorCafPackage>>>()?)
         }
     }
 }
 
-pub fn parse_meta_internal_extra_params<'v>(
+pub fn parse_remote_execution_extra_params<'v>(
     params: Option<DictRef<'v>>,
-) -> bz_error::Result<Arc<MetaInternalExtraParams>> {
+) -> bz_error::Result<Arc<RemoteExecutionExtraParams>> {
     let Some(params) = params else {
-        return Ok(MetaInternalExtraParams::default_arc());
+        return Ok(RemoteExecutionExtraParams::default_arc());
     };
 
     let gang = params
@@ -567,19 +563,19 @@ pub fn parse_meta_internal_extra_params<'v>(
         .and_then(|v| v.unpack_bool())
         .unwrap_or(false);
 
-    let result = MetaInternalExtraParams {
+    let result = RemoteExecutionExtraParams {
         remote_execution_policy: parse_remote_execution_policy(
             params.get_str("remote_execution_policy"),
         )?,
-        remote_execution_caf_fbpkgs: parse_remote_execution_caf_fbpkgs(
-            params.get_str("remote_execution_caf_fbpkgs"),
+        remote_execution_caf_packages: parse_remote_execution_caf_packages(
+            params.get_str("remote_execution_caf_packages"),
         )?,
         gang,
         allow_unsandboxed_action_cache_uploads,
     };
 
-    if result == MetaInternalExtraParams::default() {
-        Ok(MetaInternalExtraParams::default_arc())
+    if result == RemoteExecutionExtraParams::default() {
+        Ok(RemoteExecutionExtraParams::default_arc())
     } else {
         Ok(Arc::new(result))
     }

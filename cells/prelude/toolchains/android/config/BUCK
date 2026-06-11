@@ -1,7 +1,5 @@
-# @oss-disable[end= ]: load("@fbcode//bz/platform:java_toolchains.bzl", "config_backed_java_toolchain")
-# @oss-disable[end= ]: load("@fbcode//bz/platform:kotlin_toolchains.bzl", "config_backed_kotlin_toolchain")
 load("@prelude//utils:source_listing.bzl", "source_listing")
-load("@prelude//toolchains/android/config:oss_toolchains.bzl", "config_backed_java_toolchain", "config_backed_kotlin_toolchain") # @oss-enable
+load("@prelude//toolchains/android/config:oss_toolchains.bzl", "config_backed_java_toolchain", "config_backed_kotlin_toolchain")
 
 oncall("android_devxx")
 
@@ -11,7 +9,7 @@ config_backed_java_toolchain(
     name = "java_bootstrap",
     is_bootstrap_toolchain = True,
     # This causes us to always use the classic protocol instead of javacd as the bootstrap toolchain needs to build javacd itself.
-    javac = "fbsource//third-party/toolchains/jdk:javac",
+    javac = "third_party//toolchains/jdk:javac",
     visibility = [
         "PUBLIC",
     ],

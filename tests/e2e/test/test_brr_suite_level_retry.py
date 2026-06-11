@@ -40,7 +40,7 @@ def read_brr_report(path: Path) -> dict[str, object]:
     return merged
 
 
-PYTHON_TEST_TARGET: str = "fbcode//bz/tests/targets/rules/python/test:test"
+PYTHON_TEST_TARGET: str = "//tests/targets/rules/python/test:test"
 
 
 @buck_test(inplace=True, skip_for_os=["darwin", "windows"])
@@ -70,7 +70,7 @@ async def test_brr_suite_level_main_runs_all_tests(buck: Buck, tmp_path: Path) -
         "test_config": {
             "config": "",
             "host": "linux",
-            "mode": "@fbcode//mode/dev",
+            "mode": "@root//mode/dev",
         },
     }
     brr_file.write_text(json.dumps(brr_data))
@@ -100,7 +100,7 @@ async def test_brr_suite_level_main_runs_all_tests(buck: Buck, tmp_path: Path) -
 
 
 BROKEN_RUN_AS_BUNDLE_TARGET: str = (
-    "fbcode//testinfra/playground/python/broken_run_as_bundle:broken_run_as_bundle_test"
+    "root//testinfra/playground/python/broken_run_as_bundle:broken_run_as_bundle_test"
 )
 
 
@@ -169,7 +169,7 @@ async def test_brr_roundtrip_run_as_bundle_failure(buck: Buck, tmp_path: Path) -
 
 
 BROKEN_LISTING_TARGET: str = (
-    "fbcode//testinfra/playground/python/broken_listing:broken_listing_test"
+    "root//testinfra/playground/python/broken_listing:broken_listing_test"
 )
 
 

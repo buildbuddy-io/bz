@@ -6,8 +6,6 @@
   ovr_config = prelude
   # Just have to exist, not actually used for this test
   toolchains = root
-  fbsource = root
-  fbcode = root
   buck = root
 
 [external_cells]

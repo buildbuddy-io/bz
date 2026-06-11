@@ -10,7 +10,7 @@
 -compile(warn_missing_spec_all).
 -moduledoc """
 This file acts as a manual erlang sync for the thrift type struct
-TestResultArtifactAnnotations defined in  https://fburl.com/code/r2t4vclb
+TestResultArtifactAnnotations defined in
 
  == How To Update This File ==
 We mostly expect next iterations of thrift data structure to include

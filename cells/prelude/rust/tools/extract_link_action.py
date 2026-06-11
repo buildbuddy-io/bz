@@ -126,7 +126,7 @@ def process_link_args(args: list[str], out_artifacts: Path) -> list[str]:
             i += 1
             continue
         elif arg.startswith("-Wl,--no-undefined-version"):
-            # Temporary fbcode specific hack
+            # Temporary workspace specific hack
             i += 1
             continue
         new_args.append(arg)

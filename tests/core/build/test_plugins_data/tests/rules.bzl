@@ -6,8 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-# @lint-ignore-every FBCODEBZLADDLOADS
-
 RustProcMacroMarker = provider(fields = ["target"])
 
 RustProcMacroInfo = provider(fields = ["data"])

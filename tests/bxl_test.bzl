@@ -6,8 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
-load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
+load("//tests:buck_e2e.bzl", "bz_e2e_test")
 
 def bxl_test(src, name = None, labels = None, buck_args: list[str] | None = None, bxl_args: list[str] | None = None, env: dict[str, str] | None = None, **kwargs):
     """
@@ -35,7 +34,7 @@ def bxl_test(src, name = None, labels = None, buck_args: list[str] | None = None
 
     # Need to include `name` to keep this target unique, in case there are multiple bxl_tests defined for same bxl file
     export_file_name = "{}.{}.export_file".format(src, name)
-    export_file(name = export_file_name, src = src, mode = "reference")
+    native.export_file(name = export_file_name, src = src, mode = "reference")
 
     # This is ugly but needed for buck1 compatibility
     cell = native.repository_name()[1:]
@@ -61,7 +60,7 @@ def bxl_test(src, name = None, labels = None, buck_args: list[str] | None = None
     bz_e2e_test(
         name = name,
         env = merged_env,
-        srcs = {"fbcode//bz/tests/e2e_util:test_bxl_template.py": "test_bxl_template.py"},
+        srcs = {"//tests/e2e_util:test_bxl_template.py": "test_bxl_template.py"},
         labels = ["bxl_test"] + (labels if labels else []),
         test_with_compiled_buck2 = False,
         test_with_deployed_buck2 = True,

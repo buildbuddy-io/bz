@@ -25,7 +25,7 @@ def _owners_entry_point(ctx: bxl.Context) -> None:
 
 build = bxl_main(
     doc = """Determines owning python targets and root, providing files within the first owning target.
-    Note: must be run from within fbsource.
+    Note: must be run from within workspace.
 
     It takes a file path, returning an object of format
     `{'owning_targets': List<string>, 'root': string, 'files': List<string>}`

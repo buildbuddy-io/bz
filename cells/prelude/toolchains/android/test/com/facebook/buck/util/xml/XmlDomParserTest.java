@@ -45,7 +45,7 @@ public class XmlDomParserTest {
    * {@link com.facebook.buck.util.xml.XmlDomParser#parse(InputSource,boolean)}, it is closed before
    * the method returns.
    *
-   * @see <a href="http://fburl.com/8289364">DocumentBuilder.parse(InputStream)</a>
+   * @see <a href="
    * @throws IOException
    */
   @Test

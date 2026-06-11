@@ -13,7 +13,6 @@ use std::env;
 use std::sync::OnceLock;
 
 use bz_core::ci::ci_identifiers;
-use bz_core::facebook_only;
 use bz_hash::StdBuckHashMap;
 use bz_wrapper_common::BUCK2_WRAPPER_ENV_VAR;
 
@@ -21,7 +20,6 @@ use crate::daemon_id::DaemonId;
 
 /// Collects metadata from the current binary and environment and writes it as map, suitable for telemetry purposes.
 pub fn collect(daemon: &DaemonId) -> StdBuckHashMap<String, String> {
-    facebook_only();
     fn add_env_var(map: &mut StdBuckHashMap<String, String>, key: &'static str, var: &'static str) {
         if let Ok(data) = env::var(var) {
             map.insert(key.to_owned(), data);
@@ -79,9 +77,6 @@ pub fn collect(daemon: &DaemonId) -> StdBuckHashMap<String, String> {
     }
 
     add_env_var(&mut map, "launched_via_wrapper", BUCK2_WRAPPER_ENV_VAR);
-    add_env_var(&mut map, "fbpackage_name", "FBPACKAGE_PACKAGE_NAME");
-    add_env_var(&mut map, "fbpackage_version", "FBPACKAGE_PACKAGE_VERSION");
-    add_env_var(&mut map, "fbpackage_release", "FBPACKAGE_PACKAGE_RELEASE");
 
     if let Ok(ci_identifiers) = ci_identifiers() {
         for (ci_name, ci_value) in ci_identifiers {
@@ -152,69 +147,23 @@ pub fn hostname() -> Option<String> {
 }
 
 pub fn ces_id() -> Option<String> {
-    #[cfg(fbcode_build)]
-    {
-        use cross_env_session_id::CrossEnvironmentSessionId;
-
-        CrossEnvironmentSessionId::get()
-    }
-    #[cfg(not(fbcode_build))]
-    {
-        None
-    }
+    None
 }
 
 pub fn devx_session_id() -> Option<String> {
-    #[cfg(fbcode_build)]
-    {
-        use devx_session_id::DevXSessionId;
-
-        DevXSessionId::get()
-    }
-    #[cfg(not(fbcode_build))]
-    {
-        None
-    }
+    None
 }
 
 pub fn environment() -> Option<String> {
-    #[cfg(fbcode_build)]
-    {
-        use hostcaps::get_env;
-
-        Some(get_env().to_string().to_lowercase())
-    }
-    #[cfg(not(fbcode_build))]
-    {
-        None
-    }
+    None
 }
 
 pub fn username() -> bz_error::Result<Option<String>> {
-    #[cfg(fbcode_build)]
-    {
-        use bz_error::conversion::from_any_with_tag;
-        Ok(Some(user::current_username().map_err(|e| {
-            from_any_with_tag(e, bz_error::ErrorTag::InvalidUsername)
-        })?))
-    }
-    #[cfg(not(fbcode_build))]
-    {
-        Ok::<Option<String>, bz_error::Error>(None)
-    }
+    Ok(None)
 }
 
 pub fn system_fingerprint() -> Option<String> {
-    #[cfg(fbcode_build)]
-    {
-        use devserver_fingerprint::SystemFingerprintReader;
-        let sfr = SystemFingerprintReader::get().ok()?;
-        sfr.fingerprint().map(|s| s.to_owned())
-    }
-    #[cfg(not(fbcode_build))]
-    {
-        None
-    }
+    None
 }
 
 #[cfg(all(test, target_os = "windows"))]

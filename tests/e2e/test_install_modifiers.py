@@ -31,7 +31,7 @@ if linux_only():
         args = ["--dst", f"{tmp_dir}/"]
 
         await buck.install(
-            "fbcode//bz/tests/targets/rules/install:installer_modifiers_test",
+            "//tests/targets/rules/install:installer_modifiers_test",
             "--",
             *args,
         )
@@ -43,7 +43,7 @@ if linux_only():
         args = ["--dst", f"{tmp_dir}/"]
 
         await buck.install(
-            "fbcode//bz/tests/targets/rules/install:installer_modifiers_test?asan",
+            "//tests/targets/rules/install:installer_modifiers_test?asan",
             "--",
             *args,
         )
@@ -60,7 +60,7 @@ async def test_install_fails_with_global_modifiers(buck: Buck, tmp_path: Path) -
         buck.install(
             "--modifier",
             "asan",
-            "fbcode//bz/tests/targets/rules/install:installer_modifiers_test?asan",
+            "//tests/targets/rules/install:installer_modifiers_test?asan",
             "--",
             *args,
         ),

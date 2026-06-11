@@ -405,9 +405,6 @@ impl LegacyBuckConfig {
                 &[
                     ("config", "prelude"),
                     ("ovr_config", "prelude"),
-                    ("fbcode", "prelude"),
-                    ("fbcode_macros", "prelude"),
-                    ("fbsource", "prelude"),
                     ("toolchains", "prelude"),
                 ],
             ),
@@ -847,10 +844,7 @@ pub mod testing {
             ))
         }
 
-        async fn read_dir(
-            &mut self,
-            _path: &ConfigPath,
-        ) -> bz_error::Result<Vec<ConfigDirEntry>> {
+        async fn read_dir(&mut self, _path: &ConfigPath) -> bz_error::Result<Vec<ConfigDirEntry>> {
             // This is only used for listing files in `buckconfig.d` directories, which we can just
             // say are always empty in tests
             Ok(Vec::new())

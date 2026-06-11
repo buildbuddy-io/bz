@@ -1,11 +1,11 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
+load("//tests:buck_e2e.bzl", "bz_e2e_test")
 
 oncall("build_infra")
 
 bz_e2e_test(
     name = "test_bxl",
     srcs = ["test_bxl.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
@@ -14,110 +14,110 @@ bz_e2e_test(
         "darwin",
     ],
     deps = [
-        "//bz/tests/e2e_util:utils",  # @autodeps2-fixme-manual
+        "//tests/e2e_util:utils",  # @autodeps2-fixme-manual
     ],
 )
 
 bz_e2e_test(
     name = "test_bxl_query",
     srcs = ["test_bxl_query.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
     deps = [
-        "//bz/tests/e2e_util:utils",  # @autodeps2-fixme-manual
+        "//tests/e2e_util:utils",  # @autodeps2-fixme-manual
     ],
 )
 
 bz_e2e_test(
     name = "test_bxl_fs",
     srcs = ["test_bxl_fs.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
     deps = [
-        "//bz/tests/e2e_util:utils",  # @autodeps2-fixme-manual
+        "//tests/e2e_util:utils",  # @autodeps2-fixme-manual
     ],
 )
 
 bz_e2e_test(
     name = "test_bxl_node_operations",
     srcs = ["test_bxl_node_operations.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
     deps = [
-        "//bz/tests/e2e_util:utils",  # @autodeps2-fixme-manual
+        "//tests/e2e_util:utils",  # @autodeps2-fixme-manual
     ],
 )
 
 bz_e2e_test(
     name = "test_bxl_lazy_analysis",
     srcs = ["test_bxl_lazy_analysis.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
     deps = [
-        "//bz/tests/e2e_util:utils",  # @autodeps2-fixme-manual
+        "//tests/e2e_util:utils",  # @autodeps2-fixme-manual
     ],
 )
 
 bz_e2e_test(
     name = "test_bxl_lazy_configured_target_node",
     srcs = ["test_bxl_lazy_configured_target_node.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
     deps = [
-        "//bz/tests/e2e_util:utilities",
+        "//tests/e2e_util:utilities",
     ],
 )
 
 bz_e2e_test(
     name = "test_bxl_lazy_unconfigured_target_node",
     srcs = ["test_bxl_lazy_unconfigured_target_node.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
     deps = [
-        "//bz/tests/e2e_util:utilities",
+        "//tests/e2e_util:utilities",
     ],
 )
 
 bz_e2e_test(
     name = "test_bxl_targets",
     srcs = ["test_bxl_targets.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
     deps = [
-        "//bz/tests/e2e_util:utils",  # @autodeps2-fixme-manual
+        "//tests/e2e_util:utils",  # @autodeps2-fixme-manual
     ],
 )
 
 bz_e2e_test(
     name = "test_bxl_lazy_cquery",
     srcs = ["test_bxl_lazy_cquery.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     env = {
         "OVR_CONFIG": "1",
         "PRELUDE": "$(location prelude//:prelude)",
     },
     deps = [
-        "//bz/tests/e2e_util:utils",  # @autodeps2-fixme-manual
+        "//tests/e2e_util:utils",  # @autodeps2-fixme-manual
     ],
 )

@@ -51,7 +51,5 @@ fn check_rustc_version() {
 }
 
 fn main() {
-    if !cfg!(fbcode_build) {
-        check_rustc_version();
-    }
+    check_rustc_version();
 }

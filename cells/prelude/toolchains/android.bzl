@@ -82,7 +82,6 @@ def system_android_toolchain(
     kwargs["filter_prebuilt_native_library_dir"] = "prelude//android/tools:filter_prebuilt_native_library_dir"
     kwargs["filter_resources"] = "prelude//toolchains/android/src/com/facebook/buck/android/resources/filter:filter_resources_binary"
     kwargs["framework_aidl_file"] = "{}[framework.aidl]".format(android_sdk_tools_target)
-    # @oss-disable[end= ]: kwargs["gatorade_mergemap_tool"] = "prelude//android/tools/meta_only:gatorade_mergemap_tool"
     kwargs["generate_build_config"] = "prelude//toolchains/android/src/com/facebook/buck/android/build_config:generate_build_config_binary"
     kwargs["generate_manifest"] = "prelude//toolchains/android/src/com/facebook/buck/android/manifest:generate_manifest_binary"
     kwargs["sort_pre_dexed_files"] = "prelude//android/tools:sort_pre_dexed_files"
@@ -163,7 +162,6 @@ def system_android_toolchain_rule_impl(ctx):
             filter_prebuilt_native_library_dir = ctx.attrs.filter_prebuilt_native_library_dir,
             filter_resources = ctx.attrs.filter_resources,
             framework_aidl_file = ctx.attrs.framework_aidl_file,
-            # @oss-disable[end= ]: gatorade_mergemap_tool = ctx.attrs.gatorade_mergemap_tool[RunInfo],
             generate_build_config = ctx.attrs.generate_build_config,
             generate_manifest = ctx.attrs.generate_manifest,
             installer = ctx.attrs.installer,
@@ -225,7 +223,6 @@ system_android_toolchain_rule = rule(
         "filter_prebuilt_native_library_dir": attrs.dep(providers = [RunInfo]),
         "filter_resources": attrs.dep(providers = [RunInfo]),
         "framework_aidl_file": attrs.source(),
-        # @oss-disable[end= ]: "gatorade_mergemap_tool": attrs.dep(providers = [RunInfo]),
         "generate_build_config": attrs.dep(providers = [RunInfo]),
         "generate_manifest": attrs.dep(providers = [RunInfo]),
         "installer": attrs.label(),

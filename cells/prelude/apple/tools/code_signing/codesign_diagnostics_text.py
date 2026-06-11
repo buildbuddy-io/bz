@@ -9,9 +9,6 @@
 
 class CodesignDiagnosticsText:
     """Generic remediation text for codesigning diagnostic messages.
-
-    In Meta builds, this class is replaced by the Meta-specific version from
-    meta_only/codesign_diagnostics_text.py via @oss-disable/@oss-enable.
     """
 
     CERT_REMEDIATION: str = "Check that your signing certificate is installed in your keychain and has not expired. Re-download from the Apple Developer Portal if needed."

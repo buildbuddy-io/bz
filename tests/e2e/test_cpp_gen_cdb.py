@@ -21,12 +21,12 @@ from buck2.tests.e2e_util.buck_workspace import buck_test
 @buck_test(inplace=True, skip_for_os=["windows"])
 async def test_no_quotes(buck: Buck) -> None:
     result = await buck.bxl(
-        "fbcode//tools/build/buck/bxl/cpp_lsp/cpp_gen_cdb.bxl:cpp_gen_cdb",
+        "root//tools/build/buck/bxl/cpp_lsp/cpp_gen_cdb.bxl:cpp_gen_cdb",
         "--",
         "--filename",
         str(
             buck.cwd.parent
-            / "fbcode/buck2/tests/targets/cpp_gen_cdb/basic/src/main.cpp"
+            / "workspace/buck2/tests/targets/cpp_gen_cdb/basic/src/main.cpp"
         ),
         "--os",
         platform.system().lower(),

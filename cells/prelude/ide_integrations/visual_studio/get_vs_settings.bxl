@@ -34,7 +34,7 @@ def _get_all_header_files(attrs: dict):
 
 # Buck target can have same file declared in both headers and srcs and buck will work without any problem,
 # while VS will error out: The item "xxx" already exists under the filter "".
-# e.g., fbsource//xplat/QNNPACK:operators
+# e.g., root//xplat/QNNPACK:operators
 def _get_headers_and_sources(attrs):
     headers_dict = {h: True for h in _get_all_header_files(attrs)}
     sources_dict = attrs["srcs"]
@@ -78,7 +78,7 @@ def _get_debug_settings(target: bxl.ConfiguredTargetNode, attrs: dict, attrs_laz
         actual_target_debug_settings = vs_settings_dict[actual_target_label][BY_MODES][default_mode_file]
         debug_settings = {key: actual_target_debug_settings[key] for key in debug_settings}
     elif attrs["buck_type"] == "command_alias" and target.label.name.endswith("_oxx_runner"):
-        # Replicate oxx_runner as it invokes base binary via child process which Visual Studio cannot debug into. https://fburl.com/code/i1pkehjo
+        # Replicate oxx_runner as it invokes base binary via child process which Visual Studio cannot debug into.
         base_binary_target = bxl_ctx.configured_targets(
             target.label.cell + "//" + target.label.package + ":" + target.label.name.removesuffix("_oxx_runner"),
             modifiers = bxl_ctx.modifiers,
@@ -100,14 +100,6 @@ def _get_debug_settings(target: bxl.ConfiguredTargetNode, attrs: dict, attrs_laz
         if oxx_runner_path:
             debug_settings[DEBUG_ENV].setdefault("PATH", "%PATH%")
             debug_settings[DEBUG_ENV]["PATH"] = ";".join(oxx_runner_path) + ";" + debug_settings[DEBUG_ENV]["PATH"]
-    elif attrs["buck_type"] == "command_alias" and attrs["exe"] == "fbsource//arvr/tools/buck:launcher":
-        # Replicate launcher behavior as it launches binary via child process which Visual Studio cannot debug into. https://fburl.com/code/sb7e6zi7
-        exe_path = debug_settings[DEBUG_ARGS][0]
-
-        # Infer config based path as content based path varies after local changes.
-        exe_path = translate_content_based_path(exe_path, target.label, cli_args)
-        debug_settings[DEBUG_CMD] = "$(RepoRoot)\\" + exe_path
-        debug_settings[DEBUG_PWD] = "$(RepoRoot)\\" + dirname(exe_path, separator = "\\")
         debug_settings[DEBUG_ARGS].pop(0)
     elif attrs["buck_type"] == "command_alias" and attrs["exe"]:
         # Replicate generic command_alias as buck launches exe binary via child process which Visual Studio cannot debug into.
@@ -122,7 +114,7 @@ def _get_debug_settings(target: bxl.ConfiguredTargetNode, attrs: dict, attrs_laz
         test_binary_path = attrs["env"]["BUCK_BASE_BINARY"][0]
         debug_settings[DEBUG_CMD] = test_binary_path
     elif attrs["buck_type"] == "cxx_test" and "AVATAR_LAUNCHER_TARGET" in attrs["env"]:
-        # Replicate Avatar launcher script https://fburl.com/code/wylf2zjx
+        # Replicate Avatar launcher script
         test_binary_path = attrs["env"]["AVATAR_LAUNCHER_TARGET"][0]
         debug_settings[DEBUG_CMD] = test_binary_path
         debug_settings[DEBUG_PWD] = dirname(test_binary_path, separator = "\\")
@@ -200,7 +192,7 @@ def get_vs_settings(target: bxl.ConfiguredTargetNode, toolchain, attrs: dict, vs
     if attrs_lazy.get("reexport_all_header_dependencies"):
         # Turn all normal dependencies to exported dependencies so that dependents on this target can find headers of transitive dependencies.
         # Might bring in additional exported dependencies, but does the job.
-        # e.g., fbsource//arvr/projects/hsr/libraries/common/tooling/code_gen:idl_serializer
+        # e.g., root//arvr/projects/hsr/libraries/common/tooling/code_gen:idl_serializer
         exported_deps.extend(deps)
         deps = []
     deps = [d.label.configured_target() for d in deps]  # list[configured_target_label]
@@ -289,7 +281,7 @@ main = bxl_main(
         "extra_buck_options": cli_args.list(cli_args.string(), default = []),
         "immediate_buck_options": cli_args.list(cli_args.string(), default = []),
         "log_level": cli_args.int(default = 30),
-        "mode_files": cli_args.list(cli_args.string(), default = ["fbsource//arvr/mode/win/dev"]),
+        "mode_files": cli_args.list(cli_args.string(), default = []),
         "mode_hashes": cli_args.option(cli_args.json()),  # mode => configuration hash.
         "target": cli_args.target_label(),
     },

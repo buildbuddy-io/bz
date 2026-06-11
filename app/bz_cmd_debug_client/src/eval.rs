@@ -30,7 +30,7 @@ use gazebo::prelude::SliceExt;
 /// Just evaluate and check evaluation does not fail.
 #[derive(Debug, clap::Parser)]
 pub struct EvalCommand {
-    /// Module names to evaluate, e.g. `fbsource//foo/bar:baz`.
+    /// Module names to evaluate, e.g. `root//foo/bar:baz`.
     #[clap(value_name = "PATH", required = true)]
     paths: Vec<PathArg>,
 

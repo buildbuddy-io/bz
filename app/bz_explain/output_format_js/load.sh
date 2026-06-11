@@ -10,7 +10,7 @@
 # We use this script to load the data for quick local iteration on the frontend
 # $1: buck2 executable
 set -e
-BUCK2_DUMP_FBS=/tmp/fbs $1 cquery 'deps(fbcode//bz:bz)' --output-format=html > /dev/null && \
+BUCK2_DUMP_FBS=/tmp/fbs $1 cquery 'deps(//:bz)' --output-format=html > /dev/null && \
 cd "$(dirname "$0")" && \
 echo "export const DATA = '$(cat /tmp/fbs)';" > src/data.ts && \
-cp -rfX "$(bz build //bz/app/bz_explain/output_format_js:schema_ts --show-full-simple-output)" src
+cp -rfX "$(bz build //app/bz_explain/output_format_js:schema_ts --show-full-simple-output)" src

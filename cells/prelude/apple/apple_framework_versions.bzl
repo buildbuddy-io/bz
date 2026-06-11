@@ -1162,7 +1162,6 @@ def get_framework_linker_args(ctx: AnalysisContext, framework_names: list[str]) 
             introduced = versions.get(sdk_name, None)
             if not introduced:
                 message = "SDK framework {} is not compatible with platform {}".format(name, sdk_name)
-                # @oss-disable[end= ]: message += "\n\nFor help, see: https://fburl.com/apple_build_errors/sdk_framework_is_not_compatible\n"
                 fail(message)
 
             if _version_is_greater_than(introduced, deployment_target):

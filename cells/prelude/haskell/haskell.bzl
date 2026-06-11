@@ -429,8 +429,7 @@ def _make_package(
     modules = [src_to_module_name(x) for x, _ in srcs_to_pairs(ctx.attrs.srcs) if is_haskell_src(x)]
 
     if enable_profiling:
-        # Add the `-p` suffix otherwise ghc will look for objects
-        # following this logic (https://fburl.com/code/3gmobm5x) and will fail.
+        # Add the `-p` suffix otherwise ghc will look for profiled objects and fail.
         libname += "_p"
 
     def mk_artifact_dir(dir_prefix: str, profiled: bool) -> str:

@@ -13,7 +13,7 @@ load(":util.bxl", "TestRefs", "get_test_refs")
 
 # These tests run `cfg_constructor_pre_constraint_analysis` and `cfg_constructor_post_constraint_analysis` with test arguments
 # and check if they return the expected PlatformInfo. They act like unit tests except for the fact that they use certain
-# constraint targets from the repo (listed below), which requires running from within fbsource.
+# constraint targets from the repo (listed below), which requires running from within workspace.
 # TODO(scottcao): Make this test runnable as isolated test.
 
 def test_resolve_constraint_value_modifier(

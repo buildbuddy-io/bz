@@ -67,7 +67,7 @@ class WheelBuilder(contextlib.AbstractContextManager):
         self._normalized_name: str = normalize_name(name)
 
         # TODO normalize version like we normalized name above
-        #  can follow pypi/packaging.utils.canonicalize_version (see: https://fburl.com/code/amuvl3d2)
+        #  can follow pypi/packaging.utils.canonicalize_version.
         #  punted for later since it was not a clean copy/paste and
         #  taking a dep to tp from toolchains is not straightforward
         self._version = version

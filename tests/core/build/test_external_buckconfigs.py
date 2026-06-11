@@ -91,11 +91,11 @@ async def test_external_buckconfigs(buck: Buck) -> None:
         and not external_path_config_value["is_cli"]
     )
 
-    # Next comes the values from the buckconfig.local file (which may include other files https://fburl.com/wd54jnpu)
+    # Next comes the values from the buckconfig.local file, which may include other files.
     local_path_configs = external_configs[1]["data"]["GlobalExternalConfigFile"]
     assert len(local_path_configs["values"]) == 2
     assert local_path_configs["origin_path"] == ".buckconfig.local"
-    # Note that buck parses configfiles ordered by section: https://fburl.com/rnzlt05n
+    # Note that buck parses config files ordered by section.
     # That's why, we first have the values from the included file,
     included_config_value = local_path_configs["values"][0]
     assert (

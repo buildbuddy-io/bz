@@ -353,9 +353,7 @@ impl Display for ConfiguredProvidersPatternExtra {
 impl PatternType for ConfiguredProvidersPatternExtra {
     const NAME: &'static str = "configured providers";
 
-    fn from_configured_providers(
-        extra: ConfiguredProvidersPatternExtra,
-    ) -> bz_error::Result<Self> {
+    fn from_configured_providers(extra: ConfiguredProvidersPatternExtra) -> bz_error::Result<Self> {
         Ok(extra)
     }
 

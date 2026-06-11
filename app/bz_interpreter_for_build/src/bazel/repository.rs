@@ -229,13 +229,13 @@ use self::download::repository_ctx_extract_archive;
 use self::download::repository_ctx_rename_files_from_entries;
 use self::download::repository_ctx_renamed_strip_prefix;
 pub use self::recorded_inputs::RepositoryPathLabelDep;
-pub use self::recorded_inputs::repository_recorded_dir_tree_value;
-pub use self::recorded_inputs::repository_recorded_dirents_value;
-pub use self::recorded_inputs::repository_recorded_file_value;
 use self::recorded_inputs::record_repository_dir_tree_input;
 use self::recorded_inputs::record_repository_dirents_input;
 use self::recorded_inputs::record_repository_env_var;
 use self::recorded_inputs::record_repository_file_input;
+pub use self::recorded_inputs::repository_recorded_dir_tree_value;
+pub use self::recorded_inputs::repository_recorded_dirents_value;
+pub use self::recorded_inputs::repository_recorded_file_value;
 use self::recorded_inputs::repository_should_record_watch;
 use self::repository_path::BazelRepositoryPathRemoteContext;
 pub(crate) use self::repository_path::StarlarkRepositoryPath;
@@ -479,9 +479,7 @@ fn record_repository_rule_invocation<'v>(
     let recorder = build_context
         .bazel_repository_rule_recorder
         .ok_or_else(|| {
-            bz_error::Error::from(
-                BazelRepositoryError::RepositoryRuleCalledOutsideModuleExtension,
-            )
+            bz_error::Error::from(BazelRepositoryError::RepositoryRuleCalledOutsideModuleExtension)
         })?;
 
     args.no_positional_args(eval.heap())?;
@@ -507,8 +505,8 @@ fn record_repository_rule_invocation<'v>(
             ));
         }
     }
-    let name = name
-        .ok_or_else(|| bz_error::Error::from(BazelRepositoryError::RepositoryRuleMissingName))?;
+    let name =
+        name.ok_or_else(|| bz_error::Error::from(BazelRepositoryError::RepositoryRuleMissingName))?;
     attrs.sort_by(|(left, _), (right, _)| left.cmp(right));
     let attr_build_file_callsite = repository_rule_attr_build_file_callsite(eval, build_context);
 
@@ -1043,11 +1041,11 @@ mod tests {
     fn test_repository_rule_execution_cache_key_distinguishes_remote_execution() {
         use bz_core::execution_types::executor_config::CacheUploadBehavior;
         use bz_core::execution_types::executor_config::CommandGenerationOptions;
-        use bz_core::execution_types::executor_config::MetaInternalExtraParams;
         use bz_core::execution_types::executor_config::OutputPathsBehavior;
         use bz_core::execution_types::executor_config::PathSeparatorKind;
         use bz_core::execution_types::executor_config::RePlatformFields;
         use bz_core::execution_types::executor_config::RemoteEnabledExecutorOptions;
+        use bz_core::execution_types::executor_config::RemoteExecutionExtraParams;
         use bz_core::execution_types::executor_config::RemoteExecutorOptions;
         use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 
@@ -1064,7 +1062,7 @@ mod tests {
                 dependencies: Vec::new(),
                 gang_workers: Vec::new(),
                 custom_image: None,
-                meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
+                remote_execution_extra_params: RemoteExecutionExtraParams::default_arc(),
                 priority: None,
             }),
             options: CommandGenerationOptions {
@@ -2910,13 +2908,13 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         attrs.insert(attr_name.clone(), value);
     }
     if let Some((attr, _)) = explicit_attrs.into_iter().next() {
-        return Err(bz_error::Error::from(
-            BazelRepositoryError::RepositoryRuleUnknownAttribute {
+        return Err(
+            bz_error::Error::from(BazelRepositoryError::RepositoryRuleUnknownAttribute {
                 rule: invocation.rule_id.to_string(),
                 attr,
-            },
-        )
-        .into());
+            })
+            .into(),
+        );
     }
     let attrs = BazelRepositoryAttrValues {
         attrs,
@@ -3833,16 +3831,16 @@ fn repository_ctx_validate_external_inputs_ready(
             if let Some(dep) = repository_ctx_external_input_dep(&path) {
                 record_dep(dep);
             }
-            return Err(bz_error::Error::from(
-                BazelRepositoryError::RepositoryCtxExecuteFailed {
+            return Err(
+                bz_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
                     program: program.to_owned(),
                     error: format!(
                         "external input `{}` was not materialized",
                         path.to_string_lossy()
                     ),
-                },
-            )
-            .into());
+                })
+                .into(),
+            );
         }
     }
     Ok(())

@@ -240,7 +240,7 @@ cython_toolchain_rule = prelude_rule(
 
         Python version-based compiler selection is handled via select() +
         py_version_select() on the "compiler" attribute in the toolchain
-        BUCK definition, mirroring the fbsource//third-party/pypi/cython:compiler
+        BUCK definition, mirroring the third_party//pypi/cython:compiler
         alias pattern.
     """,
     is_toolchain_rule = True,

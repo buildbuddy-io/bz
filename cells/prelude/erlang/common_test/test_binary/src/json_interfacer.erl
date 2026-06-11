@@ -9,7 +9,7 @@
 -module(json_interfacer).
 -moduledoc """
 Methods used for serialization to the type
-defined in tpx [here](https://www.internalfb.com/code/fbsource/[bb9e81daacad]/fbcode/testinfra/tpx/tpx-output/src/erl_parser.rs).
+defined in tpx [here](
 """.
 -compile(warn_missing_spec_all).
 

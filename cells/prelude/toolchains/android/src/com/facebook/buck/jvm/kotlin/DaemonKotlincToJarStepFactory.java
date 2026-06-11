@@ -347,7 +347,7 @@ public class DaemonKotlincToJarStepFactory extends BaseCompileToJarStepFactory<K
         javaAnnotationProcessorParams.getPluginProperties().stream()
             .filter(AnnotationProcessorUtils::isRunsOnJavaOnlyProcessor)
             .collect(ImmutableList.toImmutableList());
-    // See https://fburl.com/diff/d1msdqm8
+    // See
     // If pluginProperties is empty, make sure parameters is empty too, or javac will complain
     if (filteredPluginProperties.isEmpty()) {
       return JavacPluginParams.EMPTY;

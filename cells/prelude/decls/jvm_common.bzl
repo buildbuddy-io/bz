@@ -206,7 +206,7 @@ def _kotlin_compiler_plugins():
                  E.g.
 
                 ```
-fbcode/buck2/prelude/decls/jvm_common.bzl
+workspace/buck2/prelude/decls/jvm_common.bzl
                 kotlin_compiler_plugins = {
                     "somePluginSourcePath": {
                         "plugin:somePluginId:somePluginOptionKey": "somePluginOptionValue",
@@ -262,11 +262,6 @@ def _annotation_processors():
 def _content_based_path_attr():
     return attrs.bool(default = select({
         "DEFAULT": False,
-        # @oss-disable[end= ]: "config//build_mode/constraints:whatsapp": True,
-        # @oss-disable[end= ]: "config//build_mode:arvr_mode[enabled]": True,
-        # @oss-disable[end= ]: "config//os/constraints:android": True,
-        # @oss-disable[end= ]: "config//runtime/constraints:android-host-test": True,
-        # @oss-disable[end= ]: "config//runtime/constraints:android-unit-test": True,
     }))
 
 def _kotlincd_content_based_paths():

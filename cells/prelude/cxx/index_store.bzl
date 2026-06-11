@@ -15,7 +15,7 @@ def _index_store_args(artifact: Artifact) -> Artifact:
 # A transitive set (tset) where we don't need to format the items to use them
 # as CLI arguments.
 #
-# https://www.internalfb.com/intern/staticdocs/buck2/docs/rule_authors/transitive_sets/#projections-using-transitive-sets-in-command-lines
+# https://buck2.build/docs/rule_authors/transitive_sets/#projections-using-transitive-sets-in-command-lines
 IndexStoreTSet = transitive_set(
     args_projections = {
         "args": _index_store_args,
@@ -24,7 +24,7 @@ IndexStoreTSet = transitive_set(
 
 # A struct representing information about the index store.
 #
-# https://www.internalfb.com/intern/staticdocs/buck2/docs/rule_authors/writing_rules/#providers
+# https://buck2.build/docs/rule_authors/writing_rules/#providers
 IndexStoreInfo = provider(
     fields = {
         # The name of the target.

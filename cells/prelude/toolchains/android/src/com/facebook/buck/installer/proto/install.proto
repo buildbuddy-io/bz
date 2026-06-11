@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-// Copied from fbcode/buck2/install_proto/install.proto
-// (https://fburl.com/code/y9zjtzvn)
+// Copied from workspace/buck2/install_proto/install.proto
+// (
 
 //----------------------------------------------
 //  Generate command

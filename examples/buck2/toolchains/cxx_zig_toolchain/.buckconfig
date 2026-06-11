@@ -7,9 +7,6 @@ none = none
 [cell_aliases]
 config = prelude
 buck = none
-fbcode = none
-fbcode_macros = none
-fbsource = none
 
 [external_cells]
   prelude = bundled

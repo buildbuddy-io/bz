@@ -206,7 +206,7 @@ def _link_deps(
     """
     Return transitive deps required to link dynamically against the given deps.
     This will following through deps of statically linked inputs and exported
-    deps of everything else (see https://fburl.com/diffusion/rartsbkw from v1).
+    deps of everything else, matching v1 behavior.
     """
 
     def find_deps(node: ConfiguredProvidersLabel):

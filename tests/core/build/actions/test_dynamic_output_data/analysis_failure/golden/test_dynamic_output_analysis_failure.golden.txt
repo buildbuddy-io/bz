@@ -2,7 +2,7 @@
 
 [<TIMESTAMP>] Starting new buck2 daemon...
 [<TIMESTAMP>] Connected to new buck2 daemon.
-[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+[<TIMESTAMP>] Build ID: <UUID>
 BUILD FAILED
 Error running dynamic analysis for `prelude//:analysis_failure (<unspecified>)`
 

@@ -2,7 +2,7 @@
 
 [<TIMESTAMP>] Starting new buck2 daemon...
 [<TIMESTAMP>] Connected to new buck2 daemon.
-[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+[<TIMESTAMP>] Build ID: <UUID>
 [<TIMESTAMP>] Error parsing root//b
 [<TIMESTAMP>] Error evaluating build file: `root//b:TARGETS.fixture`
 [<TIMESTAMP>]

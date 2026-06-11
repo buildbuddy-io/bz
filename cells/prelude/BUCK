@@ -15,12 +15,11 @@ source_listing(exclude = [
     "PACKAGE",
 ])
 
-# Done to avoid triggering a lint rule that replaces glob with an fbcode macro
+# Done to avoid triggering a lint rule that replaces glob with an workspace macro
 globby = glob
 
 srcs = globby(
     ["**"],
-    # Context: https://fb.workplace.com/groups/buck2users/posts/3121903854732641/
     exclude = [
         "**/.pyre_configuration.local",
         # Unfortunately, using modifiers require loading bzl files in outside of prelude,

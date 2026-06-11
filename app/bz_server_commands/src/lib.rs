@@ -21,8 +21,6 @@ pub(crate) mod complete;
 pub(crate) mod debug_eval;
 pub(crate) mod expand_external_cells;
 pub(crate) mod explain;
-#[cfg(fbcode_build)]
-pub(crate) mod explain_code;
 pub(crate) mod init_commands;
 pub(crate) mod install;
 

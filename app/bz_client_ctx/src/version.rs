@@ -86,18 +86,12 @@ impl BuckVersion {
             )
         })?;
 
-        let (internal_exe_hash, internal_exe_hash_kind) = if let Some(internal_exe_hash) =
-            Self::extract_unique_id(&file_object)
-        {
-            (internal_exe_hash, "<build-id>")
-        } else {
-            if !(bz_core::is_open_source() || bz_env!("BUCK2_IGNORE_VERSION_EXTRACTION_FAILURE", type=bool, default=false, applicability=testing).unwrap_or(false)) {
-                let _ignored = crate::eprintln!(
-                    "version extraction failed. This indicates an issue with the buck2 release, will fallback to binary hash"
-                );
-            }
-            (Self::hash_binary(&mut file)?, "<exe-hash>")
-        };
+        let (internal_exe_hash, internal_exe_hash_kind) =
+            if let Some(internal_exe_hash) = Self::extract_unique_id(&file_object) {
+                (internal_exe_hash, "<build-id>")
+            } else {
+                (Self::hash_binary(&mut file)?, "<exe-hash>")
+            };
 
         let version = if let Some(version) = bz_build_info::revision() {
             version.to_owned()

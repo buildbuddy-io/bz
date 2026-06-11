@@ -29,10 +29,10 @@ async def test_bxl_root(buck: Buck) -> None:
 @buck_test(inplace=False, data_dir="bxl/simple")
 async def test_bxl_cell_root(buck: Buck) -> None:
     result = await buck.bxl(
-        "fbcode//cell_root.bxl:cell_root_test",
+        "root//cell_root.bxl:cell_root_test",
     )
 
-    assert str(buck.cwd / "fbcode") in result.stdout
+    assert str(buck.cwd / "workspace") in result.stdout
 
 
 @buck_test(inplace=False, data_dir="bxl/simple")

@@ -51,7 +51,7 @@
 //!
 //! ```text
 //! error[E0521]: borrowed data escapes outside of closure
-//!   --> fbcode/buck2/deps/starlark-rust/starlark/src/values/layout/heap/branding.rs:55:32
+//!   --> workspace/buck2/deps/starlark-rust/starlark/src/values/layout/heap/branding.rs:55:32
 //!    |
 //! 52 |     Heap::temp(|heap1| {
 //!    |                 -----

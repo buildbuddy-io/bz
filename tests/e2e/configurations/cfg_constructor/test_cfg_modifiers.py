@@ -18,7 +18,7 @@ from buck2.tests.e2e_util.buck_workspace import buck_test
 @buck_test(inplace=True)
 async def test_cfg_modifiers(buck: Buck) -> None:
     result = await buck.targets(
-        "fbcode//bz/tests/e2e/configurations/cfg_constructor/cfg_modifiers:test",
+        "//tests/e2e/configurations/cfg_constructor/cfg_modifiers:test",
         "--output-attribute=metadata",
     )
     targets = json.loads(result.stdout)

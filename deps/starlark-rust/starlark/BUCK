@@ -1,6 +1,3 @@
-load("@fbcode_macros//build_defs:native_rules.bzl", "alias", "buck_filegroup")
-load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
-
 oncall("build_infra")
 
 # Constraint controlling the "pagable" Cargo feature of the starlark crate.
@@ -20,10 +17,10 @@ constraint(
 
 alias(
     name = "starlark-bin",
-    actual = "//bz/deps/starlark-rust/starlark_bin:starlark_bin",
+    actual = "//deps/starlark-rust/starlark_bin:starlark_bin",
 )
 
-buck_filegroup(
+filegroup(
     name = "testcases",
     srcs = glob([
         "src/**/golden/**",
@@ -52,7 +49,7 @@ rust_library(
         "DEFAULT": [],
     }),
     test_deps = [
-        "fbsource//third-party/rust:rand",
+        "third_party//rust:rand",
         # This is a hack to build `:testcases` when invoking a test.
         # Otherwise `OUT_DIR` is set, but it points to non-existing directory.
         # This is likely a bug in `rust_test` rule.
@@ -64,38 +61,38 @@ rust_library(
         "CARGO_MANIFEST_DIR": "$(location :testcases)",
     },
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:bumpalo",
-        "fbsource//third-party/rust:debugserver-types",
-        "fbsource//third-party/rust:derivative",
-        "fbsource//third-party/rust:derive_more",
-        "fbsource//third-party/rust:either",
-        "fbsource//third-party/rust:erased-serde",
-        "fbsource//third-party/rust:hashbrown",
-        "fbsource//third-party/rust:inventory",
-        "fbsource//third-party/rust:itertools",
-        "fbsource//third-party/rust:maplit",
-        "fbsource//third-party/rust:memoffset",
-        "fbsource//third-party/rust:num-bigint",
-        "fbsource//third-party/rust:num-traits",
-        "fbsource//third-party/rust:once_cell",
-        "fbsource//third-party/rust:paste",
-        "fbsource//third-party/rust:ref-cast",
-        "fbsource//third-party/rust:regex",
-        "fbsource//third-party/rust:rustyline",
-        "fbsource//third-party/rust:serde",
-        "fbsource//third-party/rust:serde_json",
-        "fbsource//third-party/rust:static_assertions",
-        "fbsource//third-party/rust:strsim",
-        "fbsource//third-party/rust:textwrap",
-        "fbsource//third-party/rust:thiserror",
-        "//bz/deps/allocative/allocative:allocative",
-        "//bz/deps/gazebo/cmp_any:cmp_any",
-        "//bz/deps/gazebo/display_container:display_container",
-        "//bz/deps/gazebo/dupe:dupe",
-        "//bz/deps/pagable:pagable",
-        "//bz/deps/starlark-rust/starlark_derive:starlark_derive",
-        "//bz/deps/starlark-rust/starlark_map:starlark_map",
-        "//bz/deps/starlark-rust/starlark_syntax:starlark_syntax",
+        "third_party//rust:anyhow",
+        "third_party//rust:bumpalo",
+        "third_party//rust:debugserver-types",
+        "third_party//rust:derivative",
+        "third_party//rust:derive_more",
+        "third_party//rust:either",
+        "third_party//rust:erased-serde",
+        "third_party//rust:hashbrown",
+        "third_party//rust:inventory",
+        "third_party//rust:itertools",
+        "third_party//rust:maplit",
+        "third_party//rust:memoffset",
+        "third_party//rust:num-bigint",
+        "third_party//rust:num-traits",
+        "third_party//rust:once_cell",
+        "third_party//rust:paste",
+        "third_party//rust:ref-cast",
+        "third_party//rust:regex",
+        "third_party//rust:rustyline",
+        "third_party//rust:serde",
+        "third_party//rust:serde_json",
+        "third_party//rust:static_assertions",
+        "third_party//rust:strsim",
+        "third_party//rust:textwrap",
+        "third_party//rust:thiserror",
+        "//deps/allocative/allocative:allocative",
+        "//deps/gazebo/cmp_any:cmp_any",
+        "//deps/gazebo/display_container:display_container",
+        "//deps/gazebo/dupe:dupe",
+        "//deps/pagable:pagable",
+        "//deps/starlark-rust/starlark_derive:starlark_derive",
+        "//deps/starlark-rust/starlark_map:starlark_map",
+        "//deps/starlark-rust/starlark_syntax:starlark_syntax",
     ],
 )

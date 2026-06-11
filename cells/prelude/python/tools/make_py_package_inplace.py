@@ -156,7 +156,7 @@ def write_bootstrapper(args: argparse.Namespace) -> None:
     native_lib_dirs = [relative_modules_dir] + args.native_library_runtime_paths
 
     # TODO(nmj): Remove this hack. So, if arg0 in your shebang is a bash script
-    #                 (like /usr/local/fbcode/platform007/bin/python3.7 on macs is)
+    #                 (like /usr/local/workspace/platform007/bin/python3.7 on macs is)
     #                 OSX just sort of ignores it and tries to run your thing with
     #                 the current shell. So, we hack in /usr/bin/env in the front
     #                 for now, and let it do the lifting. OSX: Bringing you the best

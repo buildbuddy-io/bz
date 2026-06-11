@@ -43,24 +43,19 @@ use bz_error::internal_error;
 ///
 /// `LateBinding` is stored in a static variable, and must be initialized explicitly.
 /// We tried to use `#[ctor]` crate for initialization, but unfortunately it does not work
-/// reliably on macOS. Some details are in [this post](https://fburl.com/ctor).
+/// reliably on macOS.
 ///
 /// Suppose you have a function `fn foo()` initialized with `LateBinding`.
 /// The convention is this:
 /// * in the interface crate define a static variable
 ///   `static FOO: LateBinding<fn()> = LateBinding::new("FOO");`
-///   ([example](https://fburl.com/code/rvxqbf4f)).
 /// * in the implementation crate define an implementation like `fn foo() { ... }`,
-///   and next to the implementation, define a function like `fn init_foo() { FOO.init(foo); }`
-///   ([example](https://fburl.com/code/0wd4xoql)).
+///   and next to the implementation, define a function like `fn init_foo() { FOO.init(foo); }`.
 /// * in the root of the implementation crate, define a function `fn init_late_bindings() { ... }`
-///   that calls `init_foo()` and other `init_*` functions
-///   ([example](https://fburl.com/code/wbj4tt25)).
+///   that calls `init_foo()` and other `init_*` functions.
 /// * in the file `app/bz/bin/buck2.rs` call `init_late_bindings()` of the corresponding crate
-///   ([example](https://fburl.com/code/maorfzdy)).
 /// * In the test crates that need to call this function, also call `init_late_bindings()`
 ///   of the corresponding crates
-///   ([example](https://fburl.com/code/ynd8ylo1)).
 ///   Note, to use `#[ctor]` in test crate, it should be placed in `#[test]`
 ///   to avoid rust compiler and linker erase the initialization code.
 ///

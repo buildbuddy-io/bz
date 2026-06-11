@@ -18,10 +18,10 @@ import java.util.Optional;
 
 /**
  * TestResultsOutputEvent implements the following thrift schema.
- * https://www.internalfb.com/code/fbsource/[8bed6a02e7ed]/fbcode/testinfra/if/test_result_output_spec.thrift
+ * Test result output event model.
  *
  * <p>It keeps and serializes events pertaining to the execution of test cases and replicates
- * instead of using the thrift structs directly to avoid the need for a dependency on fbcode.
+ * instead of using the thrift structs directly to avoid the need for a dependency on workspace.
  */
 public class TestResultsOutputEvent {
   private static final JsonFactory jsonFactory = new JsonFactory();

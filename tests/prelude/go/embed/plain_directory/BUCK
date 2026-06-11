@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests/prelude:py_assertion.bzl", "py_assertion")
+load("//tests/prelude:py_assertion.bzl", "py_assertion")
 
 oncall("golang")
 
@@ -17,7 +17,6 @@ prelude.go_test(
         "main_test.go",
     ],
     embed_srcs = glob(["templates/**"]),
-    # @oss-disable[end= ]: env = {"GO_TEST2JSON_TOOL": "$(exe_target fbsource//third-party/go:test2json)"},
 )
 
 py_assertion(

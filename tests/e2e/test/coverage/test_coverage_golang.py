@@ -22,8 +22,8 @@ from .test_coverage_utils import collect_coverage_for
 async def test_go_test_dbgo_cov(buck: Buck, tmp_path: Path) -> None:
     coverage_file = tmp_path / "coverage.txt"
     await buck.test(
-        "@fbcode//mode/dbgo-cov",
-        "fbcode//test_frameworks/gotest/playground:simple_add_test",
+        "@root//mode/dbgo-cov",
+        "root//test_frameworks/gotest/playground:simple_add_test",
         "--",
         f"--coverage-output={coverage_file}",
     )
@@ -32,8 +32,8 @@ async def test_go_test_dbgo_cov(buck: Buck, tmp_path: Path) -> None:
         for line in results:
             paths.append(json.loads(line)["filepath"])
 
-    assert "fbcode/test_frameworks/gotest/playground/simple.go" in paths, str(paths)
-    assert "fbcode/test_frameworks/gotest/playground/simple_add_test.go" in paths, str(
+    assert "workspace/test_frameworks/gotest/playground/simple.go" in paths, str(paths)
+    assert "workspace/test_frameworks/gotest/playground/simple_add_test.go" in paths, str(
         paths
     )
 
@@ -44,13 +44,13 @@ async def test_go_test_filtered_coverage_by_folder(buck: Buck, tmp_path: Path) -
     paths = await collect_coverage_for(
         buck,
         tmp_path,
-        "fbcode//test_frameworks/gotest/playground:simple_add_test",
-        folder_filter=["fbcode/test_frameworks/gotest/playground"],
+        "root//test_frameworks/gotest/playground:simple_add_test",
+        folder_filter=["workspace/test_frameworks/gotest/playground"],
         file_filter=[],
     )
 
-    assert "fbcode/test_frameworks/gotest/playground/simple.go" in paths, str(paths)
-    assert "fbcode/test_frameworks/gotest/playground/simple_add_test.go" in paths, str(
+    assert "workspace/test_frameworks/gotest/playground/simple.go" in paths, str(paths)
+    assert "workspace/test_frameworks/gotest/playground/simple_add_test.go" in paths, str(
         paths
     )
 
@@ -61,12 +61,12 @@ async def test_go_test_filtered_coverage_by_file(buck: Buck, tmp_path: Path) -> 
     paths = await collect_coverage_for(
         buck,
         tmp_path,
-        "fbcode//test_frameworks/gotest/playground:simple_add_test",
+        "root//test_frameworks/gotest/playground:simple_add_test",
         folder_filter=[],
-        file_filter=["fbcode/test_frameworks/gotest/playground/simple.go"],
+        file_filter=["workspace/test_frameworks/gotest/playground/simple.go"],
     )
 
-    assert "fbcode/test_frameworks/gotest/playground/simple.go" in paths, str(paths)
+    assert "workspace/test_frameworks/gotest/playground/simple.go" in paths, str(paths)
 
 
 @buck_test(inplace=True)
@@ -75,14 +75,14 @@ async def test_go_test_selective_coverage_by_file(buck: Buck, tmp_path: Path) ->
     paths = await collect_coverage_for(
         buck,
         tmp_path,
-        "fbcode//testing_frameworks/code_coverage/go:math_test",
+        "root//testing_frameworks/code_coverage/go:math_test",
         folder_filter=[],
         file_filter=[
-            "fbcode/testing_frameworks/code_coverage/go/add.go",
+            "workspace/testing_frameworks/code_coverage/go/add.go",
         ],
     )
 
-    assert "fbcode/testing_frameworks/code_coverage/go/add.go" in paths, str(paths)
+    assert "workspace/testing_frameworks/code_coverage/go/add.go" in paths, str(paths)
 
 
 @buck_test(inplace=True)
@@ -93,7 +93,7 @@ async def test_go_test_filtered_coverage_not_matching(
     paths = await collect_coverage_for(
         buck,
         tmp_path,
-        "fbcode//test_frameworks/gotest/playground:simple_add_test",
+        "root//test_frameworks/gotest/playground:simple_add_test",
         folder_filter=["some/other/path"],
         file_filter=[],
     )
@@ -105,8 +105,8 @@ async def test_go_test_filtered_coverage_not_matching(
 async def test_go_test_dbgo_cov_on_remote_execution(buck: Buck, tmp_path: Path) -> None:
     coverage_file = tmp_path / "coverage.txt"
     await buck.test(
-        "@fbcode//mode/dbgo-cov",
-        "fbcode//test_frameworks/gotest/playground:simple_add_test_re",
+        "@root//mode/dbgo-cov",
+        "root//test_frameworks/gotest/playground:simple_add_test_re",
         "--",
         f"--coverage-output={coverage_file}",
     )
@@ -115,7 +115,7 @@ async def test_go_test_dbgo_cov_on_remote_execution(buck: Buck, tmp_path: Path) 
         for line in results:
             paths.append(json.loads(line)["filepath"])
 
-    assert "fbcode/test_frameworks/gotest/playground/simple.go" in paths, str(paths)
-    assert "fbcode/test_frameworks/gotest/playground/simple_add_test.go" in paths, str(
+    assert "workspace/test_frameworks/gotest/playground/simple.go" in paths, str(paths)
+    assert "workspace/test_frameworks/gotest/playground/simple_add_test.go" in paths, str(
         paths
     )

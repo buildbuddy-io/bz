@@ -6,11 +6,11 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//:is_buck2.bzl", "is_buck2") # @oss-enable
+load("@prelude//:is_buck2.bzl", "is_buck2")
 load(
     "@prelude//platforms/apple:build_mode.bzl",
     "APPLE_BUILD_MODES",
-      "CONSTRAINT_PACKAGE", # @oss-enable
+      "CONSTRAINT_PACKAGE",
     "get_build_mode",
 )
 load(
@@ -21,11 +21,9 @@ load(
     "mac_platforms",
     "watch_platforms",
 )
-# @oss-disable[end= ]: load("@prelude//platforms/apple/meta_only:build_mode.bzl", _get_build_mode_constraints_map = "get_build_mode_constraints_map")
 
 def get_build_mode_constraints_map(use_whatsapp_build_modes):
-    return {build_mode: ["{}:{}".format(CONSTRAINT_PACKAGE, build_mode)] for build_mode in APPLE_BUILD_MODES} # @oss-enable
-    # @oss-disable[end= ]: return _get_build_mode_constraints_map(use_whatsapp_build_modes)
+    return {build_mode: ["{}:{}".format(CONSTRAINT_PACKAGE, build_mode)] for build_mode in APPLE_BUILD_MODES}
 
 _MOBILE_PLATFORMS = [
     appletv_platforms.APPLETVOS_ARM64,
@@ -78,7 +76,7 @@ def apple_build_mode_backed_platform(name, platform, build_mode = None):
     return _get_generated_name(name, platform, build_mode)
 
 def is_mobile_platform(platform):
-    # These builds modes are primarily used in mobile code. MacOS builds in fbcode/arvr use different
+    # These builds modes are primarily used in mobile code. MacOS builds in workspace/arvr use different
     # modes to represent dev/opt variants.
     return platform in _MOBILE_PLATFORMS
 

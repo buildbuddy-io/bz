@@ -19,16 +19,12 @@ use bz_core::bz_env;
 use bz_core::cells::CellResolver;
 use bz_core::cells::name::CellName;
 use bz_core::fs::project::ProjectRoot;
-#[cfg(fbcode_build)]
-use bz_core::soft_error;
 use bz_error::BuckErrorContext;
 use bz_error::ErrorTag;
 use bz_error::bz_error;
 use bz_hash::StdBuckHashMap;
 use dice::DiceTransactionUpdater;
 
-#[cfg(fbcode_build)]
-use crate::edenfs::interface::EdenFsFileWatcher;
 use crate::fs_hash_crawler::FsHashCrawler;
 use crate::mergebase::Mergebase;
 use crate::no_watchfs::NoWatchFs;
@@ -88,14 +84,6 @@ impl dyn FileWatcher {
             return Ok(Arc::new(NoWatchFs::new()));
         }
 
-        #[cfg(fbcode_build)]
-        let default = if detect_eden::is_eden(project_root.root().to_path_buf())? {
-            "edenfs"
-        } else {
-            "watchman"
-        };
-
-        #[cfg(not(fbcode_build))]
         let default = "notify";
 
         let _allow_unused = fb;
@@ -108,23 +96,6 @@ impl dyn FileWatcher {
             .unwrap_or(default);
 
         let watcher_conf = if let "edenfs" = watcher_conf {
-            #[cfg(fbcode_build)]
-            match EdenFsFileWatcher::new(
-                fb,
-                project_root,
-                root_config,
-                cells.clone(),
-                ignore_specs.clone(),
-            ) {
-                Ok(edenfs) => return Ok(Arc::new(edenfs)),
-                Err(e) if e.has_tag(ErrorTag::IoNotConnected) => {
-                    soft_error!("edenfs_watcher_creation_failure", e)?;
-                    // fallback to watchman if failed to create edenfs watcher
-                    "watchman"
-                }
-                Err(e) => return Err(e),
-            }
-            #[cfg(not(fbcode_build))]
             default
         } else {
             watcher_conf

@@ -573,11 +573,7 @@ struct StaticLinesAdapter<'a>(&'a Lines);
 impl Component for StaticLinesAdapter<'_> {
     type Error = bz_error::Error;
 
-    fn draw_unchecked(
-        &self,
-        _dimensions: Dimensions,
-        mode: DrawMode,
-    ) -> bz_error::Result<Lines> {
+    fn draw_unchecked(&self, _dimensions: Dimensions, mode: DrawMode) -> bz_error::Result<Lines> {
         Ok(match mode {
             DrawMode::Final => Lines::new(),
             DrawMode::Normal => self.0.clone(),
@@ -590,11 +586,7 @@ struct ProgressHeaderSpacer;
 impl Component for ProgressHeaderSpacer {
     type Error = bz_error::Error;
 
-    fn draw_unchecked(
-        &self,
-        _dimensions: Dimensions,
-        _mode: DrawMode,
-    ) -> bz_error::Result<Lines> {
+    fn draw_unchecked(&self, _dimensions: Dimensions, _mode: DrawMode) -> bz_error::Result<Lines> {
         Ok(Lines(vec![Line::default()]))
     }
 }
@@ -914,10 +906,7 @@ impl SuperConsoleState {
         })
     }
 
-    pub async fn update_event_observer(
-        &mut self,
-        event: &Arc<BuckEvent>,
-    ) -> bz_error::Result<()> {
+    pub async fn update_event_observer(&mut self, event: &Arc<BuckEvent>) -> bz_error::Result<()> {
         self.simple_console.update_event_observer(event).await
     }
 
@@ -983,43 +972,39 @@ impl StatefulSuperConsoleImpl {
     async fn handle_inner_event(&mut self, event: &BuckEvent) -> bz_error::Result<()> {
         match unpack_event(event)? {
             bz_event_observer::unpack_event::UnpackedBuckEvent::SpanStart(_, _, _) => Ok(()),
-            bz_event_observer::unpack_event::UnpackedBuckEvent::SpanEnd(_, _, data) => {
-                match data {
-                    bz_data::span_end_event::Data::ActionExecution(action) => {
-                        self.handle_action_execution_end(action).await
-                    }
-                    bz_data::span_end_event::Data::FileWatcher(file_watcher) => {
-                        self.handle_file_watcher_end(file_watcher).await
-                    }
-                    _ => Ok(()),
+            bz_event_observer::unpack_event::UnpackedBuckEvent::SpanEnd(_, _, data) => match data {
+                bz_data::span_end_event::Data::ActionExecution(action) => {
+                    self.handle_action_execution_end(action).await
                 }
-            }
-            bz_event_observer::unpack_event::UnpackedBuckEvent::Instant(_, _, data) => {
-                match data {
-                    bz_data::instant_event::Data::ConsoleMessage(message) => {
-                        self.handle_console_message(message).await
-                    }
-                    bz_data::instant_event::Data::ConsoleWarning(message) => {
-                        self.handle_console_warning(message).await
-                    }
-                    bz_data::instant_event::Data::StructuredError(err) => {
-                        self.handle_structured_error(err).await
-                    }
-                    bz_data::instant_event::Data::TestResult(result) => {
-                        self.handle_test_result(result).await
-                    }
-                    bz_data::instant_event::Data::ConsolePreferences(preferences) => {
-                        self.handle_console_preferences(preferences).await
-                    }
-                    bz_data::instant_event::Data::ActionError(error) => {
-                        self.handle_action_error(error).await
-                    }
-                    bz_data::instant_event::Data::StreamingOutput(message) => {
-                        self.handle_streaming_output(message).await
-                    }
-                    _ => Ok(()),
+                bz_data::span_end_event::Data::FileWatcher(file_watcher) => {
+                    self.handle_file_watcher_end(file_watcher).await
                 }
-            }
+                _ => Ok(()),
+            },
+            bz_event_observer::unpack_event::UnpackedBuckEvent::Instant(_, _, data) => match data {
+                bz_data::instant_event::Data::ConsoleMessage(message) => {
+                    self.handle_console_message(message).await
+                }
+                bz_data::instant_event::Data::ConsoleWarning(message) => {
+                    self.handle_console_warning(message).await
+                }
+                bz_data::instant_event::Data::StructuredError(err) => {
+                    self.handle_structured_error(err).await
+                }
+                bz_data::instant_event::Data::TestResult(result) => {
+                    self.handle_test_result(result).await
+                }
+                bz_data::instant_event::Data::ConsolePreferences(preferences) => {
+                    self.handle_console_preferences(preferences).await
+                }
+                bz_data::instant_event::Data::ActionError(error) => {
+                    self.handle_action_error(error).await
+                }
+                bz_data::instant_event::Data::StreamingOutput(message) => {
+                    self.handle_streaming_output(message).await
+                }
+                _ => Ok(()),
+            },
             bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanStart(_, _)
             | bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedSpanEnd(_, _)
             | bz_event_observer::unpack_event::UnpackedBuckEvent::UnrecognizedInstant(_, _) => {
@@ -1143,10 +1128,7 @@ impl StatefulSuperConsoleImpl {
         Ok(())
     }
 
-    async fn handle_action_error(
-        &mut self,
-        error: &bz_data::ActionError,
-    ) -> bz_error::Result<()> {
+    async fn handle_action_error(&mut self, error: &bz_data::ActionError) -> bz_error::Result<()> {
         let mut lines = vec![];
         let display_platform = self.state.config.display_platform;
 
@@ -1231,10 +1213,7 @@ impl StatefulSuperConsoleImpl {
         Ok(())
     }
 
-    async fn handle_test_result(
-        &mut self,
-        result: &bz_data::TestResult,
-    ) -> bz_error::Result<()> {
+    async fn handle_test_result(&mut self, result: &bz_data::TestResult) -> bz_error::Result<()> {
         if let Some(msg) = display::format_test_result(result, self.verbosity)? {
             let byte_count: usize = msg.0.iter().map(|line| line.len()).sum();
             match self.state.simple_console.output_limit.emit(byte_count) {
@@ -1754,14 +1733,8 @@ fn lines_for_command_details(
                 ))]));
             }
             Some(Command::RemoteCommand(remote_command)) => {
-                let help_message = if bz_core::is_open_source() {
-                    format!("Remote action digest: `{}`", remote_command.action_digest)
-                } else {
-                    format!(
-                        "Reproduce locally: `frecli cas download-action {}`",
-                        remote_command.action_digest
-                    )
-                };
+                let help_message =
+                    format!("Remote action digest: `{}`", remote_command.action_digest);
 
                 lines.push(Line::from_iter([Span::new_styled_lossy(
                     help_message.with(Color::DarkRed),
@@ -1925,12 +1898,10 @@ mod tests {
             Some(id),
             None,
             bz_data::buck_event::Data::SpanStart(SpanStartEvent {
-                data: Some(bz_data::span_start_event::Data::Load(
-                    LoadBuildFileStart {
-                        module_id: "foo".to_owned(),
-                        cell: "bar".to_owned(),
-                    },
-                )),
+                data: Some(bz_data::span_start_event::Data::Load(LoadBuildFileStart {
+                    module_id: "foo".to_owned(),
+                    cell: "bar".to_owned(),
+                })),
             }),
         ));
         console.handle_event(&event).await.unwrap();
@@ -2062,11 +2033,7 @@ mod tests {
         };
 
         // Verify we have the right output on intermediate frames
-        if cfg!(fbcode_build) {
-            assert_frame_contains(&frame, "Buck UI:");
-        } else {
-            assert_frame_contains(&frame, "Build ID:");
-        }
+        assert_frame_contains(&frame, "Build ID:");
         assert_frame_contains(&frame, "Upload:");
         assert_frame_contains(&frame, "(reSessionID-123)");
         assert_frame_contains(&frame, "Loaded");
@@ -2125,7 +2092,7 @@ mod tests {
         }
         .draw_unchecked(
             Dimensions {
-                // Enough to print everything on one line (we need 109 in fbcode and 110 in OSS)
+                // Enough to print everything on one line (we need 109 in workspace and 110 in OSS)
                 width: 110,
                 height: 1,
             },
@@ -2179,10 +2146,12 @@ mod tests {
         )?;
 
         assert_eq!(hidden_build_id.len(), 1);
-        assert!(!hidden_build_id
-            .fmt_for_test()
-            .to_string()
-            .contains("Build ID:"));
+        assert!(
+            !hidden_build_id
+                .fmt_for_test()
+                .to_string()
+                .contains("Build ID:")
+        );
 
         let final_output = SessionInfoComponent {
             session_info: &info,

@@ -26,12 +26,6 @@ from typing import Any, cast, Dict, List, Optional, Union
 
 from apple.tools.plistlib_utils import detect_format_and_load
 
-# @oss-disable[end= ]: from ..meta_only.codesign_diagnostics_text import (
-    # @oss-disable[end= ]: CodesignDiagnosticsText,
-# @oss-disable[end= ]: )
-# @oss-disable[end= ]: from ..meta_only.entitlements_mismatch.check_entitlements import (
-    # @oss-disable[end= ]: verify_entitlements,
-# @oss-disable[end= ]: )
 from .apple_platform import ApplePlatform
 from .codesign_command_factory import (
     DefaultCodesignCommandFactory,
@@ -41,7 +35,7 @@ from .codesign_command_factory import (
     ManifestCodesignCommandFactory,
 )
 
-from .codesign_diagnostics_text import CodesignDiagnosticsText # @oss-enable
+from .codesign_diagnostics_text import CodesignDiagnosticsText
 from .fast_adhoc import is_fast_adhoc_codesign_allowed, should_skip_adhoc_signing_path
 from .identity import CodeSigningIdentity
 from .info_plist_metadata import InfoPlistMetadata
@@ -313,8 +307,6 @@ def signing_context_with_profile_selection(
     )
 
     profile_path = selected_profile_info.profile.file_path
-    # @oss-disable[end= ]: if should_verify_entitlements:
-        # @oss-disable[end= ]: _verify_entitlements(entitlements_path, profile_path, platform)
 
     return SigningContextWithProfileSelection(
         info_plist_source,

@@ -1,4 +1,3 @@
-load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("build_infra")
 
@@ -9,10 +8,10 @@ rust_library(
     ),
     proc_macro = True,
     deps = [
-        "fbsource//third-party/rust:convert_case",
-        "fbsource//third-party/rust:proc-macro2",
-        "fbsource//third-party/rust:quote",
-        "fbsource//third-party/rust:syn",
-        "//bz/deps/gazebo/gazebo:gazebo",
+        "third_party//rust:convert_case",
+        "third_party//rust:proc-macro2",
+        "third_party//rust:quote",
+        "third_party//rust:syn",
+        "//deps/gazebo/gazebo:gazebo",
     ],
 )

@@ -29,9 +29,6 @@ def _has_content_based_path_attr():
     return {
         "has_content_based_path": attrs.bool(default = select({
             "DEFAULT": False,
-            # @oss-disable[end= ]: "config//os/constraints:android": True,
-            # @oss-disable[end= ]: "config//runtime/constraints:android-host-test": True,
-            # @oss-disable[end= ]: "config//runtime/constraints:android-unit-test": True,
         })),
     }
 
@@ -1508,7 +1505,7 @@ worker_tool = prelude_rule(
                  to process the same input—with different contents—twice!
             """),
 
-            # FIXME: prelude// should be standalone (not refer to fbsource//)
+            # FIXME: prelude// should be standalone (not refer to root//)
             "_worker_tool_runner": attrs.default_only(attrs.dep(default = "prelude//js/worker_runner:worker_tool_runner")),
         } |
         buck.licenses_arg() |

@@ -24,7 +24,7 @@ async def test_junit_test_selective_coverage_doesnt_produce_coverage(
     paths = await collect_coverage_for(
         buck,
         tmp_path,
-        "fbcode//testing_frameworks/code_coverage/junit/com/facebook/testing_frameworks:test",
+        "root//testing_frameworks/code_coverage/junit/com/facebook/testing_frameworks:test",
         folder_filter=[],
         file_filter=[
             "testing_frameworks/code_coverage/junit/com/facebook/testing_frameworks/AddTest.java"

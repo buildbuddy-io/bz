@@ -151,7 +151,7 @@ main = bxl_main(
         "extra_buck_options": cli_args.list(cli_args.string(), default = []),
         "immediate_buck_options": cli_args.list(cli_args.string(), default = []),
         "log_level": cli_args.int(default = 30),
-        "mode_files": cli_args.list(cli_args.string(), default = ["fbsource//arvr/mode/win/dev"]),
+        "mode_files": cli_args.list(cli_args.string(), default = []),
         "mode_hashes": cli_args.option(cli_args.json()),  # mode => configuration hash.
         "target": cli_args.target_label(),
     },

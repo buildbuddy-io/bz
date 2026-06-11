@@ -6,7 +6,6 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//:is_full_meta_repo.bzl", "is_full_meta_repo")
 load(
     "@prelude//java:class_to_srcs.bzl",
     "JavaClassToSourceMapInfo",  # @unused Used as a type
@@ -192,8 +191,6 @@ def build_bootclasspath(bootclasspath_entries: list[Artifact], source_level: int
     if bootclasspath_entries:
         bootclasspath_list = bootclasspath_entries
     elif source_level == 8:
-        if not is_full_meta_repo():
-            return bootclasspath_list
         expect(java_toolchain.bootclasspath_8, "Must specify bootclasspath for source level 8")
         bootclasspath_list = java_toolchain.bootclasspath_8
     return bootclasspath_list

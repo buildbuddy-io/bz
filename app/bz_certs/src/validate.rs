@@ -23,16 +23,14 @@ use crate::certs::load_certs;
 #[buck2(environment, tag = NoValidCerts)]
 enum InvalidCertsError {
     #[error(
-        "Could not find valid root certs. Please check your machine certificate settings. Instructions: https://fburl.com/devcert\nFailure Reason: {0}"
+        "Could not find valid root certs. Please check your machine certificate settings.\nFailure Reason: {0}"
     )]
     SystemCerts(String),
     #[error(
-        "Could not find valid client certs. Try refreshing your internal certs or re-login and try again. Instructions: https://fburl.com/devcert\nFailure Reason: {0}"
+        "Could not find valid client certs. Refresh your client certificate configuration and try again.\nFailure Reason: {0}"
     )]
     ClientCerts(String),
-    #[error(
-        "Could not find valid certs for VPNless. Please refresh/renew certs with SKS agent and try again. Instructions: https://fburl.com/devcert"
-    )]
+    #[error("Could not find valid certs for VPNless.")]
     VPNlessCerts,
 }
 
@@ -45,8 +43,6 @@ async fn is_vpnless_cert_valid() -> bool {
         "fb-sks-agent"
     };
 
-    // Post suggests using the following for VPN-less scenario
-    // https://fb.workplace.com/groups/382932749004606/permalink/1473311023300101/
     let cmd_result = async_background_command(sks_agent)
         .args(["renew", "--status", "--corp-x509"])
         .output()
@@ -90,38 +86,6 @@ async fn verify(path: &OsString) -> bz_error::Result<()> {
 }
 
 pub async fn validate_certs() -> bz_error::Result<()> {
-    if cfg!(not(fbcode_build)) {
-        return Ok(());
-    }
-
-    if certs::supports_vpnless() {
-        if is_vpnless_cert_valid().await {
-            return Ok(());
-        }
-
-        return Err(InvalidCertsError::VPNlessCerts.into());
-    } else {
-        let err_msg = "Could not find any files that may contain certificates";
-        // System certs are unlikely to be invalid, but if it is, it's a bigger issue than invalid client certs so we check it first
-        match certs::find_root_ca_certs() {
-            Some(root_certs) => {
-                if let Err(e) = verify(&root_certs).await {
-                    return Err(InvalidCertsError::SystemCerts(e.to_string()).into());
-                }
-            }
-            None => return Err(InvalidCertsError::SystemCerts(err_msg.to_owned()).into()),
-        }
-
-        match certs::find_internal_cert() {
-            Some(client_certs) => {
-                if let Err(e) = verify(&client_certs).await {
-                    return Err(InvalidCertsError::ClientCerts(e.to_string()).into());
-                }
-            }
-            None => return Err(InvalidCertsError::ClientCerts(err_msg.to_owned()).into()),
-        }
-    }
-
     Ok(())
 }
 
@@ -153,7 +117,6 @@ pub async fn check_cert_state(cert_state: CertState) -> Option<bz_error::Error> 
     None
 }
 
-#[cfg(fbcode_build)]
 #[cfg(test)]
 mod tests {
     use std::env;

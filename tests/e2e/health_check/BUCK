@@ -1,5 +1,4 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
-load("@fbcode_macros//build_defs:python_binary.bzl", "python_binary")
+load("//tests:buck_e2e.bzl", "bz_e2e_test")
 
 oncall("build_infra")
 
@@ -12,8 +11,8 @@ python_binary(
     main_function = "buck2.tests.e2e.health_check.health_check_server.main",
     visibility = ["PUBLIC"],
     deps = [
-        "fbcode//bz/app/bz_health_check_proto:health_check-py",
-        "fbsource//third-party/grpc/src/python/grpcio/grpc:grpcio",
+        "//app/bz_health_check_proto:health_check-py",
+        "third_party//grpc/src/python/grpcio/grpc:grpcio",
     ],
 )
 
@@ -24,6 +23,6 @@ bz_e2e_test(
         "windows",
     ],
     deps = [
-        "fbcode//bz/tests/e2e_util:utils",
+        "//tests/e2e_util:utils",
     ],
 )

@@ -1,5 +1,4 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
-load("@fbcode_macros//build_defs:python_library.bzl", "python_library")
+load("//tests:buck_e2e.bzl", "bz_e2e_test")
 
 oncall("tae")
 
@@ -7,7 +6,7 @@ python_library(
     name = "fdb_e2e_types",
     srcs = ["types.py"],
     deps = [
-        "//bz/tests/e2e_util/api:api",
+        "//tests/e2e_util/api:api",
     ],
 )
 
@@ -20,6 +19,6 @@ bz_e2e_test(
     test_with_deployed_buck2 = True,
     deps = [
         ":fdb_e2e_types",
-        "//bz/tests/e2e_util:utils",  # @autodeps2-fixme-manual
+        "//tests/e2e_util:utils",  # @autodeps2-fixme-manual
     ],
 )

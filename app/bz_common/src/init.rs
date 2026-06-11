@@ -716,8 +716,8 @@ impl DaemonStartupConfig {
 
         let log_download_method = {
             // Determine the log download method to use. Only default to
-            // manifold in fbcode contexts, or when specifically asked.
-            let use_manifold_default = cfg!(fbcode_build);
+            // manifold in workspace contexts, or when specifically asked.
+            let use_manifold_default = false;
             let use_manifold = config
                 .parse(BuckconfigKeyRef {
                     section: "buck2",
@@ -777,7 +777,7 @@ impl DaemonStartupConfig {
                     section: "buck2",
                     property: "watchfs",
                 })?
-                .unwrap_or(cfg!(fbcode_build)),
+                .unwrap_or(false),
             paranoid: false, // Setup later in ImmediateConfig
             remote_download_outputs: RemoteDownloadOutputsMode::from_config(config)?,
             http: HttpConfig::from_config(config)?,
@@ -844,11 +844,7 @@ impl DaemonStartupConfig {
             remote_download_outputs: RemoteDownloadOutputsMode::default(),
             http: HttpConfig::default(),
             resource_control: ResourceControlConfig::testing_default(),
-            log_download_method: if cfg!(fbcode_build) {
-                LogDownloadMethod::Manifold
-            } else {
-                LogDownloadMethod::None
-            },
+            log_download_method: LogDownloadMethod::None,
             health_check_config: HealthCheckConfig::default(),
             retained_event_logs: DEFAULT_RETAINED_EVENT_LOGS,
             macos_qos_class: None,

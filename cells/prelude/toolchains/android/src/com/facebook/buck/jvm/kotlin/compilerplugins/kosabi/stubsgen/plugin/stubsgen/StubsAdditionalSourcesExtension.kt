@@ -10,8 +10,7 @@
 
 package com.facebook.kotlin.compilerplugins.kosabi.stubsgen.plugin.stubsgen
 
-import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.generators.StubsGenAPI // @oss-enable
-// @oss-disable: import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.generators.meta_only.StubsGenApiImpl
+import com.facebook.kotlin.compilerplugins.kosabi.stubsgen.generators.StubsGenAPI
 import java.io.File
 import org.jetbrains.kotlin.com.intellij.openapi.project.Project
 import org.jetbrains.kotlin.config.CompilerConfiguration
@@ -58,8 +57,7 @@ class StubsAdditionalSourcesExtension(
     alreadyCreated = true
 
     val stubgenAPI =
-        StubsGenAPI( // @oss-enable
-        // @oss-disable: StubsGenApiImpl(
+        StubsGenAPI(
             stubsDumpDir,
             stubsClassOutputDir,
             classPaths,

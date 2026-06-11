@@ -26,8 +26,8 @@ use async_compression::tokio::bufread::DeflateDecoder;
 use async_compression::tokio::bufread::DeflateEncoder;
 use async_compression::tokio::bufread::ZstdDecoder;
 use async_compression::tokio::bufread::ZstdEncoder;
-use bz_re_configuration::Buck2OssReConfiguration;
 use bz_re_configuration::HttpHeader;
+use bz_re_configuration::RemoteExecutionClientConfig;
 use dupe::Dupe;
 use futures::Stream;
 use futures::future::BoxFuture;
@@ -200,7 +200,7 @@ fn ttimestamp_from(ts: Option<::prost_types::Timestamp>) -> TTimestamp {
     }
 }
 
-async fn create_tls_config(opts: &Buck2OssReConfiguration) -> anyhow::Result<ClientTlsConfig> {
+async fn create_tls_config(opts: &RemoteExecutionClientConfig) -> anyhow::Result<ClientTlsConfig> {
     let config = ClientTlsConfig::new().with_enabled_roots();
 
     let config = match opts.tls_ca_certs.as_ref() {
@@ -283,8 +283,6 @@ pub struct RECapabilities {
 
 /// Contains runtime options for the remote execution client as set under `buck2_re_client`
 pub struct RERuntimeOpts {
-    /// Use the Meta version of the request metadata
-    use_fbcode_metadata: bool,
     /// Maximum amount of time to wait for a remote execution/cache gRPC call.
     remote_timeout: Duration,
     /// Maximum number of concurrent upload requests.
@@ -343,14 +341,14 @@ impl Compressor {
 
 pub struct REClientBuilder;
 
-fn reapi_service_address(opts: &Buck2OssReConfiguration) -> Option<String> {
+fn reapi_service_address(opts: &RemoteExecutionClientConfig) -> Option<String> {
     opts.engine_address
         .clone()
         .or_else(|| opts.action_cache_address.clone())
         .or_else(|| opts.cas_address.clone())
 }
 
-fn remote_timeout(opts: &Buck2OssReConfiguration) -> Duration {
+fn remote_timeout(opts: &RemoteExecutionClientConfig) -> Duration {
     Duration::from_secs(
         opts.remote_timeout_secs
             .unwrap_or(DEFAULT_REMOTE_TIMEOUT_SECS),
@@ -406,21 +404,21 @@ fn write_requests_size(requests: &[WriteRequest]) -> u64 {
     })
 }
 
-fn grpc_keepalive_time(opts: &Buck2OssReConfiguration) -> Option<Duration> {
+fn grpc_keepalive_time(opts: &RemoteExecutionClientConfig) -> Option<Duration> {
     let secs = opts
         .grpc_keepalive_time_secs
         .unwrap_or(DEFAULT_GRPC_KEEPALIVE_TIME_SECS);
     (secs != 0).then(|| Duration::from_secs(secs))
 }
 
-fn grpc_keepalive_timeout(opts: &Buck2OssReConfiguration) -> Duration {
+fn grpc_keepalive_timeout(opts: &RemoteExecutionClientConfig) -> Duration {
     Duration::from_secs(
         opts.grpc_keepalive_timeout_secs
             .unwrap_or(DEFAULT_GRPC_KEEPALIVE_TIMEOUT_SECS),
     )
 }
 
-fn grpc_keepalive_while_idle(opts: &Buck2OssReConfiguration) -> bool {
+fn grpc_keepalive_while_idle(opts: &RemoteExecutionClientConfig) -> bool {
     opts.grpc_keepalive_while_idle
         .unwrap_or(DEFAULT_GRPC_KEEPALIVE_WHILE_IDLE)
 }
@@ -432,7 +430,7 @@ fn counting_connector() -> CountingConnector<HttpConnector> {
 }
 
 fn endpoint_for_address(
-    opts: &Buck2OssReConfiguration,
+    opts: &RemoteExecutionClientConfig,
     tls_config: &ClientTlsConfig,
     address: Option<String>,
 ) -> anyhow::Result<(Endpoint, String)> {
@@ -457,7 +455,7 @@ fn endpoint_for_address(
 }
 
 impl REClientBuilder {
-    pub async fn build_and_connect(opts: &Buck2OssReConfiguration) -> anyhow::Result<REClient> {
+    pub async fn build_and_connect(opts: &RemoteExecutionClientConfig) -> anyhow::Result<REClient> {
         // We just always create this just in case, so that we implicitly validate it if set.
         let tls_config = create_tls_config(opts)
             .await
@@ -593,7 +591,6 @@ impl REClientBuilder {
 
         Ok(REClient::new(
             RERuntimeOpts {
-                use_fbcode_metadata: opts.use_fbcode_metadata,
                 remote_timeout,
                 max_concurrent_uploads_per_action: opts.max_concurrent_uploads_per_action,
                 // NOTE: This is an arbitrary number because RBE does not return information
@@ -1050,7 +1047,6 @@ impl REClient {
                     ..Default::default()
                 },
                 metadata,
-                self.runtime_opts.use_fbcode_metadata,
                 self.runtime_opts.remote_timeout,
             ))
             .await?;
@@ -1078,7 +1074,6 @@ impl REClient {
                     ..Default::default()
                 },
                 metadata,
-                self.runtime_opts.use_fbcode_metadata,
                 self.runtime_opts.remote_timeout,
             ))
             .await?;
@@ -1129,7 +1124,6 @@ impl REClient {
                     ..Default::default()
                 },
                 metadata,
-                self.runtime_opts.use_fbcode_metadata,
                 self.runtime_opts.remote_timeout,
             ))
             .await?;
@@ -1167,7 +1161,6 @@ impl REClient {
             .execute(with_re_metadata(
                 request,
                 metadata,
-                self.runtime_opts.use_fbcode_metadata,
                 self.runtime_opts.remote_timeout,
             ))
             .await?
@@ -1288,12 +1281,7 @@ impl REClient {
                 );
                 let (mut cas_client, _permit) = self.grpc_clients.cas_client().await?;
                 let resp = cas_client
-                    .batch_update_blobs(with_re_metadata(
-                        re_request,
-                        metadata,
-                        self.runtime_opts.use_fbcode_metadata,
-                        timeout,
-                    ))
+                    .batch_update_blobs(with_re_metadata(re_request, metadata, timeout))
                     .await?;
                 Ok(resp.into_inner())
             },
@@ -1307,12 +1295,7 @@ impl REClient {
                     self.grpc_clients.bytestream_client().await?;
                 let requests = futures::stream::iter(segments);
                 let resp = bytestream_client
-                    .write(with_re_metadata(
-                        requests,
-                        metadata,
-                        self.runtime_opts.use_fbcode_metadata,
-                        timeout,
-                    ))
+                    .write(with_re_metadata(requests, metadata, timeout))
                     .await?;
 
                 Ok(resp.into_inner())
@@ -1373,12 +1356,7 @@ impl REClient {
                 );
                 let (mut client, _permit) = self.grpc_clients.cas_client().await?;
                 Ok(client
-                    .batch_read_blobs(with_re_metadata(
-                        re_request,
-                        metadata,
-                        self.runtime_opts.use_fbcode_metadata,
-                        timeout,
-                    ))
+                    .batch_read_blobs(with_re_metadata(re_request, metadata, timeout))
                     .await?
                     .into_inner())
             },
@@ -1391,12 +1369,7 @@ impl REClient {
                     );
                     let (mut client, permit) = self.grpc_clients.bytestream_client().await?;
                     let response = client
-                        .read(with_re_metadata(
-                            read_request,
-                            metadata,
-                            self.runtime_opts.use_fbcode_metadata,
-                            timeout,
-                        ))
+                        .read(with_re_metadata(read_request, metadata, timeout))
                         .await?
                         .into_inner();
                     let stream = response.into_stream().map(move |item| {
@@ -1454,7 +1427,6 @@ impl REClient {
                                     ..Default::default()
                                 },
                                 metadata,
-                                self.runtime_opts.use_fbcode_metadata,
                                 self.runtime_opts.remote_timeout,
                             ))
                             .await
@@ -2173,68 +2145,20 @@ where
 fn with_re_metadata<T>(
     t: T,
     metadata: RemoteExecutionMetadata,
-    use_fbcode_metadata: bool,
     remote_timeout: Duration,
 ) -> tonic::Request<T> {
-    // This creates a new Tonic request with attached metadata for the RE
-    // backend. There are two cases here we need to support:
-    //
-    //   - Servers that abide by the remote execution apis defined with Bazel,
-    //     AKA the "OSS RE API", which this package implements
-    //   - The internal RE solution used at Meta, which uses a different API,
-    //     but is compatible with the OSS RE API to some extent.
-    //
-    // The second case is supported only through attaching some metadata to the
-    // request, which the fbcode RE service understands; and the reason for all
-    // of this is that it allows this OSS client package to be tested inside of
-    // fbcode builds within Meta. So there doesn't need to be a separate CI
-    // check.
-    //
-    // However, we don't need it for FOSS builds of Buck2. And in theory we
-    // could test the OSS Bazel API in the upstream GitHub CI, but doing it this
-    // way is only a little ugly, it's hidden, and it helps ensure the internal
-    // Meta builds catch those issues earlier.
-
     let mut msg = tonic::Request::new(t);
     msg.set_timeout(remote_timeout);
 
-    if use_fbcode_metadata {
-        // This is pretty ugly, but the protobuf spec that defines this is
-        // internal, so considering field numbers need to be stable anyway (=
-        // low risk), and this is not used in prod (= low impact if this goes
-        // wrong), we just inline it here. This is a small hack that lets us use
-        // our internal RE using this GRPC client for testing.
-        //
-        // This is defined in `fbcode/remote_execution/grpc/metadata.proto`.
-        #[derive(prost::Message)]
-        struct Metadata {
-            #[prost(message, optional, tag = "15")]
-            platform: Option<crate::grpc::Platform>,
-            #[prost(string, optional, tag = "18")]
-            use_case_id: Option<String>,
-        }
-
-        let mut encoded = Vec::new();
-        Metadata {
-            platform: metadata.platform,
-            use_case_id: Some(metadata.use_case_id),
-        }
+    let mut encoded = Vec::new();
+    request_metadata(metadata)
         .encode(&mut encoded)
         .expect("Encoding into a Vec cannot not fail");
 
-        msg.metadata_mut()
-            .insert_bin("re-metadata-bin", MetadataValue::from_bytes(&encoded));
-    } else {
-        let mut encoded = Vec::new();
-        request_metadata(metadata)
-            .encode(&mut encoded)
-            .expect("Encoding into a Vec cannot not fail");
-
-        msg.metadata_mut().insert_bin(
-            "build.bazel.remote.execution.v2.requestmetadata-bin",
-            MetadataValue::from_bytes(&encoded),
-        );
-    };
+    msg.metadata_mut().insert_bin(
+        "build.bazel.remote.execution.v2.requestmetadata-bin",
+        MetadataValue::from_bytes(&encoded),
+    );
     msg
 }
 
@@ -2302,7 +2226,7 @@ mod tests {
 
     #[test]
     fn test_reapi_service_address_falls_back_to_cache() {
-        let opts = Buck2OssReConfiguration {
+        let opts = RemoteExecutionClientConfig {
             cas_address: Some("cas.example.com".to_owned()),
             action_cache_address: Some("cache.example.com".to_owned()),
             engine_address: None,
@@ -2317,7 +2241,7 @@ mod tests {
 
     #[test]
     fn test_reapi_service_address_prefers_executor() {
-        let opts = Buck2OssReConfiguration {
+        let opts = RemoteExecutionClientConfig {
             cas_address: Some("cas.example.com".to_owned()),
             action_cache_address: Some("cache.example.com".to_owned()),
             engine_address: Some("executor.example.com".to_owned()),
@@ -2332,7 +2256,7 @@ mod tests {
 
     #[test]
     fn test_grpc_defaults_match_bazel_remote_defaults() {
-        let opts = Buck2OssReConfiguration::default();
+        let opts = RemoteExecutionClientConfig::default();
 
         assert_eq!(remote_timeout(&opts), Duration::from_secs(60));
         assert_eq!(grpc_keepalive_time(&opts), Some(Duration::from_secs(60)));
@@ -2342,7 +2266,7 @@ mod tests {
 
     #[test]
     fn test_grpc_keepalive_time_zero_disables_keepalive() {
-        let opts = Buck2OssReConfiguration {
+        let opts = RemoteExecutionClientConfig {
             grpc_keepalive_time_secs: Some(0),
             ..Default::default()
         };
@@ -2355,7 +2279,6 @@ mod tests {
         let request = with_re_metadata(
             (),
             RemoteExecutionMetadata::default(),
-            false,
             Duration::from_secs(60),
         );
 

@@ -1,4 +1,4 @@
-load("@fbcode//bz/tests:bxl_test.bzl", "bxl_test")
+load("//tests:bxl_test.bzl", "bxl_test")
 load("@prelude//cfg/modifier:buckconfig_backed_modifiers.bzl", "BuckconfigBackedModifier", "buckconfig_backed_modifiers")
 load(":test_platform_rule.bzl", "test_platform")
 
@@ -19,7 +19,7 @@ oncall("build_infra")
     src = "test_sanitizer_buckconfig_backed_modifiers.bxl",
     buck_args = [
         "--config",
-        "fbcode.sanitizer={}".format(sanitizer),
+        "workspace.sanitizer={}".format(sanitizer),
     ],
 ) for sanitizer in ("address", "address-undefined", "thread", "hwaddress")]
 

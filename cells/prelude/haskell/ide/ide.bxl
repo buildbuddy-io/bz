@@ -194,7 +194,7 @@ def _solution_for_haskell_lib(ctx, target, exclude):
 
     flags = [
         "-this-unit-id",
-        "fbcode_fake_unit_id",
+        "workspace_fake_unit_id",
         "-optP-undef",
         "-optP-traditional-cpp",
         "-I.",

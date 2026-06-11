@@ -1,4 +1,3 @@
-load("@fbsource//tools/build_defs:rust_binary.bzl", "rust_binary")
 
 oncall("build_infra")
 
@@ -8,13 +7,13 @@ rust_binary(
         ["src/**/*.rs"],
     ),
     deps = [
-        "fbsource//third-party/rust:anyhow",
-        "fbsource//third-party/rust:clap",
-        "fbsource//third-party/rust:futures",
-        "fbsource//third-party/rust:prost",
-        "fbsource//third-party/rust:tokio",
-        "fbsource//third-party/rust:tokio-util",
-        "//bz/app/bz_cli_proto:bz_cli_proto",
-        "//bz/app/bz_subscription_proto:bz_subscription_proto",
+        "third_party//rust:anyhow",
+        "third_party//rust:clap",
+        "third_party//rust:futures",
+        "third_party//rust:prost",
+        "third_party//rust:tokio",
+        "third_party//rust:tokio-util",
+        "//app/bz_cli_proto:bz_cli_proto",
+        "//app/bz_subscription_proto:bz_subscription_proto",
     ],
 )

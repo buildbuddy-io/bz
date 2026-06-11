@@ -1,14 +1,14 @@
-load("@fbcode//bz/tests:buck_e2e.bzl", "bz_e2e_test")
+load("//tests:buck_e2e.bzl", "bz_e2e_test")
 
 oncall("testing_frameworks")
 
 bz_e2e_test(
     name = "test_test_inplace",
     srcs = ["test_test_inplace.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     test_with_deployed_buck2 = True,
     use_compiled_bz_client_and_tpx = True,
-    deps = ["//bz/tests/e2e_util:utils"],
+    deps = ["//tests/e2e_util:utils"],
 )
 
 bz_e2e_test(
@@ -16,7 +16,7 @@ bz_e2e_test(
     srcs = ["test_test_artifacts.py"],
     compatible_with = ["ovr_config//os:linux"],
     env = {
-        "TESTX_BIN": "$(exe_target fbcode//tae/testx:testx)",
+        "TESTX_BIN": "$(exe_target root//tae/testx:testx)",
     },
     skip_for_os = [
         "darwin",
@@ -25,7 +25,7 @@ bz_e2e_test(
     test_with_deployed_buck2 = True,
     use_compiled_bz_client_and_tpx = True,
     deps = [
-        "//bz/tests/e2e_util:utils",
+        "//tests/e2e_util:utils",
         "//remote_execution/client_lib/wrappers/python:py_re_client_lib",
         "//remote_execution/lib/if:common-py3-types",
         "//remote_execution/lib/if:common-python-types",
@@ -39,7 +39,7 @@ bz_e2e_test(
     srcs = ["test_test_details_artifacts.py"],
     compatible_with = ["ovr_config//os:linux"],
     env = {
-        "TESTX_BIN": "$(exe_target fbcode//tae/testx:testx)",
+        "TESTX_BIN": "$(exe_target root//tae/testx:testx)",
     },
     skip_for_os = [
         "darwin",
@@ -48,7 +48,7 @@ bz_e2e_test(
     test_with_deployed_buck2 = False,
     use_compiled_bz_client_and_tpx = True,
     deps = [
-        "//bz/tests/e2e_util:utils",
+        "//tests/e2e_util:utils",
         "//tae/testx:py",
     ],
 )
@@ -71,7 +71,7 @@ bz_e2e_test(
 bz_e2e_test(
     name = "test_test_remote_execution",
     srcs = ["test_test_remote_execution.py"],
-    data = "//bz/tests/targets:isolated_targets",
+    data = "//tests/targets:isolated_targets",
     test_with_deployed_buck2 = False,
     use_compiled_bz_client_and_tpx = True,
 )
@@ -86,8 +86,8 @@ bz_e2e_test(
     test_with_deployed_buck2 = False,
     use_compiled_bz_client_and_tpx = True,
     deps = [
-        "//bz/tests/e2e_util:utilities",
-        "//bz/tests/e2e_util/api:api",
+        "//tests/e2e_util:utilities",
+        "//tests/e2e_util/api:api",
     ],
 )
 

@@ -2,7 +2,7 @@
 
 [<TIMESTAMP>] Starting new buck2 daemon...
 [<TIMESTAMP>] Connected to new buck2 daemon.
-[<TIMESTAMP>] Buck UI: https://www.internalfb.com/buck2/<UUID>
+[<TIMESTAMP>] Build ID: <UUID>
 [<TIMESTAMP>] root//single_value_no_flag:version (<unbound>): failed:
 [<TIMESTAMP>]   Error running analysis for `root//single_value_no_flag:version (<unbound>)`
 [<TIMESTAMP>]   

@@ -99,25 +99,7 @@ pub struct BackendStats {
 
 impl PerBackendRemoteExecutionClientStats {
     pub fn fill_from_re_client_metrics(&mut self, metrics: &remote_execution::TStorageStats) {
-        #[cfg(fbcode_build)]
-        {
-            for (typ, re_stats) in metrics.per_backend_stats.iter() {
-                let stats = match *typ {
-                    remote_execution::TStorageBackendType::ZDB => &mut self.zdb,
-                    remote_execution::TStorageBackendType::ZGATEWAY => &mut self.zgateway,
-                    remote_execution::TStorageBackendType::MANIFOLD => &mut self.manifold,
-                    remote_execution::TStorageBackendType::HEDWIG => &mut self.hedwig,
-                    _ => continue,
-                };
-                stats.queries = re_stats.queries_count as _;
-                stats.bytes = re_stats.bytes as _;
-            }
-        }
-
-        #[cfg(not(fbcode_build))]
-        {
-            let _unused = metrics;
-        }
+        let _unused = metrics;
     }
 }
 

@@ -325,7 +325,7 @@ def main(argv):
             sort_keys=True,
         )
 
-    # Append all search path flags (e.g -Lfbcode/third-party-buck/platform010/build/glibc/lib) from argsfile to final_index
+    # Append all search path flags (e.g -Lworkspace/third-party-buck/platform010/build/glibc/lib) from argsfile to final_index
     # this workaround is to make dist_lto compatible with link_group. see T136415235 for more info
     argsfile = _get_argsfile(args)
     lib_search_path = _extract_lib_search_path(argsfile)

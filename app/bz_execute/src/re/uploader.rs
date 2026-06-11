@@ -50,12 +50,12 @@ use once_cell::sync::Lazy;
 use remote_execution::GetDigestsTtlResponse;
 use remote_execution::InlinedBlobWithDigest;
 use remote_execution::NamedDigest;
-use remote_execution::TDigest;
 use remote_execution::TCode;
 use remote_execution::TCodeReasonGroup;
+use remote_execution::TDigest;
 use remote_execution::UploadRequest;
-use tokio::sync::oneshot;
 use tokio::sync::Semaphore;
+use tokio::sync::oneshot;
 
 use crate::digest::CasDigestFromReExt;
 use crate::digest::CasDigestToReExt;
@@ -140,16 +140,21 @@ impl UploadDeduper {
         }
 
         let (sender, receiver) = oneshot::channel();
-        let waiter = async move { receiver.await.unwrap_or_else(|_| Err(upload_cancelled_error())) }
-            .boxed()
-            .shared();
+        let waiter = async move {
+            receiver
+                .await
+                .unwrap_or_else(|_| Err(upload_cancelled_error()))
+        }
+        .boxed()
+        .shared();
         self.in_flight.insert(key, waiter);
         UploadClaimState::Own(sender)
     }
 
     fn prune_uploaded(&mut self, now: DateTime<Utc>) {
         let cutoff = now - Duration::minutes(30);
-        self.uploaded.retain(|_, uploaded_at| *uploaded_at >= cutoff);
+        self.uploaded
+            .retain(|_, uploaded_at| *uploaded_at >= cutoff);
     }
 }
 
@@ -283,11 +288,7 @@ impl Uploader {
 
         // RE mentions they usually take 5-10 minutes of leeway so we mirror this here.
         let now = Utc::now();
-        let ttl_wanted = if bz_core::is_open_source() {
-            1
-        } else {
-            600i64
-        };
+        let ttl_wanted = 1;
         let ttl_deadline = now + Duration::seconds(ttl_wanted);
 
         {

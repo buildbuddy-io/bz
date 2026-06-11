@@ -43,7 +43,7 @@ use superconsole::Line;
 use superconsole::Span;
 
 use crate::commands::build::has_bes_results_url;
-use crate::commands::build::print_buck_ui_and_rating;
+use crate::commands::build::print_build_id_after_superconsole;
 use crate::commands::build::print_build_result;
 
 fn forward_output_to_path(
@@ -443,7 +443,7 @@ impl StreamingCommand for TestCommand {
 
         let printed_bes_results_url =
             has_bes_results_url(&self.common_opts.event_log_opts, ctx.buildbuddy_bes());
-        print_buck_ui_and_rating(
+        print_build_id_after_superconsole(
             &console,
             ctx,
             events_ctx.used_superconsole,

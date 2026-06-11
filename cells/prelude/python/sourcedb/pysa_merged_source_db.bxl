@@ -10,9 +10,8 @@ load("@prelude//python:python.bzl", "PythonLibraryManifestsTSet")
 load("@prelude//python:source_db.bzl", "PythonSourceDBInfo")
 load("@prelude//python:toolchain.bzl", "PythonToolchainInfo")
 load("@prelude//python:typing.bzl", "get_default_sys_platform")
-load("@prelude//python/meta_only:config.bzl", "DEFAULT_PY_VERSION")  # @oss-disable
 
-# @oss-enable: load("@prelude//python:typing.bzl", "DEFAULT_PY_VERSION")
+load("@prelude//python:typing.bzl", "DEFAULT_PY_VERSION")
 load("@prelude//python/sourcedb:filter.bxl", "BUCK_PYTHON_RULE_KINDS")
 load("@prelude//utils:utils.bzl", "flatten")
 
@@ -128,7 +127,7 @@ def _run(ctx: bxl.Context) -> None:
 run = bxl_main(
     doc = """Produce a merged type check config for multiple Python Buck targets.
 
-    Usage: buck2 bxl prelude//python/sourcedb/pysa_merged_source_db.bxl:run -- --target fbcode//foo/...
+    Usage: buck2 bxl prelude//python/sourcedb/pysa_merged_source_db.bxl:run -- --target root//foo/...
     """,
     impl = _run,
     cli_args = {
