@@ -180,15 +180,19 @@ mod tests {
             r#"
 # comment
 node_modules
-website/build/
+generated_site/build/
 
 "#,
         )
         .unwrap();
         let set = IgnoreSet::from_ignore_spec(&spec, false).unwrap();
         assert!(set.is_match(CellRelativePath::testing_new("node_modules/pkg/index.js")));
-        assert!(set.is_match(CellRelativePath::testing_new("website/build/index.html")));
-        assert!(!set.is_match(CellRelativePath::testing_new("website/src/index.ts")));
+        assert!(set.is_match(CellRelativePath::testing_new(
+            "generated_site/build/index.html"
+        )));
+        assert!(!set.is_match(CellRelativePath::testing_new(
+            "generated_site/src/index.ts"
+        )));
     }
 
     #[test]
