@@ -14,17 +14,10 @@
 
 use std::env::temp_dir;
 use std::panic;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
-
-use bz_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
-
-pub(crate) trait DaemonStatePanicDiceDump: Send + Sync + 'static {
-    fn dice_dump(&self, path: &Path, format: DiceDumpFormat) -> bz_error::Result<()>;
-}
 
 fn get_panic_dump_dir() -> PathBuf {
     temp_dir().join("buck2-dumps")
@@ -53,7 +46,10 @@ async fn remove_old_panic_dumps() -> bz_error::Result<()> {
 }
 
 /// Initializes the panic hook.
-pub(crate) fn initialize(_daemon_state: Arc<dyn DaemonStatePanicDiceDump>) {
+pub(crate) fn initialize<T>(_daemon_state: Arc<T>)
+where
+    T: Send + Sync + 'static,
+{
     let hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         hook(info);

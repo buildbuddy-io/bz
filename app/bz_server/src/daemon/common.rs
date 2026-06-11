@@ -408,8 +408,6 @@ fn executor_config_with_bazel_remote_endpoint_overrides(
 #[derive(bz_error::Error, Debug)]
 #[buck2(input)]
 enum ExecutorCompatibilityError {
-    #[error("The desired execution strategy (`{0:?}`) is incompatible with the local executor")]
-    LocalIncompatible(ExecutionStrategy),
     #[error(
         "The desired execution strategy (`{0:?}`) is incompatible with the executor config that was selected: {1:?}"
     )]
@@ -772,33 +770,6 @@ pub fn get_default_executor_config(host_platform: HostPlatformOverride) -> Comma
             output_paths_behavior: Default::default(),
             use_bazel_protocol_remote_persistent_workers: false,
         },
-    }
-}
-
-fn get_default_re_properties(host_platform: HostPlatformOverride) -> RePlatformFields {
-    let linux = &[("platform", "linux-remote-execution")];
-    let macos = &[("platform", "mac"), ("subplatform", "any")];
-    let windows = &[("platform", "windows")];
-
-    let props = match host_platform {
-        HostPlatformOverride::Linux => linux.as_slice(),
-        HostPlatformOverride::MacOs => macos.as_slice(),
-        HostPlatformOverride::Windows => windows.as_slice(),
-        HostPlatformOverride::DefaultPlatform => match std::env::consts::OS {
-            "linux" => linux.as_slice(),
-            "macos" => macos.as_slice(),
-            "windows" => windows.as_slice(),
-            v => unimplemented!("no support yet for operating system `{}`", v),
-        },
-    };
-
-    RePlatformFields {
-        properties: Arc::new(
-            props
-                .iter()
-                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-                .collect(),
-        ),
     }
 }
 

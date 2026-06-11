@@ -49,24 +49,6 @@ pub(crate) fn dice_dump(
     }
 }
 
-pub(crate) fn tar_dice_dump(dice_dump_folder: &Path) -> bz_error::Result<()> {
-    let tar_gz = File::create(format!("{}.tar.gz", dice_dump_folder.display()))?;
-    let enc = GzEncoder::new(tar_gz, Compression::default());
-    let mut tar = tar::Builder::new(enc);
-    let files = vec!["nodes.gz", "edges.gz", "nodes_currently_running.gz"];
-    for file_name in files {
-        let mut file = File::open(dice_dump_folder.join(file_name))
-            .buck_error_context(format!("Failed to open file `{file_name}` for compressing"))?;
-        tar.append_file(file_name, &mut file)
-            .buck_error_context(format!("Failed to write file `{file_name}` to archive"))?;
-    }
-
-    tar.finish()
-        .buck_error_context("Failed to generate DICE dump archive")?;
-
-    Ok(())
-}
-
 fn dice_dump_tsv(dice: &Arc<Dice>, path: &Path) -> bz_error::Result<()> {
     let path = path.to_path_buf();
     let nodes_path = path.join("nodes.gz");

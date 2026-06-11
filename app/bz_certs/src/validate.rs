@@ -8,53 +8,20 @@
  * above-listed licenses.
  */
 
-use std::ffi::OsString;
 use std::sync::Arc;
 
-use bz_error::bz_error;
-use bz_util::process::async_background_command;
 use dupe::Dupe;
 use tokio::sync::Mutex;
 
-use crate::certs;
+#[cfg(test)]
 use crate::certs::load_certs;
-
-#[derive(Debug, bz_error::Error)]
-#[buck2(environment, tag = NoValidCerts)]
-enum InvalidCertsError {
-    #[error(
-        "Could not find valid root certs. Please check your machine certificate settings.\nFailure Reason: {0}"
-    )]
-    SystemCerts(String),
-    #[error(
-        "Could not find valid client certs. Refresh your client certificate configuration and try again.\nFailure Reason: {0}"
-    )]
-    ClientCerts(String),
-    #[error("Could not find valid certs for VPNless.")]
-    VPNlessCerts,
-}
-
-/// Use SKS Agent to check the status of the VPNless cert in the scenario that VPNless is supported.
-/// SKS Agent is different in Windows so we need to use the appropriate command for the OS.
-async fn is_vpnless_cert_valid() -> bool {
-    let sks_agent = if cfg!(target_os = "windows") {
-        "sks-agent"
-    } else {
-        "fb-sks-agent"
-    };
-
-    let cmd_result = async_background_command(sks_agent)
-        .args(["renew", "--status", "--corp-x509"])
-        .output()
-        .await;
-
-    match cmd_result {
-        Ok(cmd_output) => String::from_utf8_lossy(&cmd_output.stdout).starts_with("true"),
-        Err(_) => false,
-    }
-}
+#[cfg(test)]
+use bz_error::bz_error;
+#[cfg(test)]
+use std::ffi::OsString;
 
 /// Check if the provided certs exists and if it is still valid at the current time.
+#[cfg(test)]
 async fn verify(path: &OsString) -> bz_error::Result<()> {
     let certs = load_certs(path).await?;
     if certs.is_empty() {

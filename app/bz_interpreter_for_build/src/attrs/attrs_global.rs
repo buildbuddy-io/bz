@@ -285,16 +285,6 @@ fn bazel_label_list_default<'v>(
     Ok(Some(eval.heap().alloc(AllocList::EMPTY)))
 }
 
-fn bazel_attr_required<'v>(
-    _eval: &mut Evaluator<'v, '_, '_>,
-    doc: &str,
-    coercer: AttrType,
-) -> bz_error::Result<StarlarkAttribute<'v>> {
-    Ok(StarlarkAttribute::new_bazel(Attribute::new(
-        None, doc, coercer,
-    )?))
-}
-
 fn bazel_label_allows_files(allow_files: Option<Value>, allow_single_file: Option<Value>) -> bool {
     allow_files.is_some_and(|v| v.to_bool()) || allow_single_file.is_some_and(|v| v.to_bool())
 }

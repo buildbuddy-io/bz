@@ -44,7 +44,7 @@ impl StarlarkFileType {
             enable_types: DialectTypes::Disable,
             enable_load_reexport: false,
             enable_top_level_stmt: false,
-            enable_f_strings,
+            enable_f_strings: true,
             ..Dialect::Standard
         };
         let bzl_dialect: Dialect = Dialect {
@@ -59,7 +59,7 @@ impl StarlarkFileType {
             },
             enable_load_reexport: false,
             enable_top_level_stmt: true,
-            enable_f_strings,
+            enable_f_strings: true,
             ..Dialect::Standard
         };
         let bxl_dialect: Dialect = Dialect {
@@ -74,7 +74,7 @@ impl StarlarkFileType {
             },
             enable_load_reexport: false,
             enable_top_level_stmt: true,
-            enable_f_strings,
+            enable_f_strings: true,
             ..Dialect::Standard
         };
 

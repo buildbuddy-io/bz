@@ -81,7 +81,6 @@ use crate::bazel::glob::BazelGlobRequest;
 use crate::bazel::glob::BazelPackageDataRequest;
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
 use crate::interpreter::build_context::BazelRepositoryContextForStarlark;
-use crate::interpreter::build_context::BazelRepositoryRecordedInput;
 use crate::interpreter::build_context::BazelRepositoryRecordedInputSet;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::build_context::BazelRepositoryRuleRecorder;

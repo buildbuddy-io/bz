@@ -11,7 +11,6 @@
 use std::fs::File;
 use std::sync::OnceLock;
 
-use bz_core::bz_env;
 use bz_error::BuckErrorContext;
 use bz_error::ErrorTag;
 use object::Object;

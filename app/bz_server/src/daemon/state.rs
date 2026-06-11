@@ -101,7 +101,6 @@ use crate::daemon::disk_state::maybe_initialize_incremental_sqlite_db;
 use crate::daemon::disk_state::maybe_initialize_materializer_sqlite_db;
 use crate::daemon::forkserver::maybe_launch_forkserver;
 use crate::daemon::io_provider::create_io_provider;
-use crate::daemon::panic::DaemonStatePanicDiceDump;
 use crate::daemon::server::BuckdServerInitPreferences;
 
 fn buckconfig_truthy(value: Option<&str>) -> bool {
@@ -292,12 +291,6 @@ impl DaemonStateData {
     ) -> bz_error::Result<()> {
         crate::daemon::dice_dump::dice_dump_spawn(self.dice_manager.unsafe_dice(), path, format)
             .await
-    }
-}
-
-impl DaemonStatePanicDiceDump for DaemonStateData {
-    fn dice_dump(&self, path: &Path, format: DiceDumpFormat) -> bz_error::Result<()> {
-        self.dice_dump(path, format)
     }
 }
 

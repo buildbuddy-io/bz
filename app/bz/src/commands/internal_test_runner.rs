@@ -12,7 +12,6 @@ use bz_client_ctx::client_ctx::ClientCommandContext;
 use bz_client_ctx::common::BuckArgMatches;
 use bz_client_ctx::events_ctx::EventsCtx;
 use bz_client_ctx::exit_result::ExitResult;
-use bz_error::ErrorTag;
 use clap::Parser;
 use tokio::runtime::Runtime;
 

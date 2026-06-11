@@ -499,7 +499,7 @@ fn re_create_action(
         action_and_blobs.add_blob(digest.dupe(), data.clone());
     }
 
-    let mut action = RE::Action {
+    let action = RE::Action {
         input_root_digest: Some(input_digest.to_grpc()),
         command_digest: Some(action_and_blobs.add_command(&command).to_grpc()),
         timeout: timeout

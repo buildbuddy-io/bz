@@ -1991,10 +1991,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bz_eden"
-version = "0.1.0"
-
-[[package]]
 name = "bz_env"
 version = "0.1.0"
 dependencies = [
