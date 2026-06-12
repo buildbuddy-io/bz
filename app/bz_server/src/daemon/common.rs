@@ -38,6 +38,7 @@ use bz_events::daemon_id::DaemonId;
 use bz_execute::execute::blocking::BlockingExecutor;
 use bz_execute::execute::cache_uploader::NoOpCacheUploader;
 use bz_execute::execute::cache_uploader::force_cache_upload;
+use bz_execute::execute::known_missing::KnownMissingRemoteCasTracker;
 use bz_execute::execute::prepared::NoOpCommandOptionalExecutor;
 use bz_execute::execute::prepared::PreparedCommandExecutor;
 use bz_execute::execute::prepared::PreparedCommandOptionalExecutor;
@@ -107,6 +108,7 @@ pub struct CommandExecutorFactory {
     remote_metadata_semaphore: Arc<Semaphore>,
     remote_action_cache_semaphore: Arc<Semaphore>,
     daemon_id: DaemonId,
+    known_missing_remote_cas: Arc<KnownMissingRemoteCasTracker>,
     bazel_remote_endpoint_overrides: BazelRemoteEndpointOverrides,
 }
 
@@ -137,6 +139,7 @@ impl CommandExecutorFactory {
         remote_metadata_concurrency: usize,
         remote_action_cache_concurrency: usize,
         daemon_id: DaemonId,
+        known_missing_remote_cas: Arc<KnownMissingRemoteCasTracker>,
         remote_execution_startup_config: &RemoteExecutionStartupConfig,
     ) -> Self {
         let cache_upload_permission_checker = Arc::new(ActionCacheUploadPermissionChecker::new());
@@ -175,6 +178,7 @@ impl CommandExecutorFactory {
                 remote_action_cache_concurrency,
             )),
             daemon_id,
+            known_missing_remote_cas,
             bazel_remote_endpoint_overrides: BazelRemoteEndpointOverrides::from_startup_config(
                 remote_execution_startup_config,
             ),
@@ -451,6 +455,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                     worker_pool,
                     self.memory_tracker.dupe(),
                     self.daemon_id.dupe(),
+                    self.known_missing_remote_cas.dupe(),
                 )
             };
         let local_action_cache_checker_new =
@@ -557,6 +562,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                                 deduplicate_get_digests_ttl_calls: self.deduplicate_get_digests_ttl_calls,
                                 output_trees_download_config: self.output_trees_download_config.dupe(),
                                 remote_metadata_semaphore: self.remote_metadata_semaphore.dupe(),
+                                known_missing_remote_cas: self.known_missing_remote_cas.dupe(),
                             }) as _
                         } else {
                             Arc::new(NoOpCommandOptionalExecutor {}) as _
@@ -579,6 +585,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                                 output_trees_download_config: self.output_trees_download_config.dupe(),
                                 remote_action_cache_semaphore: self.remote_action_cache_semaphore.dupe(),
                                 local_action_cache: self.local_action_cache.dupe(),
+                                known_missing_remote_cas: self.known_missing_remote_cas.dupe(),
                             }) as _
                     };
                     let action_cache_checker: Arc<dyn PreparedCommandOptionalExecutor> =

@@ -25,6 +25,7 @@ use bz_execute::execute::dep_file_digest::DepFileDigest;
 use bz_execute::execute::executor_stage_async;
 use bz_execute::execute::kind::CommandExecutionKind;
 use bz_execute::execute::kind::RemoteCommandExecutionDetails;
+use bz_execute::execute::known_missing::KnownMissingRemoteCasTracker;
 use bz_execute::execute::manager::CommandExecutionManager;
 use bz_execute::execute::manager::CommandExecutionManagerExt;
 use bz_execute::execute::prepared::PreparedCommand;
@@ -71,6 +72,7 @@ pub struct ActionCacheChecker {
     pub output_trees_download_config: OutputTreesDownloadConfig,
     pub remote_action_cache_semaphore: Arc<Semaphore>,
     pub local_action_cache: Arc<LocalActionCache>,
+    pub known_missing_remote_cas: Arc<KnownMissingRemoteCasTracker>,
 }
 
 enum CacheType {
@@ -198,6 +200,7 @@ async fn query_action_cache_and_download_result(
     output_trees_download_config: &OutputTreesDownloadConfig,
     remote_cache_query_semaphore: &Arc<Semaphore>,
     local_action_cache: Option<&Arc<LocalActionCache>>,
+    known_missing_remote_cas: &Arc<KnownMissingRemoteCasTracker>,
 ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
     let request = command.request;
     let action_blobs = &command.prepared_action.action_and_blobs.blobs;
@@ -353,6 +356,7 @@ async fn query_action_cache_and_download_result(
         false,
         None,
         output_trees_download_config,
+        Some(known_missing_remote_cas.as_ref()),
     )
     .await;
 
@@ -453,6 +457,7 @@ impl PreparedCommandOptionalExecutor for ActionCacheChecker {
             &self.output_trees_download_config,
             &self.remote_action_cache_semaphore,
             Some(&self.local_action_cache),
+            &self.known_missing_remote_cas,
         )
         .await
     }
@@ -470,6 +475,7 @@ pub struct RemoteDepFileCacheChecker {
     pub deduplicate_get_digests_ttl_calls: bool,
     pub output_trees_download_config: OutputTreesDownloadConfig,
     pub remote_metadata_semaphore: Arc<Semaphore>,
+    pub known_missing_remote_cas: Arc<KnownMissingRemoteCasTracker>,
 }
 
 #[async_trait]
@@ -517,6 +523,7 @@ impl PreparedCommandOptionalExecutor for RemoteDepFileCacheChecker {
             &self.output_trees_download_config,
             &self.remote_metadata_semaphore,
             None,
+            &self.known_missing_remote_cas,
         )
         .await
     }

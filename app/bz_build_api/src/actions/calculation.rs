@@ -97,6 +97,7 @@ use crate::actions::execute::action_executor::ActionExecutionValue;
 use crate::actions::execute::action_executor::ActionOutputs;
 use crate::actions::execute::action_executor::BuckActionExecutor;
 use crate::actions::execute::action_executor::HasActionExecutor;
+use crate::actions::execute::dice_data::GetKnownMissingRemoteCasTracker;
 use crate::actions::execute::error::ExecuteError;
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
@@ -122,6 +123,7 @@ const MAX_REPEATED_LOST_REMOTE_REWINDS: usize = 20;
 #[derive(Default)]
 pub struct LostRemoteRewindTracker {
     attempts: Mutex<HashMap<String, usize>>,
+    action_cache_bypass: Mutex<HashSet<ActionKey>>,
 }
 
 impl LostRemoteRewindTracker {
@@ -152,6 +154,23 @@ impl LostRemoteRewindTracker {
 
         Ok(())
     }
+
+    fn record_action_cache_bypass(&self, action_keys: Vec<ActionKey>) -> bz_error::Result<()> {
+        let mut action_cache_bypass = self
+            .action_cache_bypass
+            .lock()
+            .map_err(|_| internal_error!("lost remote action cache bypass lock poisoned"))?;
+        action_cache_bypass.extend(action_keys);
+        Ok(())
+    }
+
+    fn take_action_cache_bypass(&self, action_key: &ActionKey) -> bz_error::Result<bool> {
+        let mut action_cache_bypass = self
+            .action_cache_bypass
+            .lock()
+            .map_err(|_| internal_error!("lost remote action cache bypass lock poisoned"))?;
+        Ok(action_cache_bypass.remove(action_key))
+    }
 }
 
 pub trait HasLostRemoteRewindTracker {
@@ -161,6 +180,14 @@ pub trait HasLostRemoteRewindTracker {
         summary: &str,
         signatures: Vec<String>,
     ) -> bz_error::Result<()>;
+    fn record_lost_remote_action_cache_bypass(
+        &self,
+        action_keys: Vec<ActionKey>,
+    ) -> bz_error::Result<()>;
+    fn take_lost_remote_action_cache_bypass(
+        &self,
+        action_key: &ActionKey,
+    ) -> bz_error::Result<bool>;
 }
 
 impl HasLostRemoteRewindTracker for UserComputationData {
@@ -178,6 +205,26 @@ impl HasLostRemoteRewindTracker for UserComputationData {
         }
         Ok(())
     }
+
+    fn record_lost_remote_action_cache_bypass(
+        &self,
+        action_keys: Vec<ActionKey>,
+    ) -> bz_error::Result<()> {
+        if let Ok(tracker) = self.data.get::<LostRemoteRewindTracker>() {
+            tracker.record_action_cache_bypass(action_keys)?;
+        }
+        Ok(())
+    }
+
+    fn take_lost_remote_action_cache_bypass(
+        &self,
+        action_key: &ActionKey,
+    ) -> bz_error::Result<bool> {
+        if let Ok(tracker) = self.data.get::<LostRemoteRewindTracker>() {
+            return tracker.take_action_cache_bypass(action_key);
+        }
+        Ok(false)
+    }
 }
 
 async fn build_action_impl(
@@ -188,6 +235,13 @@ async fn build_action_impl(
 ) -> bz_error::Result<ActionExecutionValue> {
     // Compute is only called if we have cache miss
     debug!("compute {}", key);
+    let force_skip_action_cache = force_skip_action_cache
+        || ctx
+            .per_transaction_data()
+            .take_lost_remote_action_cache_bypass(key)?;
+    if force_skip_action_cache {
+        tracing::debug!("building `{}` with action-cache reads bypassed", key);
+    }
 
     let action = ActionCalculation::get_action(ctx, key).await?;
 
@@ -613,6 +667,9 @@ async fn build_action_inner(
     .await;
 
     if let Some(lost) = lost_remote_cas_artifacts(&execute_result) {
+        ctx.per_transaction_data()
+            .get_known_missing_remote_cas_tracker()
+            .record_lost_remote_cas_artifacts(&lost);
         let restart_error = async {
             let plan = prepare_lost_remote_rewind_plan(ctx, &ensured_inputs, action, &lost).await?;
             prepare_lost_remote_rewind_restart(ctx, action, &plan).await?;
@@ -903,6 +960,8 @@ async fn prepare_lost_remote_rewind_restart(
 
     invalidate_rewind_action_outputs(ctx, failed_action, plan).await?;
     purge_remote_cache_metadata_for_origins(ctx, plan.remote_origins()).await?;
+    ctx.per_transaction_data()
+        .record_lost_remote_action_cache_bypass(plan.producers.keys().cloned().collect())?;
     Ok(())
 }
 

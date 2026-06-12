@@ -215,11 +215,9 @@ fn format_directory_entry_leaves(
 
 #[derive(bz_error::Error, Debug, Clone, Dupe)]
 #[error(
-    "Your build requires materializing an artifact that has expired in the \
-    RE CAS and Buck does not have it. \
-    This likely happened because your Buck daemon \
-    has been online for a long time. This error is currently unrecoverable. \
-    To proceed, you should restart Buck using `bz killall`.
+    "Your build requires materializing a remote-backed artifact that is missing \
+    from the RE CAS. The build should recover by invalidating stale remote cache \
+    metadata and retrying the affected actions.
 
 Debug information:
   Path: {}

@@ -42,6 +42,7 @@ use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_execute::materialize::materializer::CasNotFoundError;
 use bz_execute::materialize::materializer::DeclareArtifactPayload;
 use bz_execute::materialize::materializer::HasMaterializer;
+use bz_execute::materialize::materializer::LostRemoteCasArtifacts;
 use bz_execute::materialize::materializer::MaterializationError;
 use bz_execute::materialize::materializer::Materializer;
 use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
@@ -59,6 +60,7 @@ use pagable::Pagable;
 use crate::actions::artifact::get_artifact_fs::GetArtifactFs;
 use crate::actions::calculation::ActionCalculation;
 use crate::actions::calculation::HasLostRemoteRewindTracker;
+use crate::actions::execute::dice_data::GetKnownMissingRemoteCasTracker;
 use crate::actions::execute::dice_data::GetReClient;
 use crate::actions::impls::run_action_knobs::HasRunActionKnobs;
 use crate::artifact_groups::ArtifactGroup;
@@ -148,7 +150,15 @@ pub async fn materialize_and_upload_artifact_group(
     let values = materialize_artifact_group(ctx, artifact_group, contexts.0, queue_tracker).await?;
 
     if let UploadContext::Upload = contexts.1 {
-        ensure_uploaded(ctx, &values).await?;
+        if let Err(error) = ensure_uploaded(ctx, &values).await {
+            if let Some(lost) = error.find_typed_context::<LostRemoteCasArtifacts>() {
+                let restart_error = prepare_lost_remote_upload_rewind_restart(ctx, &values, &lost)
+                    .await
+                    .unwrap_or_else(|restart_error| restart_error);
+                return Err(restart_error);
+            }
+            return Err(error);
+        }
     }
 
     Ok(values)
@@ -554,6 +564,13 @@ fn prepare_lost_remote_output_rewind_plan(
     lost: Vec<LostRemoteOutput>,
 ) -> bz_error::Result<LostRemoteOutputRewindPlan> {
     let plan = LostRemoteOutputRewindPlan::new(lost);
+    let tracker = ctx
+        .per_transaction_data()
+        .get_known_missing_remote_cas_tracker();
+    for record in &plan.records {
+        let missing_digests = record.source.missing_file_digests();
+        tracker.record_file_digests(&missing_digests);
+    }
     ctx.per_transaction_data()
         .record_lost_remote_rewind_attempt(
             &plan.display_summary(),
@@ -578,6 +595,8 @@ async fn prepare_lost_remote_output_rewind_restart(
 
     invalidate_lost_remote_output_producer_paths(ctx, plan).await?;
     purge_remote_cache_metadata_for_origins(ctx, plan.remote_origins()).await?;
+    ctx.per_transaction_data()
+        .record_lost_remote_action_cache_bypass(plan.producers.keys().cloned().collect())?;
     Ok(())
 }
 
@@ -663,6 +682,96 @@ async fn ensure_uploaded(
         .await?;
 
     Ok(())
+}
+
+async fn prepare_lost_remote_upload_rewind_restart(
+    ctx: &mut DiceComputations<'_>,
+    values: &ArtifactGroupValues,
+    lost: &LostRemoteCasArtifacts,
+) -> bz_error::Result<bz_error::Error> {
+    ctx.per_transaction_data()
+        .get_known_missing_remote_cas_tracker()
+        .record_lost_remote_cas_artifacts(lost);
+
+    let summary = lost.display_summary();
+    let signatures = lost
+        .iter()
+        .flat_map(|artifact| {
+            if artifact.missing_digests.is_empty() {
+                vec![format!("upload|{}|<unknown>", artifact.path)]
+            } else {
+                artifact
+                    .missing_digests
+                    .iter()
+                    .map(|digest| format!("upload|{}|{}", artifact.path, digest))
+                    .collect::<Vec<_>>()
+            }
+        })
+        .collect::<Vec<_>>();
+    ctx.per_transaction_data()
+        .record_lost_remote_rewind_attempt(&summary, signatures)?;
+
+    let artifact_fs = ctx.get_artifact_fs().await?;
+    let mut builder = LostRemoteRewindGraphBuilder::default();
+    let mut output_paths = Vec::new();
+    let mut action_keys = Vec::new();
+
+    for (artifact, _value) in values.iter() {
+        let BaseArtifactKind::Build(build_artifact) = artifact.as_parts().0 else {
+            continue;
+        };
+        let action_key = build_artifact.key().dupe();
+        if !action_keys.contains(&action_key) {
+            let action = ActionCalculation::get_action(ctx, &action_key).await?;
+            output_paths.extend(
+                action
+                    .outputs()
+                    .iter()
+                    .map(|output| {
+                        artifact_fs.resolve_build_configuration_hash_path(output.get_path())
+                    })
+                    .collect::<bz_error::Result<Vec<_>>>()?,
+            );
+            action_keys.push(action_key.dupe());
+        }
+        builder.add_action_key(action_key);
+        builder.add_artifact(artifact);
+        builder.add_artifact_group(&ArtifactGroup::Artifact(artifact.dupe()));
+    }
+
+    if !output_paths.is_empty() {
+        ctx.per_transaction_data()
+            .get_materializer()
+            .invalidate_many(output_paths)
+            .await
+            .buck_error_context("Failed to invalidate outputs for lost remote upload rewind")?;
+    }
+
+    if action_keys.is_empty() {
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
+            "Remote-backed artifacts are missing from CAS while uploading final outputs, but no build producer was found to retry:\n{}",
+            summary,
+        ));
+    }
+
+    let mut origins = Vec::new();
+    for artifact in lost.iter() {
+        if !origins
+            .iter()
+            .any(|origin: &RemoteActionCacheOrigin| origin == &artifact.origin)
+        {
+            origins.push(artifact.origin.clone());
+        }
+    }
+    purge_remote_cache_metadata_for_origins(ctx, origins).await?;
+    ctx.per_transaction_data()
+        .record_lost_remote_action_cache_bypass(action_keys)?;
+
+    Ok(lost_remote_build_restart_error(builder.finish(format!(
+        "remote-backed artifacts are missing from CAS while uploading final outputs; purged remote cache metadata and invalidated affected producer action(s):\n{}",
+        summary,
+    ))))
 }
 
 #[derive(Clone, Dupe, Copy, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]

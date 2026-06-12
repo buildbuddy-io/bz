@@ -22,7 +22,6 @@ use bz_core::bz_env;
 use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use bz_core::fs::project::ProjectRoot;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
-use bz_core::soft_error;
 use bz_data::ReUploadMetrics;
 use bz_directory::directory::directory::Directory;
 use bz_directory::directory::directory_iterator::DirectoryIterator;
@@ -67,7 +66,8 @@ use crate::directory::ReDirectorySerializer;
 use crate::execute::blobs::ActionBlobs;
 use crate::execute::request::CommandExecutionPaths;
 use crate::materialize::materializer::ArtifactNotMaterializedReason;
-use crate::materialize::materializer::CasDownloadInfo;
+use crate::materialize::materializer::LostRemoteCasArtifact;
+use crate::materialize::materializer::LostRemoteCasArtifacts;
 use crate::materialize::materializer::Materializer;
 use crate::re::action_identity::ReActionIdentity;
 use crate::re::client::RemoteExecutionClient;
@@ -619,9 +619,9 @@ impl Uploader {
                     }
                     Err(
                         ref err @ ArtifactNotMaterializedReason::RequiresCasDownload {
+                            ref path,
                             ref entry,
                             ref info,
-                            ..
                         },
                     ) => {
                         if let DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) =
@@ -632,43 +632,28 @@ impl Uploader {
                             // won't be here. On the flip side, if a digest has been in the CAS for
                             // a very long time, it might have expired.
                             if file.digest.to_re() == digest {
-                                if should_error_for_missing_digest(info) {
-                                    soft_error!(
-                                        "cas_missing_fatal",
-                                        bz_error::bz_error!(
-                                            bz_error::ErrorTag::Input,
-                                            "{} missing (origin: {})",
-                                            file.digest,
-                                            info.origin.as_display_for_not_found(),
-                                        ),
-                                        daemon_in_memory_state_is_corrupted: true,
-                                        action_cache_is_corrupted: info.origin.guaranteed_by_action_cache()
-                                    )?;
-
+                                if let Some(origin) = info.remote_origin() {
+                                    let lost = LostRemoteCasArtifact {
+                                        path: Arc::new(path.clone()),
+                                        owner: None,
+                                        missing_digests: Arc::from(vec![file.digest.dupe()]),
+                                        producer_path_hint: None,
+                                        origin,
+                                    };
                                     return Err(bz_error::bz_error!(
-                                        bz_error::ErrorTag::ReCasArtifactExpired,
-                                        "Your build requires an artifact that has expired in the RE CAS \
-                                        and Buck does not have it. This likely happened because your Buck daemon \
-                                        has been online for a long time. This error is currently unrecoverable. \
-                                        To proceed, you should restart Buck using `bz killall`. \
-                                        Debug information: {:#}",
-                                        err
-                                    ));
+                                        bz_error::ErrorTag::Input,
+                                        "Remote-backed CAS artifact is missing while preparing remote execution inputs: {:#}",
+                                        err,
+                                    )
+                                    .context(LostRemoteCasArtifacts::new(vec![lost])));
                                 }
 
-                                soft_error!(
-                                    "cas_missing",
-                                    bz_error::bz_error!(
-                                        bz_error::ErrorTag::Input,
-                                        "{} (expires = {}) is missing in the CAS but expected to exist as per: {:#}",
-                                        file.digest,
-                                        file.digest.expires()?,
-                                        err
-                                    ),
-                                    quiet: true
-                                )?;
-
-                                continue;
+                                return Err(bz_error::bz_error!(
+                                    bz_error::ErrorTag::Input,
+                                    "Declared CAS artifact `{}` is missing while preparing remote execution inputs. Debug information: {:#}",
+                                    file.digest,
+                                    err,
+                                ));
                             }
                         }
 
@@ -784,23 +769,6 @@ impl Uploader {
     }
 }
 
-fn should_error_for_missing_digest(info: &CasDownloadInfo) -> bool {
-    // RE sometimes reports things that exist as missing. We don't fully understand why at this
-    // time and this is being investigated, but we know that RE normally ensures that anything it
-    // returns to us will last for another 6 hours at least. So, we silence all errors when the
-    // download info is less than 5 hours, because we know those are most likely bogus. This
-    // basically means that after 5 hours we might tell the user to restart even though they don't
-    // need to. However, the alternative is confused users who see errors after a couple days (we
-    // had 3 reports of this in a week), so for now we do accept some false positives (when RE
-    // tells us a digest doesn't exist even though it does) in order to provide better UX when we
-    // hit a true positive.
-    if let Some(age) = info.action_age() {
-        age >= Duration::seconds(3600 * 5)
-    } else {
-        true
-    }
-}
-
 fn directory_to_blob<'a, D>(d: D) -> InlinedBlobWithDigest
 where
     D: ActionFingerprintedDirectoryRef<'a>,
@@ -819,8 +787,8 @@ fn error_for_missing_file(
     bz_error::bz_error!(
         bz_error::ErrorTag::ReInvalidGetCasResponse,
         "Action execution requires artifact `{}` but the materializer did not return a matching \
-        file for this path. This error is unrecoverable and you should restart Buck using \
-        `bz killall`. We would appreciate a bug report. Debug information: {:#}",
+        file for this path. This indicates inconsistent materializer metadata. \
+        Debug information: {:#}",
         digest,
         cause,
     )

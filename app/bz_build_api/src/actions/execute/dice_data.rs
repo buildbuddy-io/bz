@@ -18,6 +18,7 @@ use bz_core::fs::artifact_path_resolver::ArtifactFs;
 use bz_error::BuckErrorContext;
 use bz_error::conversion::from_any_with_tag;
 use bz_execute::execute::cache_uploader::UploadCache;
+use bz_execute::execute::known_missing::KnownMissingRemoteCasTracker;
 use bz_execute::execute::prepared::PreparedCommandExecutor;
 use bz_execute::execute::prepared::PreparedCommandOptionalExecutor;
 use bz_execute::re::manager::UnconfiguredRemoteExecutionClient;
@@ -44,6 +45,29 @@ pub struct CommandExecutorResponse {
 
 pub trait SetCommandExecutor {
     fn set_command_executor(&mut self, init: Box<dyn HasCommandExecutor + Send + Sync + 'static>);
+}
+
+pub trait SetKnownMissingRemoteCasTracker {
+    fn set_known_missing_remote_cas_tracker(&mut self, tracker: Arc<KnownMissingRemoteCasTracker>);
+}
+
+pub trait GetKnownMissingRemoteCasTracker {
+    fn get_known_missing_remote_cas_tracker(&self) -> Arc<KnownMissingRemoteCasTracker>;
+}
+
+impl SetKnownMissingRemoteCasTracker for UserComputationData {
+    fn set_known_missing_remote_cas_tracker(&mut self, tracker: Arc<KnownMissingRemoteCasTracker>) {
+        self.data.set(tracker);
+    }
+}
+
+impl GetKnownMissingRemoteCasTracker for UserComputationData {
+    fn get_known_missing_remote_cas_tracker(&self) -> Arc<KnownMissingRemoteCasTracker> {
+        self.data
+            .get::<Arc<KnownMissingRemoteCasTracker>>()
+            .expect("KnownMissingRemoteCasTracker should be set")
+            .dupe()
+    }
 }
 
 #[async_trait]

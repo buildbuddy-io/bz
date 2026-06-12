@@ -68,6 +68,7 @@ use bz_execute::execute::environment_inheritance::EnvironmentInheritance;
 use bz_execute::execute::executor_stage_async;
 use bz_execute::execute::inputs_directory::inputs_directory;
 use bz_execute::execute::kind::CommandExecutionKind;
+use bz_execute::execute::known_missing::KnownMissingRemoteCasTracker;
 use bz_execute::execute::manager::CommandExecutionManager;
 use bz_execute::execute::manager::CommandExecutionManagerExt;
 use bz_execute::execute::manager::CommandExecutionManagerWithClaim;
@@ -596,6 +597,7 @@ pub struct LocalExecutor {
     worker_pool: Option<Arc<WorkerPool>>,
     memory_tracker: Option<MemoryTrackerHandle>,
     daemon_id: DaemonId,
+    known_missing_remote_cas: Arc<KnownMissingRemoteCasTracker>,
 }
 
 impl LocalExecutor {
@@ -614,6 +616,7 @@ impl LocalExecutor {
         worker_pool: Option<Arc<WorkerPool>>,
         memory_tracker: Option<MemoryTrackerHandle>,
         daemon_id: DaemonId,
+        known_missing_remote_cas: Arc<KnownMissingRemoteCasTracker>,
     ) -> Self {
         Self {
             artifact_fs,
@@ -630,6 +633,7 @@ impl LocalExecutor {
             worker_pool,
             memory_tracker,
             daemon_id,
+            known_missing_remote_cas,
         }
     }
 
@@ -2356,6 +2360,18 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         };
 
         let remote_cache_origin = entry.remote_cache_origin.clone();
+        if remote_cache_origin.is_some()
+            && self
+                .known_missing_remote_cas
+                .contains_artifact_values(outputs.values())
+        {
+            tracing::debug!(
+                "local action cache metadata entry `{}` referenced a known-missing CAS blob; treating it as a miss",
+                command.local_action_cache_key.key,
+            );
+            return self
+                .remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager);
+        }
         if !command.outputs_declared_by_action {
             if remote_cache_origin.is_none()
                 && let Err(e) = self
@@ -2446,6 +2462,26 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     ) {
                         Ok(Some(outputs)) => {
                             let remote_cache_origin = entry.remote_cache_origin.clone();
+                            if remote_cache_origin.is_some()
+                                && self
+                                    .known_missing_remote_cas
+                                    .contains_artifact_values(outputs.values())
+                            {
+                                tracing::debug!(
+                                    "local action cache metadata entry `{}` referenced a known-missing CAS blob; treating it as a miss",
+                                    local_action_cache_key.key,
+                                );
+                                if let Err(e) = self
+                                    .local_action_cache
+                                    .remove_action_metadata(&local_action_cache_key.key)
+                                {
+                                    return ControlFlow::Break(
+                                        manager
+                                            .error("local_action_cache_remove_metadata_failed", e),
+                                    );
+                                }
+                                return ControlFlow::Continue(manager);
+                            }
                             if remote_cache_origin.is_none()
                                 && let Err(e) = self
                                     .declare_local_action_cache_outputs(
@@ -2599,6 +2635,22 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         ) {
             Ok(Some(outputs)) => {
                 let remote_cache_origin = cache_entry.remote_cache_origin.clone();
+                if remote_cache_origin.is_some()
+                    && self
+                        .known_missing_remote_cas
+                        .contains_artifact_values(outputs.values())
+                {
+                    tracing::debug!(
+                        "local action cache entry `{}` referenced a known-missing CAS blob; treating it as a miss",
+                        action_digest,
+                    );
+                    if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                        return ControlFlow::Break(
+                            manager.error("local_action_cache_remove_failed", e),
+                        );
+                    }
+                    return ControlFlow::Continue(manager);
+                }
                 if remote_cache_origin.is_none()
                     && let Err(e) = self
                         .declare_local_action_cache_outputs(&outputs, command.digest_config)
@@ -4284,15 +4336,12 @@ pub async fn materialize_inputs(
                     });
                     continue;
                 }
-                let corrupted = source.info.origin.guaranteed_by_action_cache();
 
                 return Err(tag_error!(
-                    "cas_missing_fatal",
+                    "cas_missing",
                     MaterializationError::NotFound { source }.into(),
                     quiet: true,
-                    task: false,
-                    daemon_in_memory_state_is_corrupted: true,
-                    action_cache_is_corrupted: corrupted
+                    task: false
                 ));
             }
             Err(e) => {
@@ -5139,6 +5188,7 @@ mod tests {
             None,
             None,
             DaemonId::new(),
+            Arc::new(KnownMissingRemoteCasTracker::default()),
         );
 
         Ok((executor, temp.path().root().to_buf(), temp))

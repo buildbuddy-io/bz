@@ -40,6 +40,7 @@ use bz_execute::directory::re_tree_to_directory;
 use bz_execute::execute::action_digest::TrackedActionDigest;
 use bz_execute::execute::executor_stage_async;
 use bz_execute::execute::kind::RemoteCommandExecutionDetails;
+use bz_execute::execute::known_missing::KnownMissingRemoteCasTracker;
 use bz_execute::execute::manager::CommandExecutionManager;
 use bz_execute::execute::manager::CommandExecutionManagerExt;
 use bz_execute::execute::manager::CommandExecutionManagerWithClaim;
@@ -107,65 +108,78 @@ pub fn missing_mandatory_output(
         .map(str::to_owned)
 }
 
-pub async fn remote_artifact_values_present(
+pub enum RemoteCacheDigestPresence {
+    Present,
+    Missing(Vec<TrackedFileDigest>),
+}
+
+pub async fn remote_artifact_values_presence(
     re_client: &ManagedRemoteExecutionClient,
     outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-) -> bz_error::Result<bool> {
-    remote_cache_digests_present(re_client, artifact_value_file_digests(outputs)).await
+) -> bz_error::Result<RemoteCacheDigestPresence> {
+    remote_cache_digests_presence(re_client, artifact_value_file_digests(outputs)).await
 }
 
 fn artifact_value_file_digests(
     outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-) -> Vec<RE::TDigest> {
+) -> Vec<TrackedFileDigest> {
     let mut digests = Vec::new();
     for value in outputs.values() {
         let mut walk = unordered_entry_walk(value.entry().as_ref().map_dir(Directory::as_ref));
         while let Some((_path, entry)) = walk.next() {
             if let DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) = entry {
-                digests.push(file.digest.to_re());
+                digests.push(file.digest.dupe());
             }
         }
     }
     digests
 }
 
-async fn remote_cache_digests_present(
+async fn remote_cache_digests_presence(
     re_client: &ManagedRemoteExecutionClient,
-    digests: Vec<RE::TDigest>,
-) -> bz_error::Result<bool> {
+    digests: Vec<TrackedFileDigest>,
+) -> bz_error::Result<RemoteCacheDigestPresence> {
     let mut seen = StdBuckHashSet::default();
     let mut unique = Vec::new();
     for digest in digests {
-        if seen.insert(digest.clone()) {
+        if seen.insert(digest.dupe()) {
             unique.push(digest);
         }
     }
 
     if unique.is_empty() {
-        return Ok(true);
+        return Ok(RemoteCacheDigestPresence::Present);
     }
 
-    let requested: StdBuckHashSet<_> = unique.iter().cloned().collect();
-    let expirations = match re_client.get_digest_expirations(unique).await {
+    let requested: StdBuckHashSet<_> = unique.iter().map(|digest| digest.to_re()).collect();
+    let expirations = match re_client
+        .get_digest_expirations(unique.iter().map(|digest| digest.to_re()).collect())
+        .await
+    {
         Ok(expirations) => expirations,
-        Err(e) if is_remote_execution_not_found(&e) => return Ok(false),
+        Err(e) if is_remote_execution_not_found(&e) => {
+            return Ok(RemoteCacheDigestPresence::Missing(unique));
+        }
         Err(e) => return Err(e),
     };
-
-    if expirations.len() != requested.len() {
-        return Ok(false);
-    }
 
     let now = Utc::now();
     let mut present = StdBuckHashSet::default();
     for (digest, expires) in expirations {
-        if expires <= now {
-            return Ok(false);
+        if expires > now {
+            present.insert(digest);
         }
-        present.insert(digest);
     }
 
-    Ok(requested.iter().all(|digest| present.contains(digest)))
+    let missing = unique
+        .into_iter()
+        .filter(|digest| !present.contains(&digest.to_re()))
+        .collect::<Vec<_>>();
+    if missing.is_empty() && present.len() == requested.len() {
+        Ok(RemoteCacheDigestPresence::Present)
+    } else {
+        Ok(RemoteCacheDigestPresence::Missing(missing))
+    }
 }
 
 fn is_remote_execution_not_found(error: &bz_error::Error) -> bool {
@@ -196,6 +210,7 @@ pub async fn download_action_results<'a>(
     materialize_failed_re_action_outputs: bool,
     additional_message: Option<String>,
     output_trees_download_config: &OutputTreesDownloadConfig,
+    known_missing_remote_cas: Option<&KnownMissingRemoteCasTracker>,
 ) -> DownloadResult {
     let std_streams = response.std_streams(re_client, digest_config);
     let std_streams = async {
@@ -242,6 +257,7 @@ pub async fn download_action_results<'a>(
         response,
         &details,
         cache_hit_missing_cas_is_cache_miss,
+        known_missing_remote_cas,
         cancellations,
     );
 
@@ -396,6 +412,7 @@ impl CasDownloader<'_> {
         output_spec: &dyn RemoteActionResult,
         details: &RemoteCommandExecutionDetails,
         cache_hit_missing_cas_is_cache_miss: bool,
+        known_missing_remote_cas: Option<&KnownMissingRemoteCasTracker>,
         cancellations: &CancellationContext,
     ) -> ControlFlow<
         DownloadResult,
@@ -449,11 +466,25 @@ impl CasDownloader<'_> {
                 };
 
             if cache_hit_missing_cas_is_cache_miss {
-                match remote_artifact_values_present(self.re_client, &artifacts.mapped_outputs)
+                if let Some(known_missing_remote_cas) = known_missing_remote_cas
+                    && known_missing_remote_cas
+                        .contains_artifact_values(artifacts.mapped_outputs.values())
+                {
+                    tracing::debug!(
+                        "Cached result for `{}` referenced a known-missing CAS blob; treating it as a cache miss",
+                        details.action_digest,
+                    );
+                    return ControlFlow::Break(DownloadResult::CacheMiss(manager));
+                }
+
+                match remote_artifact_values_presence(self.re_client, &artifacts.mapped_outputs)
                     .await
                 {
-                    Ok(true) => {}
-                    Ok(false) => {
+                    Ok(RemoteCacheDigestPresence::Present) => {}
+                    Ok(RemoteCacheDigestPresence::Missing(missing)) => {
+                        if let Some(known_missing_remote_cas) = known_missing_remote_cas {
+                            known_missing_remote_cas.record_file_digests(&missing);
+                        }
                         tracing::debug!(
                             "Cached result for `{}` referenced missing output CAS blobs; treating it as a cache miss",
                             details.action_digest,

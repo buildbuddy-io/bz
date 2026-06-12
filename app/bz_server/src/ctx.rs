@@ -22,6 +22,7 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use bz_build_api::actions::calculation::HasLostRemoteRewindTracker;
 use bz_build_api::actions::execute::dice_data::SetCommandExecutor;
+use bz_build_api::actions::execute::dice_data::SetKnownMissingRemoteCasTracker;
 use bz_build_api::actions::execute::dice_data::SetReClient;
 use bz_build_api::actions::execute::dice_data::set_fallback_executor_config;
 use bz_build_api::actions::impls::run_action_knobs::HasRunActionKnobs;
@@ -95,6 +96,7 @@ use bz_events::dispatch::EventDispatcher;
 use bz_events::metadata;
 use bz_events::schedule_type::SandcastleScheduleType;
 use bz_execute::execute::blocking::SetBlockingExecutor;
+use bz_execute::execute::known_missing::KnownMissingRemoteCasTracker;
 use bz_execute::knobs::ExecutorGlobalKnobs;
 use bz_execute::materialize::materializer::Materializer;
 use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
@@ -1338,6 +1340,8 @@ impl DiceCommandUpdater<'_, '_> {
         if let Some(v) = &self.profile_event_listener {
             SetProfileEventListener::set(&mut data, v.clone());
         }
+        let known_missing_remote_cas = Arc::new(KnownMissingRemoteCasTracker::default());
+        data.set_known_missing_remote_cas_tracker(known_missing_remote_cas.dupe());
         data.set_command_executor(Box::new(CommandExecutorFactory::new(
             self.re_connection.dupe(),
             host_sharing_broker,
@@ -1364,6 +1368,7 @@ impl DiceCommandUpdater<'_, '_> {
             remote_metadata_concurrency,
             remote_action_cache_concurrency,
             self.cmd_ctx.base_context.daemon.daemon_id.dupe(),
+            known_missing_remote_cas,
             &self
                 .cmd_ctx
                 .base_context

@@ -574,6 +574,7 @@ impl PreparedCommandExecutor for ReExecutor {
                 self.materialize_failed_outputs,
                 additional_message,
                 &self.output_trees_download_config,
+                None,
             )
             .boxed()
             .await;
