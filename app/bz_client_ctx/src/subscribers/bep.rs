@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::path::PathBuf;
@@ -949,10 +950,7 @@ async fn generate_chrome_trace_profile(
     let current_exe =
         std::env::current_exe().map_err(|e| BepError::ProfileUpload(e.to_string()))?;
     let output = tokio::process::Command::new(current_exe)
-        .arg("debug")
-        .arg("chrome-trace")
-        .arg(profile_path)
-        .arg(event_log.as_path())
+        .args(chrome_trace_profile_args(event_log.as_path(), profile_path))
         .output()
         .await
         .map_err(|e| BepError::ProfileUpload(e.to_string()))?;
@@ -968,6 +966,16 @@ async fn generate_chrome_trace_profile(
     }
 
     Ok(())
+}
+
+fn chrome_trace_profile_args(event_log: &Path, profile_path: &Path) -> Vec<OsString> {
+    vec![
+        "debug".into(),
+        "chrome-trace".into(),
+        "--trace-path".into(),
+        profile_path.as_os_str().to_owned(),
+        event_log.as_os_str().to_owned(),
+    ]
 }
 
 async fn upload_timing_profile(
@@ -1976,6 +1984,29 @@ mod tests {
                 Some("new")
             ),
             vec!["x-other=value", "x-buildbuddy-api-key=new"]
+        );
+    }
+
+    #[test]
+    fn chrome_trace_profile_args_passes_trace_path_explicitly() {
+        let args = chrome_trace_profile_args(
+            Path::new("/tmp/events.pb.zst"),
+            Path::new("/tmp/profile.trace"),
+        );
+        let args = args
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "debug",
+                "chrome-trace",
+                "--trace-path",
+                "/tmp/profile.trace",
+                "/tmp/events.pb.zst"
+            ]
         );
     }
 
