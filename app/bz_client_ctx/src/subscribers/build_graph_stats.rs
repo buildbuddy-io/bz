@@ -140,26 +140,24 @@ mod tests {
         let events = handler.build_graph_stats_from_build_response(&res);
 
         let event_expected = bz_data::BuckEvent {
-            data: Some(bz_data::buck_event::Data::Record(
-                bz_data::RecordEvent {
-                    data: Some(bz_data::record_event::Data::BuildGraphStats(
-                        bz_data::BuildGraphStats {
-                            build_targets: vec![
-                                bz_data::BuildTarget {
-                                    target: "//some/target:A".to_owned(),
-                                    configuration: "//some/conf:A".to_owned(),
-                                    configured_graph_size: Some(123),
-                                },
-                                bz_data::BuildTarget {
-                                    target: "//some/target:B".to_owned(),
-                                    configuration: "//some/conf:B".to_owned(),
-                                    configured_graph_size: None,
-                                },
-                            ],
-                        },
-                    )),
-                },
-            )),
+            data: Some(bz_data::buck_event::Data::Record(bz_data::RecordEvent {
+                data: Some(bz_data::record_event::Data::BuildGraphStats(
+                    bz_data::BuildGraphStats {
+                        build_targets: vec![
+                            bz_data::BuildTarget {
+                                target: "//some/target:A".to_owned(),
+                                configuration: "//some/conf:A".to_owned(),
+                                configured_graph_size: Some(123),
+                            },
+                            bz_data::BuildTarget {
+                                target: "//some/target:B".to_owned(),
+                                configuration: "//some/conf:B".to_owned(),
+                                configured_graph_size: None,
+                            },
+                        ],
+                    },
+                )),
+            })),
             ..Default::default()
         };
 
@@ -219,27 +217,23 @@ mod tests {
         let output_build_targets_2 = vec![build_target.clone(), build_target.clone()];
 
         let event_expected_3000 = bz_data::BuckEvent {
-            data: Some(bz_data::buck_event::Data::Record(
-                bz_data::RecordEvent {
-                    data: Some(bz_data::record_event::Data::BuildGraphStats(
-                        bz_data::BuildGraphStats {
-                            build_targets: output_build_targets_3000,
-                        },
-                    )),
-                },
-            )),
+            data: Some(bz_data::buck_event::Data::Record(bz_data::RecordEvent {
+                data: Some(bz_data::record_event::Data::BuildGraphStats(
+                    bz_data::BuildGraphStats {
+                        build_targets: output_build_targets_3000,
+                    },
+                )),
+            })),
             ..Default::default()
         };
         let event_expected_2 = bz_data::BuckEvent {
-            data: Some(bz_data::buck_event::Data::Record(
-                bz_data::RecordEvent {
-                    data: Some(bz_data::record_event::Data::BuildGraphStats(
-                        bz_data::BuildGraphStats {
-                            build_targets: output_build_targets_2,
-                        },
-                    )),
-                },
-            )),
+            data: Some(bz_data::buck_event::Data::Record(bz_data::RecordEvent {
+                data: Some(bz_data::record_event::Data::BuildGraphStats(
+                    bz_data::BuildGraphStats {
+                        build_targets: output_build_targets_2,
+                    },
+                )),
+            })),
             ..Default::default()
         };
 

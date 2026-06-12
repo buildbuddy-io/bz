@@ -271,6 +271,12 @@ impl CommandExecutionManagerWithClaim {
         self.inner.execution_kind = Some(execution_kind);
         self
     }
+
+    pub fn start_waiting_category(&mut self, waiting_category: WaitingCategory) {
+        self.inner
+            .waiting_data
+            .start_waiting_category_now(waiting_category);
+    }
 }
 
 impl CommandExecutionManagerLike for CommandExecutionManagerWithClaim {

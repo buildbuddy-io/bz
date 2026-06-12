@@ -47,6 +47,7 @@ use bz_core::fs::project::ProjectRoot;
 use bz_core::logging::LogConfigurationReloadHandle;
 use bz_core::pattern::unparsed::UnparsedPatternPredicate;
 use bz_error::BuckErrorContext;
+use bz_events::BuckEvent;
 use bz_events::Event;
 use bz_events::daemon_id::DaemonId;
 use bz_events::dispatch::EventDispatcher;
@@ -837,19 +838,17 @@ where
 
     let daemon_shutdown_stream = daemon_shutdown_channel
         .map_ok(move |shutdown| CommandProgress {
-            progress: Some(command_progress::Progress::Event(Box::new(
-                bz_data::BuckEvent {
-                    timestamp: Some(SystemTime::now().into()),
-                    trace_id: trace_id.to_string(),
-                    span_id: 0,
-                    parent_id: 0,
-                    data: Some(
-                        bz_data::InstantEvent {
-                            data: Some(shutdown.into()),
-                        }
-                        .into(),
-                    ),
-                },
+            progress: Some(command_progress::Progress::Event(Box::from(
+                BuckEvent::new(
+                    SystemTime::now(),
+                    trace_id.dupe(),
+                    None,
+                    None,
+                    bz_data::InstantEvent {
+                        data: Some(shutdown.into()),
+                    }
+                    .into(),
+                ),
             ))),
         })
         .into_stream()

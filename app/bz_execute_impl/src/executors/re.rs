@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use bz_build_signals::env::WaitingCategory;
 use bz_core::execution_types::executor_config::ReGangWorker;
 use bz_core::execution_types::executor_config::RemoteExecutionExtraParams;
 use bz_core::execution_types::executor_config::RemoteExecutorDependency;
@@ -108,7 +109,7 @@ pub struct ReExecutor {
 impl ReExecutor {
     async fn upload(
         &self,
-        manager: CommandExecutionManager,
+        mut manager: CommandExecutionManager,
         identity: &ReActionIdentity<'_>,
         blobs: &ActionBlobs,
         paths: &CommandExecutionPaths,
@@ -117,6 +118,7 @@ impl ReExecutor {
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
         let re_client = &self.re_client;
 
+        manager.start_waiting_category(WaitingCategory::RemoteUploading);
         let upload_response = span_async(
             bz_data::ReUploadStart {
                 target_id: identity.target_id.clone(),
@@ -200,6 +202,7 @@ impl ReExecutor {
             action_digest,
         );
 
+        manager.start_waiting_category(WaitingCategory::RemoteExecuting);
         let now = TimeSpan::start_now();
         let dependencies = dependencies.into_iter().collect::<Vec<_>>();
 
@@ -541,6 +544,7 @@ impl PreparedCommandExecutor for ReExecutor {
 
         let mut retried_missing_cache_cas = false;
         let mut res = loop {
+            manager.start_waiting_category(WaitingCategory::RemoteDownloading);
             let exit_code = response.execute_response.action_result.exit_code;
             let additional_message = if response.execute_response.status.message.is_empty() {
                 None

@@ -5070,7 +5070,7 @@ impl RunAction {
                 manager
                     .inner
                     .waiting_data
-                    .start_waiting_category_now(WaitingCategory::Unknown);
+                    .start_waiting_category_now(WaitingCategory::PreparingExecution);
                 let (req, prepared_action) = if self.inner.incremental_remote_outputs {
                     // For the case of incremental remote outputs, we checked the caches using the action which
                     // does not include the outputs as inputs.

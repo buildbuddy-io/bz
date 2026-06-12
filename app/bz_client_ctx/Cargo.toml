@@ -22,6 +22,7 @@ derivative = { workspace = true }
 derive_more = { workspace = true }
 dupe = { workspace = true }
 fbinit = { workspace = true }
+flate2 = { workspace = true }
 fs4 = { workspace = true }
 futures = { workspace = true }
 gazebo = { workspace = true }

@@ -725,6 +725,7 @@ where
 
         let BuildInfo {
             critical_path,
+            build_graph_critical_path,
             slowest_path,
             num_nodes,
             num_edges,
@@ -736,7 +737,11 @@ where
                 .collect(),
         )?;
 
-        let critical_path2 = critical_path.into_critical_path_proto(&ctx.early_command_timing, now);
+        let critical_path2 =
+            critical_path.into_real_work_critical_path_proto(&ctx.early_command_timing);
+
+        let build_graph_critical_path =
+            build_graph_critical_path.into_critical_path_proto(&ctx.early_command_timing, now);
 
         let slowest_path = slowest_path.into_critical_path_proto(&ctx.early_command_timing, now);
 
@@ -759,6 +764,7 @@ where
             num_edges,
             backend_name: Some(T::name().to_string()),
             top_level_targets,
+            build_graph_critical_path,
         });
         Ok(())
     }
@@ -940,8 +946,11 @@ where
 }
 
 pub(crate) struct BuildInfo {
-    /// Node, its data, and its potential for improvement
+    /// Critical path through span-backed typed build work.
+    /// Excludes synthetic waiting and scheduler gaps.
     critical_path: DetailedCriticalPath,
+    /// Diagnostic longest path through the build graph/DICE graph.
+    build_graph_critical_path: DetailedCriticalPath,
     /// Path where each node's predecessor is the dependency that finished last.
     /// Unlike critical path, waiting time is directly attributable to the immediate predecessor.
     slowest_path: DetailedCriticalPath,
@@ -959,6 +968,11 @@ pub(crate) struct DetailedCriticalPathEntry {
     pub(crate) potential_improvement: Option<Duration>,
     /// The time when all dependencies finished executing (if known).
     pub(crate) deps_finished_time: Option<Instant>,
+    /// Overrides the duration used for aggregate critical path accounting.
+    ///
+    /// Critical-path entries retain their actual wall-clock span, but only the
+    /// non-overlapping portion counts toward aggregate critical-path duration.
+    pub(crate) critical_path_duration: Option<Duration>,
 }
 
 pub(crate) struct DetailedCriticalPath {
@@ -1026,12 +1040,84 @@ impl DetailedCriticalPath {
         }
 
         enhancer.add_simple_entry(
-            Some("unknown_final_work"),
+            Some("critical_path_final_work"),
             bz_data::critical_path_entry2::ComputeCriticalPath {}.into(),
             TimeSpan::new_saturating(critical_path_compute_start, Instant::now()),
             true,
         );
         enhancer.into_entries()
+    }
+
+    fn into_real_work_critical_path_proto(
+        self,
+        early_command_timing: &EarlyCommandTiming,
+    ) -> Vec<bz_data::CriticalPathEntry2> {
+        self.entries
+            .into_iter()
+            .filter_map(|entry| entry.into_real_work_critical_path_proto(early_command_timing))
+            .collect()
+    }
+}
+
+impl DetailedCriticalPathEntry {
+    fn into_real_work_critical_path_proto(
+        self,
+        early_command_timing: &EarlyCommandTiming,
+    ) -> Option<bz_data::CriticalPathEntry2> {
+        use bz_data::critical_path_entry2::Entry;
+
+        if self.data.span_ids.is_empty() {
+            return None;
+        }
+
+        let entry_data = self
+            .key
+            .into_critical_path_entry_data(&self.data.extra_data);
+        if !matches!(
+            entry_data,
+            Entry::ActionExecution(_)
+                | Entry::Analysis(_)
+                | Entry::AnonAnalysis(_)
+                | Entry::DynamicAnalysis(_)
+                | Entry::Load(_)
+                | Entry::Listing(_)
+                | Entry::FinalMaterialization(_)
+        ) {
+            return None;
+        }
+
+        Some(bz_data::CriticalPathEntry2 {
+            span_ids: self
+                .data
+                .span_ids
+                .iter()
+                .map(|span_id| (*span_id).into())
+                .collect(),
+            duration: Some(duration_to_proto_saturating(
+                self.critical_path_duration
+                    .unwrap_or_else(|| self.data.duration.critical_path_duration()),
+            )),
+            user_duration: Some(duration_to_proto_saturating(self.data.duration.user)),
+            queue_duration: self.data.duration.queue.map(duration_to_proto_saturating),
+            total_duration: Some(duration_to_proto_saturating(
+                self.data.duration.total.duration(),
+            )),
+            potential_improvement_duration: self
+                .potential_improvement
+                .map(duration_to_proto_saturating),
+            non_critical_path_duration: None,
+            start_offset_ns: Some(
+                self.data
+                    .duration
+                    .total
+                    .start()
+                    .saturating_duration_since(early_command_timing.command_start)
+                    .as_nanos()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            ),
+            entry: Some(entry_data),
+        })
     }
 }
 

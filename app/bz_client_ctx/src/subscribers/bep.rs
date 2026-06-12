@@ -1,7 +1,5 @@
-use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::Path;
-use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -13,11 +11,9 @@ use bz_cli_proto::CommandResult;
 use bz_cli_proto::command_result;
 use bz_common::init::BUILDBUDDY_API_KEY_HEADER;
 use bz_error::ExitCode;
-use bz_event_log::file_names::find_log_by_trace_id;
 use bz_event_observer::event_observer::EventObserver;
 use bz_event_observer::event_observer::NoopEventObserverExtra;
 use bz_events::BuckEvent;
-use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use prost::Message;
@@ -39,6 +35,7 @@ use tonic::transport::Endpoint;
 
 use crate::client_ctx::ClientCommandContext;
 use crate::exit_result::ExitResult;
+use crate::subscribers::chrome_trace_profile::ChromeTraceProfileWriter;
 use crate::subscribers::subscriber::EventSubscriber;
 
 const BAZEL_BUILD_EVENT_TYPE_URL: &str = "type.googleapis.com/build_event_stream.BuildEvent";
@@ -106,7 +103,6 @@ pub(crate) struct BuildEventProtocolConfig {
     working_directory: String,
     workspace_directory: String,
     trace_id: TraceId,
-    event_log_dir: Option<AbsNormPathBuf>,
 }
 
 impl BuildEventProtocolConfig {
@@ -133,14 +129,6 @@ impl BuildEventProtocolConfig {
         let keywords = keywords(T::COMMAND_NAME, &event_log_opts.bes_keywords);
         let project_id = event_log_opts.bes_instance_name.clone().unwrap_or_default();
         let timeout = event_log_opts.bes_timeout_duration()?;
-        let event_log_dir = paths.and_then(|p| {
-            if event_log_opts.no_event_log {
-                None
-            } else {
-                Some(p.log_dir())
-            }
-        });
-
         Ok(Some(Self {
             backend,
             headers: headers_with_buildbuddy_api_key(
@@ -164,7 +152,6 @@ impl BuildEventProtocolConfig {
             working_directory: ctx.working_dir.to_string(),
             workspace_directory,
             trace_id: ctx.trace_id.dupe(),
-            event_log_dir,
         }))
     }
 }
@@ -301,6 +288,7 @@ pub(crate) struct BuildEventProtocolSubscriber {
     workspace_status_sent: bool,
     finished_sent: bool,
     observer: EventObserver<NoopEventObserverExtra>,
+    profile_writer: Option<ChromeTraceProfileWriter>,
 }
 
 impl BuildEventProtocolSubscriber {
@@ -310,6 +298,13 @@ impl BuildEventProtocolSubscriber {
         let terminal_output_tap = crate::stdio::install_output_tap(terminal_output_sender);
         let upload = tokio::spawn(upload_build_events(config.clone(), receiver));
         let trace_id = config.trace_id.dupe();
+        let profile_writer = Some(ChromeTraceProfileWriter::new(
+            config.command_name.clone(),
+            config.trace_id.dupe(),
+            config.start_time,
+            config.argv.clone(),
+            config.workspace_directory.clone(),
+        ));
         let mut this = Self {
             sender: Some(sender),
             upload: Some(upload),
@@ -324,6 +319,7 @@ impl BuildEventProtocolSubscriber {
             workspace_status_sent: false,
             finished_sent: false,
             observer: EventObserver::new(trace_id),
+            profile_writer,
         };
 
         this.send_bazel_event(this.started_event());
@@ -692,7 +688,7 @@ impl BuildEventProtocolSubscriber {
         });
     }
 
-    async fn build_tool_logs(&self) -> Vec<build_event_stream::File> {
+    async fn build_tool_logs(&mut self) -> Vec<build_event_stream::File> {
         let upload = match self.config.timeout {
             Some(timeout) if !timeout.is_zero() => {
                 match tokio::time::timeout(timeout, self.maybe_upload_timing_profile()).await {
@@ -716,26 +712,20 @@ impl BuildEventProtocolSubscriber {
     }
 
     async fn maybe_upload_timing_profile(
-        &self,
+        &mut self,
     ) -> bz_error::Result<Option<build_event_stream::File>> {
-        let Some(event_log_dir) = &self.config.event_log_dir else {
-            return Ok(None);
-        };
-        let Some(event_log) = find_log_by_trace_id(event_log_dir, &self.config.trace_id)? else {
-            tracing::warn!(
-                "Could not find event log for invocation {}; skipping BEP timing profile",
-                self.config.invocation_id
-            );
+        let Some(profile_writer) = self.profile_writer.take() else {
             return Ok(None);
         };
 
-        let profile_path = temporary_profile_path(&self.config.invocation_id);
-        let profile_result = generate_chrome_trace_profile(event_log.path(), &profile_path).await;
-        if let Err(error) = profile_result {
-            let _ignored = tokio::fs::remove_file(&profile_path).await;
-            return Err(error);
-        }
-
+        let profile_path = profile_writer.path().to_owned();
+        let profile_path = match profile_writer.finish().await {
+            Ok(path) => path,
+            Err(error) => {
+                let _ignored = tokio::fs::remove_file(&profile_path).await;
+                return Err(error);
+            }
+        };
         let upload_result = upload_timing_profile(
             &self.config.backend,
             &self.config.headers,
@@ -779,6 +769,15 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
     ) -> bz_error::Result<()> {
         for event in events {
             self.observer.observe(event).await?;
+        }
+        if let Some(mut profile_writer) = self.profile_writer.take() {
+            match profile_writer.handle_events(events).await {
+                Ok(()) => self.profile_writer = Some(profile_writer),
+                Err(error) => {
+                    tracing::warn!("Failed to write BEP timing profile: {error:#}");
+                    profile_writer.discard().await;
+                }
+            }
         }
         self.drain_terminal_output();
         self.maybe_flush_terminal_progress();
@@ -943,41 +942,6 @@ async fn upload_build_events(
     })
 }
 
-async fn generate_chrome_trace_profile(
-    event_log: &bz_fs::paths::abs_path::AbsPath,
-    profile_path: &Path,
-) -> bz_error::Result<()> {
-    let current_exe =
-        std::env::current_exe().map_err(|e| BepError::ProfileUpload(e.to_string()))?;
-    let output = tokio::process::Command::new(current_exe)
-        .args(chrome_trace_profile_args(event_log.as_path(), profile_path))
-        .output()
-        .await
-        .map_err(|e| BepError::ProfileUpload(e.to_string()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(BepError::ProfileUpload(format!(
-            "chrome-trace exited with {}: stdout: {}, stderr: {}",
-            output.status, stdout, stderr
-        ))
-        .into());
-    }
-
-    Ok(())
-}
-
-fn chrome_trace_profile_args(event_log: &Path, profile_path: &Path) -> Vec<OsString> {
-    vec![
-        "debug".into(),
-        "chrome-trace".into(),
-        "--trace-path".into(),
-        profile_path.as_os_str().to_owned(),
-        event_log.as_os_str().to_owned(),
-    ]
-}
-
 async fn upload_timing_profile(
     backend: &str,
     headers: &[String],
@@ -1033,12 +997,6 @@ async fn upload_timing_profile(
         digest,
         length: size,
     })
-}
-
-fn temporary_profile_path(invocation_id: &str) -> PathBuf {
-    let mut path = std::env::temp_dir();
-    path.push(format!("buck2-{invocation_id}-{PROFILE_NAME}"));
-    path
 }
 
 fn bytestream_upload_resource_name(
@@ -1848,7 +1806,6 @@ mod tests {
             working_directory: "/workspace".to_owned(),
             workspace_directory: "/workspace".to_owned(),
             trace_id: TraceId::null(),
-            event_log_dir: None,
         }
     }
 
@@ -1869,6 +1826,7 @@ mod tests {
             workspace_status_sent: false,
             finished_sent: false,
             observer: EventObserver::new(TraceId::null()),
+            profile_writer: None,
         }
     }
 
@@ -1984,29 +1942,6 @@ mod tests {
                 Some("new")
             ),
             vec!["x-other=value", "x-buildbuddy-api-key=new"]
-        );
-    }
-
-    #[test]
-    fn chrome_trace_profile_args_passes_trace_path_explicitly() {
-        let args = chrome_trace_profile_args(
-            Path::new("/tmp/events.pb.zst"),
-            Path::new("/tmp/profile.trace"),
-        );
-        let args = args
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            args,
-            vec![
-                "debug",
-                "chrome-trace",
-                "--trace-path",
-                "/tmp/profile.trace",
-                "/tmp/events.pb.zst"
-            ]
         );
     }
 

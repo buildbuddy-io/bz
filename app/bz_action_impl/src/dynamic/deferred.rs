@@ -414,7 +414,7 @@ pub(crate) async fn prepare_and_execute_lambda(
                 bz_data::DeferredPreparationStageEnd {},
             )
             .await?;
-            waiting_data.start_waiting_category_now(WaitingCategory::Unknown);
+            waiting_data.start_waiting_category_now(WaitingCategory::DynamicExecuting);
             let (time_span, spans, res) = cancellation
                 .with_structured_cancellation(|observer| {
                     execute_lambda(

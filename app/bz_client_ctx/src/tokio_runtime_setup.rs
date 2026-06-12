@@ -14,7 +14,7 @@ use bz_util::tokio_runtime::new_tokio_runtime;
 /// Tokio runtime used by the client commands.
 pub fn client_tokio_runtime() -> bz_error::Result<tokio::runtime::Runtime> {
     // Do not use current thread because current thread may have too low thread size.
-    new_tokio_runtime("buck2-cli")
+    new_tokio_runtime("bz-cli")
         // Tokio creates this number of threads,
         // and creating too many threads for short commands is expensive.
         .worker_threads(1)

@@ -13,6 +13,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use bz_analysis::analysis::calculation::AnalysisKey;
+use bz_artifact::actions::key::ActionKey;
+use bz_build_api::artifact_groups::ArtifactGroup;
 use bz_build_signals::env::CriticalPathBackendName;
 use bz_build_signals::env::NodeDuration;
 use bz_build_signals::env::WaitingData;
@@ -231,23 +233,30 @@ impl BuildListenerBackend for LongestPathGraphBackend {
                 .unwrap_or(u64::MAX)
         });
 
-        let (slowest_path, cp_res) = std::thread::scope(|s| {
-            let cp = s.spawn(|| {
+        let (slowest_path, build_graph_cp_res, work_cp_res) = std::thread::scope(|s| {
+            let build_graph_cp = s.spawn(|| {
                 compute_critical_paths(&graph, &keys, &data, durations, &self.top_level_targets)
+            });
+            let work_cp = s.spawn(|| {
+                compute_real_work_critical_path(&graph, &keys, &data, &self.top_level_targets)
             });
             let slow = s.spawn(|| compute_slowest_paths(&graph, &keys, &data));
 
-            let cp = cp.join().expect("thread panicked");
+            let build_graph_cp = build_graph_cp.join().expect("thread panicked");
+            let work_cp = work_cp.join().expect("thread panicked");
             let slow = slow.join().expect("thread panicked");
 
-            (slow, cp)
+            (slow, build_graph_cp, work_cp)
         });
 
         let slowest_path = slowest_path?;
-        let (critical_path, critical_path_for_top_level_targets) = cp_res?;
+        let (build_graph_critical_path, _build_graph_critical_path_for_top_level_targets) =
+            build_graph_cp_res?;
+        let (critical_path, critical_path_for_top_level_targets) = work_cp_res?;
 
         Ok(BuildInfo {
             critical_path,
+            build_graph_critical_path,
             slowest_path,
             num_nodes: graph.vertices_count() as _,
             num_edges: graph.edges_count() as _,
@@ -258,6 +267,281 @@ impl BuildListenerBackend for LongestPathGraphBackend {
     fn name() -> CriticalPathBackendName {
         CriticalPathBackendName::LongestPathGraph
     }
+}
+
+#[derive(Clone, Copy)]
+struct WorkPathState {
+    cost: Duration,
+    predecessor: Option<VertexId>,
+}
+
+fn compute_real_work_critical_path(
+    graph: &Graph,
+    keys: &VertexKeys<NodeKey>,
+    data: &VertexData<NodeData>,
+    top_level_targets: &[TopLevelTarget],
+) -> Result<(DetailedCriticalPath, Vec<(ConfiguredTargetLabel, Duration)>), CriticalPathError> {
+    let work_vertices = graph
+        .iter_vertices()
+        .filter(|idx| is_critical_path_work_node(&keys[*idx], &data[*idx]))
+        .collect::<Vec<_>>();
+
+    if work_vertices.is_empty() {
+        return Ok((DetailedCriticalPath::empty(), Vec::new()));
+    }
+
+    let action_key_to_vertex = work_vertices
+        .iter()
+        .filter_map(|idx| action_key_for_node(&data[*idx]).map(|key| (key.dupe(), *idx)))
+        .collect::<HashMap<_, _>>();
+
+    let mut work_deps = graph.allocate_vertex_data(Vec::<VertexId>::new());
+    for work in &work_vertices {
+        let mut deps =
+            explicit_action_input_dependency_vertices(&data[*work], &action_key_to_vertex);
+        deps.extend(collect_reachable_work_vertices(
+            graph,
+            keys,
+            data,
+            graph.iter_edges(*work),
+        ));
+        let mut seen = HashSet::new();
+        deps.retain(|dep| dep != work && seen.insert(*dep));
+        work_deps[*work] = deps;
+    }
+
+    let mut memo = HashMap::new();
+    let mut visiting = HashSet::new();
+    let mut max_work = None;
+    for work in &work_vertices {
+        let state =
+            compute_work_path_state(*work, keys, data, &work_deps, &mut memo, &mut visiting)?;
+        if max_work.is_none_or(|(_, max): (VertexId, WorkPathState)| state.cost > max.cost) {
+            max_work = Some((*work, state));
+        }
+    }
+
+    let critical_path = match max_work {
+        Some((work, _)) => work_path_to_detailed_path(work, keys, data, &work_deps, &memo)?,
+        None => DetailedCriticalPath::empty(),
+    };
+
+    let critical_path_for_top_level_targets = top_level_targets
+        .iter()
+        .filter_map(|target| {
+            let mut work = HashSet::new();
+            for artifact in &target.artifacts {
+                let Some(vertex) = keys.get(artifact) else {
+                    continue;
+                };
+                work.extend(collect_reachable_work_vertices(
+                    graph,
+                    keys,
+                    data,
+                    std::iter::once(vertex),
+                ));
+            }
+
+            let duration = work
+                .iter()
+                .filter_map(|work| memo.get(work).map(|state| state.cost))
+                .max()?;
+
+            Some((target.target.dupe(), duration))
+        })
+        .collect();
+
+    Ok((critical_path, critical_path_for_top_level_targets))
+}
+
+fn is_critical_path_work_node(key: &NodeKey, data: &NodeData) -> bool {
+    use bz_data::critical_path_entry2::Entry;
+
+    if data.span_ids.is_empty() {
+        return false;
+    }
+
+    match key {
+        NodeKey::BuildKey(..) => matches!(data.extra_data, NodeExtraData::Action(..)),
+        NodeKey::AnalysisKey(..) => matches!(data.extra_data, NodeExtraData::Analysis(..)),
+        NodeKey::InterpreterResultsKey(..) => true,
+        NodeKey::PackageListingKey(..) => true,
+        NodeKey::FinalMaterialization(..) => true,
+        NodeKey::Dyn(_, dyn_key) => matches!(
+            dyn_key.critical_path_entry_proto(),
+            Some(Entry::Analysis(..) | Entry::AnonAnalysis(..) | Entry::DynamicAnalysis(..))
+        ),
+        NodeKey::EnsureProjectedArtifactKey(..)
+        | NodeKey::EnsureTransitiveSetProjectionKey(..)
+        | NodeKey::TestExecution(..)
+        | NodeKey::TestListing(..) => false,
+    }
+}
+
+fn action_key_for_node(data: &NodeData) -> Option<&ActionKey> {
+    match &data.extra_data {
+        NodeExtraData::Action(action) => Some(action.action.key()),
+        _ => None,
+    }
+}
+
+fn explicit_action_input_dependency_vertices(
+    data: &NodeData,
+    action_key_to_vertex: &HashMap<ActionKey, VertexId>,
+) -> Vec<VertexId> {
+    let NodeExtraData::Action(action) = &data.extra_data else {
+        return Vec::new();
+    };
+
+    let inputs = match action.action.inputs() {
+        Ok(inputs) => inputs,
+        Err(e) => {
+            drop(soft_error!("critical_path_action_inputs", e.into(), quiet: true));
+            return Vec::new();
+        }
+    };
+
+    let mut deps = Vec::new();
+    for input in inputs.iter() {
+        if let ArtifactGroup::Artifact(artifact) = input
+            && let Some(action_key) = artifact.action_key()
+            && let Some(vertex) = action_key_to_vertex.get(action_key)
+        {
+            deps.push(*vertex);
+        }
+    }
+    deps
+}
+
+fn collect_reachable_work_vertices(
+    graph: &Graph,
+    keys: &VertexKeys<NodeKey>,
+    data: &VertexData<NodeData>,
+    roots: impl IntoIterator<Item = VertexId>,
+) -> Vec<VertexId> {
+    let mut work = Vec::new();
+    let mut work_seen = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut stack = roots.into_iter().collect::<Vec<_>>();
+
+    while let Some(vertex) = stack.pop() {
+        if !visited.insert(vertex) {
+            continue;
+        }
+
+        if is_critical_path_work_node(&keys[vertex], &data[vertex]) {
+            if work_seen.insert(vertex) {
+                work.push(vertex);
+            }
+            continue;
+        }
+
+        stack.extend(graph.iter_edges(vertex));
+    }
+
+    work
+}
+
+fn compute_work_path_state(
+    work: VertexId,
+    keys: &VertexKeys<NodeKey>,
+    data: &VertexData<NodeData>,
+    work_deps: &VertexData<Vec<VertexId>>,
+    memo: &mut HashMap<VertexId, WorkPathState>,
+    visiting: &mut HashSet<VertexId>,
+) -> Result<WorkPathState, CriticalPathError> {
+    if let Some(state) = memo.get(&work) {
+        return Ok(*state);
+    }
+
+    if !visiting.insert(work) {
+        return Err(CriticalPathError::CycleDetected(format!(
+            "critical path dependency cycle at {}",
+            keys[work]
+        )));
+    }
+
+    let mut best = None;
+    for dep in &work_deps[work] {
+        let dep_state = compute_work_path_state(*dep, keys, data, work_deps, memo, visiting)?;
+        let contribution = non_overlapping_duration(data, work, *dep);
+        let cost = dep_state
+            .cost
+            .checked_add(contribution)
+            .unwrap_or(Duration::MAX);
+        if best.is_none_or(|(best_cost, _)| cost > best_cost) {
+            best = Some((cost, *dep));
+        }
+    }
+
+    let state = match best {
+        Some((cost, predecessor)) => WorkPathState {
+            cost,
+            predecessor: Some(predecessor),
+        },
+        None => WorkPathState {
+            cost: data[work].duration.total.duration(),
+            predecessor: None,
+        },
+    };
+
+    visiting.remove(&work);
+    memo.insert(work, state);
+    Ok(state)
+}
+
+fn non_overlapping_duration(
+    data: &VertexData<NodeData>,
+    work: VertexId,
+    dependency: VertexId,
+) -> Duration {
+    let work_span = data[work].duration.total;
+    let dependency_end = data[dependency].duration.total.end();
+    let effective_start = work_span.start().max(dependency_end);
+    work_span.end().saturating_duration_since(effective_start)
+}
+
+fn work_path_to_detailed_path(
+    work: VertexId,
+    keys: &VertexKeys<NodeKey>,
+    data: &VertexData<NodeData>,
+    work_deps: &VertexData<Vec<VertexId>>,
+    memo: &HashMap<VertexId, WorkPathState>,
+) -> Result<DetailedCriticalPath, CriticalPathError> {
+    let mut path = Vec::new();
+    let mut visited = HashSet::new();
+    let mut current = Some(work);
+
+    while let Some(vertex) = current {
+        if !visited.insert(vertex) {
+            return Err(CriticalPathError::CycleDetected(format!(
+                "critical path predecessor cycle at {}",
+                keys[vertex]
+            )));
+        }
+
+        let predecessor = memo.get(&vertex).and_then(|state| state.predecessor);
+        let critical_path_duration = Some(match predecessor {
+            Some(predecessor) => non_overlapping_duration(data, vertex, predecessor),
+            None => data[vertex].duration.total.duration(),
+        });
+
+        path.push(DetailedCriticalPathEntry {
+            key: keys[vertex].dupe(),
+            data: data[vertex].clone(),
+            potential_improvement: None,
+            deps_finished_time: work_deps[vertex]
+                .iter()
+                .map(|dep| data[*dep].duration.total.end())
+                .max(),
+            critical_path_duration,
+        });
+
+        current = predecessor;
+    }
+
+    path.reverse();
+    Ok(DetailedCriticalPath::new(path))
 }
 
 fn compute_critical_paths(
@@ -330,6 +614,7 @@ fn compute_critical_paths(
                 data: node_data,
                 potential_improvement,
                 deps_finished_time,
+                critical_path_duration: None,
             }
         })
         .collect();
@@ -380,6 +665,7 @@ fn compute_slowest_paths(
             data: data[curr].clone(),
             potential_improvement: None,
             deps_finished_time,
+            critical_path_duration: None,
         });
         node = prev_node;
     }

@@ -732,7 +732,7 @@ impl LocalExecutor {
         &self,
         action_digest: &ActionDigest,
         request: &CommandExecutionRequest,
-        manager: CommandExecutionManagerWithClaim,
+        mut manager: CommandExecutionManagerWithClaim,
         cancellations: &CancellationContext,
         liveliness_observer: impl LivelinessObserver + 'static,
         scratch_path: &ScratchPath,
@@ -810,6 +810,7 @@ impl LocalExecutor {
             Err(e) => return Err(manager.error("prepare_output_dirs_failed", e)),
         };
 
+        manager.start_waiting_category(WaitingCategory::LocalExecuting);
         let (time_span, start_time, res) = executor_stage_async(
             {
                 let env = env
@@ -1136,10 +1137,11 @@ impl LocalExecutor {
         };
         let scratch_path = &materialized_inputs.scratch;
 
-        manager.start_waiting_category(WaitingCategory::Unknown);
+        manager.start_waiting_category(WaitingCategory::ClaimingOutputs);
 
         // TODO: Release here.
-        let manager = manager.claim().boxed().await;
+        let mut manager = manager.claim().boxed().await;
+        manager.start_waiting_category(WaitingCategory::PreparingExecution);
 
         info!(
             "Local execution command line:\n```\n$ {}\n```",
@@ -2258,7 +2260,7 @@ impl PreparedCommandExecutor for LocalExecutor {
         .await;
 
         let _worker_permit = self.acquire_worker_permit(request).await;
-        manager.start_waiting_category(WaitingCategory::Unknown);
+        manager.start_waiting_category(WaitingCategory::PreparingExecution);
 
         // If we start running something, we don't want this task to get dropped, because if we do
         // we might interfere with e.g. clean up.

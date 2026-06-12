@@ -19,6 +19,8 @@ use gazebo::variants::VariantName;
 use crate::DetailedCriticalPathEntry;
 use crate::duration_to_proto_saturating;
 
+const CRITICAL_PATH_OVERHEAD: &str = "critical_path_overhead";
+
 /// Helper for building critical path protobuf entries.
 ///
 /// Accumulates `CriticalPathEntry2` entries during critical path computation,
@@ -46,8 +48,10 @@ impl CriticalPathProtoEnhancer {
             mut data,
             potential_improvement,
             deps_finished_time,
+            critical_path_duration,
         } = entry;
         let proto_entry = key.into_critical_path_entry_data(&data.extra_data);
+        let ready_waiting_category = ready_waiting_category(&proto_entry);
 
         let waiting_for_deps_start = self.last_entry_end;
         let waiting_for_deps_end = deps_finished_time.unwrap_or(waiting_for_deps_start);
@@ -56,7 +60,7 @@ impl CriticalPathProtoEnhancer {
             .is_zero()
         {
             self.add_simple_entry(
-                None,
+                Some(CRITICAL_PATH_OVERHEAD),
                 bz_data::critical_path_entry2::Entry::Waiting(
                     bz_data::critical_path_entry2::Waiting {
                         category: Some("for_deps".to_owned()),
@@ -84,18 +88,17 @@ impl CriticalPathProtoEnhancer {
         {
             match time_span.intersection(&waiting_span) {
                 Some(time_span) => {
-                    // We skip adding WaitingCategory::Unknown entries if they are 0 duration. We don't skip other categories because
-                    // it is useful to know that we measure that time specifically so that a user knows that the adjacent waiting spans
-                    // are not that (i.e. for a local action execution, maybe there'd be an Unknown span and a 0-duration ::LocalQueued
-                    // span and you'd know that the Unknown time was not being spent in the local queue).
-                    if time_span.duration() > Duration::ZERO
-                        || category != &WaitingCategory::Unknown
-                    {
+                    if time_span.duration() > Duration::ZERO {
+                        let category = if category == &WaitingCategory::Ready {
+                            ready_waiting_category.as_str()
+                        } else {
+                            category.variant_name_lowercase()
+                        };
                         self.add_simple_entry(
-                            None,
+                            Some(CRITICAL_PATH_OVERHEAD),
                             bz_data::critical_path_entry2::Entry::Waiting(
                                 bz_data::critical_path_entry2::Waiting {
-                                    category: Some(category.variant_name_lowercase().to_owned()),
+                                    category: Some(category.to_owned()),
                                 },
                             ),
                             time_span,
@@ -112,7 +115,7 @@ impl CriticalPathProtoEnhancer {
         }
 
         self.add_entry_impl(
-            None,
+            Some(CRITICAL_PATH_OVERHEAD),
             data.duration.total,
             bz_data::CriticalPathEntry2 {
                 span_ids: data
@@ -121,7 +124,8 @@ impl CriticalPathProtoEnhancer {
                     .map(|span_id| (*span_id).into())
                     .collect(),
                 duration: Some(duration_to_proto_saturating(
-                    data.duration.critical_path_duration(),
+                    critical_path_duration
+                        .unwrap_or_else(|| data.duration.critical_path_duration()),
                 )),
                 user_duration: Some(duration_to_proto_saturating(data.duration.user)),
                 queue_duration: data.duration.queue.map(duration_to_proto_saturating),
@@ -217,7 +221,11 @@ impl CriticalPathProtoEnhancer {
             self.entries.push(
                 self.create_simple_entry(
                     bz_data::critical_path_entry2::Waiting {
-                        category: waiting_category.map(|v| v.to_owned()),
+                        category: Some(
+                            waiting_category
+                                .unwrap_or(CRITICAL_PATH_OVERHEAD)
+                                .to_owned(),
+                        ),
                     }
                     .into(),
                     self.last_entry_end,
@@ -254,6 +262,28 @@ impl CriticalPathProtoEnhancer {
                     .try_into()
                     .unwrap_or(u64::MAX),
             ),
+        }
+    }
+}
+
+fn ready_waiting_category(entry: &bz_data::critical_path_entry2::Entry) -> String {
+    use bz_data::critical_path_entry2::Entry;
+
+    match entry {
+        Entry::ActionExecution(..) => "action_scheduling".to_owned(),
+        Entry::Analysis(..) | Entry::AnonAnalysis(..) | Entry::DynamicAnalysis(..) => {
+            "analysis_scheduling".to_owned()
+        }
+        Entry::FinalMaterialization(..) => "materialization_scheduling".to_owned(),
+        Entry::ComputeCriticalPath(..) => "critical_path_scheduling".to_owned(),
+        Entry::Load(..) => "package_load_scheduling".to_owned(),
+        Entry::Listing(..) => "package_listing_scheduling".to_owned(),
+        Entry::GenericEntry(entry) => format!("{}_scheduling", entry.kind),
+        Entry::Waiting(..) => CRITICAL_PATH_OVERHEAD.to_owned(),
+        Entry::TestExecution(..) => "test_execution_scheduling".to_owned(),
+        Entry::TestListing(..) => "test_listing_scheduling".to_owned(),
+        Entry::EnsureTransitiveSetProjection(..) => {
+            "transitive_set_projection_scheduling".to_owned()
         }
     }
 }

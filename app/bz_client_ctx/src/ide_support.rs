@@ -8,10 +8,10 @@
  * above-listed licenses.
  */
 
+use bytes::BytesMut;
 use bz_error::BuckErrorContext;
 use bz_error::conversion::from_any_with_tag;
 use bz_error::internal_error;
-use bytes::BytesMut;
 use futures::Stream;
 use futures::StreamExt;
 use serde::Deserialize;

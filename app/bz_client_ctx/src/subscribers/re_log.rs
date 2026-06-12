@@ -78,10 +78,7 @@ impl EventSubscriber for ReLog {
     }
 }
 
-async fn log_upload_impl(
-    session_id: String,
-    isolation_dir: FileNameBuf,
-) -> bz_error::Result<()> {
+async fn log_upload_impl(session_id: String, isolation_dir: FileNameBuf) -> bz_error::Result<()> {
     if !should_upload_log()? {
         return Ok(());
     }

@@ -84,7 +84,7 @@ impl WaitingData {
                 let mut spans = Vec::with_capacity(1 + initialized.categorized_waiting.len());
                 spans.push((
                     TimeSpan::new_saturating(start_time, initialized.categorized_waiting[0].0),
-                    &WaitingCategory::Unknown,
+                    &WaitingCategory::Ready,
                 ));
                 for (i, (start, category)) in initialized.categorized_waiting.iter().enumerate() {
                     let end = initialized
@@ -99,7 +99,7 @@ impl WaitingData {
             }
             _ => vec![(
                 TimeSpan::new_saturating(start_time, end_time),
-                &WaitingCategory::Unknown,
+                &WaitingCategory::Ready,
             )]
             .into_iter(),
         }
@@ -134,13 +134,21 @@ impl Default for WaitingData {
 /// Used to categorize non-critical path time for better build performance insights.
 #[derive(VariantName, Clone, Dupe, Debug, Allocative, Eq, PartialEq)]
 pub enum WaitingCategory {
-    Unknown,
+    /// Time after dependencies are ready before a more specific phase starts.
+    Ready,
     /// Time spent preparing action inputs and command-line arguments.
     PreparingAction,
     /// Time spent checking action cache and dep file caches.
     CheckingCaches,
     MaterializingInputs,
+    ClaimingOutputs,
+    PreparingExecution,
     LocalQueued,
+    LocalExecuting,
+    RemoteUploading,
+    RemoteExecuting,
+    RemoteDownloading,
+    DynamicExecuting,
     MaterializerPrepare,
     MaterializerStage2,
 }
@@ -304,7 +312,7 @@ mod tests {
         let spans: Vec<_> = waiting_data.iter_spans(start_time, end_time).collect();
 
         assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].1, &WaitingCategory::Unknown);
+        assert_eq!(spans[0].1, &WaitingCategory::Ready);
         assert_eq!(spans[0].0.duration(), Duration::from_secs(10));
     }
 
@@ -322,8 +330,8 @@ mod tests {
 
         assert_eq!(spans.len(), 2);
 
-        // First span: Unknown from start_time to category_start
-        assert_eq!(spans[0].1, &WaitingCategory::Unknown);
+        // First span: Ready from start_time to category_start
+        assert_eq!(spans[0].1, &WaitingCategory::Ready);
         assert_eq!(spans[0].0.duration(), Duration::from_secs(2));
 
         // Second span: PreparingAction from category_start to end_time
@@ -350,8 +358,8 @@ mod tests {
 
         assert_eq!(spans.len(), 4);
 
-        // First span: Unknown from start_time to category1_start (1 sec)
-        assert_eq!(spans[0].1, &WaitingCategory::Unknown);
+        // First span: Ready from start_time to category1_start (1 sec)
+        assert_eq!(spans[0].1, &WaitingCategory::Ready);
         assert_eq!(spans[0].0.duration(), Duration::from_secs(1));
 
         // Second span: PreparingAction from category1_start to category2_start (3 secs)
@@ -381,8 +389,8 @@ mod tests {
 
         assert_eq!(spans.len(), 2);
 
-        // First span: Unknown with zero duration (start_time to start_time)
-        assert_eq!(spans[0].1, &WaitingCategory::Unknown);
+        // First span: Ready with zero duration (start_time to start_time)
+        assert_eq!(spans[0].1, &WaitingCategory::Ready);
         assert_eq!(spans[0].0.duration(), Duration::ZERO);
 
         // Second span: LocalQueued from start_time to end_time

@@ -66,7 +66,7 @@ fn repository_ctx_remote_execute_runtime() -> Result<&'static tokio::runtime::Ru
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .worker_threads(2)
-                .thread_name("buck2-remote-repository-ctx")
+                .thread_name("bz-remote-repository-ctx")
                 .build()
                 .map_err(|error| {
                     format!("could not create remote repository_ctx.execute runtime: {error}")
@@ -98,7 +98,7 @@ where
     repository_ctx_remote_execute_block_in_place(|| {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let handle = std::thread::Builder::new()
-            .name("buck2-remote-repository-ctx-call".to_owned())
+            .name("bz-remote-repository-ctx-call".to_owned())
             .spawn(move || {
                 let result = f();
                 let _ = sender.send(result);
@@ -276,7 +276,7 @@ impl BazelRemoteRepositoryCommandExecutor {
             vec![
                 "-c".to_owned(),
                 REPOSITORY_CTX_REMOTE_WHICH_SCRIPT.to_owned(),
-                "buck2-remote-repository-ctx-which".to_owned(),
+                "bz-remote-repository-ctx-which".to_owned(),
                 program.to_owned(),
             ],
             paths,
@@ -523,7 +523,7 @@ input_root="$1"
         let mut request_args = vec![
             "-c".to_owned(),
             script.to_owned(),
-            "buck2-remote-repository-ctx".to_owned(),
+            "bz-remote-repository-ctx".to_owned(),
             remote_input_root,
             remote_repo_root.to_owned(),
             remote_working_dir,

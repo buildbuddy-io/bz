@@ -96,6 +96,7 @@ impl BuildListenerBackend for LoggingBackend {
     ) -> Result<BuildInfo, CriticalPathError> {
         Ok(BuildInfo {
             critical_path: DetailedCriticalPath::empty(),
+            build_graph_critical_path: DetailedCriticalPath::empty(),
             slowest_path: DetailedCriticalPath::empty(),
             num_nodes: 0,
             num_edges: 0,

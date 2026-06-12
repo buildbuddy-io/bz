@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use std::ops::ControlFlow;
 use std::io::IsTerminal;
+use std::ops::ControlFlow;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -80,9 +80,7 @@ enum BuckdCommunicationError {
     #[error("buck daemon request finished without returning a CommandResult")]
     #[buck2(tag = Tier0)]
     MissingCommandResult,
-    #[error(
-        "The bz daemon was shut down while executing your command. This happened because: {0}"
-    )]
+    #[error("The bz daemon was shut down while executing your command. This happened because: {0}")]
     #[buck2(tag = InterruptedByDaemonShutdown)]
     InterruptedByDaemonShutdown(bz_data::DaemonShutdown),
     #[error("buckd communication encountered an unexpected error `{0:?}`")]
@@ -715,7 +713,8 @@ impl EventsCtx {
         runtime.block_on(async move {
             let buck_log_dir = self.buck_log_dir.take();
             let command_report_path = self.command_report_path.take();
-            let interrupted_build_summary = interrupted_build_summary(&result, self.recorder.as_deref());
+            let interrupted_build_summary =
+                interrupted_build_summary(&result, self.recorder.as_deref());
             let finalize_events = async {
                 self.handle_exit_result(&result);
                 self.finalize().await

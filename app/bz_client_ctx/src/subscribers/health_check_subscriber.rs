@@ -95,13 +95,11 @@ impl HealthCheckSubscriber {
             SpanStart(start) => match &start.data {
                 Some(bz_data::span_start_event::Data::Command(command)) => {
                     Some(HealthCheckEvent::HealthCheckContextEvent(
-                        HealthCheckContextEvent::CommandStart(
-                            bz_data::CommandStartWithTraceId {
-                                trace_id: trace_id.map(|id| id.to_string()).unwrap_or_default(),
-                                command_start: Some(command.clone()),
-                                timestamp: Some(event.timestamp().into()),
-                            },
-                        ),
+                        HealthCheckContextEvent::CommandStart(bz_data::CommandStartWithTraceId {
+                            trace_id: trace_id.map(|id| id.to_string()).unwrap_or_default(),
+                            command_start: Some(command.clone()),
+                            timestamp: Some(event.timestamp().into()),
+                        }),
                     ))
                 }
                 _ => None,
@@ -159,10 +157,9 @@ impl HealthCheckSubscriber {
                     }
                     Snapshot(_snapshot) => {
                         // Create a new HealthCheckSnapshotData from the snapshot
-                        let snapshot_data =
-                            bz_health_check::interface::HealthCheckSnapshotData {
-                                timestamp: event.timestamp(),
-                            };
+                        let snapshot_data = bz_health_check::interface::HealthCheckSnapshotData {
+                            timestamp: event.timestamp(),
+                        };
                         Some(HealthCheckEvent::Snapshot(snapshot_data))
                     }
                     _ => None,
@@ -395,11 +392,9 @@ mod tests {
             events_tx,
         );
 
-        let event = test_event(bz_data::buck_event::Data::Instant(
-            bz_data::InstantEvent {
-                data: Some(Box::new(bz_data::Snapshot::default()).into()),
-            },
-        ));
+        let event = test_event(bz_data::buck_event::Data::Instant(bz_data::InstantEvent {
+            data: Some(Box::new(bz_data::Snapshot::default()).into()),
+        }));
 
         for _ in 0..MAXIMUM_HEALTH_CHECK_EVENT_COUNT {
             subscriber.handle_event(&event).await?;
@@ -433,11 +428,9 @@ mod tests {
             events_tx,
         );
 
-        let event = test_event(bz_data::buck_event::Data::Instant(
-            bz_data::InstantEvent {
-                data: Some(Box::new(bz_data::Snapshot::default()).into()),
-            },
-        ));
+        let event = test_event(bz_data::buck_event::Data::Instant(bz_data::InstantEvent {
+            data: Some(Box::new(bz_data::Snapshot::default()).into()),
+        }));
 
         for _ in 0..EVENT_CHANNEL_SIZE {
             subscriber.handle_event(&event).await?;
@@ -465,11 +458,9 @@ mod tests {
             events_tx,
         );
 
-        let event = test_event(bz_data::buck_event::Data::Instant(
-            bz_data::InstantEvent {
-                data: Some(Box::new(bz_data::Snapshot::default()).into()),
-            },
-        ));
+        let event = test_event(bz_data::buck_event::Data::Instant(bz_data::InstantEvent {
+            data: Some(Box::new(bz_data::Snapshot::default()).into()),
+        }));
 
         subscriber.handle_event(&event).await?;
         // Verify that the client and channel are still active

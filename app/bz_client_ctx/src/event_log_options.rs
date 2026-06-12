@@ -65,10 +65,7 @@ pub struct EventLogOptions {
 }
 
 impl EventLogOptions {
-    pub async fn get(
-        &self,
-        ctx: &ClientCommandContext<'_>,
-    ) -> bz_error::Result<EventLogPathBuf> {
+    pub async fn get(&self, ctx: &ClientCommandContext<'_>) -> bz_error::Result<EventLogPathBuf> {
         if let Some(path) = &self.path {
             EventLogPathBuf::infer(path.resolve(&ctx.working_dir))
         } else if let Some(id) = &self.trace_id {

@@ -754,13 +754,15 @@ struct ChromeTraceWriter {
 #[derive(Copy, Clone, Dupe, Debug, Display, Hash, PartialEq, Eq)]
 enum SpanCategorization {
     #[display("critical-path")]
-    CriticalPath = 0,
-    #[display("detailed-critical-path")]
-    DetailedCriticalPath = 1,
-    #[display("detailed-slowest-path")]
+    DetailedCriticalPath = 0,
+    #[display("build-graph-critical-path")]
+    DetailedBuildGraphPath = 1,
+    #[display("slowest-path")]
     DetailedSlowestPath = 2,
+    #[display("critical-path-work")]
+    CriticalPath = 3,
     #[display("uncategorized")]
-    Uncategorized = 3,
+    Uncategorized = 4,
 }
 
 impl ChromeTraceWriter {
@@ -816,6 +818,7 @@ impl ChromeTraceWriter {
                     SpanCategorization::Uncategorized => Some(self.max_tracks),
                     SpanCategorization::DetailedCriticalPath => None,
                     SpanCategorization::DetailedSlowestPath => None,
+                    SpanCategorization::DetailedBuildGraphPath => None,
                 };
 
                 let track = self
@@ -1318,9 +1321,9 @@ impl ChromeTraceWriter {
     ) -> bz_error::Result<()> {
         use bz_data::critical_path_entry2::Entry;
 
-        // All spans go on track 1. Parent-child relationships are determined by
+        // All spans go on track 0. Parent-child relationships are determined by
         // time containment in Chrome trace format.
-        const TRACK: u64 = 1;
+        const TRACK: u64 = 0;
 
         // Collect entries into groups: each group is [Waiting*, NonWaiting]
         // where the waiting entries are associated with the following non-waiting entry.
@@ -1776,18 +1779,25 @@ impl ChromeTraceCommand {
 
         let mut writer = ChromeTraceWriter::new(invocation, first_pass, max_tracks);
 
-        // We do this to ensure that these are the first two tracks.
+        // Write the summary lanes first so they are sorted above the worker
+        // span lanes in the profile.
         if let Some(info) = build_graph_info {
-            if !info.slowest_path.is_empty() {
-                writer.write_critical_path(
-                    SpanCategorization::DetailedSlowestPath,
-                    &info.slowest_path,
-                )?;
-            }
             if !info.critical_path2.is_empty() {
                 writer.write_critical_path(
                     SpanCategorization::DetailedCriticalPath,
                     &info.critical_path2,
+                )?;
+            }
+            if !info.build_graph_critical_path.is_empty() {
+                writer.write_critical_path(
+                    SpanCategorization::DetailedBuildGraphPath,
+                    &info.build_graph_critical_path,
+                )?;
+            }
+            if !info.slowest_path.is_empty() {
+                writer.write_critical_path(
+                    SpanCategorization::DetailedSlowestPath,
+                    &info.slowest_path,
                 )?;
             }
         }

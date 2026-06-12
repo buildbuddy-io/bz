@@ -34,9 +34,15 @@ pub mod sink;
 pub mod source;
 pub mod span;
 
+use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::thread;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
@@ -74,6 +80,30 @@ pub struct BuckEvent {
     pub parent_id: Option<SpanId>,
 }
 
+struct ThreadMetadata {
+    id: u64,
+    name: String,
+}
+
+static NEXT_THREAD_ID: AtomicU64 = AtomicU64::new(1);
+static THREAD_IDS: LazyLock<Mutex<HashMap<thread::ThreadId, u64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn current_thread_metadata() -> ThreadMetadata {
+    let thread = thread::current();
+    let raw_id = thread.id();
+    let mut ids = THREAD_IDS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let id = *ids
+        .entry(raw_id)
+        .or_insert_with(|| NEXT_THREAD_ID.fetch_add(1, Ordering::Relaxed));
+    ThreadMetadata {
+        id,
+        name: thread.name().unwrap_or("").to_owned(),
+    }
+}
+
 impl BuckEvent {
     pub fn new(
         timestamp: SystemTime,
@@ -82,11 +112,14 @@ impl BuckEvent {
         parent_id: Option<SpanId>,
         data: bz_data::buck_event::Data,
     ) -> BuckEvent {
+        let thread_metadata = current_thread_metadata();
         let event = bz_data::BuckEvent {
             timestamp: Some(timestamp.into()),
             trace_id: trace_id.to_string(),
             span_id: span_id.map_or(0, |s| s.0.into()),
             parent_id: parent_id.map_or(0, |s| s.0.into()),
+            thread_id: thread_metadata.id,
+            thread_name: thread_metadata.name,
             data: Some(data),
         };
         BuckEvent {
@@ -111,6 +144,18 @@ impl BuckEvent {
 
     pub fn parent_id(&self) -> Option<SpanId> {
         self.parent_id
+    }
+
+    pub fn thread_id(&self) -> Option<u64> {
+        NonZeroU64::new(self.event.thread_id).map(NonZeroU64::get)
+    }
+
+    pub fn thread_name(&self) -> Option<&str> {
+        if self.event.thread_name.is_empty() {
+            None
+        } else {
+            Some(&self.event.thread_name)
+        }
     }
 
     pub fn event(&self) -> &bz_data::BuckEvent {

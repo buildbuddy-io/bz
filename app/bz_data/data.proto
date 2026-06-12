@@ -34,6 +34,10 @@ message BuckEvent {
   // A trace-unique 64-bit identifying the span that this event is logically
   // parented to.
   uint64 parent_id = 4;
+  // A process-local numeric ID for the thread that emitted this event.
+  uint64 thread_id = 5;
+  // The name of the thread that emitted this event, if it has one.
+  string thread_name = 6;
   // The payload of this event. Required.
   oneof data {
     SpanStartEvent span_start = 20;
@@ -762,7 +766,14 @@ message BuildGraphExecutionInfo {
   uint64 num_nodes = 3;
   // Number of directed edges in the action graph (directed acyclic graph).
   uint64 num_edges = 4;
-  // The critical path in the build, in chronological order.
+  // The critical path through span-backed typed build work, in chronological
+  // order.
+  //
+  // Includes actions, analysis, package loading/listing, and final
+  // materialization using non-overlap accounting when those entries can be
+  // correlated to emitted spans. Synthetic waiting/generic scheduler gaps and
+  // spanless graph nodes are reported through normal profile spans and
+  // diagnostic paths instead.
   repeated CriticalPathEntry2 critical_path2 = 5;
   // The backend that was use to produce the critical path.
   optional string backend_name = 7;
@@ -775,6 +786,11 @@ message BuildGraphExecutionInfo {
 
   // The slowest path in the build, in chronological order.
   repeated CriticalPathEntry2 slowest_path = 11;
+
+  // Diagnostic longest path through the build graph/DICE graph, in
+  // chronological order. This may include synthetic waiting and scheduler
+  // entries that are not part of `critical_path2`.
+  repeated CriticalPathEntry2 build_graph_critical_path = 12;
 }
 
 // An event capturing information from the test discovery phase.
