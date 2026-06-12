@@ -1,8 +1,8 @@
 [package]
 description = """
-Code shared with Meta internal buck2 launcher.
+Code shared with bz launcher.
 
-Careful! The wrapper is not released as part of the regular buck version bumps,
+Careful! The wrapper is not released as part of the regular bz version bumps,
 meaning code changes here are not "atomically" updated.
 """
 edition = "2024"

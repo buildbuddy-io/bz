@@ -132,7 +132,7 @@ resolver = "2"
 
 [workspace.package]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/facebook/buck2"
+repository = "https://github.com/buildbuddy-io/bz"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(buck_build)'] }

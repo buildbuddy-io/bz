@@ -1,5 +1,5 @@
 [package]
-description = "Some parts of Buck2 server"
+description = "Some parts of the bz server"
 edition = "2024"
 license = { workspace = true }
 name = "bz_server"

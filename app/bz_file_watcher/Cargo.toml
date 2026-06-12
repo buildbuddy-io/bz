@@ -1,5 +1,5 @@
 [package]
-description = "Buck2 file watcher"
+description = "bz file watcher"
 edition = "2024"
 license = { workspace = true }
 name = "bz_file_watcher"

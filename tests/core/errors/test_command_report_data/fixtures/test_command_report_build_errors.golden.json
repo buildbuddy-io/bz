@@ -7,6 +7,6 @@
   ],
   "exit_code": 3,
   "finalizing_error_messages": [
-    "'invocation recorder' failed to finalize\n\nCaused by:\n    Scribe sink not enabled (internal error)"
+    "'invocation recorder' failed to finalize\n\nCaused by:\n    Remote event sink not enabled (internal error)"
   ]
 }

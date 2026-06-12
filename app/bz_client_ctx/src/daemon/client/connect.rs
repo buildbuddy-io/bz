@@ -430,7 +430,7 @@ impl<'a> BuckdLifecycle<'a> {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let unit_name = format!(
-            "buck2-daemon.{}.{}.{}",
+            "bz-daemon.{}.{}.{}",
             &repo_name,
             self.paths.isolation.as_str(),
             &daemon_id,
@@ -1116,7 +1116,7 @@ pub fn get_daemon_exe() -> bz_error::Result<PathBuf> {
         Ok(exe
             .parent()
             .ok_or_else(|| internal_error!("Expected current exe to be in a directory"))?
-            .join(format!("buck2-daemon{ext}")))
+            .join(format!("bz-daemon{ext}")))
     } else {
         Ok(exe)
     }

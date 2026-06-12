@@ -560,7 +560,7 @@ impl<Env: QueryEnvironment> DefaultQueryFunctionsModule<Env> {
     ///
     /// //:bz
     /// //:bz_bundle
-    /// //:symlinked_buck2_and_tpx
+    /// //:symlinked_bz_and_tpx
     /// ```
     async fn targets_in_buildfile(&self, env: &Env, files: FileSet) -> QueryFuncResult<Env> {
         Ok(self

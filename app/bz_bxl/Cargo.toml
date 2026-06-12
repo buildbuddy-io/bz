@@ -1,5 +1,5 @@
 [package]
-description = "Buck V2 extension language"
+description = "bz extension language"
 edition = "2024"
 license = { workspace = true }
 name = "bz_bxl"

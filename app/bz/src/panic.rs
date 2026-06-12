@@ -51,7 +51,7 @@ pub fn initialize() -> bz_error::Result<()> {
 /// The panic hook is called on the same thread that the panic occurred. It is possible to perform a backtrace here
 /// to collect additional information.
 fn the_panic_hook(fb: FacebookInit, info: &PanicHookInfo) {
-    imp::write_panic_to_scribe(fb, info);
+    imp::write_panic_to_remote_event_sink(fb, info);
 }
 
 mod imp {
@@ -63,7 +63,7 @@ mod imp {
     use bz_events::BuckEvent;
     use bz_events::daemon_id::get_daemon_id_for_panics;
     use bz_events::metadata;
-    use bz_events::sink::remote::ScribeConfig;
+    use bz_events::sink::remote::RemoteEventSinkConfig;
     use bz_events::sink::remote::new_remote_event_sink_if_enabled;
     use bz_hash::StdBuckHashMap;
     use bz_util::threads::thread_spawn;
@@ -146,15 +146,15 @@ mod imp {
         map
     }
 
-    /// Writes a representation of the given `PanicHookInfo` to Scribe, via the `StructuredError` event.
-    pub(crate) fn write_panic_to_scribe(fb: FacebookInit, info: &PanicHookInfo) {
+    /// Writes a representation of the given `PanicHookInfo` to the remote event sink, via the `StructuredError` event.
+    pub(crate) fn write_panic_to_remote_event_sink(fb: FacebookInit, info: &PanicHookInfo) {
         let message = get_message_for_panic(info);
         let location = info.location().map(|loc| Location {
             file: loc.file().to_owned(),
             line: loc.line(),
             column: loc.column(),
         });
-        write_to_scribe(
+        write_to_remote_event_sink(
             fb,
             panic_payload(location, message, get_stack(), &Default::default(), None),
         );
@@ -197,7 +197,7 @@ mod imp {
             }
         }
 
-        write_to_scribe(fb, event);
+        write_to_remote_event_sink(fb, event);
     }
 
     fn panic_payload(
@@ -224,8 +224,8 @@ mod imp {
         }
     }
 
-    /// Writes a representation of the given error (hard or soft) to Scribe
-    fn write_to_scribe(fb: FacebookInit, data: bz_data::StructuredError) {
+    /// Writes a representation of the given error (hard or soft) to the remote event sink.
+    fn write_to_remote_event_sink(fb: FacebookInit, data: bz_data::StructuredError) {
         use std::time::SystemTime;
 
         use bz_data::InstantEvent;
@@ -236,11 +236,10 @@ mod imp {
             return;
         }
 
-        let sink = match new_remote_event_sink_if_enabled(fb, ScribeConfig::default()) {
+        let sink = match new_remote_event_sink_if_enabled(fb, RemoteEventSinkConfig::default()) {
             #[allow(unreachable_patterns)]
             Ok(Some(sink)) => sink,
             _ => {
-                // We're already panicking and we can't connect to the scribe daemon? Things are bad and we're SOL.
                 return;
             }
         };
@@ -250,12 +249,11 @@ mod imp {
         // appear to be a good way to figure out if the thread we're running on is a tokio thread at all.
         //
         // Since this is the panic handler, and the panic handler runs in the context of the thread that panicked, we
-        // can make no assumptions about whether the thread we're on is a tokio thread. To flush the Scribe client,
-        // which is normally an async operation, we spawn a new thread, spawn a runtime on that, and await the flush
-        // on that thread.
+        // can make no assumptions about whether the thread we're on is a tokio thread. To flush the remote sink,
+        // which may be an async operation, we spawn a new thread, spawn a runtime on that, and await the flush there.
         //
         // Note that if we fail to spawn a writer thread, then we just won't log.
-        let _err = thread_spawn("buck2-write-panic-to-scribe", move || {
+        let _err = thread_spawn("bz-write-panic-to-remote-event-sink", move || {
             let runtime = Builder::new_current_thread().enable_all().build().unwrap();
             let _res = runtime.block_on(
                 sink.send_now(BuckEvent::new(

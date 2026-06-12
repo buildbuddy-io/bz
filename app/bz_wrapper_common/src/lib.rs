@@ -10,9 +10,9 @@
 
 #![feature(error_generic_member_access)]
 
-//! Code shared between `bz_wrapper` and `buck2`.
+//! Code shared between `bz_wrapper` and `bz`.
 //!
-//! Careful! The wrapper is not released as part of the regular buck version bumps,
+//! Careful! The wrapper is not released as part of the regular bz version bumps,
 //! meaning code changes here are not "atomically" updated.
 
 #![feature(once_cell_try)]
@@ -22,15 +22,15 @@ use std::time::Duration;
 use std::time::Instant;
 
 use bz_hash::StdBuckHashSet;
-use is_buck2::WhoIsAsking;
+use is_bz::WhoIsAsking;
 use sysinfo::ProcessesToUpdate;
 use sysinfo::System;
 
-use crate::is_buck2::is_bz_exe;
+use crate::is_bz::is_bz_exe;
 use crate::pid::Pid;
 
 pub mod invocation_id;
-pub mod is_buck2;
+pub mod is_bz;
 pub mod kill;
 pub mod pid;
 #[cfg(unix)]

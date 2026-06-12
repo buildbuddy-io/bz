@@ -9,61 +9,61 @@
 load("@prelude//decls:common.bzl", "buck")
 load("@prelude//os_lookup:defs.bzl", "Os", "OsLookup")
 
-def _buck2_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
+def _bz_bundle_impl(ctx: AnalysisContext) -> list[Provider]:
     """
     Produce a directory layout that is similar to the one our release binary
-    uses, this allows setting a path for Tpx relative to BUCK2_BINARY_DIR.
+    uses, this allows setting a path for Tpx relative to the bz binary directory.
     """
     target_is_windows = ctx.attrs._target_os_type[OsLookup].os == Os("windows")
 
     binary_extension = ".exe" if target_is_windows else ""
-    buck2_binary = "buck2" + binary_extension
-    buck2_tpx_binary = "buck2-tpx" + binary_extension
-    buck2_daemon_binary = "buck2-daemon" + binary_extension
-    buck2_health_check_binary = "buck2-health-check" + binary_extension
+    bz_binary = "bz" + binary_extension
+    bz_tpx_binary = "bz-tpx" + binary_extension
+    bz_daemon_binary = "bz-daemon" + binary_extension
+    bz_health_check_binary = "bz-health-check" + binary_extension
 
     copied_dir = {}
     materialisations = []
 
-    buck2 = ctx.attrs.buck2[DefaultInfo].default_outputs[0]
-    copied_dir[buck2_daemon_binary] = buck2
-    materialisations.extend(ctx.attrs.buck2[DefaultInfo].other_outputs)
+    bz = ctx.attrs.bz[DefaultInfo].default_outputs[0]
+    copied_dir[bz_daemon_binary] = bz
+    materialisations.extend(ctx.attrs.bz[DefaultInfo].other_outputs)
 
-    buck2_client = ctx.attrs.buck2_client[DefaultInfo].default_outputs[0]
-    copied_dir[buck2_binary] = buck2_client
-    materialisations.extend(ctx.attrs.buck2_client[DefaultInfo].other_outputs)
+    bz_client = ctx.attrs.bz_client[DefaultInfo].default_outputs[0]
+    copied_dir[bz_binary] = bz_client
+    materialisations.extend(ctx.attrs.bz_client[DefaultInfo].other_outputs)
 
-    if ctx.attrs.buck2_health_check:
-        buck2_health_check = ctx.attrs.buck2_health_check[DefaultInfo].default_outputs[0]
-        copied_dir[buck2_health_check_binary] = buck2_health_check
-        materialisations.extend(ctx.attrs.buck2_health_check[DefaultInfo].other_outputs)
+    if ctx.attrs.bz_health_check:
+        bz_health_check = ctx.attrs.bz_health_check[DefaultInfo].default_outputs[0]
+        copied_dir[bz_health_check_binary] = bz_health_check
+        materialisations.extend(ctx.attrs.bz_health_check[DefaultInfo].other_outputs)
 
     if ctx.attrs.tpx:
         tpx = ctx.attrs.tpx[DefaultInfo].default_outputs[0]
-        copied_dir[buck2_tpx_binary] = ctx.actions.symlink_file(buck2_tpx_binary, tpx, has_content_based_path = False)
+        copied_dir[bz_tpx_binary] = ctx.actions.symlink_file(bz_tpx_binary, tpx, has_content_based_path = False)
         materialisations.extend(ctx.attrs.tpx[DefaultInfo].other_outputs)
 
     out = ctx.actions.copied_dir("out", copied_dir, has_content_based_path = False)
 
-    return [DefaultInfo(out, other_outputs = materialisations), RunInfo(cmd_args(out.project("buck2" + binary_extension), hidden = materialisations))]
+    return [DefaultInfo(out, other_outputs = materialisations), RunInfo(cmd_args(out.project("bz" + binary_extension), hidden = materialisations))]
 
-_buck2_bundle = rule(
-    impl = _buck2_bundle_impl,
+_bz_bundle = rule(
+    impl = _bz_bundle_impl,
     attrs = {
-        "buck2": attrs.dep(),
-        "buck2_client": attrs.dep(),
-        "buck2_health_check": attrs.option(attrs.dep(), default = None),
+        "bz": attrs.dep(),
+        "bz_client": attrs.dep(),
+        "bz_health_check": attrs.option(attrs.dep(), default = None),
         "labels": attrs.list(attrs.string(), default = []),
         "tpx": attrs.option(attrs.dep(), default = None),
         "_target_os_type": buck.target_os_type_arg(),
     },
 )
 
-def buck2_bundle(buck2, buck2_client, buck2_health_check, tpx, **kwargs):
-    _buck2_bundle(
-        buck2 = buck2,
-        buck2_client = buck2_client,
-        buck2_health_check = buck2_health_check,
+def bz_bundle(bz, bz_client, bz_health_check, tpx, **kwargs):
+    _bz_bundle(
+        bz = bz,
+        bz_client = bz_client,
+        bz_health_check = bz_health_check,
         tpx = tpx,
         **kwargs
     )

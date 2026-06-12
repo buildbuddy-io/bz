@@ -245,10 +245,10 @@ def bz_e2e_test(
 
         # TODO(ctolliday) use BUCK2_HARD_ERROR=panic
         compiled_env["BUCK2_HARD_ERROR"] = "true"
-        compiled_env["BUCK2_TPX"] = "$BUCK2_BINARY_DIR/buck2-tpx"
+        compiled_env["BUCK2_TPX"] = "$BUCK2_BINARY_DIR/bz-tpx"
 
         if use_compiled_bz_client_and_tpx:
-            base_exe = "$(location //:symlinked_buck2_and_tpx)/buck2"
+            base_exe = "$(location //:symlinked_bz_and_tpx)/bz"
             exe = select({
                 "DEFAULT": base_exe,
                 "ovr_config//os:windows": base_exe + ".exe",

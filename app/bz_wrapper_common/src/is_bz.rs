@@ -18,7 +18,7 @@ use dupe::Dupe;
 
 #[derive(Copy, Clone, Dupe)]
 pub enum WhoIsAsking {
-    Buck2,
+    Bz,
     BuckWrapper,
 }
 
@@ -28,10 +28,10 @@ pub(crate) fn is_bz_exe(path: &Path, who_is_asking: WhoIsAsking) -> bool {
     };
     // On linux when the running executable is deleted or unlinked the string ' (deleted)' is appended to symlinked file in /proc/<pid>/exe
     if [
-        OsStr::new("buck2"),
-        OsStr::new("buck2 (deleted)"),
-        OsStr::new("buck2-daemon"),
-        OsStr::new("buck2-daemon (deleted)"),
+        OsStr::new("bz"),
+        OsStr::new("bz (deleted)"),
+        OsStr::new("bz-daemon"),
+        OsStr::new("bz-daemon (deleted)"),
     ]
     .contains(&file_stem)
     {
@@ -39,10 +39,10 @@ pub(crate) fn is_bz_exe(path: &Path, who_is_asking: WhoIsAsking) -> bool {
     } else {
         match who_is_asking {
             WhoIsAsking::BuckWrapper => {
-                // We don't know another name of the buck2 executable in the wrapper.
+                // We don't know another name of the bz executable in the wrapper.
                 false
             }
-            WhoIsAsking::Buck2 => {
+            WhoIsAsking::Bz => {
                 static CURRENT_EXE: OnceLock<PathBuf> = OnceLock::new();
                 if let Ok(current_exe) = CURRENT_EXE.get_or_try_init(env::current_exe) {
                     if let Some(current_exe_file_stem) = current_exe.file_stem() {
@@ -62,26 +62,26 @@ mod tests {
     use std::env;
     use std::path::Path;
 
-    use crate::is_buck2::WhoIsAsking;
-    use crate::is_buck2::is_bz_exe;
+    use crate::is_bz::WhoIsAsking;
+    use crate::is_bz::is_bz_exe;
 
     #[test]
     fn test_is_bz_exe() {
         let (fake_buck, other_path) = if cfg!(windows) {
-            ("C:\\dir\\buck2.exe", "C:\\dir\\other.exe")
+            ("C:\\dir\\bz.exe", "C:\\dir\\other.exe")
         } else {
-            ("/dir/buck2", "/dir/other")
+            ("/dir/bz", "/dir/other")
         };
 
-        assert!(is_bz_exe(Path::new(fake_buck), WhoIsAsking::Buck2));
+        assert!(is_bz_exe(Path::new(fake_buck), WhoIsAsking::Bz));
         assert!(is_bz_exe(Path::new(fake_buck), WhoIsAsking::BuckWrapper));
 
         let current_exe = env::current_exe().unwrap();
 
-        assert!(is_bz_exe(&current_exe, WhoIsAsking::Buck2));
+        assert!(is_bz_exe(&current_exe, WhoIsAsking::Bz));
         assert!(!is_bz_exe(&current_exe, WhoIsAsking::BuckWrapper));
 
-        assert!(!is_bz_exe(Path::new(other_path), WhoIsAsking::Buck2));
+        assert!(!is_bz_exe(Path::new(other_path), WhoIsAsking::Bz));
         assert!(!is_bz_exe(
             Path::new(other_path),
             WhoIsAsking::BuckWrapper

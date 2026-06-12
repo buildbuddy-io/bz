@@ -1,6 +1,6 @@
 [package]
 authors = ["Facebook"]
-description = "uquery, cquery, aquery and analysis query implementations for Buck2"
+description = "uquery, cquery, aquery and analysis query implementations for bz"
 edition = "2024"
 license = { workspace = true }
 name = "bz_query_impls"

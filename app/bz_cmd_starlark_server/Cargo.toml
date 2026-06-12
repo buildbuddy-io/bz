@@ -1,5 +1,5 @@
 [package]
-description = "`buck2 starlark` command server implementation"
+description = "`bz starlark` command server implementation"
 edition = "2024"
 license = { workspace = true }
 name = "bz_cmd_starlark_server"

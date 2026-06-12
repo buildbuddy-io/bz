@@ -1,5 +1,5 @@
 [package]
-description = "Implementation of Buck2 targets command"
+description = "Implementation of the bz targets command"
 edition = "2024"
 license = { workspace = true }
 name = "bz_cmd_targets_server"

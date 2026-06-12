@@ -10,7 +10,7 @@ resolver = "2"
 
 [workspace.package]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/facebook/buck2"
+repository = "https://github.com/buildbuddy-io/bz"
 
 [workspace.dependencies]
 allocative = { version = "0.3.4" }

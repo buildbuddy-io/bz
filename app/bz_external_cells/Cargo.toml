@@ -1,5 +1,5 @@
 [package]
-description = "Buck2 external cells implementation"
+description = "bz external cells implementation"
 edition = "2024"
 license = { workspace = true }
 name = "bz_external_cells"

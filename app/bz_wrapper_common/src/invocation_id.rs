@@ -107,7 +107,7 @@ impl TraceId {
         }
     }
 
-    /// Generate short hash to be used as a message key for a Scribe client.
+    /// Generate short hash to be used as a remote event message key.
     pub fn hash(&self) -> i64 {
         let mut hasher = BuckDefaultHasher::new();
         Hash::hash(self, &mut hasher);

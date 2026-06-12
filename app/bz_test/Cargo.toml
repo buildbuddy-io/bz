@@ -1,5 +1,5 @@
 [package]
-description = "Buck V2 test runner"
+description = "bz test runner"
 edition = "2024"
 license = { workspace = true }
 name = "bz_test"

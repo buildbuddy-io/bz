@@ -1,5 +1,5 @@
 [package]
-description = "utilities to configure RE in Buck2"
+description = "utilities to configure RE in bz"
 edition = "2024"
 license = { workspace = true }
 name = "bz_re_configuration"

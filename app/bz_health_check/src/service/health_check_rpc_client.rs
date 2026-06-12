@@ -38,8 +38,8 @@ use crate::interface::HealthCheckService;
 use crate::interface::HealthCheckSnapshotData;
 use crate::report::Report;
 
-const CLI_NAME: &str = "buck2-health-check";
-const CLI_INFO_FILE: &str = "buck2-health-check-server-info";
+const CLI_NAME: &str = "bz-health-check";
+const CLI_INFO_FILE: &str = "bz-health-check-server-info";
 
 struct HealthCheckServerConnection {
     pub(crate) rpc_client: HealthCheckClient<Channel>,

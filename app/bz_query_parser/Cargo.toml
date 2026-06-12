@@ -1,5 +1,5 @@
 [package]
-description = "Buck2 query language parser"
+description = "bz query language parser"
 edition = "2024"
 license = { workspace = true }
 name = "bz_query_parser"

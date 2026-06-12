@@ -1,5 +1,5 @@
 [package]
-description = "Query server commands for Buck2"
+description = "Query server commands for bz"
 edition = "2024"
 license = { workspace = true }
 name = "bz_cmd_query_server"

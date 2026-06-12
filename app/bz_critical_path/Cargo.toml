@@ -1,6 +1,6 @@
 [package]
 authors = ["Meta"]
-description = "Critical path calculations for Buck2"
+description = "Critical path calculations for bz"
 edition = "2024"
 license = { workspace = true }
 name = "bz_critical_path"

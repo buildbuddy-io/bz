@@ -41,14 +41,14 @@ complete_test(
 complete_test(
     name="test_provides_targets_in_nested_cell",
     input="buck2:",
-    expected=["buck2:buck2", "buck2:symlinked_buck2_and_tpx"],
+    expected=["buck2:bz", "buck2:symlinked_bz_and_tpx"],
     cwd="cell1",
 )
 
 complete_test(
     name="test_completes_a_partial_target",
-    input="buck2:bu",
-    expected=["buck2:buck2"],
+    input="buck2:b",
+    expected=["buck2:bz"],
     cwd="cell1",
 )
 
@@ -61,32 +61,32 @@ complete_test(
 complete_test(
     name="test_completes_other_cell_from_subdirectory",
     input="cell1//buck2:",
-    expected=["cell1//buck2:buck2", "cell1//buck2:symlinked_buck2_and_tpx"],
+    expected=["cell1//buck2:bz", "cell1//buck2:symlinked_bz_and_tpx"],
     cwd="baredir0",
 )
 
 complete_test(
     name="test_expands_cell_to_canonical_with_colon",
     input="cell1/buck2:",
-    expected=["cell1//buck2:buck2", "cell1//buck2:symlinked_buck2_and_tpx"],
+    expected=["cell1//buck2:bz", "cell1//buck2:symlinked_bz_and_tpx"],
 )
 
 complete_test(
     name="test_expands_cell_to_canonical_with_partial_target",
-    input="cell1/buck2:bu",
-    expected=["cell1//buck2:buck2"],
+    input="cell1/buck2:b",
+    expected=["cell1//buck2:bz"],
 )
 
 complete_test(
     name="test_expands_target_for_bare_colon",
     input=":",
-    expected=[":buck2", ":symlinked_buck2_and_tpx"],
+    expected=[":bz", ":symlinked_bz_and_tpx"],
     cwd="cell1/buck2",
 )
 
 complete_test(
     name="test_target_completion_with_aliased_cells",
     input="cell1_alias//buck2:",
-    expected=["cell1_alias//buck2:buck2", "cell1_alias//buck2:symlinked_buck2_and_tpx"],
+    expected=["cell1_alias//buck2:bz", "cell1_alias//buck2:symlinked_bz_and_tpx"],
     cwd="cell1/buck2/fake_prelude",
 )

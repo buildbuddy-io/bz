@@ -147,11 +147,11 @@ async def test_cleanup_timeout(buck: Buck, tmp_path: Path) -> None:
     with open(report) as f:
         report = json.loads(f.read())
 
-    # test commands have scribe logging disabled, which is reported as a finalizing error
+    # test commands have remote event logging disabled, which is reported as a finalizing error
     finalizing_errors = report["finalizing_error_messages"]
     assert len(finalizing_errors) == 1
     assert "'invocation recorder' failed to finalize" in finalizing_errors[0]
-    assert "Scribe sink not enabled" in finalizing_errors[0]
+    assert "Remote event sink not enabled" in finalizing_errors[0]
 
 
 # Should match behavior of command report test in buck wrapper

@@ -14,7 +14,7 @@ use bz_client_ctx::common::BuckArgMatches;
 use bz_client_ctx::common::CommonEventLogOptions;
 use bz_client_ctx::events_ctx::EventsCtx;
 use bz_client_ctx::exit_result::ExitResult;
-use bz_wrapper_common::is_buck2::WhoIsAsking;
+use bz_wrapper_common::is_bz::WhoIsAsking;
 
 #[derive(Debug, clap::Parser)]
 #[clap(about = "Kill all bz processes on the machine")]
@@ -32,7 +32,7 @@ impl BuckSubcommand for KillallCommand {
         _ctx: ClientCommandContext<'_>,
         _events_ctx: &mut EventsCtx,
     ) -> ExitResult {
-        bz_wrapper_common::killall(WhoIsAsking::Buck2, |s| {
+        bz_wrapper_common::killall(WhoIsAsking::Bz, |s| {
             let _ignored = bz_client_ctx::eprintln!("{}", s);
         })
         .then_some(())

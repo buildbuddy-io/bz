@@ -1,7 +1,7 @@
 stub(
-    name = "buck2",
+    name = "bz",
 )
 
 stub(
-    name = "symlinked_buck2_and_tpx",
+    name = "symlinked_bz_and_tpx",
 )

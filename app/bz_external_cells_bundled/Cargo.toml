@@ -1,6 +1,6 @@
 [package]
 build = "build.rs"
-description = "Buck2 external cells bundled data"
+description = "bz external cells bundled data"
 edition = "2024"
 license = { workspace = true }
 name = "bz_external_cells_bundled"
