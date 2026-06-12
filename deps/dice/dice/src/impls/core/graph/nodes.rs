@@ -671,8 +671,17 @@ impl OccupiedGraphNode {
                     v,
                 ));
         }
-        Arc::make_mut(&mut self.metadata.verified_ranges)
-            .intersect_range(VersionRange::bounded(VersionNumber::ZERO, v))
+        let verified_ranges = Arc::make_mut(&mut self.metadata.verified_ranges);
+        if v == VersionNumber::ZERO {
+            // No version precedes v0, so invalidating at v0 leaves nothing verified.
+            // This only happens for rewinds, which (unlike `changed()`) invalidate at
+            // the current version rather than a freshly-minted one.
+            let changed = !verified_ranges.is_empty();
+            verified_ranges.clear();
+            changed
+        } else {
+            verified_ranges.intersect_range(VersionRange::bounded(VersionNumber::ZERO, v))
+        }
     }
 
     fn rdeps(&self) -> impl Iterator<Item = DiceKey> {

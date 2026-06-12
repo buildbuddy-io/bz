@@ -81,6 +81,44 @@ impl DiceComputations<'_> {
         self.0.compute_opaque(key)
     }
 
+    /// Discards the cached results for the given keys at the current version so that
+    /// the next request for each key fully recomputes it, within this same
+    /// transaction and without committing a new one.
+    ///
+    /// This is a recovery primitive, equivalent to Bazel Skyframe's "rewinding": a
+    /// computation that discovers a dependency's cached value refers to external
+    /// state that no longer exists (e.g. a remotely-stored artifact evicted from a
+    /// cache) can rewind the keys that produced that value and re-request them,
+    /// re-running their side effects. It is not a general-purpose invalidation
+    /// mechanism — use `DiceTransactionUpdater::changed` for that.
+    ///
+    /// Semantics:
+    /// - Each key is force-dirtied at the current version: when next requested it
+    ///   recomputes rather than being reused via its (unchanged) deps, since the
+    ///   point of the rewind is to re-run its side effects.
+    /// - Transitive reverse-dependencies are invalidated at the current version.
+    ///   Results already obtained by other computations are not retracted (they may
+    ///   keep using — and re-observing — the pre-rewind values for the rest of this
+    ///   version), but they re-validate against the recomputed values when next
+    ///   requested at a later version. Callers that need specific dependents
+    ///   recomputed *now* must include them in `keys`.
+    /// - A key that is currently being computed is not restarted; its eventual
+    ///   result is treated as the post-rewind result. Concurrent rewinds of the same
+    ///   key are safe but may observe each other's recomputations; callers should
+    ///   re-check their failure condition and bound their retries.
+    /// - Injected keys cannot recompute and are skipped.
+    ///
+    /// The rewind has been applied when the returned future resolves; requests made
+    /// after that by this computation observe recomputed values. Returns the number
+    /// of keys rewound (skipped keys and a no-longer-active transaction yield a
+    /// smaller count; the latter returns 0).
+    pub fn rewind_keys<K: Key, I: IntoIterator<Item = K>>(
+        &self,
+        keys: I,
+    ) -> impl Future<Output = usize> + use<K, I> {
+        self.0.rewind_keys(keys)
+    }
+
     pub fn projection<K: Key, P: ProjectionKey<DeriveFromKey = K>>(
         &mut self,
         derive_from: &OpaqueValue<K>,

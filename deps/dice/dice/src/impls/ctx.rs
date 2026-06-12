@@ -693,6 +693,15 @@ impl ModernComputeCtx<'_> {
         self.ctx_data().get_version()
     }
 
+    /// Discards the cached results for `keys` at the current version so that the
+    /// next request for each key recomputes it. See `DiceComputations::rewind_keys`.
+    pub(crate) fn rewind_keys<K: Key, I: IntoIterator<Item = K>>(
+        &self,
+        keys: I,
+    ) -> impl Future<Output = usize> + use<K, I> {
+        self.ctx_data().rewind_keys(keys)
+    }
+
     #[allow(unused)] // used in test
     pub(super) fn dep_trackers(&mut self) -> impl DerefMut<Target = RecordingDepsTracker> {
         self.unpack().1.lock()
@@ -805,6 +814,23 @@ impl CoreCtx {
 
     pub(crate) fn get_version(&self) -> VersionNumber {
         self.async_evaluator.per_live_version_ctx.get_version()
+    }
+
+    /// Discards the cached results for `keys` at the current version so that the
+    /// next request for each key recomputes it. See `DiceComputations::rewind_keys`.
+    pub(crate) fn rewind_keys<K: Key, I: IntoIterator<Item = K>>(
+        &self,
+        keys: I,
+    ) -> impl Future<Output = usize> + use<K, I> {
+        let dice_keys = keys
+            .into_iter()
+            .map(|key| self.async_evaluator.dice.key_index.index_key(key))
+            .collect();
+        self.async_evaluator.dice.state_handle.rewind(
+            dice_keys,
+            self.async_evaluator.per_live_version_ctx.get_version(),
+            self.async_evaluator.per_live_version_ctx.version_epoch,
+        )
     }
 
     pub(crate) fn into_updater(self) -> TransactionUpdater {

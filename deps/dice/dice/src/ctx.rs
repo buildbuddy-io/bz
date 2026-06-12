@@ -65,6 +65,15 @@ impl DiceComputationsImpl<'_> {
         self.0.compute_opaque(key)
     }
 
+    /// Discards the cached results for `keys` at the current version so that the
+    /// next request for each key recomputes it. See `DiceComputations::rewind_keys`.
+    pub(crate) fn rewind_keys<K: Key, I: IntoIterator<Item = K>>(
+        &self,
+        keys: I,
+    ) -> impl Future<Output = usize> + use<K, I> {
+        self.0.rewind_keys(keys)
+    }
+
     pub fn projection<K: Key, P: ProjectionKey<DeriveFromKey = K>>(
         &mut self,
         derive_from: &OpaqueValue<K>,

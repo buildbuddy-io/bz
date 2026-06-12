@@ -115,6 +115,27 @@ impl CoreStateHandle {
         self.call(StateRequest::LookupKey { key, resp }, recv)
     }
 
+    /// Discards the cached results for `keys` at version `version` (which must still
+    /// be active at `epoch`) so that the next request for each key recomputes it
+    /// within that same version. Returns the number of keys rewound.
+    pub(crate) fn rewind(
+        &self,
+        keys: Vec<DiceKey>,
+        version: VersionNumber,
+        epoch: VersionEpoch,
+    ) -> impl Future<Output = usize> + use<> {
+        let (resp, recv) = oneshot::channel();
+        self.call(
+            StateRequest::Rewind {
+                keys,
+                version,
+                epoch,
+                resp,
+            },
+            recv,
+        )
+    }
+
     /// Report that a value has been computed
     pub(crate) fn update_computed(
         &self,
@@ -281,6 +302,14 @@ pub(super) enum StateRequest {
     LookupKey {
         key: VersionedGraphKey,
         resp: Sender<VersionedGraphResult>,
+    },
+    /// Discards the cached results for `keys` at the still-active version `version`
+    /// so that the next request for each key recomputes it within that same version.
+    Rewind {
+        keys: Vec<DiceKey>,
+        version: VersionNumber,
+        epoch: VersionEpoch,
+        resp: Sender<usize>,
     },
     /// Report that a value has been computed
     UpdateComputed {

@@ -111,6 +111,42 @@ impl CoreState {
         }
     }
 
+    /// Discards the cached results for `keys` at the (still-active) version `v` so
+    /// that the next request for each key recomputes it within that same version.
+    /// See `DiceComputations::rewind_keys` for the semantics. Returns the number of
+    /// keys rewound; 0 if the version is no longer active at the given epoch.
+    pub(super) fn rewind(
+        &mut self,
+        keys: Vec<DiceKey>,
+        v: VersionNumber,
+        epoch: VersionEpoch,
+    ) -> usize {
+        let Some(cache) = self.version_tracker.cache_if_relevant(v, epoch) else {
+            // The requesting transaction's activation of `v` is gone (or replaced by
+            // a newer activation with a fresh cache); there is nothing to rewind.
+            return 0;
+        };
+
+        let mut rewound = 0;
+        for key in keys {
+            // Injected keys have no compute and can never be re-created; force-dirtying
+            // one would wedge it (and `invalidate` panics on injected nodes).
+            if let Some(VersionedGraphNode::Injected(_)) = self.graph.nodes.get(&key) {
+                debug!(msg = "rewind skipping injected key", k = ?key, v = %v);
+                continue;
+            }
+
+            cache.rewind(key);
+            self.graph.invalidate(
+                VersionedGraphKey::new(v, key),
+                InvalidateKind::ForceDirty,
+                InvalidationSourcePriority::Normal,
+            );
+            rewound += 1;
+        }
+        rewound
+    }
+
     pub(super) fn update_computed(
         &mut self,
         key: VersionedGraphKey,

@@ -31,6 +31,15 @@ struct Data {
     /// Completed tasks lazily moved into `completed` from this map.
     storage: DashMap<DiceKey, DiceTask, BuckHasherBuilder>,
     is_cancelled: AtomicBool,
+    /// Keys whose completed result at this version has been discarded by `rewind`.
+    /// The lock-free `completed` table does not support removal, so rewound keys are
+    /// overlaid here and their `completed` entry (if any) must never be consulted
+    /// again: `None` means the key must recompute when next requested, and
+    /// `Some(value)` holds the result of the post-rewind recompute.
+    rewound: DashMap<DiceKey, Option<DiceComputedValue>, BuckHasherBuilder>,
+    /// Whether `rewound` has ever been written to, so that the overlay costs nothing
+    /// until the first rewind (the overwhelmingly common case).
+    has_rewound: AtomicBool,
 }
 
 #[derive(Allocative, Clone, Dupe)]
@@ -68,7 +77,24 @@ impl SharedCache {
         (key.index as u64).wrapping_mul(0x9e3779b97f4a7c15)
     }
 
+    /// Returns `Some(overlay)` if `key` has been rewound at this version, in which
+    /// case the `completed` table must not be consulted for it. The overlay is the
+    /// post-rewind result, if one has been computed yet.
+    fn try_get_rewound(&self, key: DiceKey) -> Option<Option<DiceComputedValue>> {
+        if self.data.has_rewound.load(Ordering::Acquire) {
+            self.data
+                .rewound
+                .get(&key)
+                .map(|overlay| overlay.value().as_ref().map(Dupe::dupe))
+        } else {
+            None
+        }
+    }
+
     fn try_get_computed(&self, key: DiceKey) -> Option<DiceComputedValue> {
+        if let Some(overlay) = self.try_get_rewound(key) {
+            return overlay;
+        }
         let hash = Self::key_hash(key);
         self.data
             .completed
@@ -95,19 +121,30 @@ impl SharedCache {
                 if let Some(Ok(result)) = e.get().get_finished_value() {
                     // Promote entry to computed.
                     // So lookup will be faster next time.
-
-                    // TODO(nga): insert unique unchecked,
-                    //   which `LockFreeRawTable` does not support yet.
-                    let (_ignore, original) = self.data.completed.insert(
-                        Self::key_hash(key),
-                        Arc::new(DiceCompletedTask {
-                            key,
-                            value: result.dupe(),
-                        }),
-                        |a, b| a.key == b.key,
-                        |task| Self::key_hash(task.key),
-                    );
-                    assert!(original.is_none());
+                    let rewound_overlay = if self.data.has_rewound.load(Ordering::Acquire) {
+                        self.data.rewound.get_mut(&key)
+                    } else {
+                        None
+                    };
+                    if let Some(mut overlay) = rewound_overlay {
+                        // The `completed` table may already hold the stale pre-rewind
+                        // entry for this key, which can be neither removed nor
+                        // replaced; the post-rewind result lives in the overlay.
+                        *overlay = Some(result.dupe());
+                    } else {
+                        // TODO(nga): insert unique unchecked,
+                        //   which `LockFreeRawTable` does not support yet.
+                        let (_ignore, original) = self.data.completed.insert(
+                            Self::key_hash(key),
+                            Arc::new(DiceCompletedTask {
+                                key,
+                                value: result.dupe(),
+                            }),
+                            |a, b| a.key == b.key,
+                            |task| Self::key_hash(task.key),
+                        );
+                        assert!(original.is_none());
+                    }
 
                     // Must remove from dashmap after inserting into completed.
                     e.remove();
@@ -125,12 +162,32 @@ impl SharedCache {
         working_entry
     }
 
+    /// Discards the completed result for `key` at this version so that the next
+    /// request recomputes it. A currently-running task for `key` is not restarted:
+    /// it began before the rewind and its (eventual) result is treated as the
+    /// post-rewind result. Callers wanting strictly-after semantics must rewind
+    /// again after observing a result they consider stale.
+    pub(crate) fn rewind(&self, key: DiceKey) {
+        self.data.rewound.insert(key, None);
+        // `Release` pairs with the `Acquire` loads in `try_get_rewound`/`get`: a
+        // reader that observes the flag also observes the tombstone inserted above.
+        self.data.has_rewound.store(true, Ordering::Release);
+        // A finished task still sitting in `storage` is the same stale result that
+        // the tombstone above shadows in `completed`; drop it so the next request
+        // spawns a fresh computation instead of promoting it into the overlay.
+        self.data
+            .storage
+            .remove_if(&key, |_, task| matches!(task.get_finished_value(), Some(Ok(_))));
+    }
+
     pub(crate) fn new() -> Self {
         SharedCache {
             data: Arc::new(Data {
                 storage: DashMap::default(),
                 completed: ShardedLockFreeRawTable::new(),
                 is_cancelled: AtomicBool::new(false),
+                rewound: DashMap::default(),
+                has_rewound: AtomicBool::new(false),
             }),
         }
     }

@@ -118,6 +118,18 @@ impl VersionTracker {
             .is_some_and(|active| active.version_epoch == epoch)
     }
 
+    /// Returns the shared cache at the given version if it is still the same activation
+    /// of that version (same epoch). Does not affect the version's ref-count.
+    pub(crate) fn cache_if_relevant(
+        &self,
+        v: VersionNumber,
+        epoch: VersionEpoch,
+    ) -> Option<SharedCache> {
+        self.active_versions.get(&v).and_then(|active| {
+            (active.version_epoch == epoch).then(|| active.per_transaction_data.dupe())
+        })
+    }
+
     pub(crate) fn should_reject(&self, v: VersionNumber) -> bool {
         v < self.invalid_before
     }
