@@ -19,19 +19,19 @@ use bz_client_ctx::subscribers::subscriber::EventSubscriber;
 use bz_cmd_audit_client::AuditCommand;
 use bz_cmd_audit_client::deferred_materializer::DeferredMaterializerCommand;
 use bz_cmd_audit_client::deferred_materializer::DeferredMaterializerSubcommand;
-use bz_common::manifold::ManifoldClient;
+use bz_common::artifact_upload::ArtifactUploadClient;
 use bz_error::bz_error;
 use futures::future::LocalBoxFuture;
 use futures::future::Shared;
 
-use crate::manifold::buf_to_manifold;
+use crate::artifact_upload::buf_to_artifact_store;
 use crate::rage::MaterializerRageUploadData;
 
 pub async fn upload_materializer_data(
     buckd: Shared<LocalBoxFuture<'_, bz_error::Result<BootstrapBuckdClient>>>,
     client_context: &ClientContext,
-    manifold: &ManifoldClient,
-    manifold_id: &String,
+    artifact_client: &ArtifactUploadClient,
+    artifact_id: &String,
     materializer_data: MaterializerRageUploadData,
 ) -> bz_error::Result<String> {
     let mut buckd = buckd.await?.to_connector();
@@ -73,8 +73,8 @@ pub async fn upload_materializer_data(
         }
     }
 
-    let manifold_filename = format!("flat/{manifold_id}_materializer_{materializer_data}");
-    buf_to_manifold(manifold, &capture.buf, manifold_filename).await
+    let artifact_filename = format!("flat/{artifact_id}_materializer_{materializer_data}");
+    buf_to_artifact_store(artifact_client, &capture.buf, artifact_filename).await
 }
 
 /// Receive StdoutBytes, just capture them.

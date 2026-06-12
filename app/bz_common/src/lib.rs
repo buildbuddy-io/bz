@@ -48,7 +48,7 @@ pub mod kill_util;
 pub mod legacy_configs;
 pub mod liveliness_observer;
 pub mod local_resource_state;
-pub mod manifold;
+pub mod artifact_upload;
 pub mod memory;
 pub mod package_boundary;
 pub mod package_listing;

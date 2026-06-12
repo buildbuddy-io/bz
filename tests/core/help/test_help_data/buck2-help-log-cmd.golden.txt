@@ -21,7 +21,7 @@ Options:
           This option does nothing
 
       --no-remote
-          Do not allow downloading the log from manifold if it's not found locally
+          Do not allow downloading the log from remote storage if it's not found locally
 
       --expand
           Show @-expanded command line arguments instead of the original command line

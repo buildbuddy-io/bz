@@ -11,8 +11,7 @@ Options:
           File will be created if it does not exist, and overwritten if it does.
 
       --upload
-          Whether to upload the output to Manifold Deprecated: now we always upload to Manifold,
-          this flag is a no-op
+          Upload the output to a configured artifact store.
 
       --stack
           Add target code pointer. This invalidates cache, slowing things down

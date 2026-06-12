@@ -22,7 +22,7 @@ Options:
           This option does nothing
 
       --no-remote
-          Do not allow downloading the log from manifold if it's not found locally
+          Do not allow downloading the log from remote storage if it's not found locally
 
   -s, --sort-by-size
           Sort the output by total bytes in ascending order

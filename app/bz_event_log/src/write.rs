@@ -263,11 +263,11 @@ async fn start_persist_event_log_subprocess(
         // Ensure that if we get CTRL-C, the persist-event-logs process does not get it.
         command.process_group(0);
     }
-    let manifold_name = &format!("{}{}", trace_id, path.extension());
+    let artifact_name = &format!("{}{}", trace_id, path.extension());
     // TODO T184566736: detach subprocess
     command
         .args(["debug", "persist-event-logs"])
-        .args(["--manifold-name", manifold_name])
+        .args(["--artifact-name", artifact_name])
         .args(["--local-path".as_ref(), path.path.as_os_str()])
         .args(["--trace-id", &trace_id.to_string()]);
     if !should_upload_log()? {

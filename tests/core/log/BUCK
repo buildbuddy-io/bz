@@ -4,11 +4,6 @@ oncall("build_infra")
 
 bz_core_tests(
     target_extra_attrs = {
-        "test_upload_re_logs": {
-            "deps": [
-                "//manifold/clients/python:manifold_client_deprecated",
-            ],
-        },
         "test_what_materialized": {
             "use_compiled_bz_client_and_tpx": True,
         },

@@ -43,7 +43,7 @@ message BuckEvent {
     SpanStartEvent span_start = 20;
     SpanEndEvent span_end = 21;
     InstantEvent instant = 22;
-    // Not present in daemon -> CLI stream or event-log, sent to Scribe
+    // Not present in daemon -> CLI stream or event-log, sent to remote event sink
     // directly.
     RecordEvent record = 23;
   }
@@ -2535,7 +2535,7 @@ enum DaemonWasStartedReason {
 }
 
 // This is the origin for every sample in bz_builds scuba table
-// It's sent from the client to Scribe at the end of each invocation
+// It's sent from the client to the remote event sink at the end of each invocation.
 message InvocationRecord {
   reserved 1, 22, 27, 28, 36, 61, 62, 66, 77, 82, 88, 89, 100, 234, 235, 400,
       401;
@@ -2904,7 +2904,7 @@ enum InvocationOutcome {
   Crashed = 4;
 }
 
-// Record event sent directly to scribe.
+// Record event sent directly to the remote event sink.
 message BuildGraphStats {
   repeated BuildTarget build_targets = 1;
 }

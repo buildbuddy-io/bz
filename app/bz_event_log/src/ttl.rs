@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-use bz_common::manifold::Ttl;
+use bz_common::artifact_upload::Ttl;
 use bz_core::bz_env;
 use bz_events::metadata::username;
 use bz_events::schedule_type::SandcastleScheduleType;
@@ -28,21 +28,21 @@ const DEFAULT_TTL_DAYS: u64 = 60;
 // diff signal retention is 4 weeks
 const CI_EXCEPT_CONTINUOUS_TTL_DAYS: u64 = 28;
 
-pub fn manifold_event_log_ttl() -> bz_error::Result<Ttl> {
-    manifold_event_log_ttl_impl(
+pub fn artifact_upload_event_log_ttl() -> bz_error::Result<Ttl> {
+    artifact_upload_event_log_ttl_impl(
         ROBOTS,
         username().ok().flatten(),
         SandcastleScheduleType::new()?,
     )
 }
 
-fn manifold_event_log_ttl_impl(
+fn artifact_upload_event_log_ttl_impl(
     robots: &[&str],
     username: Option<String>,
     schedule_type: SandcastleScheduleType,
 ) -> bz_error::Result<Ttl> {
     // 1. return if this is a test
-    let env = bz_env!("BUCK2_TEST_MANIFOLD_TTL_S", type=u64, applicability=testing)?;
+    let env = bz_env!("BUCK2_TEST_ARTIFACT_UPLOAD_TTL_S", type=u64, applicability=testing)?;
     if let Some(env) = env {
         return Ok::<Ttl, bz_error::Error>(Ttl::from_secs(env));
     }
@@ -70,7 +70,7 @@ mod tests {
     #[test]
     fn test_is_a_user() -> bz_error::Result<()> {
         assert_eq!(
-            manifold_event_log_ttl_impl(
+            artifact_upload_event_log_ttl_impl(
                 &["twsvcscm"],
                 Some("random_person".to_owned()),
                 SandcastleScheduleType::testing_new("continuous")
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn test_not_a_user() -> bz_error::Result<()> {
         assert_eq!(
-            manifold_event_log_ttl_impl(
+            artifact_upload_event_log_ttl_impl(
                 &["twsvcscm"],
                 Some("twsvcscm".to_owned()),
                 SandcastleScheduleType::testing_empty()
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn test_not_a_user_and_not_continuous() -> bz_error::Result<()> {
         assert_eq!(
-            manifold_event_log_ttl_impl(
+            artifact_upload_event_log_ttl_impl(
                 &["twsvcscm"],
                 Some("twsvcscm".to_owned()),
                 SandcastleScheduleType::testing_new("foo")
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn test_not_a_user_and_continuous() -> bz_error::Result<()> {
         assert_eq!(
-            manifold_event_log_ttl_impl(
+            artifact_upload_event_log_ttl_impl(
                 &["twsvcscm"],
                 Some("twsvcscm".to_owned()),
                 SandcastleScheduleType::testing_new("continuous")

@@ -22,8 +22,8 @@ use bz_client_ctx::thread_dump::thread_dump_command;
 use bz_client_ctx::upload_re_logs::upload_re_logs;
 use bz_common::argv::Argv;
 use bz_common::argv::SanitizedArgv;
-use bz_common::manifold::Bucket;
-use bz_common::manifold::ManifoldClient;
+use bz_common::artifact_upload::Bucket;
+use bz_common::artifact_upload::ArtifactUploadClient;
 use bz_data::InstantEvent;
 use bz_data::RageResult;
 use bz_data::instant_event::Data;
@@ -34,7 +34,7 @@ use bz_event_log::read::EventLogPathBuf;
 use bz_event_log::read::EventLogSummary;
 use bz_events::BuckEvent;
 use bz_events::sink::remote::RemoteEventSink;
-use bz_events::sink::remote::ScribeConfig;
+use bz_events::sink::remote::RemoteEventSinkConfig;
 use bz_events::sink::remote::new_remote_event_sink_if_enabled;
 use bz_fs::paths::abs_norm_path::AbsNormPath;
 use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
@@ -54,8 +54,8 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 
-use crate::manifold::file_to_manifold;
-use crate::manifold::manifold_leads;
+use crate::artifact_upload::file_to_artifact_store;
+use crate::artifact_upload::artifact_upload_leads;
 
 #[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
@@ -112,11 +112,11 @@ impl RageCommand {
         let client_ctx = ctx.empty_client_context("rage")?;
 
         // Don't fail the rage if you can't figure out whether to do vpnless.
-        let manifold = ManifoldClient::new().await?;
+        let artifact_client = ArtifactUploadClient::new().await?;
 
         let rage_id = TraceId::new();
-        let mut manifold_id = format!("{rage_id}");
-        let sink = create_scribe_sink(&ctx)?;
+        let mut artifact_id = format!("{rage_id}");
+        let sink = create_remote_event_sink(&ctx)?;
 
         bz_client_ctx::eprintln!(
             "Data collection will terminate after {} seconds (override with --timeout param)",
@@ -135,13 +135,13 @@ impl RageCommand {
         let selected_invocation = maybe_select_invocation(ctx.stdin(), &logdir, &self).await?;
         let invocation_id = get_trace_id(&selected_invocation).await?;
         if let Some(ref invocation_id) = invocation_id {
-            manifold_id = format!("{invocation_id}_{manifold_id}");
+            artifact_id = format!("{invocation_id}_{artifact_id}");
         }
 
         bz_client_ctx::eprintln!("Collecting debug info...")?;
 
         let thread_dump = self.section("Thread dump", || {
-            upload_thread_dump(&info, &manifold, &manifold_id)
+            upload_thread_dump(&info, &artifact_client, &artifact_id)
         });
         let build_info_command = self.skippable_section(
             "Associated invocation info",
@@ -159,7 +159,7 @@ impl RageCommand {
 
         let system_info_command = self.section("System info", crate::system_info::get);
         let daemon_stderr_command = self.section("Daemon stderr", || {
-            upload_daemon_stderr(stderr_path, &manifold, &manifold_id)
+            upload_daemon_stderr(stderr_path, &artifact_client, &artifact_id)
         });
         let hg_snapshot_id_command =
             self.section("Source control", crate::source_control::get_info);
@@ -167,8 +167,8 @@ impl RageCommand {
             crate::dice::upload_dice_dump(
                 buckd.clone().await?,
                 dice_dump_dir,
-                &manifold,
-                &manifold_id,
+                &artifact_client,
+                &artifact_id,
             )
             .await
         });
@@ -176,8 +176,8 @@ impl RageCommand {
             crate::materializer::upload_materializer_data(
                 buckd.clone(),
                 &client_ctx,
-                &manifold,
-                &manifold_id,
+                &artifact_client,
+                &artifact_id,
                 MaterializerRageUploadData::State,
             )
         });
@@ -185,8 +185,8 @@ impl RageCommand {
             crate::materializer::upload_materializer_data(
                 buckd.clone(),
                 &client_ctx,
-                &manifold,
-                &manifold_id,
+                &artifact_client,
+                &artifact_id,
                 MaterializerRageUploadData::Fsck,
             )
         });
@@ -194,14 +194,14 @@ impl RageCommand {
             "Event log upload",
             selected_invocation
                 .as_ref()
-                .map(|path| || upload_event_logs(path, &manifold, &manifold_id)),
+                .map(|path| || upload_event_logs(path, &artifact_client, &artifact_id)),
         );
 
         let re_logs_command = self.skippable_section(
             "RE logs upload",
             build_info
                 .get_field(|o| o.re_session_id.clone())
-                .map(|id| || upload_re_logs_impl(&manifold, &re_logs_dir, id)),
+                .map(|id| || upload_re_logs_impl(&artifact_client, &re_logs_dir, id)),
         );
 
         let (
@@ -502,31 +502,31 @@ fn insert_if_some<D>(data: &mut StdBuckHashMap<String, D>, key: &str, value: Opt
 
 async fn upload_daemon_stderr(
     path: AbsNormPathBuf,
-    manifold: &ManifoldClient,
-    manifold_id: &str,
+    artifact_client: &ArtifactUploadClient,
+    artifact_id: &str,
 ) -> bz_error::Result<String> {
-    file_to_manifold(manifold, &path, format!("flat/{manifold_id}.stderr")).await
+    file_to_artifact_store(artifact_client, &path, format!("flat/{artifact_id}.stderr")).await
 }
 
 async fn upload_event_logs(
     path: &EventLogPathBuf,
-    manifold: &ManifoldClient,
-    manifold_id: &str,
+    artifact_client: &ArtifactUploadClient,
+    artifact_id: &str,
 ) -> bz_error::Result<String> {
-    let filename = format!("flat/{}-event_log{}", manifold_id, path.extension());
-    file_to_manifold(manifold, path.path(), filename).await
+    let filename = format!("flat/{}-event_log{}", artifact_id, path.extension());
+    file_to_artifact_store(artifact_client, path.path(), filename).await
 }
 
 async fn upload_re_logs_impl(
-    manifold: &ManifoldClient,
+    artifact_client: &ArtifactUploadClient,
     re_logs_dir: &AbsNormPath,
     re_session_id: String,
 ) -> bz_error::Result<String> {
     let bucket = Bucket::RAGE_DUMPS;
     let filename = format!("flat/{}-re_logs.zst", &re_session_id);
-    upload_re_logs(manifold, bucket, re_logs_dir, &re_session_id, &filename).await?;
+    upload_re_logs(artifact_client, bucket, re_logs_dir, &re_session_id, &filename).await?;
 
-    Ok(manifold_leads(&bucket, filename))
+    Ok(artifact_upload_leads(&bucket, filename))
 }
 
 async fn dispatch_result_event(
@@ -535,11 +535,11 @@ async fn dispatch_result_event(
     result: RageResult,
 ) -> bz_error::Result<()> {
     let data = Some(Data::RageResult(result));
-    dispatch_event_to_scribe(sink, rage_id, InstantEvent { data }).await?;
+    dispatch_event_to_remote_event_sink(sink, rage_id, InstantEvent { data }).await?;
     Ok(())
 }
 
-async fn dispatch_event_to_scribe(
+async fn dispatch_event_to_remote_event_sink(
     sink: Option<&RemoteEventSink>,
     trace_id: &TraceId,
     event: InstantEvent,
@@ -556,7 +556,7 @@ async fn dispatch_event_to_scribe(
             .await;
     } else {
         tracing::warn!(
-            "Couldn't send rage results to scribe, rage ID `{}`",
+            "Couldn't send rage results to remote event sink, rage ID `{}`",
             trace_id
         )
     };
@@ -564,10 +564,8 @@ async fn dispatch_event_to_scribe(
 }
 
 #[allow(unused_variables)] // Conditional compilation
-fn create_scribe_sink(ctx: &ClientCommandContext) -> bz_error::Result<Option<RemoteEventSink>> {
-    // TODO(swgiillespie) scribe_logging is likely the right feature for this, but we should be able to inject a sink
-    // without using configurations at the call site
-    new_remote_event_sink_if_enabled(ctx.fbinit(), ScribeConfig::default())
+fn create_remote_event_sink(ctx: &ClientCommandContext) -> bz_error::Result<Option<RemoteEventSink>> {
+    new_remote_event_sink_if_enabled(ctx.fbinit(), RemoteEventSinkConfig::default())
 }
 
 async fn maybe_select_invocation(
@@ -740,8 +738,8 @@ async fn generate_paste(title: &str, content: &str) -> bz_error::Result<String> 
 
 async fn upload_thread_dump(
     buckd: &bz_error::Result<BuckdProcessInfo<'_>>,
-    manifold: &ManifoldClient,
-    manifold_id: &String,
+    artifact_client: &ArtifactUploadClient,
+    artifact_id: &String,
 ) -> bz_error::Result<String> {
     let buckd = buckd.as_ref().map_err(|e| e.clone())?;
     let command = thread_dump_command(buckd)?
@@ -754,8 +752,8 @@ async fn upload_thread_dump(
         .await?;
 
     if command.status.success() {
-        let manifold_filename = format!("flat/{manifold_id}_thread_dump");
-        crate::manifold::buf_to_manifold(manifold, &command.stdout, manifold_filename).await
+        let artifact_filename = format!("flat/{artifact_id}_thread_dump");
+        crate::artifact_upload::buf_to_artifact_store(artifact_client, &command.stdout, artifact_filename).await
     } else {
         let stderr = &command.stderr;
         Ok(String::from_utf8_lossy(stderr).to_string())

@@ -40,9 +40,9 @@ use bz_cli_proto::InstallResponse;
 use bz_common::client_utils::get_channel_tcp;
 use bz_common::client_utils::retrying;
 use bz_common::file_ops::metadata::FileDigest;
-use bz_common::manifold::Bucket;
-use bz_common::manifold::ManifoldClient;
-use bz_common::manifold::Ttl;
+use bz_common::artifact_upload::Bucket;
+use bz_common::artifact_upload::ArtifactUploadClient;
+use bz_common::artifact_upload::Ttl;
 use bz_common::pattern::parse_from_cli::parse_patterns_with_modifiers_from_cli_args;
 use bz_common::pattern::resolve::ResolveTargetPatterns;
 use bz_core::bz_env;
@@ -832,13 +832,13 @@ async fn handle_install_request(
 }
 
 async fn upload_installer_logs(log_path: &AbsNormPathBuf) -> bz_error::Result<String> {
-    let manifold = ManifoldClient::new().await?;
+    let artifact_client = ArtifactUploadClient::new().await?;
     let trace_id: &str = &get_dispatcher().trace_id().to_string();
-    let manifold_filename = format!("flat/{trace_id}.log");
-    manifold
+    let artifact_filename = format!("flat/{trace_id}.log");
+    artifact_client
         .upload_file(
             log_path,
-            manifold_filename,
+            artifact_filename,
             Bucket::INSTALLER_LOGS,
             Ttl::from_days(14),
         )

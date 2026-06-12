@@ -17,9 +17,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bz_certs::validate::validate_certs;
-use bz_common::manifold::Bucket;
-use bz_common::manifold::ManifoldClient;
-use bz_common::manifold::Ttl;
+use bz_common::artifact_upload::Bucket;
+use bz_common::artifact_upload::ArtifactUploadClient;
+use bz_common::artifact_upload::Ttl;
 use bz_core::bz_env;
 use bz_error::BuckErrorContext;
 use bz_error::ErrorTag;
@@ -208,8 +208,11 @@ async fn with_timeout<R>(
     }
 }
 
-async fn write_to_manifold(buf: &[u8], name: &str) -> Option<String> {
-    let manifold = ManifoldClient::new().await.ok()?;
+async fn write_to_artifact_store(buf: &[u8], name: &str) -> Option<String> {
+    let artifact_client = ArtifactUploadClient::new().await.ok()?;
+    if !artifact_client.is_available() {
+        return None;
+    }
 
     let filename = format!("flat/{}_{}_logs", uuid::Uuid::new_v4(), name);
     let ttl = Ttl::from_days(14); // 14 days should be plenty of time to take action
@@ -217,20 +220,15 @@ async fn write_to_manifold(buf: &[u8], name: &str) -> Option<String> {
     let bucket = Bucket::RAGE_DUMPS;
     let mut cursor = &mut std::io::Cursor::new(buf);
 
-    manifold
+    artifact_client
         .read_and_upload(bucket, &filename, ttl, &mut cursor)
         .await
         .ok()?;
 
-    let url = format!(
-        "https://interncache-all.fbcdn.net/manifold/{}/{}",
-        bucket.name, filename
-    );
-
-    Some(url)
+    Some(bucket.artifact_url(&filename))
 }
 
-async fn cmd_logs_to_manifold(cmd: &str, args: Vec<&str>) -> Option<String> {
+async fn cmd_logs_to_artifact_store(cmd: &str, args: Vec<&str>) -> Option<String> {
     let async_cmd = bz_util::process::async_background_command(cmd)
         .args(args)
         .output()
@@ -238,7 +236,7 @@ async fn cmd_logs_to_manifold(cmd: &str, args: Vec<&str>) -> Option<String> {
 
     if let Ok(result) = async_cmd {
         if result.status.success() {
-            return write_to_manifold(&result.stdout, cmd).await;
+            return write_to_artifact_store(&result.stdout, cmd).await;
         }
     }
 
@@ -247,8 +245,8 @@ async fn cmd_logs_to_manifold(cmd: &str, args: Vec<&str>) -> Option<String> {
 
 // Best effort to get watchman and eden rage logs to help with debugging.
 async fn get_watchman_eden_error_logs() -> Option<String> {
-    let watchman_cmd = cmd_logs_to_manifold("watchmanctl", vec!["rage"]);
-    let eden_cmd = cmd_logs_to_manifold("eden", vec!["debug", "log", "--full", "--stdout"]);
+    let watchman_cmd = cmd_logs_to_artifact_store("watchmanctl", vec!["rage"]);
+    let eden_cmd = cmd_logs_to_artifact_store("eden", vec!["debug", "log", "--full", "--stdout"]);
 
     let (watchman_cmd, eden_cmd) = tokio::join!(watchman_cmd, eden_cmd);
 

@@ -4,6 +4,6 @@ load("@prelude//:prelude.bzl", "http_archive")
 # packaged up zip.
 http_archive(
     name = "test_zip",
-    urls = ["https://interncache-all.fbcdn.net/manifold/buck_build_test/tree/bz_test/http_archive/test_zip.zip"],
-    sha1 = "095f3ebdcbecf6a2395f49fd367dfae1a91ec54b",
+    urls = ["https://raw.githubusercontent.com/buildbuddy-io/bz/main/tests/fixtures/downloads/test_zip.zip"],
+    sha1 = "01f76cdc142d13d7d634b587393e882e5704f642",
 )

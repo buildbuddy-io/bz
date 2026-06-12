@@ -13,7 +13,7 @@ use bz_error::BuckErrorContext;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 
-/// A bit of a trivial utility to read AsyncRead in chunks before we send them to Manifold.
+/// A small utility to read AsyncRead in chunks before uploading them.
 pub struct ChunkReader {
     chunk_size: u64,
 }
@@ -21,7 +21,7 @@ pub struct ChunkReader {
 impl ChunkReader {
     pub fn new() -> bz_error::Result<Self> {
         let chunk_size = bz_env!(
-            "BUCK2_TEST_MANIFOLD_CHUNK_BYTES",
+            "BUCK2_TEST_ARTIFACT_UPLOAD_CHUNK_BYTES",
             type=u64,
             applicability=testing,
         )?

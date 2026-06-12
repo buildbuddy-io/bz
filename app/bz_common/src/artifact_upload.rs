@@ -56,7 +56,7 @@ impl Ttl {
 
 impl Default for Ttl {
     fn default() -> Self {
-        Self::from_secs(164 * 86_400) // 164 days, equals scuba bz_builds retention
+        Self::from_secs(164 * 86_400)
     }
 }
 
@@ -106,21 +106,23 @@ impl IntoBuck2Error for HttpAppendError {
 #[buck2(tag = Environment)]
 pub enum UploadError {
     #[error(
-        "No result code from uploading path `{0}` to Manifold, probably due to signal interrupt"
+        "No result code from uploading path `{0}` to the artifact store, probably due to signal interrupt"
     )]
     NoResultCodeError(String),
-    #[error("Failed to find suitable Manifold upload command")]
+    #[error("Failed to find suitable artifact upload command")]
     CommandNotFound,
     #[error(
-        "Failed to upload path `{path}` to Manifold with exit code `{code}`, stderr: `{stderr}`"
+        "Failed to upload path `{path}` to the artifact store with exit code `{code}`, stderr: `{stderr}`"
     )]
     FileUploadExitCode {
         path: String,
         code: i32,
         stderr: String,
     },
-    #[error("Failed to upload stream to Manifold with exit code `{code}`, stderr: `{stderr}`")]
+    #[error("Failed to upload stream to the artifact store with exit code `{code}`, stderr: `{stderr}`")]
     StreamUploadExitCode { code: i32, stderr: String },
+    #[error("No artifact upload endpoint is configured in this build")]
+    Unavailable,
     #[error("File not found")]
     FileNotFound,
     #[error(transparent)]
@@ -136,28 +138,23 @@ impl From<io::Error> for UploadError {
 #[derive(Clone, Copy)]
 pub struct Bucket {
     pub name: &'static str,
-    key: &'static str,
 }
 
 impl Bucket {
     pub const EVENT_LOGS: Bucket = Bucket {
         name: "bz_logs",
-        key: "bz_logs-key",
     };
 
     pub const RAGE_DUMPS: Bucket = Bucket {
         name: "bz_rage_dumps",
-        key: "bz_rage_dumps-key",
     };
 
     pub const RE_LOGS: Bucket = Bucket {
         name: "bz_re_logs",
-        key: "bz_re_logs-key",
     };
 
     pub const INSTALLER_LOGS: Bucket = Bucket {
         name: "bz_installer_logs",
-        key: "bz_installer_logs-key",
     };
 
     pub fn path(&self, filename: &str) -> String {
@@ -165,62 +162,63 @@ impl Bucket {
     }
 
     pub fn artifact_url(&self, filename: &str) -> String {
-        format!("manifold://{}", self.path(filename))
+        format!("artifact://{}", self.path(filename))
     }
 }
 
-fn manifold_explorer_url(bucket: &Bucket, filename: String) -> String {
+fn artifact_url(bucket: &Bucket, filename: String) -> String {
     let full_path = format!("{}/{}", bucket.name, filename);
-    format!("manifold://{full_path}")
+    format!("artifact://{full_path}")
 }
 
-/// Return the scheme+host Manifold endpoint to upload to, or None to not upload at all.
+/// Return the scheme+host artifact upload endpoint, or None to disable uploads.
 fn upload_endpoint_url(use_vpnless: bool) -> Option<&'static str> {
     let _unused = use_vpnless;
     None
 }
 
-pub struct ManifoldClient {
+pub struct ArtifactUploadClient {
     client: HttpClient,
-    manifold_url: Option<String>,
+    upload_url: Option<String>,
 }
 
-impl ManifoldClient {
+impl ArtifactUploadClient {
     pub async fn new() -> bz_error::Result<Self> {
         let client = HttpClientBuilder::internal().await?.build();
-        let manifold_url = upload_endpoint_url(client.supports_vpnless()).map(|s| s.to_owned());
+        let upload_url = upload_endpoint_url(client.supports_vpnless()).map(|s| s.to_owned());
 
-        Ok(Self {
-            client,
-            manifold_url,
-        })
+        Ok(Self { client, upload_url })
+    }
+
+    pub fn is_available(&self) -> bool {
+        self.upload_url.is_some()
     }
 
     pub async fn write(
         &self,
         bucket: Bucket,
-        manifold_bucket_path: &str,
+        artifact_bucket_path: &str,
         buf: bytes::Bytes,
         ttl: Ttl,
     ) -> bz_error::Result<()> {
-        let manifold_url = match &self.manifold_url {
-            None => return Ok(()),
+        let upload_url = match &self.upload_url {
+            None => return Err(UploadError::Unavailable.into()),
             Some(x) => x,
         };
         let url = format!(
-            "{}/v0/write/{}?bucketName={}&apiKey={}&timeoutMsec=20000",
-            manifold_url, manifold_bucket_path, bucket.name, bucket.key
+            "{}/v0/write/{}?bucketName={}&timeoutMsec=20000",
+            upload_url, artifact_bucket_path, bucket.name
         );
 
         let mut headers = vec![(
-            "X-Manifold-Obj-Predicate".to_owned(),
+            "X-Artifact-Obj-Predicate".to_owned(),
             "NoPredicate".to_owned(),
         )];
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let expiration = now.as_secs() + ttl.duration.as_secs();
         headers.push((
-            "X-Manifold-Obj-ExpiresAt".to_owned(),
+            "X-Artifact-Obj-ExpiresAt".to_owned(),
             expiration.to_string(),
         ));
 
@@ -243,17 +241,17 @@ impl ManifoldClient {
     pub async fn append(
         &self,
         bucket: Bucket,
-        manifold_bucket_path: &str,
+        artifact_bucket_path: &str,
         buf: bytes::Bytes,
         offset: u64,
     ) -> bz_error::Result<()> {
-        let manifold_url = match &self.manifold_url {
-            None => return Ok(()),
+        let upload_url = match &self.upload_url {
+            None => return Err(UploadError::Unavailable.into()),
             Some(x) => x,
         };
         let url = format!(
-            "{}/v0/append/{}?bucketName={}&apiKey={}&timeoutMsec=20000&writeOffset={}",
-            manifold_url, manifold_bucket_path, bucket.name, bucket.key, offset
+            "{}/v0/append/{}?bucketName={}&timeoutMsec=20000&writeOffset={}",
+            upload_url, artifact_bucket_path, bucket.name, offset
         );
 
         let res = http_retry(
@@ -301,9 +299,9 @@ impl ManifoldClient {
         bucket: Bucket,
         path: &'a str,
         ttl: Ttl,
-    ) -> ManifoldChunkedUploader<'a> {
-        ManifoldChunkedUploader {
-            manifold: self,
+    ) -> ArtifactChunkedUploader<'a> {
+        ArtifactChunkedUploader {
+            client: self,
             position: 0,
             bucket,
             path,
@@ -322,7 +320,7 @@ impl ManifoldClient {
         self.read_and_upload(bucket, &filename, ttl, &mut file)
             .await?;
 
-        Ok(manifold_explorer_url(&bucket, filename))
+        Ok(artifact_url(&bucket, filename))
     }
 }
 
@@ -331,26 +329,26 @@ async fn consume_response<'a>(mut res: Response<BoxStream<'a, hyper::Result<Byte
     while let Some(_chunk) = res.body_mut().next().await {}
 }
 
-/// Keep track of a chunk upload to a given Manifold key.
-pub struct ManifoldChunkedUploader<'a> {
-    manifold: &'a ManifoldClient,
+/// Keep track of a chunk upload to a given artifact key.
+pub struct ArtifactChunkedUploader<'a> {
+    client: &'a ArtifactUploadClient,
     position: u64,
     bucket: Bucket,
     path: &'a str,
     ttl: Ttl,
 }
 
-impl ManifoldChunkedUploader<'_> {
+impl ArtifactChunkedUploader<'_> {
     pub async fn write(&mut self, chunk: Bytes) -> bz_error::Result<()> {
         let len = u64::try_from(chunk.len())?;
 
         if self.position == 0 {
             // First chunk
-            self.manifold
+            self.client
                 .write(self.bucket, self.path, chunk, self.ttl)
                 .await?
         } else {
-            self.manifold
+            self.client
                 .append(self.bucket, self.path, chunk, self.position)
                 .await?
         }

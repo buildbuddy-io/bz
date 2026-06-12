@@ -30,8 +30,8 @@ mod output_format_flatbuffers;
 #[allow(unused_extern_crates)]
 #[allow(clippy::extra_unused_lifetimes)]
 mod output_format_generated;
-use bz_common::manifold::Bucket;
-use bz_common::manifold::ManifoldClient;
+use bz_common::artifact_upload::Bucket;
+use bz_common::artifact_upload::ArtifactUploadClient;
 use bz_node::nodes::configured::ConfiguredTargetNode;
 use bz_query::query::environment::QueryTarget;
 use bz_query::query::syntax::simple::eval::set::TargetSet;
@@ -61,7 +61,7 @@ pub async fn main(
     changed_files: Vec<ChangedFilesEntryData>,
     output: Option<&AbsPathBuf>,
     fbs_dump: Option<&AbsPathBuf>,
-    manifold_path: Option<&str>,
+    artifact_path: Option<&str>,
 ) -> bz_error::Result<()> {
     let fbs = flatbuffers::gen_fbs(data, executed_actions, changed_files)?;
 
@@ -75,11 +75,11 @@ pub async fn main(
         fs::write(o, &html_out)?
     };
 
-    if let Some(p) = manifold_path {
+    if let Some(p) = artifact_path {
         // TODO iguridi: write and upload concurrently
-        let manifold = ManifoldClient::new().await?;
+        let artifact_client = ArtifactUploadClient::new().await?;
 
-        manifold
+        artifact_client
             .read_and_upload(Bucket::EVENT_LOGS, p, Default::default(), &mut cursor)
             .await?;
     }

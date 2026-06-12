@@ -76,7 +76,7 @@ impl EventSubscriber for EventLog {
         //
         //   Regardless of that we should do either or both of the following:
         //   - write it to event log if it is interesting (e.g. crash)
-        //   - upload it to manifold unconditionally as a separate file
+        //   - upload it to remote storage unconditionally as a separate file
         //     (but only relevant part, since command start)
         Ok(())
     }

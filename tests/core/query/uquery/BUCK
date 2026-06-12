@@ -2,12 +2,4 @@ load("//tests:buck_e2e.bzl", "bz_core_tests")
 
 oncall("build_infra")
 
-bz_core_tests(
-    target_extra_attrs = {
-        "test_uquery": {
-            "deps": [
-                "//manifold/clients/python:manifold_client_deprecated",
-            ],
-        },
-    },
-)
+bz_core_tests()

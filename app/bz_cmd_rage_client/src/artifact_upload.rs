@@ -10,21 +10,18 @@
 
 use std::io::Cursor;
 
-use bz_common::manifold::Bucket;
-use bz_common::manifold::ManifoldClient;
+use bz_common::artifact_upload::Bucket;
+use bz_common::artifact_upload::ArtifactUploadClient;
 use bz_fs::async_fs_util;
 use bz_fs::error::IoResultExt;
 use bz_fs::paths::abs_path::AbsPath;
 
-pub(crate) fn manifold_leads(bucket: &Bucket, filename: String) -> String {
-    let full_path = bucket.path(filename.as_str());
-    let command = format!("manifold get {full_path}");
-    let url = bucket.artifact_url(filename.as_str());
-    format!("{command}\n{url}")
+pub(crate) fn artifact_upload_leads(bucket: &Bucket, filename: String) -> String {
+    bucket.artifact_url(filename.as_str())
 }
 
-pub(crate) async fn file_to_manifold(
-    manifold: &ManifoldClient,
+pub(crate) async fn file_to_artifact_store(
+    artifact_client: &ArtifactUploadClient,
     path: &AbsPath,
     filename: String,
 ) -> bz_error::Result<String> {
@@ -33,24 +30,24 @@ pub(crate) async fn file_to_manifold(
     // the trait to convert from tokio::fs::File is not implemented for Stdio
     let mut file = async_fs_util::open(&path).await.categorize_internal()?;
 
-    manifold
+    artifact_client
         .read_and_upload(bucket, &filename, Default::default(), &mut file)
         .await?;
 
-    Ok(manifold_leads(&bucket, filename))
+    Ok(artifact_upload_leads(&bucket, filename))
 }
 
-pub(crate) async fn buf_to_manifold(
-    manifold: &ManifoldClient,
+pub(crate) async fn buf_to_artifact_store(
+    artifact_client: &ArtifactUploadClient,
     buf: &[u8],
     filename: String,
 ) -> bz_error::Result<String> {
     let bucket = Bucket::RAGE_DUMPS;
     let mut cursor = &mut Cursor::new(buf);
 
-    manifold
+    artifact_client
         .read_and_upload(bucket, &filename, Default::default(), &mut cursor)
         .await?;
 
-    Ok(manifold_leads(&bucket, filename))
+    Ok(artifact_upload_leads(&bucket, filename))
 }

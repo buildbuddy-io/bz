@@ -15,8 +15,8 @@ use bz_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
 use bz_client_ctx::daemon::client::BuckdClientConnector;
 use bz_client_ctx::daemon::client::connect::BootstrapBuckdClient;
 use bz_client_ctx::events_ctx::EventsCtx;
-use bz_common::manifold::Bucket;
-use bz_common::manifold::ManifoldClient;
+use bz_common::artifact_upload::Bucket;
+use bz_common::artifact_upload::ArtifactUploadClient;
 use bz_error::BuckErrorContext;
 use bz_fs::error::IoResultExt;
 use bz_fs::fs_util;
@@ -24,30 +24,30 @@ use bz_fs::paths::abs_norm_path::AbsNormPathBuf;
 use bz_fs::paths::abs_path::AbsPathBuf;
 use bz_util::process::async_background_command;
 
-use crate::manifold::manifold_leads;
+use crate::artifact_upload::artifact_upload_leads;
 
 pub async fn upload_dice_dump(
     buckd: BootstrapBuckdClient,
     buck_out_dice: AbsNormPathBuf,
-    manifold: &ManifoldClient,
-    manifold_id: &String,
+    artifact_client: &ArtifactUploadClient,
+    artifact_id: &String,
 ) -> bz_error::Result<String> {
     let buckd = buckd.to_connector();
     let mut events_ctx = EventsCtx::new(None, Default::default());
-    let manifold_bucket = Bucket::RAGE_DUMPS;
-    let manifold_filename = format!("flat/{manifold_id}_dice-dump.tar");
+    let artifact_bucket = Bucket::RAGE_DUMPS;
+    let artifact_filename = format!("flat/{artifact_id}_dice-dump.tar");
     let this_dump_folder_name = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     DiceDump::new(buck_out_dice, &this_dump_folder_name)
         .upload(
             buckd,
             &mut events_ctx,
-            manifold,
-            manifold_bucket,
-            &manifold_filename,
+            artifact_client,
+            artifact_bucket,
+            &artifact_filename,
         )
         .await?;
 
-    Ok(manifold_leads(&manifold_bucket, manifold_filename))
+    Ok(artifact_upload_leads(&artifact_bucket, artifact_filename))
 }
 
 struct DiceDump {
@@ -69,9 +69,9 @@ impl DiceDump {
         &self,
         mut buckd: BuckdClientConnector,
         events_ctx: &mut EventsCtx,
-        manifold: &ManifoldClient,
-        manifold_bucket: Bucket,
-        manifold_filename: &str,
+        artifact_client: &ArtifactUploadClient,
+        artifact_bucket: Bucket,
+        artifact_filename: &str,
     ) -> bz_error::Result<()> {
         fs_util::create_dir_all(&self.buck_out_dice).with_buck_error_context(|| {
             format!(
@@ -98,24 +98,24 @@ impl DiceDump {
             })?;
 
         // create DICE dump name using the old command being rage on and the trace id of this rage command.
-        upload_to_manifold(
+        upload_to_artifact_store(
             &self.dump_folder,
-            manifold,
-            manifold_bucket,
-            manifold_filename,
+            artifact_client,
+            artifact_bucket,
+            artifact_filename,
         )
         .await
-        .with_buck_error_context(|| "Failed during manifold upload!")?;
+        .with_buck_error_context(|| "Failed during artifact upload!")?;
 
         Ok(())
     }
 }
 
-async fn upload_to_manifold(
+async fn upload_to_artifact_store(
     dump_folder: &Path,
-    manifold: &ManifoldClient,
-    manifold_bucket: Bucket,
-    manifold_filename: &str,
+    artifact_client: &ArtifactUploadClient,
+    artifact_bucket: Bucket,
+    artifact_filename: &str,
 ) -> bz_error::Result<()> {
     if !cfg!(target_os = "windows") {
         let tar = async_background_command("tar")
@@ -126,10 +126,10 @@ async fn upload_to_manifold(
             .stderr(std::process::Stdio::null())
             .spawn()?;
 
-        manifold
+        artifact_client
             .read_and_upload(
-                manifold_bucket,
-                manifold_filename,
+                artifact_bucket,
+                artifact_filename,
                 Default::default(),
                 &mut tar.stdout.unwrap(),
             )

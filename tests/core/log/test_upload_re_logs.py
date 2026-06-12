@@ -9,25 +9,10 @@
 # pyre-strict
 
 
-import os
-import sys
-
 from buck2.tests.e2e_util.api.buck import Buck
+from buck2.tests.e2e_util.asserts import expect_failure
 from buck2.tests.e2e_util.buck_workspace import buck_test, env
 from buck2.tests.e2e_util.helper.utils import json_get
-from manifold.clients.python.manifold_client_deprecated import Client as ManifoldClient
-
-
-BUCKET_CONFIG = {"bucket": "bz_re_logs", "apikey": "bz_re_logs-key"}
-
-# Use the system cert path on platforms where it is available.
-if sys.platform != "windows" and os.path.exists("/etc/ssl/cert.pem"):
-    os.environ["SSL_CERT_FILE"] = "/etc/ssl/cert.pem"
-
-
-async def manifold_exists(path: str) -> bool:
-    with ManifoldClient(BUCKET_CONFIG) as client:
-        return client.exists(bucket=BUCKET_CONFIG["bucket"], path=path)
 
 
 @buck_test()
@@ -37,8 +22,10 @@ async def test_upload_re_logs(buck: Buck) -> None:
     await buck.build("root//:run")
 
     session_id = await extract_re_session_id(buck)
-    await buck.debug("upload-re-logs", "--session-id", session_id)
-    assert await manifold_exists(path=f"flat/{session_id}.log.zst") is True
+    await expect_failure(
+        buck.debug("upload-re-logs", "--session-id", session_id),
+        stderr_regex="No artifact upload endpoint is configured in this build",
+    )
 
 
 async def extract_re_session_id(buck: Buck) -> str:

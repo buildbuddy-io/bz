@@ -22,7 +22,4 @@ bz_e2e_test(
 bz_e2e_test(
     name = "test_persist_event_logs",
     srcs = ["test_persist_event_logs.py"],
-    deps = [
-        "//manifold/clients/python:manifold_client_deprecated",
-    ],
 )

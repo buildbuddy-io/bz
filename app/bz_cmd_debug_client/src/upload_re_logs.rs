@@ -13,8 +13,8 @@ use bz_client_ctx::client_ctx::ClientCommandContext;
 use bz_client_ctx::common::BuckArgMatches;
 use bz_client_ctx::exit_result::ExitResult;
 use bz_client_ctx::upload_re_logs::upload_re_logs;
-use bz_common::manifold::Bucket;
-use bz_common::manifold::ManifoldClient;
+use bz_common::artifact_upload::Bucket;
+use bz_common::artifact_upload::ArtifactUploadClient;
 
 #[derive(Debug, clap::Parser)]
 #[clap(about = "upload RE logs")]
@@ -33,11 +33,11 @@ impl BuckSubcommand for UploadReLogsCommand {
         events_ctx: &mut bz_client_ctx::events_ctx::EventsCtx,
     ) -> ExitResult {
         events_ctx.log_invocation_record = false;
-        let manifold = ManifoldClient::new().await?;
+        let artifact_client = ArtifactUploadClient::new().await?;
         // TODO: This should receive the path from the caller.
         let re_logs_dir = ctx.paths()?.re_logs_dir();
         upload_re_logs(
-            &manifold,
+            &artifact_client,
             Bucket::RE_LOGS,
             &re_logs_dir,
             &self.session_id,

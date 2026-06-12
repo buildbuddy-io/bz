@@ -45,7 +45,7 @@ use bz_error::classify::ErrorLike;
 use bz_error::classify::source_area;
 use bz_error::internal_error;
 use bz_error::source_location::SourceLocation;
-use bz_event_log::ttl::manifold_event_log_ttl;
+use bz_event_log::ttl::artifact_upload_event_log_ttl;
 use bz_event_observer::action_stats;
 use bz_event_observer::cache_hit_rate::total_cache_hit_rate;
 use bz_event_observer::humanized::CommaSeparatedCount;
@@ -54,7 +54,7 @@ use bz_event_observer::last_command_execution_kind::LastCommandExecutionKind;
 use bz_event_observer::last_command_execution_kind::get_last_command_execution_time;
 use bz_events::BuckEvent;
 use bz_events::daemon_id::DaemonId;
-use bz_events::sink::remote::ScribeConfig;
+use bz_events::sink::remote::RemoteEventSinkConfig;
 use bz_events::sink::remote::new_remote_event_sink_if_enabled;
 use bz_fs::error::IoResultExt;
 use bz_fs::fs_util;
@@ -765,7 +765,7 @@ impl InvocationRecorder {
                 } else if error.has_tag(ErrorTag::ServerSigterm) {
                     error.context("buckd killed by SIGTERM")
                 } else {
-                    // Scribe sink truncates messages, but here we can do it better:
+                    // Remote sink truncates messages, but here we can do it better:
                     // - truncate even if total message is not large enough
                     // - truncate stderr, but keep the error message
                     let server_stderr = truncate_stderr(&self.server_stderr);
@@ -1212,7 +1212,9 @@ impl InvocationRecorder {
             install_device_metadata: self.install_device_metadata.drain(..).collect(),
             installer_log_url: self.installer_log_url.take(),
             peak_process_memory_bytes: self.peak_process_memory_bytes.take(),
-            event_log_manifold_ttl_s: manifold_event_log_ttl().ok().map(|t| t.as_secs()),
+            event_log_manifold_ttl_s: artifact_upload_event_log_ttl()
+                .ok()
+                .map(|t| t.as_secs()),
             total_disk_space_bytes: self.system_info.total_disk_space_bytes.take(),
             peak_used_disk_space_bytes: self.peak_used_disk_space_bytes.take(),
             peak_normalized_system_load1: self.peak_normalized_system_load1.take(),
@@ -2589,9 +2591,9 @@ impl EventSubscriber for InvocationRecorder {
         // Typically initialized already unless the command failed early.
         let fb = bz_common::fbinit::get_or_init_build_globals();
         let event = self.create_record_event();
-        if let Some(scribe_sink) = new_remote_event_sink_if_enabled(
+        if let Some(remote_event_sink) = new_remote_event_sink_if_enabled(
             fb,
-            ScribeConfig {
+            RemoteEventSinkConfig {
                 buffer_size: 1,
                 retry_backoff: Duration::from_millis(500),
                 retry_attempts: 5,
@@ -2599,11 +2601,11 @@ impl EventSubscriber for InvocationRecorder {
                 thrift_timeout: Duration::from_secs(2),
             },
         )? {
-            tracing::info!("Recording invocation to Scribe: {:?}", &event);
-            scribe_sink.send_now(event).await
+            tracing::info!("Recording invocation to remote event sink: {:?}", &event);
+            remote_event_sink.send_now(event).await
         } else {
-            tracing::info!("Invocation record is not sent to Scribe: {:?}", &event);
-            Err(internal_error!("Scribe sink not enabled"))
+            tracing::info!("Invocation record is not sent to remote event sink: {:?}", &event);
+            Err(internal_error!("Remote event sink not enabled"))
         }
     }
 

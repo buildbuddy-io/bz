@@ -16,7 +16,7 @@
 
 pub mod build_info;
 pub mod dice;
-pub mod manifold;
+pub mod artifact_upload;
 pub mod materializer;
 pub mod rage;
 pub mod source_control;

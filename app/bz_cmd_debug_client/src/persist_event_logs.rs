@@ -15,19 +15,19 @@ use bz_client_ctx::common::BuckArgMatches;
 use bz_client_ctx::events_ctx::EventsCtx;
 use bz_client_ctx::exit_result::ExitResult;
 use bz_common::chunk_reader::ChunkReader;
-use bz_common::manifold;
-use bz_common::manifold::ManifoldChunkedUploader;
-use bz_common::manifold::ManifoldClient;
+use bz_common::artifact_upload::ArtifactChunkedUploader;
+use bz_common::artifact_upload::ArtifactUploadClient;
+use bz_common::artifact_upload::Bucket;
 use bz_core::soft_error;
 use bz_data::InstantEvent;
 use bz_data::PersistEventLogSubprocess;
 use bz_data::instant_event::Data;
 use bz_error::BuckErrorContext;
-use bz_event_log::ttl::manifold_event_log_ttl;
+use bz_event_log::ttl::artifact_upload_event_log_ttl;
 use bz_events::BuckEvent;
 use bz_events::daemon_id::DaemonId;
 use bz_events::sink::remote::RemoteEventSink;
-use bz_events::sink::remote::ScribeConfig;
+use bz_events::sink::remote::RemoteEventSinkConfig;
 use bz_events::sink::remote::new_remote_event_sink_if_enabled;
 use bz_fs::paths::abs_path::AbsPathBuf;
 use bz_wrapper_common::invocation_id::TraceId;
@@ -51,14 +51,14 @@ pub(crate) enum PersistEventLogError {
     ReadBytesOverflow,
 }
 
-/// Read binary event log from stdin and simultaneously write it to disk and optionally upload to Manifold.
+/// Read binary event log from stdin and simultaneously write it to disk and optionally upload it.
 ///
 /// This command is launched by the buck client to continue log streaming
 /// after client command finishes. It is not intended to be used directly.
 #[derive(Debug, clap::Parser)]
 pub struct PersistEventLogsCommand {
-    #[clap(long, help = "Name this log will take in Manifold")]
-    manifold_name: String,
+    #[clap(long, help = "Name this log will take in the artifact store")]
+    artifact_name: String,
     #[clap(long, help = "Where to write this log to on disk")]
     local_path: String,
     #[clap(long, help = "If present, only write to disk and don't upload")]
@@ -78,7 +78,7 @@ impl PersistEventLogsCommand {
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
         events_ctx.log_invocation_record = false;
-        let sink = create_scribe_sink(&ctx)?;
+        let sink = create_remote_event_sink(&ctx)?;
         let trace_id = self.trace_id.clone();
         ctx.with_runtime(|mut ctx| async move {
             let mut stdin = io::BufReader::new(ctx.stdin());
@@ -98,7 +98,7 @@ impl PersistEventLogsCommand {
                 remote_success,
                 metadata: bz_events::metadata::collect(&DaemonId::null()),
             };
-            dispatch_event_to_scribe(sink.as_ref(), &trace_id, event_to_send).await;
+            dispatch_event_to_remote_event_sink(sink.as_ref(), &trace_id, event_to_send).await;
         });
         ExitResult::success()
     }
@@ -118,7 +118,7 @@ impl PersistEventLogsCommand {
             }
         };
         let write = write_task(&file, tx, stdin);
-        let upload = upload_task(&file, rx, self.manifold_name, self.no_upload);
+        let upload = upload_task(&file, rx, self.artifact_name, self.no_upload);
 
         // Wait for both tasks to finish. If the upload fails we want to keep writing to disk
         let (write_result, upload_result) = tokio::join!(write, upload);
@@ -170,16 +170,16 @@ async fn create_log_file(local_path: String) -> Result<tokio::fs::File, bz_error
 async fn upload_task(
     file_mutex: &Mutex<File>,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
-    manifold_name: String,
+    artifact_name: String,
     no_upload: bool,
 ) -> bz_error::Result<()> {
     if no_upload {
         return Ok(());
     }
 
-    let manifold_client = ManifoldClient::new().await?;
-    let manifold_path = format!("flat/{manifold_name}");
-    let mut uploader = Uploader::new(file_mutex, &manifold_path, &manifold_client)?;
+    let artifact_upload_client = ArtifactUploadClient::new().await?;
+    let artifact_path = format!("flat/{artifact_name}");
+    let mut uploader = Uploader::new(file_mutex, &artifact_path, &artifact_upload_client)?;
 
     loop {
         tokio::select! {
@@ -219,10 +219,10 @@ async fn upload_task(
 
 /// Provides methods to:
 /// - decide when to upload a chunk of the log file
-/// - do the actual upload, which is mostly managed by `ManifoldChunkedUploader`
+/// - do the actual upload, which is mostly managed by `ArtifactChunkedUploader`
 struct Uploader<'a> {
     file_mutex: &'a Mutex<File>,
-    manifold: ManifoldChunkedUploader<'a>,
+    upload: ArtifactChunkedUploader<'a>,
     reader: ChunkReader,
     total_bytes: u64,
     last_upload_attempt: Instant,
@@ -231,34 +231,34 @@ struct Uploader<'a> {
 impl<'a> Uploader<'a> {
     fn new(
         file_mutex: &'a Mutex<File>,
-        manifold_path: &'a str,
-        manifold_client: &'a ManifoldClient,
+        artifact_path: &'a str,
+        artifact_upload_client: &'a ArtifactUploadClient,
     ) -> bz_error::Result<Self> {
-        let manifold = manifold_client.start_chunked_upload(
-            manifold::Bucket::EVENT_LOGS,
-            manifold_path,
-            manifold_event_log_ttl()?,
+        let upload = artifact_upload_client.start_chunked_upload(
+            Bucket::EVENT_LOGS,
+            artifact_path,
+            artifact_upload_event_log_ttl()?,
         );
 
         Ok(Self {
             file_mutex,
-            manifold,
+            upload,
             reader: ChunkReader::new()?,
             total_bytes: 0,
             last_upload_attempt: Instant::now(),
         })
     }
 
-    /// Uploads at most 'chunk size' bytes to Manifold
+    /// Uploads at most 'chunk size' bytes to the artifact store.
     async fn upload_chunk(&mut self) -> bz_error::Result<()> {
         let mut file = self.file_mutex.lock().await;
-        file.seek(io::SeekFrom::Start(self.manifold.position()))
+        file.seek(io::SeekFrom::Start(self.upload.position()))
             .await
             .buck_error_context("Failed to seek log file")?;
         let buf = self.reader.read(&mut *file).await?;
         drop(file);
 
-        self.manifold.write(buf.into()).await?;
+        self.upload.write(buf.into()).await?;
         Ok(())
     }
 
@@ -269,13 +269,13 @@ impl<'a> Uploader<'a> {
     fn can_fill_chunk(&mut self) -> bz_error::Result<bool> {
         Ok(self
             .total_bytes
-            .checked_sub(self.manifold.position())
+            .checked_sub(self.upload.position())
             .ok_or(PersistEventLogError::ReadBytesOverflow)?
             > self.reader.chunk_size())
     }
 
     fn something_to_upload(&self) -> bool {
-        self.total_bytes > self.manifold.position()
+        self.total_bytes > self.upload.position()
     }
 
     fn wait(&self) -> Duration {
@@ -340,7 +340,7 @@ fn categorize_error(err: &bz_error::Error) -> &'static str {
     }
 }
 
-async fn dispatch_event_to_scribe(
+async fn dispatch_event_to_remote_event_sink(
     sink: Option<&RemoteEventSink>,
     invocation_id: &TraceId,
     result: PersistEventLogSubprocess,
@@ -358,12 +358,12 @@ async fn dispatch_event_to_scribe(
             ))
             .await;
     } else {
-        tracing::warn!("Couldn't send log upload result to scribe")
+        tracing::warn!("Couldn't send log upload result to remote event sink")
     };
 }
 
-fn create_scribe_sink(ctx: &ClientCommandContext) -> bz_error::Result<Option<RemoteEventSink>> {
-    new_remote_event_sink_if_enabled(ctx.fbinit(), ScribeConfig::default())
+fn create_remote_event_sink(ctx: &ClientCommandContext) -> bz_error::Result<Option<RemoteEventSink>> {
+    new_remote_event_sink_if_enabled(ctx.fbinit(), RemoteEventSinkConfig::default())
 }
 
 #[cfg(test)]

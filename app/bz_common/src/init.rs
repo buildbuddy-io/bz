@@ -640,7 +640,6 @@ impl ResourceControlConfig {
 
 #[derive(Allocative, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LogDownloadMethod {
-    Manifold,
     Curl(String),
     None,
 }
@@ -715,18 +714,18 @@ impl DaemonStartupConfig {
         // Intepreted client side because we need the value here.
 
         let log_download_method = {
-            // Determine the log download method to use. Only default to
-            // manifold in workspace contexts, or when specifically asked.
-            let use_manifold_default = false;
             let use_manifold = config
                 .parse(BuckconfigKeyRef {
                     section: "buck2",
                     property: "log_use_manifold",
                 })?
-                .unwrap_or(use_manifold_default);
+                .unwrap_or(false);
 
             if use_manifold {
-                Ok(LogDownloadMethod::Manifold)
+                Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
+                    "buck2.log_use_manifold is no longer supported; configure buck2.log_url instead"
+                ))
             } else {
                 let log_url = config.get(BuckconfigKeyRef {
                     section: "buck2",
@@ -736,7 +735,7 @@ impl DaemonStartupConfig {
                     if log_url.is_empty() {
                         Err(bz_error::bz_error!(
                             bz_error::ErrorTag::Input,
-                            "log_url is empty, but log_use_manifold is false"
+                            "log_url is empty"
                         ))
                     } else {
                         Ok(LogDownloadMethod::Curl(log_url.to_owned()))

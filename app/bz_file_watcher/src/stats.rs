@@ -11,10 +11,10 @@
 use allocative::Allocative;
 
 /// We limit the number of file change records so we don't use too much memory
-/// or too much space in scribe.
+/// or too much space in remote event logs.
 ///
 /// 100 entries covers everything required for 96% of updates, which seems sufficient.
-/// Number needs to be < 850 or it is often bigger than a scribe message.
+/// Number needs to be < 850 or it is often bigger than a remote event message.
 const MAX_FILE_CHANGE_RECORDS: usize = 100;
 
 #[derive(Allocative)]

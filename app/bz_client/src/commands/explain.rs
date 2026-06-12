@@ -21,6 +21,8 @@ use bz_client_ctx::events_ctx::EventsCtx;
 use bz_client_ctx::exit_result::ExitResult;
 use bz_client_ctx::path_arg::PathArg;
 use bz_client_ctx::streaming::StreamingCommand;
+use bz_common::artifact_upload::Bucket;
+use bz_common::artifact_upload::ArtifactUploadClient;
 use bz_event_log::file_names::get_local_logs;
 use clap::Parser as _;
 use tonic::async_trait;
@@ -37,8 +39,7 @@ pub struct ExplainCommand {
     /// File will be created if it does not exist, and overwritten if it does.
     #[clap(long, short = 'o')]
     output: Option<PathArg>,
-    /// Whether to upload the output to Manifold
-    /// Deprecated: now we always upload to Manifold, this flag is a no-op
+    /// Upload the output to a configured artifact store.
     #[clap(long)]
     upload: bool,
     /// Add target code pointer. This invalidates cache, slowing things down
@@ -66,6 +67,11 @@ impl StreamingCommand for ExplainCommand {
         }
 
         let output = self.output.clone().map(|o| o.resolve(&ctx.working_dir));
+        if output.is_none() && !self.upload {
+            return ExitResult::bail(
+                "Specify --output to write explain HTML locally, or --upload to use a configured artifact store.",
+            );
+        }
 
         // Get the most recent log
         let paths = ctx.paths()?;
@@ -124,8 +130,15 @@ impl StreamingCommand for ExplainCommand {
         let target_universe = build_args.target_universe().clone();
         let target_cfg = build_args.target_cfg();
 
-        // TODO iguridi: add option to turn manifold upload off for OSS
-        let manifold_path = Some(format!("flat/{uuid}-explain.html"));
+        let artifact_path = if self.upload {
+            let artifact_client = ArtifactUploadClient::new().await?;
+            if !artifact_client.is_available() {
+                return ExitResult::bail("No artifact upload endpoint is configured in this build");
+            }
+            Some(format!("flat/{uuid}-explain.html"))
+        } else {
+            None
+        };
 
         let mut context = ctx.empty_client_context("explain")?;
         context.target_call_stacks = self.stack;
@@ -139,7 +152,7 @@ impl StreamingCommand for ExplainCommand {
                     output,
                     target,
                     fbs_dump: self.fbs_dump.map(|x| x.resolve(&ctx.working_dir)),
-                    manifold_path: manifold_path.clone(),
+                    artifact_path: artifact_path.clone(),
                     target_universe,
                     target_cfg,
                     log_path: build_log.path().to_owned(),
@@ -149,10 +162,10 @@ impl StreamingCommand for ExplainCommand {
             )
             .await??;
 
-        if let Some(p) = manifold_path {
+        if let Some(p) = artifact_path {
             bz_client_ctx::eprintln!(
-                "\nView html in your browser: https://interncache-all.fbcdn.net/manifold/bz_logs/{} (requires VPN/lighthouse)\n",
-                p
+                "\nView html in your browser: {}\n",
+                Bucket::EVENT_LOGS.artifact_url(&p)
             )?;
         }
 

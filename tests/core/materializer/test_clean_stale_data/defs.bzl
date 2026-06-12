@@ -57,8 +57,8 @@ copy_to_dir = rule(
 )
 
 def _download(ctx: AnalysisContext):
-    url = "https://interncache-all.fbcdn.net/manifold/buck_build_test/tree/bz_test/http_archive/test.tgz"
-    sha1 = "1a45666759704bf08fc670aa96118a0415c470fc"
+    url = "https://raw.githubusercontent.com/buildbuddy-io/bz/main/tests/fixtures/downloads/test.tgz"
+    sha1 = "e17094b6879e479d113bb65e32624f818bd50f9b"
     download = ctx.actions.download_file("download", url, sha1 = sha1, has_content_based_path = False)
     return [
         DefaultInfo(default_output = download),

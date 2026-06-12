@@ -13,15 +13,7 @@ import tempfile
 
 from buck2.tests.e2e_util.api.buck import Buck
 from buck2.tests.e2e_util.asserts import expect_failure
-from buck2.tests.e2e_util.buck_workspace import buck_test, env
-from manifold.clients.python.manifold_client_deprecated import Client as ManifoldClient
-
-BUCKET_CONFIG = {"bucket": "bz_logs", "apikey": "bz_logs-key"}
-
-
-async def manifold_exists(path: str) -> bool:
-    with ManifoldClient(BUCKET_CONFIG) as client:
-        return client.exists(bucket="bz_logs", path=path)
+from buck2.tests.e2e_util.buck_workspace import buck_test
 
 
 @buck_test()
@@ -94,14 +86,14 @@ async def test_explain_only_builds(buck: Buck) -> None:
 
 
 @buck_test(skip_for_os=["windows"])
-@env("BUCK2_TEST_MANIFOLD_TTL_S", str(84_000))  # 1 day
 async def test_explain_upload(buck: Buck) -> None:
     uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     env = {"BUCK_WRAPPER_UUID": uuid}
     await buck.build("//:simple", env=env)
-    await buck.explain(env=env)
-
-    assert await manifold_exists(path=f"flat/{uuid}-explain.html") is True
+    await expect_failure(
+        buck.explain("--upload", env=env),
+        stderr_regex="No artifact upload endpoint is configured in this build",
+    )
 
 
 @buck_test(skip_for_os=["windows"])

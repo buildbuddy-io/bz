@@ -13,7 +13,7 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use bz_cli_proto::command_result;
-use bz_events::sink::remote::ScribeConfig;
+use bz_events::sink::remote::RemoteEventSinkConfig;
 use bz_events::sink::remote::new_remote_event_sink_if_enabled;
 use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
@@ -80,7 +80,7 @@ impl BuildGraphStats {
         #[allow(unreachable_patterns)]
         if let Ok(Some(sink)) = new_remote_event_sink_if_enabled(
             self.fb,
-            ScribeConfig {
+            RemoteEventSinkConfig {
                 buffer_size: 1,
                 retry_backoff: Duration::from_millis(100),
                 retry_attempts: 2,
@@ -88,10 +88,10 @@ impl BuildGraphStats {
                 thrift_timeout: Duration::from_secs(1),
             },
         ) {
-            tracing::info!("Sending events to Scribe: {:?}", &events);
+            tracing::info!("Sending events to remote event sink: {:?}", &events);
             let _res = sink.send_messages_now(events).await;
         } else {
-            tracing::info!("Events were not sent to Scribe: {:?}", &events);
+            tracing::info!("Events were not sent to remote event sink: {:?}", &events);
         }
     }
 }

@@ -9,8 +9,8 @@
  */
 
 use async_compression::tokio::bufread::ZstdEncoder;
-use bz_common::manifold::Bucket;
-use bz_common::manifold::ManifoldClient;
+use bz_common::artifact_upload::Bucket;
+use bz_common::artifact_upload::ArtifactUploadClient;
 use bz_fs::async_fs_util;
 use bz_fs::error::IoResultExt;
 use bz_fs::paths::abs_norm_path::AbsNormPath;
@@ -18,7 +18,7 @@ use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use tokio::io::BufReader;
 
 pub async fn upload_re_logs(
-    manifold: &ManifoldClient,
+    artifact_client: &ArtifactUploadClient,
     bucket: Bucket,
     re_logs_dir: &AbsNormPath,
     session_id: &str,
@@ -33,7 +33,7 @@ pub async fn upload_re_logs(
     let mut encoder =
         ZstdEncoder::with_quality(BufReader::new(file), async_compression::Level::Default);
 
-    manifold
+    artifact_client
         .read_and_upload(bucket, bucket_path, Default::default(), &mut encoder)
         .await?;
 
