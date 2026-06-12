@@ -40,7 +40,6 @@ use crate::build::graph_properties::GraphPropertiesOptions;
 use crate::build::outputs::get_outputs_for_top_level_target;
 use crate::build_signals::HasBuildSignals;
 use crate::keep_going::KeepGoing;
-use crate::lost_remote::LostRemoteBuildRestart;
 use crate::materialize::HasMaterializationQueueTracker;
 use crate::materialize::MaterializationAndUploadContext;
 use crate::materialize::materialize_and_upload_artifact_group;
@@ -269,7 +268,7 @@ async fn compute_target_completion(
     let graph_properties = key.graph_properties;
     let providers_label = key.providers_label.dupe();
 
-    let (outputs, _validation_result, _graph_properties) = ctx
+    let (_outputs, _validation_result, _graph_properties) = ctx
         .compute3(
             |ctx| {
                 let providers_label = providers_label.dupe();
@@ -293,11 +292,6 @@ async fn compute_target_completion(
                                     Ok(Err(e)) => Err(e),
                                     Err(e) => Err(e.into()),
                                 };
-                                if output.as_ref().err().is_some_and(|e| {
-                                    e.find_typed_context::<LostRemoteBuildRestart>().is_some()
-                                }) {
-                                    return (index, output);
-                                }
                                 if let Err(e) = emit_configured_build_event(
                                     ctx,
                                     ConfiguredBuildEvent {
@@ -377,14 +371,6 @@ async fn compute_target_completion(
             },
         )
         .await;
-
-    for (_index, output) in outputs {
-        if let Err(e) = output
-            && e.find_typed_context::<LostRemoteBuildRestart>().is_some()
-        {
-            return Err(e);
-        }
-    }
 
     Ok(MaybeCompatible::Compatible(Arc::new(TargetCompletionValue)))
 }

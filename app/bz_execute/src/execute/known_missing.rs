@@ -78,6 +78,16 @@ impl KnownMissingRemoteCasTracker {
         })
     }
 
+    /// Forgets all recorded digests. Called after a successful build: missing
+    /// digests recorded by previous builds may have been re-uploaded since, and
+    /// keeping them would needlessly reject action cache hits for them.
+    pub fn clear(&self) {
+        self.file_digests
+            .lock()
+            .expect("known missing remote CAS tracker lock poisoned")
+            .clear();
+    }
+
     pub fn remove_artifact_values<'a>(
         &self,
         values: impl IntoIterator<Item = &'a ArtifactValue>,

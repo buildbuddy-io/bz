@@ -8,19 +8,13 @@
  * above-listed licenses.
  */
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use bz_artifact::actions::key::ActionKey;
 use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
-use bz_build_api::actions::calculation::ActionInputSetKey;
-use bz_build_api::actions::calculation::BuildKey;
-use bz_build_api::artifact_groups::calculation::EnsureArtifactGroupValuesKey;
-use bz_build_api::artifact_groups::calculation::EnsureProjectedArtifactKey;
-use bz_build_api::artifact_groups::calculation::EnsureTransitiveSetProjectionKey;
+use bz_build_api::actions::execute::dice_data::GetKnownMissingRemoteCasTracker;
 use bz_build_api::build;
 use bz_build_api::build::AsyncBuildTargetResultBuilder;
 use bz_build_api::build::BuildEvent;
@@ -41,8 +35,6 @@ use bz_build_api::build::detailed_aggregated_metrics::types::DetailedAggregatedM
 use bz_build_api::build::eager::HasEagerBuildExecution;
 use bz_build_api::build::graph_properties::GraphPropertiesOptions;
 use bz_build_api::build::overlap::HasBuildOverlapTracker;
-use bz_build_api::lost_remote::HasRemoteBackedActionTracker;
-use bz_build_api::lost_remote::LostRemoteBuildRestart;
 use bz_build_api::materialize::MaterializationAndUploadContext;
 use bz_cli_proto::CommonBuildOptions;
 use bz_cli_proto::build_request::BuildProviders;
@@ -166,7 +158,7 @@ struct RunArgsMissingSeparator;
 
 async fn build(
     server_ctx: &dyn ServerCommandContextTrait,
-    mut ctx: DiceTransaction,
+    ctx: DiceTransaction,
     request: &bz_cli_proto::BuildRequest,
 ) -> bz_error::Result<bz_cli_proto::BuildResponse> {
     if request.run_args_missing_separator {
@@ -179,115 +171,22 @@ async fn build(
         )?;
     }
 
-    let mut lost_remote_restarts = 0;
-    loop {
-        match build_once(server_ctx, ctx.clone(), request).await {
-            Ok(response) => return Ok(response),
-            Err(error) => {
-                let Some(restart) = error.find_typed_context::<LostRemoteBuildRestart>() else {
-                    return Err(error);
-                };
-
-                lost_remote_restarts += 1;
-
-                let graph = restart.graph();
-                if graph.is_empty() {
-                    return Err(error.context(
-                        "Lost remote CAS build restart did not include any DICE keys to invalidate",
-                    ));
-                }
-
-                tracing::warn!(
-                    "Restarting build after lost remote CAS artifacts (attempt {lost_remote_restarts}): {}",
-                    restart.reason(),
-                );
-
-                // The remote cache may have evicted more blobs than the ones we
-                // observed, so all remote-backed action results are distrusted, not
-                // just the producers of the lost artifacts. Their remote cache
-                // metadata was already purged when the restart was prepared.
-                let mut action_keys: HashSet<ActionKey> =
-                    graph.action_keys().iter().cloned().collect();
-                if let Some(tracker) = ctx.per_transaction_data().get_remote_backed_action_tracker()
-                {
-                    let remote_backed = tracker.drain();
-                    if !remote_backed.is_empty() {
-                        tracing::warn!(
-                            "Invalidating {} remote-backed action(s) after lost remote CAS artifacts",
-                            remote_backed.len(),
-                        );
-                        action_keys.extend(remote_backed);
-                    }
-                }
-
-                let mut updater = ctx.into_updater();
-                if !action_keys.is_empty() {
-                    updater
-                        .changed(action_keys.into_iter().map(BuildKey).collect::<Vec<_>>())
-                        .buck_error_context(
-                            "Failed to invalidate actions for lost remote CAS build restart",
-                        )?;
-                }
-                if !graph.artifacts().is_empty() {
-                    updater
-                        .changed(
-                            graph
-                                .artifacts()
-                                .iter()
-                                .cloned()
-                                .map(EnsureArtifactGroupValuesKey)
-                                .collect::<Vec<_>>(),
-                        )
-                        .buck_error_context(
-                            "Failed to invalidate artifacts for lost remote CAS build restart",
-                        )?;
-                }
-                if !graph.projected_artifacts().is_empty() {
-                    updater
-                        .changed(
-                            graph
-                                .projected_artifacts()
-                                .iter()
-                                .cloned()
-                                .map(EnsureProjectedArtifactKey)
-                                .collect::<Vec<_>>(),
-                        )
-                        .buck_error_context(
-                            "Failed to invalidate projected artifacts for lost remote CAS build restart",
-                        )?;
-                }
-                if !graph.transitive_set_projections().is_empty() {
-                    updater
-                        .changed(
-                            graph
-                                .transitive_set_projections()
-                                .iter()
-                                .cloned()
-                                .map(EnsureTransitiveSetProjectionKey)
-                                .collect::<Vec<_>>(),
-                        )
-                        .buck_error_context(
-                            "Failed to invalidate transitive set projections for lost remote CAS build restart",
-                        )?;
-                }
-                if !graph.action_input_sets().is_empty() {
-                    updater
-                        .changed(
-                            graph
-                                .action_input_sets()
-                                .iter()
-                                .cloned()
-                                .map(ActionInputSetKey)
-                                .collect::<Vec<_>>(),
-                        )
-                        .buck_error_context(
-                            "Failed to invalidate action input sets for lost remote CAS build restart",
-                        )?;
-                }
-                ctx = updater.commit().await;
-            }
-        }
+    // Lost remote CAS artifacts are recovered in place via action rewinding (see
+    // `bz_build_api::lost_remote`): the affected DICE keys are rewound at the
+    // current version and the failed computation retries while the rest of the
+    // build keeps running, so no build-level restart is needed.
+    let response = build_once(server_ctx, ctx.clone(), request).await?;
+    if response.errors.is_empty() {
+        // Digests recorded as missing by earlier builds or rewind attempts may have
+        // been re-uploaded since; a successful build means none of them are still
+        // load-bearing, so stop rejecting action cache hits that reference them.
+        // This matches Bazel, which clears `knownMissingCasDigests` on build
+        // success.
+        ctx.per_transaction_data()
+            .get_known_missing_remote_cas_tracker()
+            .clear();
     }
+    Ok(response)
 }
 
 async fn build_once(
@@ -858,9 +757,6 @@ async fn request_build_driver(
                     event_consumer.consume(BuildEvent::new_configured(providers_label, timeout));
                 }
                 futures::future::Either::Right((Err(e), _alive)) => {
-                    if e.find_typed_context::<LostRemoteBuildRestart>().is_some() {
-                        return Err(e);
-                    }
                     event_consumer.consume(BuildEvent::new_configured(
                         error_label,
                         ConfiguredBuildEventVariant::Error { err: e.into() },
@@ -871,9 +767,6 @@ async fn request_build_driver(
         }
         None => {
             if let Err(e) = build.await {
-                if e.find_typed_context::<LostRemoteBuildRestart>().is_some() {
-                    return Err(e);
-                }
                 event_consumer.consume(BuildEvent::new_configured(
                     error_label,
                     ConfiguredBuildEventVariant::Error { err: e.into() },

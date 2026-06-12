@@ -17,7 +17,6 @@ use std::time::Instant;
 use allocative::Allocative;
 use bz_build_api::interpreter::rule_defs::context::init_action_has_content_based_path_default;
 use bz_build_api::interpreter::rule_defs::context::init_declare_output_has_content_based_path_default;
-use bz_build_api::lost_remote::RemoteBackedActionTracker;
 use bz_build_api::spawner::BuckSpawner;
 use bz_cli_proto::ConfigOverride;
 use bz_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
@@ -56,6 +55,7 @@ use bz_execute::digest_config::DigestConfig;
 use bz_execute::execute::blocking::BlockingExecutor;
 use bz_execute::execute::blocking::BuckBlockingExecutor;
 use bz_execute::execute::blocking::DirectIoExecutor;
+use bz_execute::execute::known_missing::KnownMissingRemoteCasTracker;
 use bz_execute::materialize::materializer::Materializer;
 use bz_execute::re::manager::ReConnectionManager;
 use bz_execute_impl::executors::local::ForkserverAccess;
@@ -272,10 +272,11 @@ pub struct DaemonStateData {
     #[allocative(skip)]
     pub local_action_cache: Arc<LocalActionCache>,
 
-    /// Actions whose outputs are remote-backed, invalidated wholesale when any
-    /// remote-backed artifact is lost from CAS.
+    /// CAS digests known to be missing remotely. Kept across commands so that
+    /// remote action cache hits referencing them are rejected until a build
+    /// succeeds, matching the lifetime of Bazel's `knownMissingCasDigests`.
     #[allocative(skip)]
-    pub remote_backed_action_tracker: Arc<RemoteBackedActionTracker>,
+    pub known_missing_remote_cas: Arc<KnownMissingRemoteCasTracker>,
 
     /// A unique identifier for this instance of the daemon
     pub daemon_id: DaemonId,
@@ -853,7 +854,7 @@ impl DaemonState {
                 cached_buckconfig_based_cells: Arc::new(Mutex::new(None)),
                 incremental_db_state,
                 local_action_cache,
-                remote_backed_action_tracker: Arc::new(RemoteBackedActionTracker::default()),
+                known_missing_remote_cas: Arc::new(KnownMissingRemoteCasTracker::default()),
                 daemon_id: daemon_id.dupe(),
                 named_semaphores_for_run_actions: Arc::new(NamedSemaphores::new()),
             }))

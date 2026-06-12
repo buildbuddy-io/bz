@@ -67,9 +67,8 @@ use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
 use crate::artifact_groups::calculation::ArtifactGroupCalculation;
 use crate::build_signals::HasBuildSignals;
-use crate::lost_remote::LostRemoteRewindGraph;
 use crate::lost_remote::LostRemoteRewindGraphBuilder;
-use crate::lost_remote::lost_remote_build_restart_error;
+use crate::lost_remote::rewind_lost_remote_graph;
 
 #[async_trait]
 pub trait RemoteCacheInvalidator: Send + Sync {
@@ -107,9 +106,7 @@ impl HasRemoteCacheInvalidator for UserComputationData {
     }
 }
 
-pub(crate) async fn purge_remote_cache_metadata(
-    ctx: &mut DiceComputations<'_>,
-) -> bz_error::Result<()> {
+pub async fn purge_remote_cache_metadata(ctx: &mut DiceComputations<'_>) -> bz_error::Result<()> {
     if let Some(invalidator) = ctx.per_transaction_data().get_remote_cache_invalidator() {
         invalidator.purge_remote_cache_metadata().await?;
     } else if let Some(extension) = ctx
@@ -130,21 +127,25 @@ pub async fn materialize_and_upload_artifact_group(
     contexts: MaterializationAndUploadContext,
     queue_tracker: &Arc<BuckDashSet<BuildArtifact>>,
 ) -> bz_error::Result<ArtifactGroupValues> {
-    let values = materialize_artifact_group(ctx, artifact_group, contexts.0, queue_tracker).await?;
+    loop {
+        let values =
+            materialize_artifact_group(ctx, artifact_group, contexts.0, queue_tracker).await?;
 
-    if let UploadContext::Upload = contexts.1 {
-        if let Err(error) = ensure_uploaded(ctx, &values).await {
-            if let Some(lost) = error.find_typed_context::<LostRemoteCasArtifacts>() {
-                let restart_error = prepare_lost_remote_upload_rewind_restart(ctx, &values, &lost)
-                    .await
-                    .unwrap_or_else(|restart_error| restart_error);
-                return Err(restart_error);
+        if let UploadContext::Upload = contexts.1 {
+            if let Err(error) = ensure_uploaded(ctx, &values).await {
+                if let Some(lost) = error.find_typed_context::<LostRemoteCasArtifacts>() {
+                    // Rewind the producers of the lost artifacts in place, then
+                    // re-materialize and retry the upload. Repeated losses of the
+                    // same artifact are capped by the rewind tracker.
+                    rewind_lost_remote_upload(ctx, artifact_group, &values, &lost).await?;
+                    continue;
+                }
+                return Err(error);
             }
-            return Err(error);
         }
-    }
 
-    Ok(values)
+        return Ok(values);
+    }
 }
 
 async fn materialize_artifact_group(
@@ -153,10 +154,10 @@ async fn materialize_artifact_group(
     materialization_context: MaterializationContext,
     queue_tracker: &Arc<BuckDashSet<BuildArtifact>>,
 ) -> bz_error::Result<ArtifactGroupValues> {
-    let values = ctx.ensure_artifact_group(artifact_group).await?;
+    loop {
+        let values = ctx.ensure_artifact_group(artifact_group).await?;
 
-    if let MaterializationContext::Materialize { force } = materialization_context {
-        loop {
+        if let MaterializationContext::Materialize { force } = materialization_context {
             match materialize_artifact_group_values(
                 ctx,
                 artifact_group,
@@ -166,18 +167,31 @@ async fn materialize_artifact_group(
             )
             .await
             {
-                Ok(()) => break,
+                Ok(()) => {}
                 Err(MaterializationAttemptError::Error(error)) => return Err(error),
                 Err(MaterializationAttemptError::LostRemoteOutputs(lost)) => {
+                    // Rewind the producers of the lost artifacts in place, then
+                    // re-ensure this group (also rewound, so its values reflect the
+                    // re-executed producers) and retry the materialization. Repeated
+                    // losses of the same artifact are capped by the rewind tracker.
                     let plan = prepare_lost_remote_output_rewind_plan(ctx, lost)?;
-                    prepare_lost_remote_output_rewind_restart(ctx, &plan).await?;
-                    return Err(lost_remote_build_restart_error(plan.rewind_graph()));
+                    prepare_lost_remote_output_rewind(ctx, &plan).await?;
+                    let mut graph_builder = plan.rewind_graph_builder();
+                    graph_builder.add_artifact_group(artifact_group);
+                    let rewound =
+                        rewind_lost_remote_graph(ctx, &graph_builder.finish(plan.rewind_reason()))
+                            .await;
+                    tracing::warn!(
+                        "Rewound {} key(s) after lost remote CAS outputs; retrying materialization in place",
+                        rewound,
+                    );
+                    continue;
                 }
             }
         }
-    }
 
-    Ok(values)
+        return Ok(values);
+    }
 }
 
 enum MaterializationAttemptError {
@@ -276,22 +290,24 @@ impl LostRemoteOutputRewindPlan {
             .join("\n")
     }
 
-    fn restart_reason(&self) -> String {
+    fn rewind_reason(&self) -> String {
         format!(
-            "remote-backed final outputs are missing from CAS; purged remote cache metadata and invalidated {} producer action(s):\n{}",
+            "remote-backed final outputs are missing from CAS; purged remote cache metadata and rewound {} producer action(s):\n{}",
             self.producers.len(),
             self.display_summary(),
         )
     }
 
-    fn rewind_graph(&self) -> LostRemoteRewindGraph {
+    /// Returns a builder pre-populated with the producers of the lost outputs, so
+    /// the caller can add the artifact group it is materializing before rewinding.
+    fn rewind_graph_builder(&self) -> LostRemoteRewindGraphBuilder {
         let mut builder = LostRemoteRewindGraphBuilder::default();
         for (action_key, producer) in &self.producers {
             builder.add_action_key(action_key.dupe());
             builder.add_artifact(&Artifact::from(producer.dupe()));
             builder.add_artifact_group(&ArtifactGroup::Artifact(Artifact::from(producer.dupe())));
         }
-        builder.finish(self.restart_reason())
+        builder
     }
 }
 
@@ -549,12 +565,12 @@ fn prepare_lost_remote_output_rewind_plan(
     Ok(plan)
 }
 
-async fn prepare_lost_remote_output_rewind_restart(
+async fn prepare_lost_remote_output_rewind(
     ctx: &mut DiceComputations<'_>,
     plan: &LostRemoteOutputRewindPlan,
 ) -> bz_error::Result<()> {
     tracing::warn!(
-        "Remote-backed outputs are missing from CAS; purging remote cache metadata and restarting build after invalidating {} producer action(s): {}",
+        "Remote-backed outputs are missing from CAS; purging remote cache metadata and rewinding {} producer action(s): {}",
         plan.producers.len(),
         plan.producers
             .values()
@@ -654,11 +670,15 @@ async fn ensure_uploaded(
     Ok(())
 }
 
-async fn prepare_lost_remote_upload_rewind_restart(
+/// Recovers from remote-backed artifacts going missing while uploading final
+/// outputs: rewinds the producing actions (and the materialized group) in place so
+/// the caller can re-materialize and retry the upload within the same transaction.
+async fn rewind_lost_remote_upload(
     ctx: &mut DiceComputations<'_>,
+    artifact_group: &ArtifactGroup,
     values: &ArtifactGroupValues,
     lost: &LostRemoteCasArtifacts,
-) -> bz_error::Result<bz_error::Error> {
+) -> bz_error::Result<()> {
     ctx.per_transaction_data()
         .get_known_missing_remote_cas_tracker()
         .record_lost_remote_cas_artifacts(lost);
@@ -729,10 +749,21 @@ async fn prepare_lost_remote_upload_rewind_restart(
     ctx.per_transaction_data()
         .record_lost_remote_action_cache_bypass(action_keys)?;
 
-    Ok(lost_remote_build_restart_error(builder.finish(format!(
-        "remote-backed artifacts are missing from CAS while uploading final outputs; purged remote cache metadata and invalidated affected producer action(s):\n{}",
-        summary,
-    ))))
+    builder.add_artifact_group(artifact_group);
+    let rewound = rewind_lost_remote_graph(
+        ctx,
+        &builder.finish(format!(
+            "remote-backed artifacts are missing from CAS while uploading final outputs; purged remote cache metadata and rewound affected producer action(s):\n{}",
+            summary,
+        )),
+    )
+    .await;
+    tracing::warn!(
+        "Rewound {} key(s) after lost remote CAS artifacts during final-output upload; retrying in place",
+        rewound,
+    );
+
+    Ok(())
 }
 
 #[derive(Clone, Dupe, Copy, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]

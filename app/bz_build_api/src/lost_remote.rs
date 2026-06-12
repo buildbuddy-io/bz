@@ -8,24 +8,23 @@
  * above-listed licenses.
  */
 
-use std::any::Any;
-use std::collections::HashSet;
-use std::mem;
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::PoisonError;
 
 use allocative::Allocative;
 use bz_artifact::actions::key::ActionKey;
 use bz_artifact::artifact::artifact_type::Artifact;
 use bz_artifact::artifact::artifact_type::ArtifactKind;
-use bz_error::internal_error;
 use bz_execute::artifact::artifact_dyn::ArtifactDyn;
-use dice::UserComputationData;
+use dice::DiceComputations;
 use dupe::Dupe;
 
+use crate::actions::calculation::ActionInputSetKey;
+use crate::actions::calculation::BuildKey;
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::TransitiveSetProjectionKey;
+use crate::artifact_groups::calculation::EnsureArtifactGroupValuesKey;
+use crate::artifact_groups::calculation::EnsureProjectedArtifactKey;
+use crate::artifact_groups::calculation::EnsureTransitiveSetProjectionKey;
 
 #[derive(Debug, Clone, Allocative)]
 pub struct LostRemoteRewindGraph {
@@ -148,109 +147,65 @@ impl LostRemoteRewindGraphBuilder {
     }
 }
 
-#[derive(Debug, Clone, Allocative)]
-pub struct LostRemoteBuildRestart {
-    graph: LostRemoteRewindGraph,
-}
-
-impl LostRemoteBuildRestart {
-    pub fn new(graph: LostRemoteRewindGraph) -> Self {
-        Self { graph }
-    }
-
-    pub fn graph(&self) -> &LostRemoteRewindGraph {
-        &self.graph
-    }
-
-    pub fn action_keys(&self) -> &[ActionKey] {
-        self.graph.action_keys()
-    }
-
-    pub fn reason(&self) -> &str {
-        self.graph.reason()
-    }
-}
-
-impl bz_error::TypedContext for LostRemoteBuildRestart {
-    fn eq(&self, other: &dyn bz_error::TypedContext) -> bool {
-        let Some(other) = (other as &dyn Any).downcast_ref::<Self>() else {
-            return false;
-        };
-        self.graph.action_keys == other.graph.action_keys
-            && self.graph.artifacts == other.graph.artifacts
-            && self.graph.projected_artifacts == other.graph.projected_artifacts
-            && self.graph.transitive_set_projections == other.graph.transitive_set_projections
-            && self.graph.action_input_sets == other.graph.action_input_sets
-            && self.graph.reason == other.graph.reason
-    }
-
-    fn display(&self) -> Option<String> {
-        None
-    }
-}
-
-pub fn lost_remote_build_restart_error(graph: LostRemoteRewindGraph) -> bz_error::Error {
-    internal_error!("Remote-backed artifacts are missing from CAS; restarting build attempt")
-        .context(LostRemoteBuildRestart::new(graph))
-}
-
-/// Daemon-scoped record of every action whose outputs are remote-backed (declared
-/// against remote CAS rather than materialized locally).
-///
-/// When any remote-backed artifact turns out to be evicted from CAS, the remote cache
-/// may have evicted more blobs than the ones we observed, so all remote-backed
-/// metadata must be distrusted at once: the lost-remote build restart drains this
-/// tracker and invalidates every recorded action, alongside purging all remote
-/// entries from the local action cache and the materializer. This mirrors Bazel's
-/// lost-inputs handling (`LeaseService#handleMissingInputs`), which deletes all
-/// Skyframe action values with remote outputs once any lost input is detected.
-#[derive(Default)]
-pub struct RemoteBackedActionTracker {
-    actions: Mutex<HashSet<ActionKey>>,
-}
-
-impl RemoteBackedActionTracker {
-    pub fn record(&self, action_key: ActionKey) {
-        self.actions
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(action_key);
-    }
-
-    pub fn drain(&self) -> Vec<ActionKey> {
-        mem::take(
-            &mut *self
-                .actions
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
+/// Rewinds every DICE key in `graph` at the current version (Skyframe-style action
+/// rewinding): their cached results are discarded so that re-requesting them
+/// recomputes within the same transaction, re-running producer actions whose
+/// remote-backed outputs were lost from CAS. The build keeps running; the caller
+/// must re-request whatever it consumed after this returns.
+pub async fn rewind_lost_remote_graph(
+    ctx: &mut DiceComputations<'_>,
+    graph: &LostRemoteRewindGraph,
+) -> usize {
+    let mut rewound = 0;
+    rewound += ctx
+        .rewind_keys(
+            graph
+                .action_keys()
+                .iter()
+                .cloned()
+                .map(BuildKey)
+                .collect::<Vec<_>>(),
         )
-        .into_iter()
-        .collect()
-    }
-}
-
-#[derive(Clone, Dupe)]
-struct RemoteBackedActionTrackerHolder(Arc<RemoteBackedActionTracker>);
-
-pub trait SetRemoteBackedActionTracker {
-    fn set_remote_backed_action_tracker(&mut self, tracker: Arc<RemoteBackedActionTracker>);
-}
-
-pub trait HasRemoteBackedActionTracker {
-    fn get_remote_backed_action_tracker(&self) -> Option<Arc<RemoteBackedActionTracker>>;
-}
-
-impl SetRemoteBackedActionTracker for UserComputationData {
-    fn set_remote_backed_action_tracker(&mut self, tracker: Arc<RemoteBackedActionTracker>) {
-        self.data.set(RemoteBackedActionTrackerHolder(tracker));
-    }
-}
-
-impl HasRemoteBackedActionTracker for UserComputationData {
-    fn get_remote_backed_action_tracker(&self) -> Option<Arc<RemoteBackedActionTracker>> {
-        self.data
-            .get::<RemoteBackedActionTrackerHolder>()
-            .ok()
-            .map(|holder| holder.0.dupe())
-    }
+        .await;
+    rewound += ctx
+        .rewind_keys(
+            graph
+                .artifacts()
+                .iter()
+                .cloned()
+                .map(EnsureArtifactGroupValuesKey)
+                .collect::<Vec<_>>(),
+        )
+        .await;
+    rewound += ctx
+        .rewind_keys(
+            graph
+                .projected_artifacts()
+                .iter()
+                .cloned()
+                .map(EnsureProjectedArtifactKey)
+                .collect::<Vec<_>>(),
+        )
+        .await;
+    rewound += ctx
+        .rewind_keys(
+            graph
+                .transitive_set_projections()
+                .iter()
+                .cloned()
+                .map(EnsureTransitiveSetProjectionKey)
+                .collect::<Vec<_>>(),
+        )
+        .await;
+    rewound += ctx
+        .rewind_keys(
+            graph
+                .action_input_sets()
+                .iter()
+                .cloned()
+                .map(ActionInputSetKey)
+                .collect::<Vec<_>>(),
+        )
+        .await;
+    rewound
 }

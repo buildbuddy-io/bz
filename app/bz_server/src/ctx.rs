@@ -38,7 +38,6 @@ use bz_build_api::build_signals::create_build_signals;
 use bz_build_api::context::SetBuildContextData;
 use bz_build_api::keep_going::HasKeepGoing;
 use bz_build_api::materialize::HasMaterializationQueueTracker;
-use bz_build_api::lost_remote::SetRemoteBackedActionTracker;
 use bz_build_api::materialize::RemoteCacheInvalidator;
 use bz_build_api::materialize::SetRemoteCacheInvalidator;
 use bz_build_api::spawner::BuckSpawner;
@@ -97,7 +96,6 @@ use bz_events::dispatch::EventDispatcher;
 use bz_events::metadata;
 use bz_events::schedule_type::SandcastleScheduleType;
 use bz_execute::execute::blocking::SetBlockingExecutor;
-use bz_execute::execute::known_missing::KnownMissingRemoteCasTracker;
 use bz_execute::knobs::ExecutorGlobalKnobs;
 use bz_execute::materialize::materializer::Materializer;
 use bz_execute::materialize::materializer::SetMaterializer;
@@ -1322,7 +1320,12 @@ impl DiceCommandUpdater<'_, '_> {
         if let Some(v) = &self.profile_event_listener {
             SetProfileEventListener::set(&mut data, v.clone());
         }
-        let known_missing_remote_cas = Arc::new(KnownMissingRemoteCasTracker::default());
+        let known_missing_remote_cas = self
+            .cmd_ctx
+            .base_context
+            .daemon
+            .known_missing_remote_cas
+            .dupe();
         data.set_known_missing_remote_cas_tracker(known_missing_remote_cas.dupe());
         data.set_command_executor(Box::new(CommandExecutorFactory::new(
             self.re_connection.dupe(),
@@ -1364,13 +1367,6 @@ impl DiceCommandUpdater<'_, '_> {
             materializer: self.cmd_ctx.base_context.daemon.materializer.dupe(),
             local_action_cache: self.cmd_ctx.base_context.daemon.local_action_cache.dupe(),
         }));
-        data.set_remote_backed_action_tracker(
-            self.cmd_ctx
-                .base_context
-                .daemon
-                .remote_backed_action_tracker
-                .dupe(),
-        );
         data.init_materialization_queue_tracker();
         data.init_build_event_sink();
         data.init_eager_build_execution();

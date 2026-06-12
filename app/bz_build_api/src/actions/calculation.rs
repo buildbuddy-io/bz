@@ -108,11 +108,9 @@ use crate::build::overlap::HasBuildOverlapTracker;
 use crate::deferred::calculation::ActionLookup;
 use crate::deferred::calculation::lookup_deferred_holder;
 use crate::keep_going::KeepGoing;
-use crate::lost_remote::LostRemoteBuildRestart;
 use crate::lost_remote::LostRemoteRewindGraph;
 use crate::lost_remote::LostRemoteRewindGraphBuilder;
-use crate::lost_remote::lost_remote_build_restart_error;
-use crate::lost_remote::HasRemoteBackedActionTracker;
+use crate::lost_remote::rewind_lost_remote_graph;
 use crate::materialize::purge_remote_cache_metadata;
 use crate::starlark::values::UnpackValue;
 use crate::starlark::values::type_repr::StarlarkTypeRepr;
@@ -656,45 +654,104 @@ async fn build_action_inner(
     is_expected_eligible_for_dedupe: bz_data::ExpectedEligibleForDedupe,
     force_skip_action_cache: bool,
 ) -> (ActionExecutionData, Box<bz_data::ActionExecutionEnd>) {
-    let (mut execute_result, mut command_reports) = execute_action_attempt(
-        executor,
-        waiting_data.clone(),
-        ensured_inputs.dupe(),
-        local_action_cache_input_set_digest.dupe(),
-        action,
-        cancellation,
-        force_skip_action_cache,
-    )
-    .await;
+    let mut ensured_inputs = ensured_inputs;
+    let mut local_action_cache_input_set_digest = local_action_cache_input_set_digest;
+    let mut force_skip_action_cache = force_skip_action_cache;
 
-    if let Some(lost) = lost_remote_cas_artifacts(&execute_result) {
-        ctx.per_transaction_data()
-            .get_known_missing_remote_cas_tracker()
-            .record_lost_remote_cas_artifacts(&lost);
-        let restart_error = async {
-            let plan = prepare_lost_remote_rewind_plan(ctx, &ensured_inputs, action, &lost).await?;
-            prepare_lost_remote_rewind_restart(ctx, action, &plan).await?;
-            Ok::<_, bz_error::Error>(lost_remote_build_restart_error(plan.rewind_graph()))
+    loop {
+        let (mut execute_result, mut command_reports) = execute_action_attempt(
+            executor,
+            waiting_data.clone(),
+            ensured_inputs.dupe(),
+            local_action_cache_input_set_digest.dupe(),
+            action,
+            cancellation,
+            force_skip_action_cache,
+        )
+        .await;
+
+        // Remote-backed inputs were evicted from CAS: rewind the producing keys in
+        // place (Skyframe-style action rewinding) and retry this action within the
+        // same transaction. The rest of the build keeps running. Repeated losses of
+        // the same artifact are capped by the rewind tracker, after which the
+        // recovery attempt fails the action.
+        if let Some(lost) = lost_remote_cas_artifacts(&execute_result) {
+            ctx.per_transaction_data()
+                .get_known_missing_remote_cas_tracker()
+                .record_lost_remote_cas_artifacts(&lost);
+            match rewind_lost_remote_inputs(ctx, &ensured_inputs, action, &lost).await {
+                Ok(retry_inputs) => {
+                    ensured_inputs = retry_inputs.inputs;
+                    local_action_cache_input_set_digest = retry_inputs.input_set_digest;
+                    // The cached result this action would get from the action cache
+                    // is the one that referenced the evicted blobs.
+                    force_skip_action_cache = true;
+                    continue;
+                }
+                Err(error) => {
+                    execute_result = Err(ExecuteError::Error { error });
+                    command_reports.clear();
+                }
+            }
         }
-        .await
-        .unwrap_or_else(|error| error);
-        execute_result = Err(ExecuteError::Error {
-            error: restart_error,
-        });
-        command_reports.clear();
-    }
 
-    build_action_result(
-        ctx,
-        executor,
-        execute_result,
-        command_reports,
-        action,
-        target_rule_type_name,
-        is_eligible_for_dedupe,
-        is_expected_eligible_for_dedupe,
-    )
-    .await
+        return build_action_result(
+            ctx,
+            executor,
+            execute_result,
+            command_reports,
+            action,
+            target_rule_type_name,
+            is_eligible_for_dedupe,
+            is_expected_eligible_for_dedupe,
+        )
+        .await;
+    }
+}
+
+/// Recovers from lost remote CAS inputs while the failed action's computation stays
+/// running: rewinds the producers of the lost artifacts (plus this action's input
+/// keys) at the current version, then re-ensures the inputs so the retry observes
+/// the re-executed producers' outputs.
+async fn rewind_lost_remote_inputs(
+    ctx: &mut DiceComputations<'_>,
+    ensured_inputs: &BuckIndexMap<ArtifactGroup, ArtifactGroupValues>,
+    action: &RegisteredAction,
+    lost: &LostRemoteCasArtifacts,
+) -> bz_error::Result<ActionInputSet> {
+    let plan = prepare_lost_remote_rewind_plan(ctx, ensured_inputs, action, lost).await?;
+    prepare_lost_remote_rewind(ctx, action, &plan).await?;
+
+    let rewound = rewind_lost_remote_graph(ctx, &plan.rewind_graph()).await;
+    tracing::warn!(
+        "Rewound {} key(s) after lost remote CAS artifacts; retrying `{}` in place",
+        rewound,
+        action.key(),
+    );
+
+    ensure_action_inputs_for_rewind_retry(ctx, action).await
+}
+
+/// Re-derives the action's ensured inputs and local action cache input-set digest
+/// after a rewind, mirroring the input selection in `build_action_no_redirect`.
+async fn ensure_action_inputs_for_rewind_retry(
+    ctx: &mut DiceComputations<'_>,
+    action: &RegisteredAction,
+) -> bz_error::Result<ActionInputSet> {
+    let inputs = action.inputs()?;
+    if let Some(local_action_cache_inputs) = action.local_action_cache_inputs()? {
+        let ensured_local_action_cache_inputs =
+            ensure_action_input_set(ctx, &local_action_cache_inputs).await?;
+        if local_action_cache_inputs.as_ref() == inputs.as_ref() {
+            return Ok(ensured_local_action_cache_inputs);
+        }
+        let ensured_inputs = ensure_action_input_set(ctx, &inputs).await?;
+        return Ok(ActionInputSet {
+            inputs: ensured_inputs.inputs,
+            input_set_digest: ensured_local_action_cache_inputs.input_set_digest,
+        });
+    }
+    ensure_action_input_set(ctx, &inputs).await
 }
 
 async fn execute_action_attempt(
@@ -872,9 +929,9 @@ impl LostRemoteRewindPlan {
             .join("\n")
     }
 
-    fn restart_reason(&self) -> String {
+    fn rewind_reason(&self) -> String {
         format!(
-            "remote-backed inputs are missing from CAS; purged remote cache metadata and invalidated {} producer action(s) plus the failed action input graph:\n{}",
+            "remote-backed inputs are missing from CAS; purged remote cache metadata and rewound {} producer action(s) plus the failed action input graph:\n{}",
             self.producers.len(),
             self.display_summary(),
         )
@@ -882,7 +939,8 @@ impl LostRemoteRewindPlan {
 
     fn rewind_graph(&self) -> LostRemoteRewindGraph {
         let mut builder = LostRemoteRewindGraphBuilder::default();
-        builder.add_action_key(self.failed_action.dupe());
+        // The failed action itself is not rewound: its computation stays running and
+        // retries in place after the rewind.
         builder.add_action_input_set(self.failed_action_inputs.dupe());
         for artifact_group in self.failed_action_inputs.iter() {
             builder.add_artifact_group(artifact_group);
@@ -899,7 +957,7 @@ impl LostRemoteRewindPlan {
                 builder.add_artifact_group(artifact_group);
             }
         }
-        builder.finish(self.restart_reason())
+        builder.finish(self.rewind_reason())
     }
 }
 
@@ -931,13 +989,13 @@ async fn prepare_lost_remote_rewind_plan(
     Ok(plan)
 }
 
-async fn prepare_lost_remote_rewind_restart(
+async fn prepare_lost_remote_rewind(
     ctx: &mut DiceComputations<'_>,
     failed_action: &RegisteredAction,
     plan: &LostRemoteRewindPlan,
 ) -> bz_error::Result<()> {
     tracing::warn!(
-        "Remote-backed inputs are missing from CAS; purging remote cache metadata and restarting build after invalidating {} producer action(s): {}",
+        "Remote-backed inputs are missing from CAS; purging remote cache metadata and rewinding {} producer action(s): {}",
         plan.producers.len(),
         plan.producers
             .values()
@@ -948,11 +1006,11 @@ async fn prepare_lost_remote_rewind_restart(
 
     invalidate_rewind_action_outputs(ctx, failed_action, plan).await?;
     purge_remote_cache_metadata(ctx).await?;
-    let mut action_cache_bypass = Vec::with_capacity(plan.producers.len() + 1);
-    action_cache_bypass.push(failed_action.key().dupe());
-    action_cache_bypass.extend(plan.producers.keys().cloned());
+    // The failed action's own retry bypasses the action cache via its local retry
+    // loop; only the rewound producers need a recorded bypass for when their
+    // recomputation reaches `build_action_impl`.
     ctx.per_transaction_data()
-        .record_lost_remote_action_cache_bypass(action_cache_bypass)?;
+        .record_lost_remote_action_cache_bypass(plan.producers.keys().cloned().collect())?;
     Ok(())
 }
 
@@ -1151,85 +1209,6 @@ async fn build_action_result(
     is_eligible_for_dedupe: bz_data::EligibleForDedupe,
     is_expected_eligible_for_dedupe: bz_data::ExpectedEligibleForDedupe,
 ) -> (ActionExecutionData, Box<bz_data::ActionExecutionEnd>) {
-    if let Ok((_, meta)) = &execute_result
-        && meta.remote_cache_origin.is_some()
-        && let Some(tracker) = ctx.per_transaction_data().get_remote_backed_action_tracker()
-    {
-        tracker.record(action.key().dupe());
-    }
-
-    if let Err(ExecuteError::Error { error }) = &execute_result
-        && error
-            .find_typed_context::<LostRemoteBuildRestart>()
-            .is_some()
-    {
-        let queue_duration = command_reports.last().and_then(|r| r.timing.queue_duration);
-        let wall_time = command_reports
-            .last()
-            .map(|r| r.timing.time_span.duration());
-        let memory_peak = command_reports
-            .last()
-            .and_then(|r| r.timing.execution_stats.and_then(|s| s.memory_peak));
-        let action_key = action.key().as_proto();
-        let action_name = bz_data::ActionName {
-            category: action.category().as_str().to_owned(),
-            identifier: action.identifier().unwrap_or("").to_owned(),
-        };
-        let execution_kind = bz_data::ActionExecutionKind::NotSet;
-        let invalidation_info = action_invalidation_info(ctx, executor);
-
-        return (
-            ActionExecutionData {
-                action_result: Err(error.dupe()),
-                wall_time,
-                queue_duration,
-                memory_peak,
-                extra_data: ActionExtraData {
-                    execution_kind,
-                    target_rule_type_name: target_rule_type_name.clone(),
-                    action_digest: None,
-                    invalidation_info: invalidation_info.clone(),
-                    execution_time_ms: None,
-                    output_size: 0,
-                    re_platform_name: None,
-                },
-                waiting_data: WaitingData::default(),
-            },
-            Box::new(bz_data::ActionExecutionEnd {
-                key: Some(action_key),
-                kind: action.kind().into(),
-                name: Some(action_name),
-                failed: false,
-                error: None,
-                always_print_stderr: action.always_print_stderr(),
-                wall_time: wall_time.and_then(|d| d.try_into().ok()),
-                execution_kind: execution_kind as i32,
-                output_size: 0,
-                commands: Vec::new(),
-                outputs: Vec::new(),
-                prefers_local: false,
-                requires_local: false,
-                allows_cache_upload: false,
-                cache_upload_result: bz_data::UploadResult::DidNotUploadUnspecified as i32,
-                allows_dep_file_cache_upload: false,
-                dep_file_cache_upload_result: bz_data::UploadResult::DidNotUploadUnspecified as i32,
-                dep_file_key: None,
-                eligible_for_full_hybrid: None,
-                bz_revision: None,
-                bz_build_time: None,
-                hostname: None,
-                error_diagnostics: None,
-                input_files_bytes: None,
-                invalidation_info,
-                target_rule_type_name,
-                scheduling_mode: None,
-                incremental_kind: None,
-                eligible_for_dedupe: is_eligible_for_dedupe as i32,
-                expected_eligible_for_dedupe: is_expected_eligible_for_dedupe as i32,
-            }),
-        );
-    }
-
     let local_action_cache_action_digest =
         local_action_cache_action_digest(&execute_result, &command_reports);
     if let Some(action_digest) = local_action_cache_action_digest {
