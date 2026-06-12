@@ -311,7 +311,7 @@ impl CleanStaleArtifactsCommand {
                         db_size: materializer_state.len(),
                         stats,
                     };
-                    // quiet just because it's also returned, soft_error to log to scribe
+                    // quiet just because it's also returned, soft_error for remote event logging
                     return Err(soft_error!("clean_stale_error", error.into(), quiet: true)?);
                 }
             }

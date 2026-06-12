@@ -403,8 +403,6 @@ impl ProgressHeader<'_> {
     fn render_actions_stats(&self, style: Style) -> String {
         match style {
             Style::Normal(_) | Style::Compact(_) => {
-                let compact = matches!(style, Style::Compact(_));
-
                 let mut res_types = Vec::new();
                 if self.action_stats.local_actions > 0 {
                     res_types.push(format!(
@@ -418,26 +416,29 @@ impl ProgressHeader<'_> {
                         CommaSeparatedCount::new(self.action_stats.remote_actions)
                     ));
                 }
-                let mut cache_types = Vec::new();
-                if self.action_stats.local_cached_actions > 0 {
-                    cache_types.push(format!(
-                        "{} local cache",
-                        CommaSeparatedCount::new(self.action_stats.local_cached_actions)
-                    ));
-                }
-                if self.action_stats.total_remote_cached_actions() > 0 {
-                    cache_types.push(format!(
-                        "{} remote cache",
-                        CommaSeparatedCount::new(self.action_stats.total_remote_cached_actions())
-                    ));
-                }
-                if !cache_types.is_empty() {
-                    res_types.push(format!(
-                        "{} ({}%{})",
-                        cache_types.join(", "),
-                        self.action_stats.total_cache_hit_percentage(),
-                        if compact { "" } else { " hit" }
-                    ));
+                let local_cached_actions = self.action_stats.local_cached_actions;
+                let remote_cached_actions = self.action_stats.total_remote_cached_actions();
+                let cached_actions = self.action_stats.total_cached_actions();
+                if cached_actions > 0 {
+                    let cache_summary = if local_cached_actions > 0 && remote_cached_actions > 0 {
+                        format!(
+                            "{} cached ({} local, {} remote)",
+                            CommaSeparatedCount::new(cached_actions),
+                            CommaSeparatedCount::new(local_cached_actions),
+                            CommaSeparatedCount::new(remote_cached_actions)
+                        )
+                    } else if local_cached_actions > 0 {
+                        format!(
+                            "{} local cache",
+                            CommaSeparatedCount::new(local_cached_actions)
+                        )
+                    } else {
+                        format!(
+                            "{} remote cache",
+                            CommaSeparatedCount::new(remote_cached_actions)
+                        )
+                    };
+                    res_types.push(cache_summary);
                 }
 
                 if res_types.is_empty() {
@@ -469,19 +470,19 @@ impl ProgressHeader<'_> {
 
         let exec_time_ms = self.progress_stats.exec_time_ms;
         if exec_time_ms > 0 {
+            let cached_exec_time_ms = self.progress_stats.cached_exec_time_ms;
+            let cached_suffix = if cached_exec_time_ms > 0 {
+                format!(
+                    " ({}% cached)",
+                    cached_exec_time_ms * 100 / std::cmp::max(exec_time_ms, 1)
+                )
+            } else {
+                String::new()
+            };
             parts.push(format!(
-                "{} exec time total",
+                "{} exec time{}",
                 fmt_duration::fmt_duration(Duration::from_millis(exec_time_ms)),
-            ));
-        }
-
-        let cached_exec_time_ms = self.progress_stats.cached_exec_time_ms;
-
-        if cached_exec_time_ms > 0 {
-            parts.push(format!(
-                "{} exec time cached ({}%)",
-                fmt_duration::fmt_duration(Duration::from_millis(cached_exec_time_ms)),
-                cached_exec_time_ms * 100 / std::cmp::max(exec_time_ms, 1)
+                cached_suffix
             ));
         }
 
@@ -792,7 +793,10 @@ fn add_progress_detail_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
         };
         let close = open + close_offset + 1;
         let detail = &line[open + 1..close - 1];
-        if detail.ends_with("running") || detail.contains("% hit") || detail.ends_with('%') {
+        if detail.ends_with("running")
+            || detail.contains('%')
+            || (detail.contains("local") && detail.contains("remote"))
+        {
             ranges.push(StyledRange {
                 start: open,
                 end: close,
@@ -805,7 +809,7 @@ fn add_progress_detail_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
 }
 
 fn add_progress_extra_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
-    for label in ["exec time total", "exec time cached"] {
+    for label in ["exec time"] {
         let mut search_start = 0;
         while let Some(label_offset) = line[search_start..].find(label) {
             let label_start = search_start + label_offset;
@@ -825,8 +829,7 @@ fn add_progress_extra_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
         "targets declared",
         "actions",
         "artifacts declared",
-        "local cache",
-        "remote cache",
+        "cached",
         "local",
         "remote",
     ] {
@@ -891,7 +894,10 @@ fn add_action_stats_count_ranges(line: &str, ranges: &mut Vec<StyledRange>) {
             .find(|(_, ch)| !matches!(ch, '0'..='9' | ','))
             .map_or(stats_end, |(offset, _)| start + offset);
         let suffix = line[end..stats_end].trim_start();
-        if suffix.starts_with("local") || suffix.starts_with("remote") {
+        if suffix.starts_with("local")
+            || suffix.starts_with("remote")
+            || suffix.starts_with("cached")
+        {
             ranges.push(StyledRange {
                 start,
                 end,
@@ -1044,9 +1050,59 @@ mod tests {
             .fmt_for_test()
             .to_string();
 
-        assert!(output.contains("7 local cache, 11 remote cache (100% hit)"));
+        assert!(output.contains("18 cached (7 local, 11 remote)"));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_final_stats_local_cache_without_breakout() -> bz_error::Result<()> {
+        let phase_stats = &phase_stats();
+        let progress_stats = &progress_stats();
+        let action_stats = ActionStats {
+            local_actions: 0,
+            remote_actions: 0,
+            cached_actions: 0,
+            local_cached_actions: 5113,
+            fallback_actions: 0,
+            remote_dep_file_cached_actions: 0,
+            excess_cache_misses: 0,
+        };
+        let header = ProgressHeader {
+            phase_stats,
+            progress_stats,
+            action_stats: &action_stats,
+            time_elapsed: "1234s".to_owned(),
+        };
+
+        let output = header
+            .draw(
+                Dimensions {
+                    width: 160,
+                    height: 10,
+                },
+                DrawMode::Final,
+            )?
+            .fmt_for_test()
+            .to_string();
+
+        assert!(output.contains("5,113 local cache"));
+        assert!(!output.contains("5,113 cached (5,113 local)"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_mixed_cache_breakout_is_grey() {
+        let line = style_progress_header_line(
+            " [18 / 18]  Executed  18 cached (7 local, 11 remote)",
+        );
+        let output = line.fmt_for_test().to_string();
+
+        assert!(
+            output.contains("<span fg=grey>(7 local, 11 remote)</span>"),
+            "mixed cache breakout should be grey:\n{output}"
+        );
     }
 
     #[test]
@@ -1084,7 +1140,7 @@ mod tests {
             .fmt_for_test()
             .to_string();
 
-        assert!(output.contains("8 local, 32.8s exec time total"));
+        assert!(output.contains("8 local, 32.8s exec time"));
 
         Ok(())
     }
@@ -1193,22 +1249,22 @@ mod tests {
 
                             111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
                             222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
-                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit), 2:09:37.0s exec time total, 11:06.0s exec time cached (8%)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache, 2:09:37.0s exec time (8% cached)
                  [444 / 44,444]  Validated (44 running)                                                                       Time elapsed: 1234s
 
                             111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
                             222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
-                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit), 2:09:37.0s exec time total, 11:06.0s exec time cached (8%)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache, 2:09:37.0s exec time (8% cached)
                  [444 / 44,444]  Validated (44 running)                                                                        Time elapsed: 1234s
 
                             111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
                             222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
-                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit), 2:09:37.0s exec time total, 11:06.0s exec time cached (8%)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache, 2:09:37.0s exec time (8% cached)
                  [444 / 44,444]  Validated (44 running)                                                                                  Time elapsed: 1234s
 
                             111  Loaded    (11 running)                   111 dirs read, 22,222 targets declared
                             222  Analyzed  (22 running)                   3,333,333 actions, 4,444,444 artifacts declared
-                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache (37% hit), 2:09:37.0s exec time total, 11:06.0s exec time cached (8%)
+                 [333 / 33,333]  Executed  (55 local, 66 remote running)  100 local, 122 remote, 133 remote cache, 2:09:37.0s exec time (8% cached)
                  [444 / 44,444]  Validated (44 running)                                                                                                      Time elapsed: 1234s
 
                             11,111  Loaded
@@ -1218,7 +1274,7 @@ mod tests {
 
                             11,111  Loaded     111 dirs read, 22,222 targets declared
                             22,222  Analyzed   3,333,333 actions, 4,444,444 artifacts declared
-                 [33,333 / 33,333]  Executed   100 local, 122 remote, 133 remote cache (37% hit), 2:09:37.0s exec time total, 11:06.0s exec time cached (8%)
+                 [33,333 / 33,333]  Executed   100 local, 122 remote, 133 remote cache, 2:09:37.0s exec time (8% cached)
                  [44,444 / 44,444]  Validated
 
         "#
@@ -1430,7 +1486,7 @@ mod tests {
 
     #[test]
     fn test_progress_count_range_stops_before_extra_columns() {
-        let executed = "[2,943 / 2,943]   Executed                                                       13:04.2s exec time total";
+        let executed = "[2,943 / 2,943]   Executed                                                       13:04.2s exec time";
         let (start, end, is_executed) = progress_count_range(executed).unwrap();
         assert!(is_executed);
         assert_eq!(&executed[start..end], "[2,943 / 2,943]");

@@ -485,16 +485,6 @@ impl LocalActionCache {
         cache.remove_remote_entries()
     }
 
-    pub fn remove_remote_entries_for_origin_action_digests(
-        &self,
-        origin_action_digests: &[ActionDigest],
-    ) -> bz_error::Result<()> {
-        let Some(cache) = self.loaded() else {
-            return Ok(());
-        };
-        cache.remove_remote_entries_for_origin_action_digests(origin_action_digests)
-    }
-
     pub async fn clear(&self) -> bz_error::Result<()> {
         match &self.state {
             LocalActionCacheState::Disabled => Ok(()),
@@ -762,46 +752,6 @@ impl LoadedLocalActionCache {
         }
 
         LocalActionCacheSqliteTable::new(self.connection.dupe()).delete_remote_entries()
-    }
-
-    fn remove_remote_entries_for_origin_action_digests(
-        &self,
-        origin_action_digests: &[ActionDigest],
-    ) -> bz_error::Result<()> {
-        let remote_action_digests = self
-            .entries
-            .iter()
-            .filter_map(|entry| {
-                entry
-                    .value()
-                    .remote_cache_origin
-                    .as_ref()
-                    .is_some_and(|origin| origin_action_digests.contains(origin.action_digest()))
-                    .then(|| entry.key().to_owned())
-            })
-            .collect::<Vec<_>>();
-        for key in remote_action_digests {
-            self.entries.remove(&key);
-        }
-
-        let remote_metadata_keys = self
-            .action_metadata_entries
-            .iter()
-            .filter_map(|entry| {
-                entry
-                    .value()
-                    .remote_cache_origin
-                    .as_ref()
-                    .is_some_and(|origin| origin_action_digests.contains(origin.action_digest()))
-                    .then(|| entry.key().to_owned())
-            })
-            .collect::<Vec<_>>();
-        for key in remote_metadata_keys {
-            self.action_metadata_entries.remove(&key);
-        }
-
-        LocalActionCacheSqliteTable::new(self.connection.dupe())
-            .delete_remote_entries_for_origin_action_digests(origin_action_digests)
     }
 }
 
@@ -1151,55 +1101,6 @@ impl LocalActionCacheSqliteTable {
         .with_buck_error_context(|| {
             format!("deleting remote-backed rows from sqlite table {ACTION_METADATA_TABLE_NAME}")
         })?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    fn delete_remote_entries_for_origin_action_digests(
-        &self,
-        origin_action_digests: &[ActionDigest],
-    ) -> bz_error::Result<()> {
-        let mut connection = self.connection.lock();
-        let tx = connection.transaction()?;
-        for origin_action_digest in origin_action_digests {
-            let origin_action_digest = origin_action_digest.to_string();
-            tx.execute(
-                &format!(
-                    "DELETE FROM {STATE_TABLE_NAME} WHERE action_digest IN \
-                    (SELECT action_digest FROM {REMOTE_ACTION_CACHE_TABLE_NAME} \
-                    WHERE origin_action_digest = ?1)"
-                ),
-                rusqlite::params![&origin_action_digest],
-            )
-            .with_buck_error_context(|| {
-                format!(
-                    "deleting remote-backed rows from sqlite table {STATE_TABLE_NAME} for origin action digest"
-                )
-            })?;
-            tx.execute(
-                &format!(
-                    "DELETE FROM {REMOTE_ACTION_CACHE_TABLE_NAME} WHERE origin_action_digest = ?1"
-                ),
-                rusqlite::params![&origin_action_digest],
-            )
-            .with_buck_error_context(|| {
-                format!(
-                    "deleting rows from sqlite table {REMOTE_ACTION_CACHE_TABLE_NAME} for origin action digest"
-                )
-            })?;
-            tx.execute(
-                &format!(
-                    "DELETE FROM {ACTION_METADATA_TABLE_NAME} \
-                    WHERE remote_cache_entry = 1 AND origin_action_digest = ?1"
-                ),
-                rusqlite::params![&origin_action_digest],
-            )
-            .with_buck_error_context(|| {
-                format!(
-                    "deleting remote-backed rows from sqlite table {ACTION_METADATA_TABLE_NAME} for origin action digest"
-                )
-            })?;
-        }
         tx.commit()?;
         Ok(())
     }

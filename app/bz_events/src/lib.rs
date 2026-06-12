@@ -305,10 +305,9 @@ pub trait EventSink: Send + Sync {
     fn send(&self, event: Event);
 
     /// Like `send`, but bypasses any internal buffering and delivers the event
-    /// as directly as possible. For the scribe sink this means calling thrift
-    /// synchronously instead of going through the producer queue. This is
-    /// useful for high-priority events that must be delivered even under memory
-    /// pressure. The default implementation falls back to `send`.
+    /// as directly as possible. This is useful for high-priority events that
+    /// must be delivered even under memory pressure. The default implementation
+    /// falls back to `send`.
     async fn send_now(&self, event: Event) {
         self.send(event);
     }

@@ -58,7 +58,7 @@ pub(crate) fn smart_truncate_event(d: &mut bz_data::buck_event::Data) {
 }
 
 fn truncate_invocation_record(invocation_record: &mut bz_data::InvocationRecord) {
-    // FIXME(JakobDegen): The sum of the per-field limits adds up to more than the 1MB scribe limits
+    // FIXME(JakobDegen): The sum of the per-field limits adds up to more than the remote event limits.
     if let Some(ref mut file_watcher_stats) = invocation_record.file_watcher_stats {
         truncate_file_watcher_stats(file_watcher_stats);
     }
@@ -117,7 +117,7 @@ fn truncate_action_execution_end(action_execution_end: &mut bz_data::ActionExecu
         for retried in retries {
             truncate_cmd(retried, false);
         }
-        // Current Scribe tailers don't read stderr of successful actions.
+        // Current remote event tailers don't read stderr of successful actions.
         // Save some bytes.
         truncate_cmd(last_command, !action_execution_end.failed);
     }
@@ -180,7 +180,7 @@ fn truncate_test_end(test_end: &mut bz_data::TestRunEnd) {
         }
     }
 
-    // Scribe tailer logs neither stdout nor stderr of tests, so don't send these.
+    // Remote event tailer logs neither stdout nor stderr of tests, so don't send these.
     if let Some(ref mut command_report) = test_end.command_report {
         if let Some(ref mut details) = command_report.details {
             if !details.cmd_stdout.is_empty() {
@@ -194,7 +194,7 @@ fn truncate_test_end(test_end: &mut bz_data::TestRunEnd) {
 }
 
 fn truncate_test_discovery_end(test_discovery_end: &mut bz_data::TestDiscoveryEnd) {
-    // Scribe tailer logs neither stdout nor stderr of test discovery, so don't send these.
+    // Remote event tailer logs neither stdout nor stderr of test discovery, so don't send these.
     if let Some(ref mut command_report) = test_discovery_end.command_report {
         if let Some(ref mut details) = command_report.details {
             if !details.cmd_stdout.is_empty() {

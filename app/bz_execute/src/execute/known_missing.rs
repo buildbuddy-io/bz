@@ -77,6 +77,23 @@ impl KnownMissingRemoteCasTracker {
             artifact_value_file_digests(value).any(|digest| file_digests.contains(digest.data()))
         })
     }
+
+    pub fn remove_artifact_values<'a>(
+        &self,
+        values: impl IntoIterator<Item = &'a ArtifactValue>,
+    ) -> bool {
+        let mut file_digests = self
+            .file_digests
+            .lock()
+            .expect("known missing remote CAS tracker lock poisoned");
+        let mut removed = false;
+        for value in values {
+            for digest in artifact_value_file_digests(value) {
+                removed |= file_digests.remove(digest.data());
+            }
+        }
+        removed
+    }
 }
 
 fn artifact_value_file_digests(

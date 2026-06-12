@@ -468,7 +468,7 @@ impl CasDownloader<'_> {
             if cache_hit_missing_cas_is_cache_miss {
                 if let Some(known_missing_remote_cas) = known_missing_remote_cas
                     && known_missing_remote_cas
-                        .contains_artifact_values(artifacts.mapped_outputs.values())
+                        .remove_artifact_values(artifacts.mapped_outputs.values())
                 {
                     tracing::debug!(
                         "Cached result for `{}` referenced a known-missing CAS blob; treating it as a cache miss",

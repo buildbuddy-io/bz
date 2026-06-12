@@ -9,7 +9,11 @@
  */
 
 use std::any::Any;
+use std::collections::HashSet;
+use std::mem;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::PoisonError;
 
 use allocative::Allocative;
 use bz_artifact::actions::key::ActionKey;
@@ -17,6 +21,7 @@ use bz_artifact::artifact::artifact_type::Artifact;
 use bz_artifact::artifact::artifact_type::ArtifactKind;
 use bz_error::internal_error;
 use bz_execute::artifact::artifact_dyn::ArtifactDyn;
+use dice::UserComputationData;
 use dupe::Dupe;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -187,4 +192,65 @@ impl bz_error::TypedContext for LostRemoteBuildRestart {
 pub fn lost_remote_build_restart_error(graph: LostRemoteRewindGraph) -> bz_error::Error {
     internal_error!("Remote-backed artifacts are missing from CAS; restarting build attempt")
         .context(LostRemoteBuildRestart::new(graph))
+}
+
+/// Daemon-scoped record of every action whose outputs are remote-backed (declared
+/// against remote CAS rather than materialized locally).
+///
+/// When any remote-backed artifact turns out to be evicted from CAS, the remote cache
+/// may have evicted more blobs than the ones we observed, so all remote-backed
+/// metadata must be distrusted at once: the lost-remote build restart drains this
+/// tracker and invalidates every recorded action, alongside purging all remote
+/// entries from the local action cache and the materializer. This mirrors Bazel's
+/// lost-inputs handling (`LeaseService#handleMissingInputs`), which deletes all
+/// Skyframe action values with remote outputs once any lost input is detected.
+#[derive(Default)]
+pub struct RemoteBackedActionTracker {
+    actions: Mutex<HashSet<ActionKey>>,
+}
+
+impl RemoteBackedActionTracker {
+    pub fn record(&self, action_key: ActionKey) {
+        self.actions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(action_key);
+    }
+
+    pub fn drain(&self) -> Vec<ActionKey> {
+        mem::take(
+            &mut *self
+                .actions
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
+        .into_iter()
+        .collect()
+    }
+}
+
+#[derive(Clone, Dupe)]
+struct RemoteBackedActionTrackerHolder(Arc<RemoteBackedActionTracker>);
+
+pub trait SetRemoteBackedActionTracker {
+    fn set_remote_backed_action_tracker(&mut self, tracker: Arc<RemoteBackedActionTracker>);
+}
+
+pub trait HasRemoteBackedActionTracker {
+    fn get_remote_backed_action_tracker(&self) -> Option<Arc<RemoteBackedActionTracker>>;
+}
+
+impl SetRemoteBackedActionTracker for UserComputationData {
+    fn set_remote_backed_action_tracker(&mut self, tracker: Arc<RemoteBackedActionTracker>) {
+        self.data.set(RemoteBackedActionTrackerHolder(tracker));
+    }
+}
+
+impl HasRemoteBackedActionTracker for UserComputationData {
+    fn get_remote_backed_action_tracker(&self) -> Option<Arc<RemoteBackedActionTracker>> {
+        self.data
+            .get::<RemoteBackedActionTrackerHolder>()
+            .ok()
+            .map(|holder| holder.0.dupe())
+    }
 }

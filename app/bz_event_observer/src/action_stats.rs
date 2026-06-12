@@ -169,6 +169,19 @@ pub fn was_fallback_action(action: &bz_data::ActionExecutionEnd) -> bool {
     }
 }
 
+pub(crate) fn has_counted_action_stats(action: &bz_data::ActionExecutionEnd) -> bool {
+    if action.kind != bz_data::ActionKind::Run as i32 {
+        return false;
+    }
+    if action.execution_kind() == bz_data::ActionExecutionKind::LocalActionCache {
+        return true;
+    }
+    !matches!(
+        get_last_command_execution_kind(action),
+        LastCommandExecutionKind::NoCommand
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use bz_data::ActionExecutionEnd;

@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use bz_data::ActionExecutionStart;
 use bz_data::AnalysisEnd;
 use bz_data::AnalysisStageStart;
 use bz_data::AnalysisStart;
@@ -26,6 +25,7 @@ use bz_data::span_start_event;
 use bz_events::BuckEvent;
 use bz_events::span::SpanId;
 use bz_hash::StdBuckHashMap;
+use bz_hash::StdBuckHashSet;
 
 use crate::last_command_execution_kind::get_last_command_execution_time;
 use crate::unpack_event::UnpackedBuckEvent;
@@ -157,8 +157,9 @@ pub struct BuildProgressPhaseStats {
     pub validations: BuildProgressPhaseStatsItem,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct TrackedActionSpan {
+    key: Option<bz_data::ActionKey>,
     running_local: bool,
     running_remote: bool,
 }
@@ -179,6 +180,9 @@ pub struct BuildProgressStateTracker {
     loads: SpanMap<TrackedLoadSpan>,
     analyses: SpanMap<TrackedAnalysisSpan>,
     actions: SpanMap<TrackedActionSpan>,
+    action_keys_started: StdBuckHashSet<bz_data::ActionKey>,
+    action_keys_finished: StdBuckHashSet<bz_data::ActionKey>,
+    action_exec_time_keys: StdBuckHashSet<bz_data::ActionKey>,
     validations: SpanMap<TrackedValidationSpan>,
     remote_cache_checks: StdBuckHashMap<SpanId, ()>,
 }
@@ -406,9 +410,18 @@ impl BuildProgressStateTracker {
                     ..
                 },
                 _,
-                span_start_event::Data::ActionExecution(ActionExecutionStart { .. }),
+                span_start_event::Data::ActionExecution(action),
             ) => {
-                self.actions.started(*span_id, TrackedActionSpan::default());
+                if let Some(key) = &action.key {
+                    self.action_keys_started.insert(key.clone());
+                }
+                self.actions.started(
+                    *span_id,
+                    TrackedActionSpan {
+                        key: action.key.clone(),
+                        ..Default::default()
+                    },
+                );
             }
             UnpackedBuckEvent::SpanStart(
                 BuckEvent {
@@ -447,13 +460,27 @@ impl BuildProgressStateTracker {
                 span_end_event::Data::ActionExecution(end),
             ) => {
                 if let Some(data) = self.actions.finished(*span_id) {
-                    let data = *data;
+                    let data = data.clone();
+                    if let Some(key) = &data.key {
+                        self.action_keys_finished.insert(key.clone());
+                    }
                     self.action_finished(data);
+                } else if let Some(key) = &end.key {
+                    self.action_keys_started.insert(key.clone());
+                    self.action_keys_finished.insert(key.clone());
                 }
 
                 let exec_time = get_last_command_execution_time(end);
-                self.stats.exec_time_ms += exec_time.exec_time_ms;
-                self.stats.cached_exec_time_ms += exec_time.cached_exec_time_ms;
+                if exec_time.exec_time_ms > 0 || exec_time.cached_exec_time_ms > 0 {
+                    let should_count_time = match &end.key {
+                        Some(key) => self.action_exec_time_keys.insert(key.clone()),
+                        None => true,
+                    };
+                    if should_count_time {
+                        self.stats.exec_time_ms += exec_time.exec_time_ms;
+                        self.stats.cached_exec_time_ms += exec_time.cached_exec_time_ms;
+                    }
+                }
             }
             _ => {}
         }
@@ -461,10 +488,18 @@ impl BuildProgressStateTracker {
     }
 
     pub fn phase_stats(&self) -> BuildProgressPhaseStats {
+        let mut actions = self.actions.get_stats();
+        if !self.action_keys_started.is_empty() || !self.action_keys_finished.is_empty() {
+            actions.finished = self.action_keys_finished.len() as u64;
+            actions.started = std::cmp::max(
+                self.action_keys_started.len() as u64,
+                actions.finished + actions.running,
+            );
+        }
         BuildProgressPhaseStats {
             loads: self.loads.get_stats(),
             analyses: self.analyses.get_stats(),
-            actions: self.actions.get_stats(),
+            actions,
             validations: self.validations.get_stats(),
         }
     }

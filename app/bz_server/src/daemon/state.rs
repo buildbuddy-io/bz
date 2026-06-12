@@ -17,6 +17,7 @@ use std::time::Instant;
 use allocative::Allocative;
 use bz_build_api::interpreter::rule_defs::context::init_action_has_content_based_path_default;
 use bz_build_api::interpreter::rule_defs::context::init_declare_output_has_content_based_path_default;
+use bz_build_api::lost_remote::RemoteBackedActionTracker;
 use bz_build_api::spawner::BuckSpawner;
 use bz_cli_proto::ConfigOverride;
 use bz_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
@@ -87,7 +88,7 @@ use fbinit::FacebookInit;
 use gazebo::prelude::*;
 use gazebo::variants::VariantName;
 use host_sharing::NamedSemaphores;
-use remote::ScribeConfig;
+use remote::RemoteEventSinkConfig;
 use tokio::runtime::Handle;
 use tokio::sync::Mutex;
 use tracing::Instrument;
@@ -210,7 +211,7 @@ pub struct DaemonStateData {
     pub(crate) forkserver: ForkserverAccess,
 
     #[allocative(skip)]
-    pub scribe_sink: Option<Arc<dyn EventSinkWithStats>>,
+    pub remote_event_sink: Option<Arc<dyn EventSinkWithStats>>,
 
     /// Whether to consult the offline-cache buck-out dir for network action
     /// outputs prior to running them. If no cached output exists, the action
@@ -270,6 +271,11 @@ pub struct DaemonStateData {
     /// Persistent action cache for local executions.
     #[allocative(skip)]
     pub local_action_cache: Arc<LocalActionCache>,
+
+    /// Actions whose outputs are remote-backed, invalidated wholesale when any
+    /// remote-backed artifact is lost from CAS.
+    #[allocative(skip)]
+    pub remote_backed_action_tracker: Arc<RemoteBackedActionTracker>,
 
     /// A unique identifier for this instance of the daemon
     pub daemon_id: DaemonId,
@@ -404,10 +410,10 @@ impl DaemonState {
                 section: "buck2",
                 property: "event_log_message_batch_size",
             })?;
-            tracing::info!("Initializing scribe sink...");
-            let scribe_sink = Self::init_scribe_sink(
+            tracing::info!("Initializing remote event sink...");
+            let remote_event_sink = Self::init_remote_event_sink(
                 fb,
-                ScribeConfig {
+                RemoteEventSinkConfig {
                     buffer_size,
                     retry_backoff,
                     retry_attempts,
@@ -415,7 +421,7 @@ impl DaemonState {
                     thrift_timeout: Duration::from_secs(1),
                 },
             )
-            .buck_error_context("failed to init scribe sink")?;
+            .buck_error_context("failed to init remote event sink")?;
 
             let default_digest_algorithm =
                 bz_env!("BUCK_DEFAULT_DIGEST_ALGORITHM", type=DigestAlgorithmFamily)?;
@@ -675,12 +681,12 @@ impl DaemonState {
                 paths.buck_out_path(),
                 init_ctx.daemon_startup_config.paranoid,
             ));
-            // Used only to dispatch events to scribe that are not associated with a specific command (ex. materializer clean up events)
-            let daemon_dispatcher = if let Some(sink) = scribe_sink.dupe() {
+            // Used only to dispatch events not associated with a specific command (ex. materializer clean up events).
+            let daemon_dispatcher = if let Some(sink) = remote_event_sink.dupe() {
                 EventDispatcher::new(TraceId::null(), daemon_id.dupe(), sink.to_event_sync())
             } else {
                 // If needed this could log to a sink that redirects to a daemon event log (maybe `~/.buck/buckd/repo-path/event-log`)
-                // but for now seems fine to drop events if scribe isn't enabled.
+                // but for now seems fine to drop events if a remote sink isn't enabled.
                 EventDispatcher::null()
             };
             tracing::info!("Spawning deferred materializer...");
@@ -830,7 +836,7 @@ impl DaemonState {
                 blocking_executor,
                 materializer,
                 forkserver,
-                scribe_sink,
+                remote_event_sink,
                 use_network_action_output_cache,
                 disk_state_options,
                 start_time: std::time::Instant::now(),
@@ -847,6 +853,7 @@ impl DaemonState {
                 cached_buckconfig_based_cells: Arc::new(Mutex::new(None)),
                 incremental_db_state,
                 local_action_cache,
+                remote_backed_action_tracker: Arc::new(RemoteBackedActionTracker::default()),
                 daemon_id: daemon_id.dupe(),
                 named_semaphores_for_run_actions: Arc::new(NamedSemaphores::new()),
             }))
@@ -879,28 +886,27 @@ impl DaemonState {
         )?))
     }
 
-    fn init_scribe_sink(
+    fn init_remote_event_sink(
         fb: FacebookInit,
-        config: ScribeConfig,
+        config: RemoteEventSinkConfig,
     ) -> bz_error::Result<Option<Arc<dyn EventSinkWithStats>>> {
         remote::new_remote_event_sink_if_enabled(fb, config)
-            .map(|maybe_scribe| maybe_scribe.map(|scribe| Arc::new(scribe) as _))
+            .map(|maybe_sink| maybe_sink.map(|sink| Arc::new(sink) as _))
     }
 
     /// Prepares an event stream for a request by bootstrapping an event source and EventDispatcher pair. The given
-    /// EventDispatcher will log to the returned EventSource and (optionally) to Scribe if enabled via buckconfig.
+    /// EventDispatcher will log to the returned EventSource and optionally to a remote event sink.
     pub async fn prepare_events(
         &self,
         trace_id: TraceId,
     ) -> bz_error::Result<(ChannelEventSource, EventDispatcher)> {
-        // facebook only: logging events to Scribe.
         let (events, sink) = bz_events::create_source_sink_pair();
         let data = self.data();
-        let dispatcher = if let Some(scribe_sink) = data.scribe_sink.dupe() {
+        let dispatcher = if let Some(remote_event_sink) = data.remote_event_sink.dupe() {
             EventDispatcher::new(
                 trace_id,
                 self.data.daemon_id.dupe(),
-                TeeSink::new(scribe_sink.to_event_sync(), sink),
+                TeeSink::new(remote_event_sink.to_event_sync(), sink),
             )
         } else {
             EventDispatcher::new(trace_id, self.data.daemon_id.dupe(), sink)

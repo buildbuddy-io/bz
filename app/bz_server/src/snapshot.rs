@@ -222,7 +222,7 @@ impl SnapshotCollector {
     }
 
     fn add_sink_metrics(&self, snapshot: &mut bz_data::Snapshot) {
-        if let Some(metrics) = self.daemon.scribe_sink.as_ref().map(|sink| sink.stats()) {
+        if let Some(metrics) = self.daemon.remote_event_sink.as_ref().map(|sink| sink.stats()) {
             let EventSinkStats {
                 successes,
                 failures_invalid_request,

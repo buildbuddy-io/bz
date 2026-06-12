@@ -525,6 +525,8 @@ pub struct CommandExecutionRequest {
     /// ownerless primary output, not by every input path.
     bazel_shared_action_primary_output: Option<ProjectRelativePathBuf>,
     local_action_cache_key: Option<LocalActionCacheKey>,
+    /// Whether RE execution should bypass remote action-result cache lookup.
+    force_remote_execution_cache_bypass: bool,
     /// Whether RE input upload should bypass TTL/missing checks and re-upload every digest.
     force_remote_input_reupload: bool,
 
@@ -572,6 +574,7 @@ impl CommandExecutionRequest {
             run_action_key: None,
             bazel_shared_action_primary_output: None,
             local_action_cache_key: None,
+            force_remote_execution_cache_bypass: false,
             force_remote_input_reupload: false,
             is_test: false,
             skip_resource_control: false,
@@ -871,6 +874,18 @@ impl CommandExecutionRequest {
 
     pub fn local_action_cache_key(&self) -> Option<&LocalActionCacheKey> {
         self.local_action_cache_key.as_ref()
+    }
+
+    pub fn with_force_remote_execution_cache_bypass(
+        mut self,
+        force_remote_execution_cache_bypass: bool,
+    ) -> Self {
+        self.force_remote_execution_cache_bypass = force_remote_execution_cache_bypass;
+        self
+    }
+
+    pub fn force_remote_execution_cache_bypass(&self) -> bool {
+        self.force_remote_execution_cache_bypass
     }
 
     pub fn with_force_remote_input_reupload(mut self, force_remote_input_reupload: bool) -> Self {

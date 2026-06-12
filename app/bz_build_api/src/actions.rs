@@ -384,6 +384,10 @@ pub trait ActionExecutionCtx: Send + Sync {
         false
     }
 
+    fn force_remote_execution_cache_bypass(&self) -> bool {
+        false
+    }
+
     fn artifact_path_mapping(
         &self,
         filter: Option<BuckIndexSet<ArtifactGroup>>,

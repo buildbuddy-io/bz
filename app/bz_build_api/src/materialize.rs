@@ -73,15 +73,12 @@ use crate::lost_remote::lost_remote_build_restart_error;
 
 #[async_trait]
 pub trait RemoteCacheInvalidator: Send + Sync {
+    /// Purges all remote-backed cache metadata: remote entries in the local action
+    /// cache and remote CAS declarations in the materializer. Once any remote blob
+    /// is found to be evicted, the remote cache may have evicted more blobs than the
+    /// ones we observed, so all remote-backed metadata is distrusted at once. This
+    /// mirrors Bazel's lost-inputs handling (`LeaseService#handleMissingInputs`).
     async fn purge_remote_cache_metadata(&self) -> bz_error::Result<()>;
-
-    async fn purge_remote_cache_metadata_for_origins(
-        &self,
-        origins: Vec<RemoteActionCacheOrigin>,
-    ) -> bz_error::Result<()> {
-        let _unused = origins;
-        self.purge_remote_cache_metadata().await
-    }
 }
 
 pub trait SetRemoteCacheInvalidator {
@@ -110,31 +107,17 @@ impl HasRemoteCacheInvalidator for UserComputationData {
     }
 }
 
-pub(crate) async fn purge_remote_cache_metadata_for_origins(
+pub(crate) async fn purge_remote_cache_metadata(
     ctx: &mut DiceComputations<'_>,
-    origins: Vec<RemoteActionCacheOrigin>,
 ) -> bz_error::Result<()> {
-    if origins.is_empty() {
-        return Ok(());
-    }
-
     if let Some(invalidator) = ctx.per_transaction_data().get_remote_cache_invalidator() {
-        invalidator
-            .purge_remote_cache_metadata_for_origins(origins)
-            .await?;
+        invalidator.purge_remote_cache_metadata().await?;
     } else if let Some(extension) = ctx
         .per_transaction_data()
         .get_materializer()
         .as_deferred_materializer_extension()
     {
-        extension
-            .clear_remote_declared_cas_for_origin_action_digests(
-                origins
-                    .iter()
-                    .map(|origin| origin.action_digest().dupe())
-                    .collect(),
-            )
-            .await?;
+        extension.clear_remote_declared_cas().await?;
     }
 
     Ok(())
@@ -309,19 +292,6 @@ impl LostRemoteOutputRewindPlan {
             builder.add_artifact_group(&ArtifactGroup::Artifact(Artifact::from(producer.dupe())));
         }
         builder.finish(self.restart_reason())
-    }
-
-    fn remote_origins(&self) -> Vec<RemoteActionCacheOrigin> {
-        let mut origins = Vec::new();
-        for record in &self.records {
-            if !origins
-                .iter()
-                .any(|origin: &RemoteActionCacheOrigin| origin == &record.origin)
-            {
-                origins.push(record.origin.clone());
-            }
-        }
-        origins
     }
 }
 
@@ -594,7 +564,7 @@ async fn prepare_lost_remote_output_rewind_restart(
     );
 
     invalidate_lost_remote_output_producer_paths(ctx, plan).await?;
-    purge_remote_cache_metadata_for_origins(ctx, plan.remote_origins()).await?;
+    purge_remote_cache_metadata(ctx).await?;
     ctx.per_transaction_data()
         .record_lost_remote_action_cache_bypass(plan.producers.keys().cloned().collect())?;
     Ok(())
@@ -755,16 +725,7 @@ async fn prepare_lost_remote_upload_rewind_restart(
         ));
     }
 
-    let mut origins = Vec::new();
-    for artifact in lost.iter() {
-        if !origins
-            .iter()
-            .any(|origin: &RemoteActionCacheOrigin| origin == &artifact.origin)
-        {
-            origins.push(artifact.origin.clone());
-        }
-    }
-    purge_remote_cache_metadata_for_origins(ctx, origins).await?;
+    purge_remote_cache_metadata(ctx).await?;
     ctx.per_transaction_data()
         .record_lost_remote_action_cache_bypass(action_keys)?;
 

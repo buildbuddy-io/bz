@@ -438,6 +438,7 @@ struct BuckActionExecutionContext<'a> {
     command_reports: &'a mut Vec<CommandExecutionReport>,
     cancellations: &'a CancellationContext,
     force_skip_action_cache: bool,
+    force_remote_execution_cache_bypass: bool,
     force_remote_input_reupload: bool,
 }
 
@@ -482,6 +483,10 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
 
     fn force_remote_input_reupload(&self) -> bool {
         self.force_remote_input_reupload
+    }
+
+    fn force_remote_execution_cache_bypass(&self) -> bool {
+        self.force_remote_execution_cache_bypass
     }
 
     fn artifact_path_mapping(
@@ -858,6 +863,7 @@ impl BuckActionExecutor {
             cancellations,
             false,
             false,
+            false,
         )
         .await
     }
@@ -873,14 +879,21 @@ impl BuckActionExecutor {
         Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>,
         Vec<CommandExecutionReport>,
     ) {
+        let force_skip_action_cache = true;
+        let force_remote_execution_cache_bypass = true;
+        // Rewinding should re-execute the producer and failed action, but should not force every
+        // remote-only input to be locally uploaded. A rerun producer may legitimately leave its
+        // outputs remote-backed, and the consumer upload path should probe CAS presence normally.
+        let force_remote_input_reupload = false;
         self.execute_impl(
             waiting_data,
             inputs,
             local_action_cache_input_set_digest,
             action,
             cancellations,
-            true,
-            true,
+            force_skip_action_cache,
+            force_remote_execution_cache_bypass,
+            force_remote_input_reupload,
         )
         .await
     }
@@ -893,6 +906,7 @@ impl BuckActionExecutor {
         action: &RegisteredAction,
         cancellations: &CancellationContext,
         force_skip_action_cache: bool,
+        force_remote_execution_cache_bypass: bool,
         force_remote_input_reupload: bool,
     ) -> (
         Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>,
@@ -912,6 +926,7 @@ impl BuckActionExecutor {
                 command_reports: &mut command_reports,
                 cancellations,
                 force_skip_action_cache,
+                force_remote_execution_cache_bypass,
                 force_remote_input_reupload,
             };
 
@@ -1037,6 +1052,7 @@ impl BuckActionExecutor {
                 command_reports: &mut command_reports,
                 cancellations,
                 force_skip_action_cache: false,
+                force_remote_execution_cache_bypass: false,
                 force_remote_input_reupload: false,
             };
 

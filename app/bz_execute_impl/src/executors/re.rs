@@ -500,7 +500,7 @@ impl PreparedCommandExecutor for ReExecutor {
                 &re_gang_workers,
                 command.request.remote_execution_extra_params(),
                 worker_tool_action_digest,
-                false,
+                request.force_remote_execution_cache_bypass(),
             )
             .await?;
         if response.execute_response.cached_result {

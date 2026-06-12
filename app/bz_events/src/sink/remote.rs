@@ -8,7 +8,7 @@
  * above-listed licenses.
  */
 
-//! A Sink for forwarding events directly to Remote service.
+//! A sink for forwarding events to an optional remote event service.
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
@@ -53,7 +53,7 @@ mod workspace {
     }
 
     #[derive(Default)]
-    pub struct ScribeConfig {
+    pub struct RemoteEventSinkConfig {
         pub buffer_size: usize,
         pub retry_backoff: Duration,
         pub retry_attempts: usize,
@@ -66,7 +66,7 @@ pub use workspace::*;
 
 fn new_remote_event_sink_if_available(
     fb: FacebookInit,
-    config: ScribeConfig,
+    config: RemoteEventSinkConfig,
 ) -> bz_error::Result<Option<RemoteEventSink>> {
     let _ = (fb, config);
     Ok(None)
@@ -74,7 +74,7 @@ fn new_remote_event_sink_if_available(
 
 pub fn new_remote_event_sink_if_enabled(
     fb: FacebookInit,
-    config: ScribeConfig,
+    config: RemoteEventSinkConfig,
 ) -> bz_error::Result<Option<RemoteEventSink>> {
     if is_enabled() {
         new_remote_event_sink_if_available(fb, config)
@@ -83,17 +83,15 @@ pub fn new_remote_event_sink_if_enabled(
     }
 }
 
-/// Whether or not remote event logging is enabled for this process. It must be explicitly disabled via `disable()`.
+/// Whether remote event logging is enabled for this process.
 static REMOTE_EVENT_SINK_ENABLED: AtomicBool = AtomicBool::new(true);
 
-/// Returns whether this process should actually write to remote sink, even if it is fully supported by the platform and
-/// binary.
+/// Returns whether this process should write to a remote sink, if one is supported.
 pub fn is_enabled() -> bool {
     REMOTE_EVENT_SINK_ENABLED.load(Ordering::Relaxed)
 }
 
-/// Disables remote event logging for this process. Remote event logging must be disabled explicitly on startup, otherwise it is
-/// on by default.
+/// Disables remote event logging for this process.
 pub fn disable() {
     REMOTE_EVENT_SINK_ENABLED.store(false, Ordering::Relaxed);
 }

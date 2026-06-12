@@ -2365,7 +2365,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         if remote_cache_origin.is_some()
             && self
                 .known_missing_remote_cas
-                .contains_artifact_values(outputs.values())
+                .remove_artifact_values(outputs.values())
         {
             tracing::debug!(
                 "local action cache metadata entry `{}` referenced a known-missing CAS blob; treating it as a miss",
@@ -2467,7 +2467,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                             if remote_cache_origin.is_some()
                                 && self
                                     .known_missing_remote_cas
-                                    .contains_artifact_values(outputs.values())
+                                    .remove_artifact_values(outputs.values())
                             {
                                 tracing::debug!(
                                     "local action cache metadata entry `{}` referenced a known-missing CAS blob; treating it as a miss",
@@ -2640,7 +2640,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 if remote_cache_origin.is_some()
                     && self
                         .known_missing_remote_cas
-                        .contains_artifact_values(outputs.values())
+                        .remove_artifact_values(outputs.values())
                 {
                     tracing::debug!(
                         "local action cache entry `{}` referenced a known-missing CAS blob; treating it as a miss",

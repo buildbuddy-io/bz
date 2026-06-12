@@ -5165,6 +5165,7 @@ impl RunAction {
                 self.inner.remote_execution_custom_image.clone().map(|s| *s),
             )
             .with_remote_execution_extra_params(self.inner.remote_execution_extra_params.clone())
+            .with_force_remote_execution_cache_bypass(ctx.force_remote_execution_cache_bypass())
             .with_force_remote_input_reupload(ctx.force_remote_input_reupload())
             .with_outputs_for_error_handler(outputs_for_error_handler);
 

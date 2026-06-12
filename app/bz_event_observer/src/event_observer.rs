@@ -12,9 +12,11 @@ use std::sync::Arc;
 
 use bz_error::internal_error;
 use bz_events::BuckEvent;
+use bz_hash::StdBuckHashSet;
 use bz_wrapper_common::invocation_id::TraceId;
 
 use crate::action_stats::ActionStats;
+use crate::action_stats::has_counted_action_stats;
 use crate::debug_events::DebugEventsState;
 use crate::dice_state::DiceState;
 use crate::progress::BuildProgressStateTracker;
@@ -28,6 +30,7 @@ use crate::two_snapshots::TwoSnapshots;
 pub struct EventObserver<E> {
     pub span_tracker: BuckEventSpanTracker,
     pub action_stats: ActionStats,
+    action_stats_seen_keys: StdBuckHashSet<bz_data::ActionKey>,
     re_state: ReState,
     two_snapshots: TwoSnapshots, // NOTE: We got many more copies of this than we should.
     system_info: bz_data::SystemInfo,
@@ -48,6 +51,7 @@ where
         Self {
             span_tracker: BuckEventSpanTracker::new(),
             action_stats: ActionStats::default(),
+            action_stats_seen_keys: StdBuckHashSet::default(),
             re_state: ReState::new(),
             two_snapshots: TwoSnapshots::default(),
             system_info: bz_data::SystemInfo::default(),
@@ -78,7 +82,17 @@ where
                         .as_ref()
                         .ok_or_else(|| internal_error!("Missing `data` in SpanEnd"))?
                     {
-                        self.action_stats.update(action_execution_end);
+                        let should_update = if has_counted_action_stats(action_execution_end) {
+                            match &action_execution_end.key {
+                                Some(key) => self.action_stats_seen_keys.insert(key.clone()),
+                                None => true,
+                            }
+                        } else {
+                            true
+                        };
+                        if should_update {
+                            self.action_stats.update(action_execution_end);
+                        }
                     }
                 }
                 Instant(instant) => {

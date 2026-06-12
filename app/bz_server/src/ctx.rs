@@ -38,6 +38,7 @@ use bz_build_api::build_signals::create_build_signals;
 use bz_build_api::context::SetBuildContextData;
 use bz_build_api::keep_going::HasKeepGoing;
 use bz_build_api::materialize::HasMaterializationQueueTracker;
+use bz_build_api::lost_remote::SetRemoteBackedActionTracker;
 use bz_build_api::materialize::RemoteCacheInvalidator;
 use bz_build_api::materialize::SetRemoteCacheInvalidator;
 use bz_build_api::spawner::BuckSpawner;
@@ -99,7 +100,6 @@ use bz_execute::execute::blocking::SetBlockingExecutor;
 use bz_execute::execute::known_missing::KnownMissingRemoteCasTracker;
 use bz_execute::knobs::ExecutorGlobalKnobs;
 use bz_execute::materialize::materializer::Materializer;
-use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
 use bz_execute::materialize::materializer::SetMaterializer;
 use bz_execute::re::client::RemoteExecutionClient;
 use bz_execute::re::manager::ReConnectionHandle;
@@ -205,24 +205,6 @@ impl RemoteCacheInvalidator for BuildRemoteCacheInvalidator {
         self.local_action_cache.remove_remote_entries()?;
         if let Some(extension) = self.materializer.as_deferred_materializer_extension() {
             extension.clear_remote_declared_cas().await?;
-        }
-        Ok(())
-    }
-
-    async fn purge_remote_cache_metadata_for_origins(
-        &self,
-        origins: Vec<RemoteActionCacheOrigin>,
-    ) -> bz_error::Result<()> {
-        let origin_action_digests = origins
-            .iter()
-            .map(|origin| origin.action_digest().dupe())
-            .collect::<Vec<_>>();
-        self.local_action_cache
-            .remove_remote_entries_for_origin_action_digests(&origin_action_digests)?;
-        if let Some(extension) = self.materializer.as_deferred_materializer_extension() {
-            extension
-                .clear_remote_declared_cas_for_origin_action_digests(origin_action_digests)
-                .await?;
         }
         Ok(())
     }
@@ -1382,6 +1364,13 @@ impl DiceCommandUpdater<'_, '_> {
             materializer: self.cmd_ctx.base_context.daemon.materializer.dupe(),
             local_action_cache: self.cmd_ctx.base_context.daemon.local_action_cache.dupe(),
         }));
+        data.set_remote_backed_action_tracker(
+            self.cmd_ctx
+                .base_context
+                .daemon
+                .remote_backed_action_tracker
+                .dupe(),
+        );
         data.init_materialization_queue_tracker();
         data.init_build_event_sink();
         data.init_eager_build_execution();
@@ -1460,7 +1449,7 @@ impl DiceCommandUpdater<'_, '_> {
 struct ConfigMetadataHolder(StdBuckHashMap<String, String>);
 
 fn collect_config_metadata_into(config: &LegacyBuckConfig, data: &mut UserComputationData) {
-    // Facebook only: metadata collection for Scribe writes
+    // Metadata collection for remote event writes.
 
     fn add_config(
         map: &mut StdBuckHashMap<String, String>,
@@ -1664,7 +1653,7 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
 
     /// Gathers metadata to attach to events for when a command starts and stops.
     async fn request_metadata(&self) -> bz_error::Result<StdBuckHashMap<String, String>> {
-        // Facebook only: metadata collection for Scribe writes
+        // Metadata collection for remote event writes.
 
         let mut metadata = metadata::collect(&self.base_context.daemon.daemon_id);
 

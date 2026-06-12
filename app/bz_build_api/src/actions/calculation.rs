@@ -112,7 +112,8 @@ use crate::lost_remote::LostRemoteBuildRestart;
 use crate::lost_remote::LostRemoteRewindGraph;
 use crate::lost_remote::LostRemoteRewindGraphBuilder;
 use crate::lost_remote::lost_remote_build_restart_error;
-use crate::materialize::purge_remote_cache_metadata_for_origins;
+use crate::lost_remote::HasRemoteBackedActionTracker;
+use crate::materialize::purge_remote_cache_metadata;
 use crate::starlark::values::UnpackValue;
 use crate::starlark::values::type_repr::StarlarkTypeRepr;
 
@@ -900,19 +901,6 @@ impl LostRemoteRewindPlan {
         }
         builder.finish(self.restart_reason())
     }
-
-    fn remote_origins(&self) -> Vec<RemoteActionCacheOrigin> {
-        let mut origins = Vec::new();
-        for record in &self.records {
-            if !origins
-                .iter()
-                .any(|origin: &RemoteActionCacheOrigin| origin == &record.origin)
-            {
-                origins.push(record.origin.clone());
-            }
-        }
-        origins
-    }
 }
 
 async fn prepare_lost_remote_rewind_plan(
@@ -959,9 +947,12 @@ async fn prepare_lost_remote_rewind_restart(
     );
 
     invalidate_rewind_action_outputs(ctx, failed_action, plan).await?;
-    purge_remote_cache_metadata_for_origins(ctx, plan.remote_origins()).await?;
+    purge_remote_cache_metadata(ctx).await?;
+    let mut action_cache_bypass = Vec::with_capacity(plan.producers.len() + 1);
+    action_cache_bypass.push(failed_action.key().dupe());
+    action_cache_bypass.extend(plan.producers.keys().cloned());
     ctx.per_transaction_data()
-        .record_lost_remote_action_cache_bypass(plan.producers.keys().cloned().collect())?;
+        .record_lost_remote_action_cache_bypass(action_cache_bypass)?;
     Ok(())
 }
 
@@ -1009,6 +1000,7 @@ struct LostRemoteInputOwnerEntry {
 struct LostRemoteInputOwnerIndex {
     by_owner: BuckIndexMap<CommandExecutionInputOwner, Vec<LostRemoteInputOwnerEntry>>,
     by_path: BuckIndexMap<ProjectRelativePathBuf, Vec<LostRemoteInputOwnerEntry>>,
+    by_directory_path: BuckIndexMap<ProjectRelativePathBuf, Vec<LostRemoteInputOwnerEntry>>,
 }
 
 impl LostRemoteInputOwnerIndex {
@@ -1019,6 +1011,7 @@ impl LostRemoteInputOwnerIndex {
         let mut index = Self {
             by_owner: BuckIndexMap::new(),
             by_path: BuckIndexMap::new(),
+            by_directory_path: BuckIndexMap::new(),
         };
 
         for (artifact_group, values) in ensured_inputs {
@@ -1056,11 +1049,29 @@ impl LostRemoteInputOwnerIndex {
         }
 
         let configuration_hash_path = artifact.resolve_configuration_hash_path(artifact_fs)?;
-        Self::insert_entry(&mut self.by_path, configuration_hash_path, entry.clone());
+        Self::insert_entry(
+            &mut self.by_path,
+            configuration_hash_path.clone(),
+            entry.clone(),
+        );
+        if value.is_dir() {
+            Self::insert_entry(
+                &mut self.by_directory_path,
+                configuration_hash_path,
+                entry.clone(),
+            );
+        }
 
         if artifact.has_content_based_path() {
             let content_based_path =
                 artifact.resolve_path(artifact_fs, Some(&value.content_based_path_hash()))?;
+            if value.is_dir() {
+                Self::insert_entry(
+                    &mut self.by_directory_path,
+                    content_based_path.clone(),
+                    entry.clone(),
+                );
+            }
             Self::insert_entry(&mut self.by_path, content_based_path, entry);
         }
 
@@ -1095,7 +1106,27 @@ impl LostRemoteInputOwnerIndex {
         if let Some(path_entries) = self.by_path.get(lost.path.as_ref()) {
             Self::extend_unique(&mut entries, path_entries);
         }
+        self.extend_directory_entries_for_path(&mut entries, lost.path.as_ref());
         entries
+    }
+
+    fn extend_directory_entries_for_path(
+        &self,
+        entries: &mut Vec<LostRemoteInputOwnerEntry>,
+        path: &ProjectRelativePathBuf,
+    ) {
+        for (directory_path, directory_entries) in &self.by_directory_path {
+            if path == directory_path {
+                continue;
+            }
+            if path
+                .as_forward_relative_path()
+                .strip_prefix_opt(directory_path.as_forward_relative_path())
+                .is_some()
+            {
+                Self::extend_unique(entries, directory_entries);
+            }
+        }
     }
 
     fn extend_unique(
@@ -1120,6 +1151,13 @@ async fn build_action_result(
     is_eligible_for_dedupe: bz_data::EligibleForDedupe,
     is_expected_eligible_for_dedupe: bz_data::ExpectedEligibleForDedupe,
 ) -> (ActionExecutionData, Box<bz_data::ActionExecutionEnd>) {
+    if let Ok((_, meta)) = &execute_result
+        && meta.remote_cache_origin.is_some()
+        && let Some(tracker) = ctx.per_transaction_data().get_remote_backed_action_tracker()
+    {
+        tracker.record(action.key().dupe());
+    }
+
     if let Err(ExecuteError::Error { error }) = &execute_result
         && error
             .find_typed_context::<LostRemoteBuildRestart>()
@@ -1359,7 +1397,7 @@ async fn build_action_result(
                 .map(|r| r.timing.time_span.duration());
             output_size = 0;
             // We define the below fields only in the instance of an action error
-            // so as to reduce Scribe traffic and log it in bz_action_errors
+            // so as to reduce remote event traffic and log it in bz_action_errors
             bz_revision = bz_build_info::revision().map(|s| s.to_owned());
             bz_build_time = bz_build_info::time_iso8601().map(|s| s.to_owned());
             hostname = bz_events::metadata::hostname();

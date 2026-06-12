@@ -8,11 +8,13 @@
  * above-listed licenses.
  */
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use bz_artifact::actions::key::ActionKey;
 use bz_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use bz_build_api::actions::calculation::ActionInputSetKey;
 use bz_build_api::actions::calculation::BuildKey;
@@ -39,6 +41,7 @@ use bz_build_api::build::detailed_aggregated_metrics::types::DetailedAggregatedM
 use bz_build_api::build::eager::HasEagerBuildExecution;
 use bz_build_api::build::graph_properties::GraphPropertiesOptions;
 use bz_build_api::build::overlap::HasBuildOverlapTracker;
+use bz_build_api::lost_remote::HasRemoteBackedActionTracker;
 use bz_build_api::lost_remote::LostRemoteBuildRestart;
 use bz_build_api::materialize::MaterializationAndUploadContext;
 use bz_cli_proto::CommonBuildOptions;
@@ -161,8 +164,6 @@ fn expect_build_opts(req: &bz_cli_proto::BuildRequest) -> &CommonBuildOptions {
 )]
 struct RunArgsMissingSeparator;
 
-const MAX_LOST_REMOTE_BUILD_RESTARTS: usize = 20;
-
 async fn build(
     server_ctx: &dyn ServerCommandContextTrait,
     mut ctx: DiceTransaction,
@@ -188,11 +189,6 @@ async fn build(
                 };
 
                 lost_remote_restarts += 1;
-                if lost_remote_restarts > MAX_LOST_REMOTE_BUILD_RESTARTS {
-                    return Err(error.context(format!(
-                        "Exceeded {MAX_LOST_REMOTE_BUILD_RESTARTS} lost remote CAS build restarts"
-                    )));
-                }
 
                 let graph = restart.graph();
                 if graph.is_empty() {
@@ -202,21 +198,32 @@ async fn build(
                 }
 
                 tracing::warn!(
-                    "Restarting build after lost remote CAS artifacts (attempt {lost_remote_restarts}/{MAX_LOST_REMOTE_BUILD_RESTARTS}): {}",
+                    "Restarting build after lost remote CAS artifacts (attempt {lost_remote_restarts}): {}",
                     restart.reason(),
                 );
 
+                // The remote cache may have evicted more blobs than the ones we
+                // observed, so all remote-backed action results are distrusted, not
+                // just the producers of the lost artifacts. Their remote cache
+                // metadata was already purged when the restart was prepared.
+                let mut action_keys: HashSet<ActionKey> =
+                    graph.action_keys().iter().cloned().collect();
+                if let Some(tracker) = ctx.per_transaction_data().get_remote_backed_action_tracker()
+                {
+                    let remote_backed = tracker.drain();
+                    if !remote_backed.is_empty() {
+                        tracing::warn!(
+                            "Invalidating {} remote-backed action(s) after lost remote CAS artifacts",
+                            remote_backed.len(),
+                        );
+                        action_keys.extend(remote_backed);
+                    }
+                }
+
                 let mut updater = ctx.into_updater();
-                if !graph.action_keys().is_empty() {
+                if !action_keys.is_empty() {
                     updater
-                        .changed(
-                            graph
-                                .action_keys()
-                                .iter()
-                                .cloned()
-                                .map(BuildKey)
-                                .collect::<Vec<_>>(),
-                        )
+                        .changed(action_keys.into_iter().map(BuildKey).collect::<Vec<_>>())
                         .buck_error_context(
                             "Failed to invalidate actions for lost remote CAS build restart",
                         )?;

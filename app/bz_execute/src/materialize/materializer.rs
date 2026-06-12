@@ -1004,11 +1004,6 @@ pub trait DeferredMaterializerExtensions: Send + Sync {
 
     async fn clear_remote_declared_cas(&self) -> bz_error::Result<()>;
 
-    async fn clear_remote_declared_cas_for_origin_action_digests(
-        &self,
-        origin_action_digests: Vec<ActionDigest>,
-    ) -> bz_error::Result<()>;
-
     async fn test_iter(&self, count: usize) -> bz_error::Result<String>;
     async fn flush_all_access_times(&self) -> bz_error::Result<String>;
 
