@@ -9,8 +9,11 @@
  */
 
 use std::future::Future;
+use std::time::Duration;
 use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
+use bz_cli_proto::BesOptions;
 use bz_cli_proto::ClientContext;
 use bz_cli_proto::ClientEnvironmentVariable;
 use bz_cli_proto::client_context::ExitWhen as GrpcExitWhen;
@@ -19,6 +22,7 @@ use bz_cli_proto::client_context::HostPlatformOverride as GrpcHostPlatformOverri
 use bz_cli_proto::client_context::PreemptibleWhen as GrpcPreemptibleWhen;
 use bz_common::argv::Argv;
 use bz_common::bazel::bzlmod::BZLMOD_ALLOWED_YANKED_VERSIONS_ENV;
+use bz_common::init::BUILDBUDDY_API_KEY_HEADER;
 use bz_common::init::DaemonStartupConfig;
 use bz_common::init::LogDownloadMethod;
 use bz_common::init::RemoteDownloadOutputsMode;
@@ -272,6 +276,7 @@ impl<'a> ClientCommandContext<'a> {
             }
             .into(),
             profile_pattern_opts: starlark_opts.profile_pattern_opts(&self.working_dir),
+            bes_options: self.bes_options(cmd)?,
             ..self.empty_client_context(cmd.logging_name())?
         })
     }
@@ -329,7 +334,39 @@ impl<'a> ClientCommandContext<'a> {
                 value: std::env::var(BZLMOD_ALLOWED_YANKED_VERSIONS_ENV).ok(),
             }],
             repo_environment: client_repository_environment(),
+            bes_options: None,
         })
+    }
+
+    fn bes_options<T: StreamingCommand>(&self, cmd: &T) -> bz_error::Result<Option<BesOptions>> {
+        let event_log_opts = cmd.event_log_opts();
+        let Some(backend) = event_log_opts
+            .bes_backend_with_buildbuddy_default(self.buildbuddy_bes())
+            .map(ToOwned::to_owned)
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(BesOptions {
+            backend,
+            headers: headers_with_buildbuddy_api_key(
+                event_log_opts.bes_header.clone(),
+                self.remote_execution_startup_config
+                    .buildbuddy_api_key
+                    .as_deref(),
+            ),
+            instance_name: event_log_opts.bes_instance_name.clone().unwrap_or_default(),
+            keywords: bes_keywords(T::COMMAND_NAME, &event_log_opts.bes_keywords),
+            timeout: event_log_opts
+                .bes_timeout_duration()?
+                .map(duration_to_proto),
+            results_url: event_log_opts
+                .bes_results_url_with_buildbuddy_default(self.buildbuddy_bes())
+                .map(ToOwned::to_owned),
+            target_patterns: cmd.build_event_protocol_target_patterns(),
+            sync: event_log_opts.bes_sync,
+            start_time: Some(system_time_to_proto(self.start_time)),
+        }))
     }
 
     pub fn client_id(&self) -> Option<&str> {
@@ -379,6 +416,59 @@ fn client_repository_environment() -> Vec<ClientEnvironmentVariable> {
         .collect()
 }
 
+fn bes_keywords(command_name: &str, user_keywords: &[String]) -> Vec<String> {
+    let mut out = vec![
+        format!("command_name={command_name}"),
+        "protocol_name=BEP".to_owned(),
+        "tool=buck2".to_owned(),
+    ];
+    for value in user_keywords {
+        for keyword in value.split(',') {
+            let keyword = keyword.trim();
+            if !keyword.is_empty() {
+                out.push(format!("user_keyword={keyword}"));
+            }
+        }
+    }
+    out
+}
+
+fn headers_with_buildbuddy_api_key(mut headers: Vec<String>, api_key: Option<&str>) -> Vec<String> {
+    if let Some(api_key) = api_key {
+        headers.retain(|header| match header.split_once('=') {
+            Some((name, _)) => !name.trim().eq_ignore_ascii_case(BUILDBUDDY_API_KEY_HEADER),
+            None => true,
+        });
+        if !api_key.trim().is_empty() {
+            headers.push(format!("{BUILDBUDDY_API_KEY_HEADER}={api_key}"));
+        }
+    }
+    headers
+}
+
+fn duration_to_proto(duration: Duration) -> prost_types::Duration {
+    prost_types::Duration {
+        seconds: duration.as_secs() as i64,
+        nanos: duration.subsec_nanos() as i32,
+    }
+}
+
+fn system_time_to_proto(time: SystemTime) -> prost_types::Timestamp {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => prost_types::Timestamp {
+            seconds: duration.as_secs() as i64,
+            nanos: duration.subsec_nanos() as i32,
+        },
+        Err(error) => {
+            let duration = error.duration();
+            prost_types::Timestamp {
+                seconds: -(duration.as_secs() as i64),
+                nanos: -(duration.subsec_nanos() as i32),
+            }
+        }
+    }
+}
+
 /// Provides a common interface for buck subcommands that use event subscribers for logging.
 /// Executed by a ClientCommandContext.
 #[allow(async_fn_in_trait)]
@@ -422,5 +512,64 @@ pub trait BuckSubcommand {
 
     fn event_log_opts(&self) -> &CommonEventLogOptions {
         CommonEventLogOptions::no_event_log_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splits_bes_user_keywords_like_bazel() {
+        assert_eq!(
+            bes_keywords(
+                "build",
+                &["ci, pull-request".to_owned(), "linux".to_owned()]
+            ),
+            vec![
+                "command_name=build",
+                "protocol_name=BEP",
+                "tool=buck2",
+                "user_keyword=ci",
+                "user_keyword=pull-request",
+                "user_keyword=linux"
+            ]
+        );
+    }
+
+    #[test]
+    fn api_key_adds_buildbuddy_header_to_bes_headers() {
+        assert_eq!(
+            headers_with_buildbuddy_api_key(vec!["x-other=value".to_owned()], Some("secret")),
+            vec!["x-other=value", "x-buildbuddy-api-key=secret"]
+        );
+    }
+
+    #[test]
+    fn api_key_replaces_existing_buildbuddy_bes_header() {
+        assert_eq!(
+            headers_with_buildbuddy_api_key(
+                vec![
+                    "X-BuildBuddy-Api-Key=old".to_owned(),
+                    "x-other=value".to_owned()
+                ],
+                Some("new")
+            ),
+            vec!["x-other=value", "x-buildbuddy-api-key=new"]
+        );
+    }
+
+    #[test]
+    fn empty_api_key_clears_existing_buildbuddy_bes_header() {
+        assert_eq!(
+            headers_with_buildbuddy_api_key(
+                vec![
+                    "x-buildbuddy-api-key=old".to_owned(),
+                    "x-other=value".to_owned()
+                ],
+                Some("")
+            ),
+            vec!["x-other=value"]
+        );
     }
 }

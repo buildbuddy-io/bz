@@ -267,6 +267,11 @@ pub struct CommonEventLogOptions {
         hide = true
     )]
     pub(crate) bes_results_url: Option<String>,
+
+    /// Wait for daemon-side BES upload completion before returning the command result.
+    #[serde(default)]
+    #[clap(long = "bes_sync", alias = "bes-sync", hide = true)]
+    pub(crate) bes_sync: bool,
 }
 
 impl CommonEventLogOptions {
@@ -320,6 +325,7 @@ impl CommonEventLogOptions {
             bes_keywords: Vec::new(),
             bes_timeout: None,
             bes_results_url: None,
+            bes_sync: false,
         };
         &DEFAULT
     }
@@ -338,6 +344,7 @@ impl CommonEventLogOptions {
             bes_keywords: Vec::new(),
             bes_timeout: None,
             bes_results_url: None,
+            bes_sync: false,
         };
         &NO_EVENT_LOG
     }

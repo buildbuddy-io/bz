@@ -39,7 +39,7 @@ const FALLBACK_THREAD_ID_START: u64 = 1_000_000_000;
 const OTHER_THREAD_ID_START: u64 = 1_000_000;
 const WORKER_THREAD_NAME_WIDTH: usize = 2;
 
-pub(crate) struct ChromeTraceProfileWriter {
+pub struct ChromeTraceProfileWriter {
     path: PathBuf,
     sender: mpsc::SyncSender<TraceMessage>,
     join: Option<thread::JoinHandle<Result<(), String>>>,
@@ -79,7 +79,7 @@ struct ThreadDisplayMetadata {
 }
 
 impl ChromeTraceProfileWriter {
-    pub(crate) fn new(
+    pub fn new(
         command_name: String,
         invocation_id: TraceId,
         profile_start: SystemTime,
@@ -121,10 +121,7 @@ impl ChromeTraceProfileWriter {
         }
     }
 
-    pub(crate) async fn handle_events(
-        &mut self,
-        events: &[Arc<BuckEvent>],
-    ) -> bz_error::Result<()> {
+    pub async fn handle_events(&mut self, events: &[Arc<BuckEvent>]) -> bz_error::Result<()> {
         for event in events {
             let thread_id = self.thread_id_for_event(event)?;
             self.handle_event(event, thread_id)?;
@@ -132,16 +129,16 @@ impl ChromeTraceProfileWriter {
         Ok(())
     }
 
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.path
     }
 
-    pub(crate) async fn discard(mut self) {
+    pub async fn discard(mut self) {
         let _ignored = self.finish_writer();
         let _ignored = tokio::fs::remove_file(&self.path).await;
     }
 
-    pub(crate) async fn finish(mut self) -> bz_error::Result<PathBuf> {
+    pub async fn finish(mut self) -> bz_error::Result<PathBuf> {
         let now = SystemTime::now();
         let mut open_tasks = self.open_tasks.drain().collect::<Vec<_>>();
         open_tasks.sort_by_key(|(span_id, _)| u64::from(*span_id));

@@ -11,6 +11,7 @@ async-recursion = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true }
 blake3 = { workspace = true }
+bz_build_info = { workspace = true }
 bz_hash = { workspace = true }
 bz_re_configuration = { workspace = true }
 chrono = { workspace = true }
@@ -18,6 +19,7 @@ constant_time_eq = { workspace = true }
 crossbeam-channel = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
+hex = { workspace = true }
 host_sharing = { workspace = true }
 inferno = { workspace = true }
 itertools = { workspace = true }
@@ -36,7 +38,9 @@ tar = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 tonic = { workspace = true }
+tonic-prost = { workspace = true }
 tracing = { workspace = true }
+sha2 = { workspace = true }
 
 allocative = { workspace = true }
 dice = { workspace = true }
@@ -79,6 +83,7 @@ bz_util = { workspace = true }
 bz_validation = { workspace = true }
 bz_wrapper_common = { workspace = true }
 dice_futures = { workspace = true }
+re_grpc_proto = { path = "../../deps/remote_execution/re_grpc_proto" }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 bz_forkserver = { workspace = true }

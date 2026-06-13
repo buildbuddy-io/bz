@@ -22,7 +22,6 @@ derivative = { workspace = true }
 derive_more = { workspace = true }
 dupe = { workspace = true }
 fbinit = { workspace = true }
-flate2 = { workspace = true }
 fs4 = { workspace = true }
 futures = { workspace = true }
 gazebo = { workspace = true }
@@ -40,7 +39,6 @@ rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
 shlex = { workspace = true }
 strum = { workspace = true }
 superconsole = { version = "0.2.0", path = "../../deps/superconsole" }
@@ -51,7 +49,6 @@ tokio = { workspace = true }
 tokio-stream = { workspace = true }
 tokio-util = { workspace = true }
 tonic = { workspace = true }
-tonic-prost = { workspace = true }
 tracing = { workspace = true }
 
 games = { path = "../../deps/games" }
@@ -72,7 +69,6 @@ bz_health_check = { workspace = true }
 bz_resource_control = { workspace = true }
 bz_util = { workspace = true }
 bz_wrapper_common = { workspace = true }
-re_grpc_proto = { path = "../../deps/remote_execution/re_grpc_proto" }
 
 [target.'cfg(unix)'.dependencies]
 termios = { workspace = true }

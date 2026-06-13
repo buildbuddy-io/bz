@@ -8,11 +8,21 @@ version = "0.1.0"
 
 [dependencies]
 inferno = { workspace = true }
+flate2 = { workspace = true }
+prost-types = { workspace = true }
+serde_json = { workspace = true }
+shlex = { workspace = true }
 
 starlark = { workspace = true }
+tokio = { workspace = true }
 
 bz_cli_proto = { workspace = true }
+bz_common = { workspace = true }
 bz_core = { workspace = true }
+bz_data = { workspace = true }
 bz_error = { workspace = true }
+bz_event_observer = { workspace = true }
+bz_events = { workspace = true }
 bz_fs = { workspace = true }
 bz_interpreter = { workspace = true }
+bz_wrapper_common = { workspace = true }

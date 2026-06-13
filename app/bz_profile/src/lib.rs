@@ -12,6 +12,8 @@
 
 use std::sync::Arc;
 
+pub mod chrome_trace;
+
 use bz_cli_proto::HasClientContext;
 use bz_cli_proto::profile_request::ProfileOpts;
 use bz_core::fs::project::ProjectRoot;

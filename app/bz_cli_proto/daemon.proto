@@ -199,6 +199,21 @@ message ClientContext {
 
   // Effective repository/module-extension environment, matching Bazel's REPO_ENV input.
   repeated ClientEnvironmentVariable repo_environment = 29;
+
+  // Build Event Service upload settings for daemon-side BES upload.
+  optional BesOptions bes_options = 30;
+}
+
+message BesOptions {
+  string backend = 1;
+  repeated string headers = 2;
+  string instance_name = 3;
+  repeated string keywords = 4;
+  optional google.protobuf.Duration timeout = 5;
+  optional string results_url = 6;
+  repeated string target_patterns = 7;
+  bool sync = 8;
+  google.protobuf.Timestamp start_time = 9;
 }
 
 message ClientEnvironmentVariable {

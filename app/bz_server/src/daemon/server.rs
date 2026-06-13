@@ -111,6 +111,7 @@ use tonic::transport::Server;
 
 use crate::active_commands::ActiveCommand;
 use crate::active_commands::ActiveCommandStateWriter;
+use crate::bep::BuildEventProtocolUploaderHandle;
 use crate::clean::clean_command;
 use crate::clean_stale::clean_stale_command;
 use crate::ctx::ServerCommandContext;
@@ -446,8 +447,8 @@ impl BuckdServer {
         OneshotCommandOptions::pre_run(&opts, self)?;
 
         let daemon_state = self.0.daemon_state.dupe();
-        let trace_id = client_ctx.trace_id.parse()?;
-        let (events, dispatch) = daemon_state.prepare_events(trace_id).await?;
+        let trace_id: bz_wrapper_common::invocation_id::TraceId = client_ctx.trace_id.parse()?;
+        let (events, dispatch) = daemon_state.prepare_events(trace_id.dupe()).await?;
         let ActiveCommand {
             guard,
             daemon_shutdown_channel,
@@ -526,6 +527,12 @@ impl BuckdServer {
         dispatch.instant_event(Box::new(snapshot_collector.create_snapshot().await));
         let cert_state = self.0.cert_state.dupe();
 
+        let bep_uploader = BuildEventProtocolUploaderHandle::new(
+            client_ctx,
+            trace_id.dupe(),
+            daemon_state.paths.project_root().root().to_string(),
+        )?;
+
         let repo_root = daemon_state.paths.project_root().root().to_buf();
         // Spawn an async task to collect expensive info
         // We start collecting immediately, and emit the event as soon as it is ready
@@ -541,6 +548,7 @@ impl BuckdServer {
             req,
             events,
             state,
+            bep_uploader,
             dispatch.dupe(),
             daemon_shutdown_channel,
             move |req, cancellations| {
@@ -740,6 +748,7 @@ impl<T: Stream + Send> Stream for SyncStream<T> {
 fn pump_events(
     mut events: ChannelEventSource,
     mut state: ActiveCommandStateWriter,
+    bep_uploader: Option<BuildEventProtocolUploaderHandle>,
     output_send: tokio::sync::mpsc::UnboundedSender<
         Result<bz_cli_proto::CommandProgress, tonic::Status>,
     >,
@@ -754,6 +763,9 @@ fn pump_events(
             // The CommandResult event indicates that the spawned
             // computation won't be producing any more events.
             Event::CommandResult(result) => {
+                if let Some(bep_uploader) = &bep_uploader {
+                    bep_uploader.finish(&result);
+                }
                 let _ignore = output_send.send(Ok(CommandProgress {
                     progress: Some(command_progress::Progress::Result(result)),
                 }));
@@ -765,6 +777,9 @@ fn pump_events(
                 }));
             }
             Event::Buck(buck_event) => {
+                if let Some(bep_uploader) = &bep_uploader {
+                    bep_uploader.handle_buck_event(&buck_event);
+                }
                 state.peek_event(&buck_event);
 
                 let _ignore = output_send.send(Ok(CommandProgress {
@@ -781,6 +796,7 @@ fn streaming<Req, F>(
     req: Request<Req>,
     events: ChannelEventSource,
     state: ActiveCommandStateWriter,
+    bep_uploader: Option<BuildEventProtocolUploaderHandle>,
     dispatcher: EventDispatcher,
     daemon_shutdown_channel: oneshot::Receiver<bz_data::DaemonShutdown>,
     func: F,
@@ -819,7 +835,7 @@ where
     // another tokio task in its lifo task slot. See T96012305 and https://github.com/tokio-rs/tokio/issues/4323 for more
     // information.
     let merge_task = thread_spawn("pump-events", move || {
-        pump_events(events, state, output_send);
+        pump_events(events, state, bep_uploader, output_send);
     });
     if let Err(e) = merge_task {
         return error_to_response_stream(
@@ -1440,6 +1456,7 @@ impl DaemonApi for BuckdServer {
             req,
             event_source,
             state,
+            None,
             dispatcher.dupe(),
             daemon_shutdown_channel,
             move |req, _| {
