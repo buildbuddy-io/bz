@@ -309,13 +309,15 @@ impl StreamingCommand for BuildCommand {
         };
 
         let console = self.common_opts.console_opts.final_console();
-        let printed_bes_results_url =
-            has_bes_results_url(&self.common_opts.event_log_opts, ctx.buildbuddy_bes());
+        let final_bes_results_url =
+            bes_results_url(&self.common_opts.event_log_opts, ctx.buildbuddy_bes())
+                .map(ToOwned::to_owned);
+        let invocation_id = ctx.trace_id.to_string();
         print_build_id_after_superconsole(
             &console,
             ctx,
             events_ctx.used_superconsole,
-            printed_bes_results_url,
+            final_bes_results_url.is_some(),
         )?;
         let summary_stats = events_ctx
             .recorder
@@ -338,6 +340,11 @@ impl StreamingCommand for BuildCommand {
                 &console,
                 ctx.start_time.elapsed().unwrap_or_default(),
                 summary_stats.as_ref(),
+            )?;
+            print_bes_results_url_after_build(
+                &console,
+                final_bes_results_url.as_deref(),
+                &invocation_id,
             )?;
         }
 
@@ -392,6 +399,12 @@ impl StreamingCommand for BuildCommand {
             )?;
             ExitResult::from_command_result_errors(response.errors)
         };
+
+        print_bes_results_url_after_build(
+            &console,
+            final_bes_results_url.as_deref(),
+            &invocation_id,
+        )?;
 
         res.with_stdout(stdout)
     }
@@ -534,12 +547,36 @@ pub(crate) fn has_bes_results_url(
     event_log_opts: &CommonEventLogOptions,
     buildbuddy_bes: bool,
 ) -> bool {
+    bes_results_url(event_log_opts, buildbuddy_bes).is_some()
+}
+
+pub(crate) fn bes_results_url(
+    event_log_opts: &CommonEventLogOptions,
+    buildbuddy_bes: bool,
+) -> Option<&str> {
     event_log_opts
         .bes_backend_with_buildbuddy_default(buildbuddy_bes)
-        .is_some()
-        && event_log_opts
-            .bes_results_url_with_buildbuddy_default(buildbuddy_bes)
-            .is_some()
+        .and_then(|_| event_log_opts.bes_results_url_with_buildbuddy_default(buildbuddy_bes))
+}
+
+fn print_bes_results_url_after_build(
+    console: &FinalConsole,
+    results_url: Option<&str>,
+    invocation_id: &str,
+) -> bz_error::Result<()> {
+    let Some(results_url) = results_url else {
+        return Ok(());
+    };
+
+    console.print_info_prefix(&format!(
+        "Streaming build results to: {}",
+        bes_invocation_url(results_url, invocation_id)
+    ))
+}
+
+fn bes_invocation_url(results_url: &str, invocation_id: &str) -> String {
+    let separator = if results_url.ends_with('/') { "" } else { "/" };
+    format!("{results_url}{separator}{invocation_id}")
 }
 
 fn should_reprint_build_id(used_superconsole: bool, printed_bes_results_url: bool) -> bool {

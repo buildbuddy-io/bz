@@ -23,6 +23,7 @@ use re_grpc_proto::google::bytestream::byte_stream_client::ByteStreamClient;
 use sha2::Digest;
 use sha2::Sha256;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::metadata::MetadataKey;
 use tonic::metadata::MetadataValue;
@@ -65,6 +66,8 @@ enum BepError {
     Upload(String),
     #[error("BEP timing profile upload failed: {0}")]
     ProfileUpload(String),
+    #[error("BEP upload worker failed: {0}")]
+    Worker(String),
 }
 
 #[derive(Clone)]
@@ -255,8 +258,9 @@ impl BuildEventProtocolUploaderHandle {
         let timeout = config.timeout;
         let _backend = BesBackend::parse(&config.backend)?;
         validate_headers(&config.headers)?;
+        let uploader = BuildEventProtocolUploader::new(config)?;
         let (sender, receiver) = mpsc::unbounded_channel();
-        tokio::spawn(run_build_event_protocol_uploader(config, receiver));
+        tokio::spawn(run_build_event_protocol_uploader(uploader, receiver));
         Ok(Some(Self {
             sender,
             sync,
@@ -330,10 +334,9 @@ enum BuildEventProtocolMessage {
 }
 
 async fn run_build_event_protocol_uploader(
-    config: BuildEventProtocolConfig,
+    mut uploader: BuildEventProtocolUploader,
     mut receiver: mpsc::UnboundedReceiver<BuildEventProtocolMessage>,
 ) {
-    let mut uploader = BuildEventProtocolUploader::new(config);
     while let Some(message) = receiver.recv().await {
         match message {
             BuildEventProtocolMessage::Buck(event) => {
@@ -352,8 +355,35 @@ async fn run_build_event_protocol_uploader(
     }
 }
 
+struct BesConnectionHandle {
+    join: JoinHandle<bz_error::Result<tonic::transport::Channel>>,
+}
+
+impl BesConnectionHandle {
+    fn connect(config: BuildEventProtocolConfig) -> bz_error::Result<Self> {
+        Ok(Self {
+            join: tokio::task::spawn_blocking(move || {
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime.block_on(connect_bes_channel(&config)),
+                    Err(error) => Err(BepError::Worker(error.to_string()).into()),
+                }
+            }),
+        })
+    }
+
+    async fn wait(self) -> bz_error::Result<tonic::transport::Channel> {
+        self.join
+            .await
+            .map_err(|error| BepError::Worker(error.to_string()))?
+    }
+}
+
 struct BuildEventProtocolUploader {
     sender: Option<mpsc::UnboundedSender<publish_build_event::PublishBuildToolEventStreamRequest>>,
+    connection: Option<BesConnectionHandle>,
     receiver:
         Option<mpsc::UnboundedReceiver<publish_build_event::PublishBuildToolEventStreamRequest>>,
     terminal_progress: TerminalProgressCoalescer,
@@ -367,8 +397,9 @@ struct BuildEventProtocolUploader {
 }
 
 impl BuildEventProtocolUploader {
-    fn new(config: BuildEventProtocolConfig) -> Self {
+    fn new(config: BuildEventProtocolConfig) -> bz_error::Result<Self> {
         let (sender, receiver) = mpsc::unbounded_channel();
+        let connection = BesConnectionHandle::connect(config.clone())?;
         let profile_writer = Some(ChromeTraceProfileWriter::new(
             config.command_name.clone(),
             config.trace_id.clone(),
@@ -378,6 +409,7 @@ impl BuildEventProtocolUploader {
         ));
         let mut this = Self {
             sender: Some(sender),
+            connection: Some(connection),
             receiver: Some(receiver),
             terminal_progress: TerminalProgressCoalescer::new(),
             sequence_number: 0,
@@ -394,7 +426,7 @@ impl BuildEventProtocolUploader {
         this.send_workspace_status();
         this.queue_results_url_progress();
         this.flush_terminal_progress_now();
-        this
+        Ok(this)
     }
 
     fn next_sequence_number(&mut self) -> i64 {
@@ -870,11 +902,18 @@ impl BuildEventProtocolUploader {
         self.send_component_stream_finished();
         self.sender.take();
 
+        let Some(connection) = self.connection.take() else {
+            return Ok(());
+        };
         let Some(receiver) = self.receiver.take() else {
             return Ok(());
         };
 
-        let upload = upload_build_events(self.config.clone(), receiver);
+        let config = self.config.clone();
+        let upload = async move {
+            let channel = connection.wait().await?;
+            upload_build_events(config, channel, receiver).await
+        };
 
         let summary =
             match self.config.timeout {
@@ -913,21 +952,9 @@ struct UploadSummary {
 
 async fn upload_build_events(
     config: BuildEventProtocolConfig,
+    channel: tonic::transport::Channel,
     receiver: mpsc::UnboundedReceiver<publish_build_event::PublishBuildToolEventStreamRequest>,
 ) -> bz_error::Result<UploadSummary> {
-    let backend = BesBackend::parse(&config.backend)?;
-    let mut endpoint = Endpoint::from_shared(backend.uri.clone())
-        .map_err(|e| BepError::InvalidBackend(format!("{} ({e})", config.backend)))?;
-    if backend.tls {
-        endpoint = endpoint
-            .tls_config(ClientTlsConfig::new().with_native_roots())
-            .map_err(|e| BepError::Upload(e.to_string()))?;
-    }
-
-    let channel = endpoint
-        .connect()
-        .await
-        .map_err(|e| BepError::Upload(e.to_string()))?;
     let mut grpc = tonic::client::Grpc::new(channel);
     grpc.ready()
         .await
@@ -963,6 +990,25 @@ async fn upload_build_events(
         acked_events,
         last_ack,
     })
+}
+
+async fn connect_bes_channel(
+    config: &BuildEventProtocolConfig,
+) -> bz_error::Result<tonic::transport::Channel> {
+    let backend = BesBackend::parse(&config.backend)?;
+    let mut endpoint = Endpoint::from_shared(backend.uri.clone())
+        .map_err(|e| BepError::InvalidBackend(format!("{} ({e})", config.backend)))?;
+    if backend.tls {
+        endpoint = endpoint
+            .tls_config(ClientTlsConfig::new().with_native_roots())
+            .map_err(|e| BepError::Upload(e.to_string()))?;
+    }
+
+    let channel = endpoint
+        .connect()
+        .await
+        .map_err(|e| BepError::Upload(e.to_string()))?;
+    Ok(channel)
 }
 
 async fn upload_timing_profile(
