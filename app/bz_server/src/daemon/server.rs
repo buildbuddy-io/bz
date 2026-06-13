@@ -764,7 +764,16 @@ fn pump_events(
             // computation won't be producing any more events.
             Event::CommandResult(result) => {
                 if let Some(bep_uploader) = &bep_uploader {
-                    bep_uploader.finish(&result);
+                    if bep_uploader.is_sync() {
+                        bep_uploader.finish(&result);
+                    } else {
+                        let bep_result = result.clone();
+                        let _ignore = output_send.send(Ok(CommandProgress {
+                            progress: Some(command_progress::Progress::Result(result)),
+                        }));
+                        bep_uploader.finish_owned(*bep_result);
+                        return;
+                    }
                 }
                 let _ignore = output_send.send(Ok(CommandProgress {
                     progress: Some(command_progress::Progress::Result(result)),

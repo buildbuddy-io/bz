@@ -23,7 +23,6 @@ use re_grpc_proto::google::bytestream::byte_stream_client::ByteStreamClient;
 use sha2::Digest;
 use sha2::Sha256;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::metadata::MetadataKey;
 use tonic::metadata::MetadataValue;
@@ -66,8 +65,6 @@ enum BepError {
     Upload(String),
     #[error("BEP timing profile upload failed: {0}")]
     ProfileUpload(String),
-    #[error("BEP upload task failed to join: {0}")]
-    Join(String),
 }
 
 #[derive(Clone)]
@@ -256,14 +253,19 @@ impl BuildEventProtocolUploaderHandle {
         };
         let sync = config.sync;
         let timeout = config.timeout;
-        let uploader = BuildEventProtocolUploader::new(config)?;
+        let _backend = BesBackend::parse(&config.backend)?;
+        validate_headers(&config.headers)?;
         let (sender, receiver) = mpsc::unbounded_channel();
-        tokio::spawn(run_build_event_protocol_uploader(uploader, receiver));
+        tokio::spawn(run_build_event_protocol_uploader(config, receiver));
         Ok(Some(Self {
             sender,
             sync,
             timeout,
         }))
+    }
+
+    pub(crate) fn is_sync(&self) -> bool {
+        self.sync
     }
 
     pub(crate) fn handle_buck_event(&self, event: &BuckEvent) {
@@ -273,6 +275,10 @@ impl BuildEventProtocolUploaderHandle {
     }
 
     pub(crate) fn finish(&self, result: &CommandResult) {
+        self.finish_owned(result.clone());
+    }
+
+    pub(crate) fn finish_owned(&self, result: CommandResult) {
         let done = self.sync.then(|| {
             let (sender, receiver) = std_mpsc::channel();
             (sender, receiver)
@@ -285,7 +291,7 @@ impl BuildEventProtocolUploaderHandle {
         if self
             .sender
             .send(BuildEventProtocolMessage::Finish {
-                result: Box::new(result.clone()),
+                result: Box::new(result),
                 done: done_sender,
             })
             .is_err()
@@ -324,9 +330,10 @@ enum BuildEventProtocolMessage {
 }
 
 async fn run_build_event_protocol_uploader(
-    mut uploader: BuildEventProtocolUploader,
+    config: BuildEventProtocolConfig,
     mut receiver: mpsc::UnboundedReceiver<BuildEventProtocolMessage>,
 ) {
+    let mut uploader = BuildEventProtocolUploader::new(config);
     while let Some(message) = receiver.recv().await {
         match message {
             BuildEventProtocolMessage::Buck(event) => {
@@ -347,7 +354,8 @@ async fn run_build_event_protocol_uploader(
 
 struct BuildEventProtocolUploader {
     sender: Option<mpsc::UnboundedSender<publish_build_event::PublishBuildToolEventStreamRequest>>,
-    upload: Option<JoinHandle<bz_error::Result<UploadSummary>>>,
+    receiver:
+        Option<mpsc::UnboundedReceiver<publish_build_event::PublishBuildToolEventStreamRequest>>,
     terminal_progress: TerminalProgressCoalescer,
     sequence_number: i64,
     progress_count: i32,
@@ -359,11 +367,8 @@ struct BuildEventProtocolUploader {
 }
 
 impl BuildEventProtocolUploader {
-    fn new(config: BuildEventProtocolConfig) -> bz_error::Result<Self> {
-        let _backend = BesBackend::parse(&config.backend)?;
-        validate_headers(&config.headers)?;
+    fn new(config: BuildEventProtocolConfig) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
-        let upload = tokio::spawn(upload_build_events(config.clone(), receiver));
         let profile_writer = Some(ChromeTraceProfileWriter::new(
             config.command_name.clone(),
             config.trace_id.clone(),
@@ -373,7 +378,7 @@ impl BuildEventProtocolUploader {
         ));
         let mut this = Self {
             sender: Some(sender),
-            upload: Some(upload),
+            receiver: Some(receiver),
             terminal_progress: TerminalProgressCoalescer::new(),
             sequence_number: 0,
             progress_count: 0,
@@ -389,7 +394,7 @@ impl BuildEventProtocolUploader {
         this.send_workspace_status();
         this.queue_results_url_progress();
         this.flush_terminal_progress_now();
-        Ok(this)
+        this
     }
 
     fn next_sequence_number(&mut self) -> i64 {
@@ -865,16 +870,11 @@ impl BuildEventProtocolUploader {
         self.send_component_stream_finished();
         self.sender.take();
 
-        let Some(upload) = self.upload.take() else {
+        let Some(receiver) = self.receiver.take() else {
             return Ok(());
         };
 
-        let upload = async move {
-            upload
-                .await
-                .map_err(|e| BepError::Join(e.to_string()).into())
-                .and_then(|res| res)
-        };
+        let upload = upload_build_events(self.config.clone(), receiver);
 
         let summary =
             match self.config.timeout {
