@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::io::IsTerminal;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -568,15 +569,25 @@ fn print_bes_results_url_after_build(
         return Ok(());
     };
 
-    console.print_info_prefix(&format!(
-        "Streaming build results to: {}",
-        bes_invocation_url(results_url, invocation_id)
+    console.print_stderr(&bes_results_url_message(
+        results_url,
+        invocation_id,
+        std::io::stderr().is_terminal(),
     ))
 }
 
 fn bes_invocation_url(results_url: &str, invocation_id: &str) -> String {
     let separator = if results_url.ends_with('/') { "" } else { "/" };
     format!("{results_url}{separator}{invocation_id}")
+}
+
+fn bes_results_url_message(results_url: &str, invocation_id: &str, color: bool) -> String {
+    let url = bes_invocation_url(results_url, invocation_id);
+    if color {
+        format!("\x1b[32mINFO:\x1b[0m Streaming build results to: \x1b[4;36m{url}\x1b[0m")
+    } else {
+        format!("INFO: Streaming build results to: {url}")
+    }
 }
 
 fn should_reprint_build_id(used_superconsole: bool, printed_bes_results_url: bool) -> bool {
@@ -946,6 +957,14 @@ mod tests {
         assert!(!should_reprint_build_id(true, true));
 
         Ok(())
+    }
+
+    #[test]
+    fn final_bes_results_url_uses_initial_bes_styling() {
+        assert_eq!(
+            bes_results_url_message("https://app.buildbuddy.dev/invocation", "abc", true),
+            "\x1b[32mINFO:\x1b[0m Streaming build results to: \x1b[4;36mhttps://app.buildbuddy.dev/invocation/abc\x1b[0m"
+        );
     }
 
     #[test]

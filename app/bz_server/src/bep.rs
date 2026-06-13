@@ -355,26 +355,27 @@ async fn run_build_event_protocol_uploader(
     }
 }
 
-struct BesConnectionHandle {
-    join: JoinHandle<bz_error::Result<tonic::transport::Channel>>,
+struct BesUploadHandle {
+    join: JoinHandle<bz_error::Result<UploadSummary>>,
 }
 
-impl BesConnectionHandle {
-    fn connect(config: BuildEventProtocolConfig) -> bz_error::Result<Self> {
+impl BesUploadHandle {
+    fn start(
+        config: BuildEventProtocolConfig,
+        receiver: mpsc::UnboundedReceiver<publish_build_event::PublishBuildToolEventStreamRequest>,
+    ) -> bz_error::Result<Self> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| BepError::Worker(error.to_string()))?;
         Ok(Self {
             join: tokio::task::spawn_blocking(move || {
-                match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime.block_on(connect_bes_channel(&config)),
-                    Err(error) => Err(BepError::Worker(error.to_string()).into()),
-                }
+                runtime.block_on(upload_build_events(config, receiver))
             }),
         })
     }
 
-    async fn wait(self) -> bz_error::Result<tonic::transport::Channel> {
+    async fn wait(self) -> bz_error::Result<UploadSummary> {
         self.join
             .await
             .map_err(|error| BepError::Worker(error.to_string()))?
@@ -383,9 +384,7 @@ impl BesConnectionHandle {
 
 struct BuildEventProtocolUploader {
     sender: Option<mpsc::UnboundedSender<publish_build_event::PublishBuildToolEventStreamRequest>>,
-    connection: Option<BesConnectionHandle>,
-    receiver:
-        Option<mpsc::UnboundedReceiver<publish_build_event::PublishBuildToolEventStreamRequest>>,
+    upload: Option<BesUploadHandle>,
     terminal_progress: TerminalProgressCoalescer,
     sequence_number: i64,
     progress_count: i32,
@@ -399,7 +398,7 @@ struct BuildEventProtocolUploader {
 impl BuildEventProtocolUploader {
     fn new(config: BuildEventProtocolConfig) -> bz_error::Result<Self> {
         let (sender, receiver) = mpsc::unbounded_channel();
-        let connection = BesConnectionHandle::connect(config.clone())?;
+        let upload = BesUploadHandle::start(config.clone(), receiver)?;
         let profile_writer = Some(ChromeTraceProfileWriter::new(
             config.command_name.clone(),
             config.trace_id.clone(),
@@ -409,8 +408,7 @@ impl BuildEventProtocolUploader {
         ));
         let mut this = Self {
             sender: Some(sender),
-            connection: Some(connection),
-            receiver: Some(receiver),
+            upload: Some(upload),
             terminal_progress: TerminalProgressCoalescer::new(),
             sequence_number: 0,
             progress_count: 0,
@@ -902,26 +900,18 @@ impl BuildEventProtocolUploader {
         self.send_component_stream_finished();
         self.sender.take();
 
-        let Some(connection) = self.connection.take() else {
-            return Ok(());
-        };
-        let Some(receiver) = self.receiver.take() else {
+        let Some(upload) = self.upload.take() else {
             return Ok(());
         };
 
-        let config = self.config.clone();
-        let upload = async move {
-            let channel = connection.wait().await?;
-            upload_build_events(config, channel, receiver).await
-        };
+        let wait = upload.wait();
 
-        let summary =
-            match self.config.timeout {
-                Some(timeout) if !timeout.is_zero() => tokio::time::timeout(timeout, upload)
-                    .await
-                    .map_err(|_| BepError::Upload(format!("timed out after {timeout:?}")))??,
-                _ => upload.await?,
-            };
+        let summary = match self.config.timeout {
+            Some(timeout) if !timeout.is_zero() => tokio::time::timeout(timeout, wait)
+                .await
+                .map_err(|_| BepError::Upload(format!("timed out after {timeout:?}")))??,
+            _ => wait.await?,
+        };
 
         if let Some(results_url) = &self.config.results_url {
             tracing::info!(
@@ -952,9 +942,9 @@ struct UploadSummary {
 
 async fn upload_build_events(
     config: BuildEventProtocolConfig,
-    channel: tonic::transport::Channel,
     receiver: mpsc::UnboundedReceiver<publish_build_event::PublishBuildToolEventStreamRequest>,
 ) -> bz_error::Result<UploadSummary> {
+    let channel = connect_bes_channel(&config).await?;
     let mut grpc = tonic::client::Grpc::new(channel);
     grpc.ready()
         .await

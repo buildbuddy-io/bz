@@ -347,14 +347,18 @@ impl<'a> ClientCommandContext<'a> {
             return Ok(None);
         };
 
+        let headers = headers_with_buildbuddy_api_key(
+            event_log_opts.bes_header.clone(),
+            self.remote_execution_startup_config
+                .buildbuddy_api_key
+                .as_deref(),
+            &backend,
+            self.remote_execution_startup_config.remote_cache.as_deref(),
+        );
+
         Ok(Some(BesOptions {
             backend,
-            headers: headers_with_buildbuddy_api_key(
-                event_log_opts.bes_header.clone(),
-                self.remote_execution_startup_config
-                    .buildbuddy_api_key
-                    .as_deref(),
-            ),
+            headers,
             instance_name: event_log_opts.bes_instance_name.clone().unwrap_or_default(),
             keywords: bes_keywords(T::COMMAND_NAME, &event_log_opts.bes_keywords),
             timeout: event_log_opts
@@ -433,8 +437,15 @@ fn bes_keywords(command_name: &str, user_keywords: &[String]) -> Vec<String> {
     out
 }
 
-fn headers_with_buildbuddy_api_key(mut headers: Vec<String>, api_key: Option<&str>) -> Vec<String> {
-    if let Some(api_key) = api_key {
+fn headers_with_buildbuddy_api_key(
+    mut headers: Vec<String>,
+    api_key: Option<&str>,
+    bes_backend: &str,
+    remote_cache: Option<&str>,
+) -> Vec<String> {
+    if let Some(api_key) = api_key
+        && remote_cache.is_some_and(|remote_cache| endpoints_match(bes_backend, remote_cache))
+    {
         headers.retain(|header| match header.split_once('=') {
             Some((name, _)) => !name.trim().eq_ignore_ascii_case(BUILDBUDDY_API_KEY_HEADER),
             None => true,
@@ -444,6 +455,21 @@ fn headers_with_buildbuddy_api_key(mut headers: Vec<String>, api_key: Option<&st
         }
     }
     headers
+}
+
+fn endpoints_match(left: &str, right: &str) -> bool {
+    normalize_endpoint(left).eq_ignore_ascii_case(normalize_endpoint(right))
+}
+
+fn normalize_endpoint(endpoint: &str) -> &str {
+    let endpoint = endpoint.trim();
+    let endpoint = endpoint
+        .strip_prefix("grpcs://")
+        .or_else(|| endpoint.strip_prefix("grpc://"))
+        .or_else(|| endpoint.strip_prefix("https://"))
+        .or_else(|| endpoint.strip_prefix("http://"))
+        .unwrap_or(endpoint);
+    endpoint.trim_end_matches('/')
 }
 
 fn duration_to_proto(duration: Duration) -> prost_types::Duration {
@@ -540,7 +566,25 @@ mod tests {
     #[test]
     fn api_key_adds_buildbuddy_header_to_bes_headers() {
         assert_eq!(
-            headers_with_buildbuddy_api_key(vec!["x-other=value".to_owned()], Some("secret")),
+            headers_with_buildbuddy_api_key(
+                vec!["x-other=value".to_owned()],
+                Some("secret"),
+                "remote.buildbuddy.dev",
+                Some("remote.buildbuddy.dev"),
+            ),
+            vec!["x-other=value", "x-buildbuddy-api-key=secret"]
+        );
+    }
+
+    #[test]
+    fn api_key_allows_equivalent_buildbuddy_endpoint_spellings() {
+        assert_eq!(
+            headers_with_buildbuddy_api_key(
+                vec!["x-other=value".to_owned()],
+                Some("secret"),
+                "grpc://remote.buildbuddy.dev",
+                Some("https://remote.buildbuddy.dev/"),
+            ),
             vec!["x-other=value", "x-buildbuddy-api-key=secret"]
         );
     }
@@ -553,7 +597,9 @@ mod tests {
                     "X-BuildBuddy-Api-Key=old".to_owned(),
                     "x-other=value".to_owned()
                 ],
-                Some("new")
+                Some("new"),
+                "remote.buildbuddy.dev",
+                Some("remote.buildbuddy.dev"),
             ),
             vec!["x-other=value", "x-buildbuddy-api-key=new"]
         );
@@ -567,9 +613,40 @@ mod tests {
                     "x-buildbuddy-api-key=old".to_owned(),
                     "x-other=value".to_owned()
                 ],
-                Some("")
+                Some(""),
+                "remote.buildbuddy.dev",
+                Some("remote.buildbuddy.dev"),
             ),
             vec!["x-other=value"]
+        );
+    }
+
+    #[test]
+    fn api_key_is_not_added_when_bes_backend_and_remote_cache_do_not_match() {
+        assert_eq!(
+            headers_with_buildbuddy_api_key(
+                vec!["x-other=value".to_owned()],
+                Some("secret"),
+                "remote.buildbuddy.dev",
+                Some("example.com"),
+            ),
+            vec!["x-other=value"]
+        );
+    }
+
+    #[test]
+    fn explicit_bes_header_is_preserved_when_remote_cache_does_not_match() {
+        assert_eq!(
+            headers_with_buildbuddy_api_key(
+                vec![
+                    "x-buildbuddy-api-key=manual".to_owned(),
+                    "x-other=value".to_owned()
+                ],
+                Some("secret"),
+                "remote.buildbuddy.dev",
+                None,
+            ),
+            vec!["x-buildbuddy-api-key=manual", "x-other=value"]
         );
     }
 }
