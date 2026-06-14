@@ -16,6 +16,7 @@ use bz_cli_proto::BuildTarget;
 use bz_cli_proto::build_target::BuildOutput;
 use bz_client_ctx::exit_result::ClientIoError;
 use bz_client_ctx::output_destination_arg::OutputDestinationArg;
+use bz_client_ctx::stdio::AsyncStdoutWriter;
 use bz_core::fs::project::ProjectRoot;
 use bz_error::BuckErrorContext;
 use bz_error::bz_error;
@@ -141,7 +142,8 @@ pub(super) async fn copy_to_out(
                 let mut file = async_fs_util::open(&to_be_copied.from_path)
                     .await
                     .categorize_internal()?;
-                tokio::io::copy(&mut file, &mut tokio::io::stdout())
+                let mut stdout = AsyncStdoutWriter::new();
+                tokio::io::copy(&mut file, &mut stdout)
                     .await
                     .map_err(convert_broken_pipe_error)?;
             }

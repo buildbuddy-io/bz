@@ -18,13 +18,17 @@ use std::io;
 use std::io::LineWriter;
 use std::io::Stdout;
 use std::io::Write;
+use std::pin::Pin;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::task::Context;
+use std::task::Poll;
 
 use bz_error::internal_error;
 use crossterm::tty::IsTty as CrosstermIsTty;
 use superconsole::Line;
+use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
 
 use crate::exit_result::ClientIoError;
@@ -68,6 +72,29 @@ fn tap_output(stream: OutputStream, bytes: &[u8]) {
             stream,
             bytes: bytes.to_vec(),
         });
+    }
+}
+
+struct TapWriter<W> {
+    inner: W,
+    stream: OutputStream,
+}
+
+impl<W: Write> Write for TapWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        tap_output(self.stream, &buf[..written]);
+        Ok(written)
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.inner.write_all(buf)?;
+        tap_output(self.stream, buf);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -224,6 +251,49 @@ impl CrosstermIsTty for StdoutWriter {
 }
 
 #[derive(Debug)]
+pub struct AsyncStdoutWriter {
+    inner: tokio::io::Stdout,
+}
+
+impl AsyncStdoutWriter {
+    pub fn new() -> Self {
+        Self {
+            inner: tokio::io::stdout(),
+        }
+    }
+}
+
+impl AsyncWrite for AsyncStdoutWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        if STDOUT_LOCKED.load(Ordering::Relaxed) {
+            return Poll::Ready(Err(io::Error::other("stdout is already locked")));
+        }
+        HAS_WRITTEN_TO_STDOUT.store(true, Ordering::Relaxed);
+
+        let this = self.get_mut();
+        match Pin::new(&mut this.inner).poll_write(cx, buf) {
+            Poll::Ready(Ok(written)) => {
+                tap_output(OutputStream::Stdout, &buf[..written]);
+                Poll::Ready(Ok(written))
+            }
+            res => res,
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+#[derive(Debug)]
 pub struct StderrWriter;
 
 impl StderrWriter {
@@ -278,7 +348,10 @@ where
 
     let _guard = stdout.lock();
     let file = stdout_to_file(&stdout)?;
-    let mut w = LineWriter::new(file);
+    let mut w = LineWriter::new(TapWriter {
+        inner: file,
+        stream: OutputStream::Stdout,
+    });
     match f(&mut w).await {
         Ok(()) => {}
         Err(e) => return Err(e.into()),

@@ -155,7 +155,10 @@ pub fn get_console_with_root(
     match result {
         Ok(pair) => pair,
         Err(e) => {
-            eprintln!("Falling back to simple console, super console initialization failed: {e}");
+            let _ignored = crate::eprintln!(
+                "Falling back to simple console, super console initialization failed: {}",
+                e
+            );
             let _unused = soft_error!("console_init_failed", e);
             (
                 Box::new(SimpleConsole::<NoopEventObserverExtra>::autodetect(
