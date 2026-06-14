@@ -13,6 +13,7 @@ use bz_cli_proto::command_result;
 use bz_events::BuckEvent;
 use bz_hash::StdBuckHashMap;
 use bz_profile::chrome_trace::ChromeTraceProfileWriter;
+use bz_util::threads::thread_spawn;
 use bz_wrapper_common::invocation_id::TraceId;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
@@ -39,6 +40,8 @@ const PUBLISH_BUILD_TOOL_EVENT_STREAM_PATH: &str =
     "/google.devtools.build.v1.PublishBuildEvent/PublishBuildToolEventStream";
 const DEFAULT_PROGRESS_CHUNK_SIZE: usize = 1024 * 1024;
 const TERMINAL_PROGRESS_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
+const DEFERRED_BEP_TERMINAL_OUTPUT_FINISH_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_BEP_PROFILE_UPLOAD_TIMEOUT: Duration = Duration::from_secs(5);
 const PROFILE_NAME: &str = "command.profile.gz";
 const BYTESTREAM_UPLOAD_CHUNK_SIZE: usize = 2 * 1024 * 1024;
 const BAZEL_REQUEST_METADATA_HEADER: &str = "build.bazel.remote.execution.v2.requestmetadata-bin";
@@ -141,6 +144,7 @@ struct DeferredBepUpload {
     handle: BuildEventProtocolUploaderHandle,
     result: Option<CommandResult>,
     terminal_done: bool,
+    fallback_started: bool,
 }
 
 static DEFERRED_BEP_UPLOADS: Lazy<Mutex<StdBuckHashMap<TraceId, DeferredBepUpload>>> =
@@ -153,11 +157,13 @@ fn register_deferred_bep_upload(trace_id: TraceId, handle: BuildEventProtocolUpl
             handle,
             result: None,
             terminal_done: false,
+            fallback_started: false,
         },
     );
 }
 
 fn record_deferred_bep_result(trace_id: &TraceId, result: CommandResult) {
+    let mut start_fallback = false;
     let finish = {
         let mut uploads = DEFERRED_BEP_UPLOADS.lock();
         let Some(upload) = uploads.get_mut(trace_id) else {
@@ -172,12 +178,25 @@ fn record_deferred_bep_result(trace_id: &TraceId, result: CommandResult) {
             Some(upload)
         } else {
             upload.result = Some(result);
+            if !upload.fallback_started {
+                upload.fallback_started = true;
+                start_fallback = true;
+            }
             None
         }
     };
 
     if let Some(upload) = finish {
         finish_deferred_bep_upload(upload);
+    } else if start_fallback {
+        let timeout_trace_id = trace_id.dupe();
+        if let Err(error) = thread_spawn("bep-deferred-finish", move || {
+            std::thread::sleep(DEFERRED_BEP_TERMINAL_OUTPUT_FINISH_TIMEOUT);
+            finish_deferred_bep_upload_after_terminal_timeout(&timeout_trace_id);
+        }) {
+            tracing::warn!("Failed to spawn BEP deferred finish fallback: {error}");
+            finish_deferred_bep_upload_after_terminal_timeout(trace_id);
+        }
     }
 }
 
@@ -223,6 +242,28 @@ fn finish_deferred_bep_upload(mut upload: DeferredBepUpload) {
         return;
     };
     upload.handle.finish_owned(result);
+}
+
+fn finish_deferred_bep_upload_after_terminal_timeout(trace_id: &TraceId) {
+    let finish = {
+        let mut uploads = DEFERRED_BEP_UPLOADS.lock();
+        let Some(upload) = uploads.get(trace_id) else {
+            return;
+        };
+        if upload.result.is_some() {
+            uploads.remove(trace_id)
+        } else {
+            None
+        }
+    };
+
+    if let Some(upload) = finish {
+        tracing::warn!(
+            "BEP terminal output stream did not finish for `{trace_id}` within {:?}; finishing upload without waiting for more terminal output",
+            DEFERRED_BEP_TERMINAL_OUTPUT_FINISH_TIMEOUT,
+        );
+        finish_deferred_bep_upload(upload);
+    }
 }
 
 fn proto_duration_to_duration(duration: &prost_types::Duration) -> bz_error::Result<Duration> {
@@ -920,7 +961,21 @@ impl BuildEventProtocolUploader {
                     }
                 }
             }
-            _ => self.maybe_upload_timing_profile().await,
+            Some(_) => self.maybe_upload_timing_profile().await,
+            None => {
+                match tokio::time::timeout(
+                    DEFAULT_BEP_PROFILE_UPLOAD_TIMEOUT,
+                    self.maybe_upload_timing_profile(),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(BepError::ProfileUpload(format!(
+                        "timed out after {DEFAULT_BEP_PROFILE_UPLOAD_TIMEOUT:?}"
+                    ))
+                    .into()),
+                }
+            }
         };
 
         match upload {
