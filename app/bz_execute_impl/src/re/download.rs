@@ -201,7 +201,7 @@ pub async fn download_action_results<'a>(
     requested_outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
     details: RemoteCommandExecutionDetails,
     response: &dyn RemoteActionResult,
-    cache_hit_missing_cas_is_cache_miss: bool,
+    missing_cas_is_cache_miss: bool,
     paranoid: Option<&ParanoidDownloader>,
     cancellations: &CancellationContext,
     action_exit_code: i32,
@@ -256,7 +256,7 @@ pub async fn download_action_results<'a>(
         requested_outputs,
         response,
         &details,
-        cache_hit_missing_cas_is_cache_miss,
+        missing_cas_is_cache_miss,
         known_missing_remote_cas,
         cancellations,
     );
@@ -411,7 +411,7 @@ impl CasDownloader<'_> {
         requested_outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
         output_spec: &dyn RemoteActionResult,
         details: &RemoteCommandExecutionDetails,
-        cache_hit_missing_cas_is_cache_miss: bool,
+        missing_cas_is_cache_miss: bool,
         known_missing_remote_cas: Option<&KnownMissingRemoteCasTracker>,
         cancellations: &CancellationContext,
     ) -> ControlFlow<
@@ -440,11 +440,11 @@ impl CasDownloader<'_> {
                     Err(e) => {
                         let error: bz_error::Error =
                             e.context(format!("action_digest={}", details.action_digest));
-                        if cache_hit_missing_cas_is_cache_miss
+                        if missing_cas_is_cache_miss
                             && is_remote_execution_not_found(&error)
                         {
                             tracing::debug!(
-                                "Cached result for `{}` referenced missing CAS metadata; treating it as a cache miss",
+                                "Remote result for `{}` referenced missing CAS metadata; treating it as a miss",
                                 details.action_digest,
                             );
                             return ControlFlow::Break(DownloadResult::CacheMiss(manager));
@@ -465,13 +465,13 @@ impl CasDownloader<'_> {
                     }
                 };
 
-            if cache_hit_missing_cas_is_cache_miss {
+            if missing_cas_is_cache_miss {
                 if let Some(known_missing_remote_cas) = known_missing_remote_cas
                     && known_missing_remote_cas
                         .remove_artifact_values(artifacts.mapped_outputs.values())
                 {
                     tracing::debug!(
-                        "Cached result for `{}` referenced a known-missing CAS blob; treating it as a cache miss",
+                        "Remote result for `{}` referenced a known-missing CAS blob; treating it as a miss",
                         details.action_digest,
                     );
                     return ControlFlow::Break(DownloadResult::CacheMiss(manager));
@@ -486,7 +486,7 @@ impl CasDownloader<'_> {
                             known_missing_remote_cas.record_file_digests(&missing);
                         }
                         tracing::debug!(
-                            "Cached result for `{}` referenced missing output CAS blobs; treating it as a cache miss",
+                            "Remote result for `{}` referenced missing output CAS blobs; treating it as a miss",
                             details.action_digest,
                         );
                         return ControlFlow::Break(DownloadResult::CacheMiss(manager));

@@ -542,7 +542,7 @@ impl PreparedCommandExecutor for ReExecutor {
             }
         }
 
-        let mut retried_missing_cache_cas = false;
+        let mut retried_missing_remote_cas = false;
         let mut res = loop {
             manager.start_waiting_category(WaitingCategory::RemoteDownloading);
             let exit_code = response.execute_response.action_result.exit_code;
@@ -552,6 +552,8 @@ impl PreparedCommandExecutor for ReExecutor {
                 Some(response.execute_response.status.message.clone())
             };
             let cached_result = response.execute_response.cached_result;
+            let verify_remote_outputs =
+                cached_result || request.force_remote_execution_cache_bypass();
 
             let download = download_action_results(
                 request,
@@ -569,7 +571,7 @@ impl PreparedCommandExecutor for ReExecutor {
                 request.outputs(),
                 details.clone(),
                 &response,
-                cached_result,
+                verify_remote_outputs,
                 self.paranoid.as_ref(),
                 cancellations,
                 exit_code,
@@ -585,14 +587,19 @@ impl PreparedCommandExecutor for ReExecutor {
 
             match download {
                 DownloadResult::Result(res) => break res,
-                DownloadResult::CacheMiss(retry_manager)
-                    if cached_result && !retried_missing_cache_cas =>
-                {
-                    tracing::debug!(
-                        "Remote execution returned cached result for `{}` with missing CAS blobs; retrying with cache lookup disabled",
-                        action_and_blobs.action,
-                    );
-                    retried_missing_cache_cas = true;
+                DownloadResult::CacheMiss(retry_manager) if !retried_missing_remote_cas => {
+                    if cached_result {
+                        tracing::debug!(
+                            "Remote execution returned cached result for `{}` with missing CAS blobs; retrying with cache lookup disabled",
+                            action_and_blobs.action,
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Remote execution returned result for `{}` with missing CAS blobs; retrying with cache lookup disabled",
+                            action_and_blobs.action,
+                        );
+                    }
+                    retried_missing_remote_cas = true;
                     execution_time = TimeSpan::start_now();
                     let retry = self
                         .re_execute(
@@ -618,7 +625,7 @@ impl PreparedCommandExecutor for ReExecutor {
                     break retry_manager.error(
                         "re_download",
                         bz_error::internal_error!(
-                            "cached remote execution result referenced missing CAS blobs after retry"
+                            "remote execution result referenced missing CAS blobs after retry"
                         ),
                     );
                 }
