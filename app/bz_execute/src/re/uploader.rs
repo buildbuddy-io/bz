@@ -64,6 +64,7 @@ use crate::directory::ActionFingerprintedDirectoryRef;
 use crate::directory::ActionImmutableDirectory;
 use crate::directory::ReDirectorySerializer;
 use crate::execute::blobs::ActionBlobs;
+use crate::execute::cpu_load_gate::acquire_remote_action_building_cpu_permit;
 use crate::execute::request::CommandExecutionPaths;
 use crate::materialize::materializer::ArtifactNotMaterializedReason;
 use crate::materialize::materializer::LostRemoteCasArtifact;
@@ -254,6 +255,7 @@ impl Uploader {
         StdBuckHashSet<&'a TrackedCasDigest<FileDigestKind>>,
     )> {
         // See if anything needs uploading
+        let cpu_permit = acquire_remote_action_building_cpu_permit().await;
         let mut input_digests = blobs.keys().collect::<StdBuckHashSet<_>>();
 
         if force_reupload {
@@ -310,6 +312,7 @@ impl Uploader {
                 input_digests.insert(root_dir_digest);
             }
         };
+        drop(cpu_permit);
 
         let mut upload_blobs = Vec::new();
         let mut missing_digests = StdBuckHashSet::default();
@@ -383,6 +386,7 @@ impl Uploader {
         tracing::debug!("Got digests for {}", input_dir.fingerprint());
 
         // Now find the blobs that need to be uploaded
+        let _cpu_permit = acquire_remote_action_building_cpu_permit().await;
         for digest_with_ttl in digests_and_ttls_iterator {
             let (digest, digest_ttl) = digest_with_ttl?;
 
@@ -458,6 +462,7 @@ impl Uploader {
         let mut paths_to_materialize = Vec::new();
 
         if !missing_digests.is_empty() {
+            let cpu_permit = acquire_remote_action_building_cpu_permit().await;
             let artifact_path_alias_upload_paths = input_paths.map(|input_paths| {
                 let mut exact_paths = StdBuckHashMap::default();
                 let mut directory_paths = Vec::new();
@@ -598,6 +603,7 @@ impl Uploader {
                 missing_digests.is_empty(),
                 "Expected a path to be found for every digest, traversal code is inconsistent. Left with {missing_digests:?}."
             );
+            drop(cpu_permit);
 
             // Get the real path of the files we are going to upload.
             // This needs to be done because we could have A copied to B, and

@@ -16,6 +16,7 @@ pub mod cache_uploader;
 pub mod claim;
 pub mod clean_output_paths;
 pub mod command_executor;
+pub(crate) mod cpu_load_gate;
 pub mod dep_file_digest;
 pub mod environment_inheritance;
 pub mod inputs_directory;

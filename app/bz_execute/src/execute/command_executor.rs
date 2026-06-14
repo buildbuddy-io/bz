@@ -42,6 +42,7 @@ use crate::execute::action_digest_and_blobs::ActionDigestAndBlobsBuilder;
 use crate::execute::cache_uploader::CacheUploadInfo;
 use crate::execute::cache_uploader::IntoRemoteDepFile;
 use crate::execute::cache_uploader::UploadCache;
+use crate::execute::cpu_load_gate::acquire_remote_action_building_cpu_permit;
 use crate::execute::executor_stage;
 use crate::execute::manager::CommandExecutionManager;
 use crate::execute::prepared::PreparedAction;
@@ -314,6 +315,7 @@ impl CommandExecutor {
                     "remote action building semaphore was closed"
                 )
             })?;
+        let _remote_action_building_cpu = acquire_remote_action_building_cpu_permit().await;
         executor_stage(bz_data::PrepareAction {}, || {
             let input_digest = request.paths().input_directory().fingerprint();
 
