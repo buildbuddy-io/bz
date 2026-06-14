@@ -11,8 +11,12 @@ use bz_cli_proto::ClientContext;
 use bz_cli_proto::CommandResult;
 use bz_cli_proto::command_result;
 use bz_events::BuckEvent;
+use bz_hash::StdBuckHashMap;
 use bz_profile::chrome_trace::ChromeTraceProfileWriter;
 use bz_wrapper_common::invocation_id::TraceId;
+use dupe::Dupe;
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use prost::Message;
 use prost_types::Any;
 use prost_types::Timestamp;
@@ -88,6 +92,7 @@ pub(crate) struct BuildEventProtocolConfig {
     workspace_directory: String,
     trace_id: TraceId,
     sync: bool,
+    mirror_terminal_output: bool,
 }
 
 impl BuildEventProtocolConfig {
@@ -127,8 +132,97 @@ impl BuildEventProtocolConfig {
             workspace_directory,
             trace_id,
             sync: options.sync,
+            mirror_terminal_output: options.mirror_terminal_output,
         }))
     }
+}
+
+struct DeferredBepUpload {
+    handle: BuildEventProtocolUploaderHandle,
+    result: Option<CommandResult>,
+    terminal_done: bool,
+}
+
+static DEFERRED_BEP_UPLOADS: Lazy<Mutex<StdBuckHashMap<TraceId, DeferredBepUpload>>> =
+    Lazy::new(|| Mutex::new(StdBuckHashMap::default()));
+
+fn register_deferred_bep_upload(trace_id: TraceId, handle: BuildEventProtocolUploaderHandle) {
+    DEFERRED_BEP_UPLOADS.lock().insert(
+        trace_id,
+        DeferredBepUpload {
+            handle,
+            result: None,
+            terminal_done: false,
+        },
+    );
+}
+
+fn record_deferred_bep_result(trace_id: &TraceId, result: CommandResult) {
+    let finish = {
+        let mut uploads = DEFERRED_BEP_UPLOADS.lock();
+        let Some(upload) = uploads.get_mut(trace_id) else {
+            tracing::warn!("BEP terminal output upload for `{trace_id}` was not registered");
+            return;
+        };
+        if upload.terminal_done {
+            let mut upload = uploads
+                .remove(trace_id)
+                .expect("deferred BEP upload was present");
+            upload.result = Some(result);
+            Some(upload)
+        } else {
+            upload.result = Some(result);
+            None
+        }
+    };
+
+    if let Some(upload) = finish {
+        finish_deferred_bep_upload(upload);
+    }
+}
+
+pub(crate) fn has_deferred_bep_upload(trace_id: &TraceId) -> bool {
+    DEFERRED_BEP_UPLOADS.lock().contains_key(trace_id)
+}
+
+pub(crate) fn send_deferred_bep_terminal_output(trace_id: &TraceId, bytes: Vec<u8>) -> bool {
+    let handle = DEFERRED_BEP_UPLOADS
+        .lock()
+        .get(trace_id)
+        .map(|upload| upload.handle.clone());
+    let Some(handle) = handle else {
+        return false;
+    };
+    handle.handle_terminal_output(bytes);
+    true
+}
+
+pub(crate) fn finish_deferred_bep_terminal_output(trace_id: &TraceId) -> bool {
+    let finish = {
+        let mut uploads = DEFERRED_BEP_UPLOADS.lock();
+        let Some(upload) = uploads.get_mut(trace_id) else {
+            return false;
+        };
+        if upload.result.is_some() {
+            uploads.remove(trace_id)
+        } else {
+            upload.terminal_done = true;
+            None
+        }
+    };
+
+    if let Some(upload) = finish {
+        finish_deferred_bep_upload(upload);
+    }
+    true
+}
+
+fn finish_deferred_bep_upload(mut upload: DeferredBepUpload) {
+    let Some(result) = upload.result.take() else {
+        tracing::warn!("BEP terminal output ended before command result was available");
+        return;
+    };
+    upload.handle.finish_owned(result);
 }
 
 fn proto_duration_to_duration(duration: &prost_types::Duration) -> bz_error::Result<Duration> {
@@ -237,10 +331,13 @@ fn take_progress_chunk(bytes: &mut Vec<u8>) -> Vec<u8> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct BuildEventProtocolUploaderHandle {
     sender: mpsc::UnboundedSender<BuildEventProtocolMessage>,
     sync: bool,
     timeout: Option<Duration>,
+    trace_id: TraceId,
+    mirror_terminal_output: bool,
 }
 
 impl BuildEventProtocolUploaderHandle {
@@ -249,33 +346,58 @@ impl BuildEventProtocolUploaderHandle {
         trace_id: TraceId,
         workspace_directory: String,
     ) -> bz_error::Result<Option<Self>> {
-        let Some(config) =
-            BuildEventProtocolConfig::from_client_context(ctx, trace_id, workspace_directory)?
+        let Some(config) = BuildEventProtocolConfig::from_client_context(
+            ctx,
+            trace_id.dupe(),
+            workspace_directory,
+        )?
         else {
             return Ok(None);
         };
         let sync = config.sync;
         let timeout = config.timeout;
+        let trace_id = trace_id.dupe();
+        let mirror_terminal_output = config.mirror_terminal_output;
         let _backend = BesBackend::parse(&config.backend)?;
         validate_headers(&config.headers)?;
         let uploader = BuildEventProtocolUploader::new(config)?;
         let (sender, receiver) = mpsc::unbounded_channel();
         tokio::spawn(run_build_event_protocol_uploader(uploader, receiver));
-        Ok(Some(Self {
+        let handle = Self {
             sender,
             sync,
             timeout,
-        }))
+            trace_id,
+            mirror_terminal_output,
+        };
+        if mirror_terminal_output {
+            register_deferred_bep_upload(handle.trace_id.dupe(), handle.clone());
+        }
+        Ok(Some(handle))
     }
 
     pub(crate) fn is_sync(&self) -> bool {
         self.sync
     }
 
+    pub(crate) fn mirror_terminal_output(&self) -> bool {
+        self.mirror_terminal_output
+    }
+
     pub(crate) fn handle_buck_event(&self, event: &BuckEvent) {
         let _ignored = self
             .sender
             .send(BuildEventProtocolMessage::Buck(Box::new(event.clone())));
+    }
+
+    pub(crate) fn handle_terminal_output(&self, bytes: Vec<u8>) {
+        let _ignored = self
+            .sender
+            .send(BuildEventProtocolMessage::TerminalOutput { bytes });
+    }
+
+    pub(crate) fn defer_finish(&self, result: CommandResult) {
+        record_deferred_bep_result(&self.trace_id, result);
     }
 
     pub(crate) fn finish(&self, result: &CommandResult) {
@@ -327,6 +449,9 @@ impl BuildEventProtocolUploaderHandle {
 
 enum BuildEventProtocolMessage {
     Buck(Box<BuckEvent>),
+    TerminalOutput {
+        bytes: Vec<u8>,
+    },
     Finish {
         result: Box<CommandResult>,
         done: Option<std_mpsc::Sender<bz_error::Result<()>>>,
@@ -341,6 +466,9 @@ async fn run_build_event_protocol_uploader(
         match message {
             BuildEventProtocolMessage::Buck(event) => {
                 uploader.handle_buck_event(*event).await;
+            }
+            BuildEventProtocolMessage::TerminalOutput { bytes } => {
+                uploader.handle_terminal_output(bytes);
             }
             BuildEventProtocolMessage::Finish { result, done } => {
                 let result = uploader.finish(&result).await;
@@ -422,8 +550,10 @@ impl BuildEventProtocolUploader {
         this.send_bazel_event(this.started_event());
         this.send_bazel_event(this.options_parsed_event());
         this.send_workspace_status();
-        this.queue_results_url_progress();
-        this.flush_terminal_progress_now();
+        if !this.config.mirror_terminal_output {
+            this.queue_results_url_progress();
+            this.flush_terminal_progress_now();
+        }
         Ok(this)
     }
 
@@ -705,6 +835,11 @@ impl BuildEventProtocolUploader {
         self.send_progress_text(None, Some(terminal_output_text(&bytes)));
     }
 
+    fn handle_terminal_output(&mut self, bytes: Vec<u8>) {
+        self.terminal_progress.push(&bytes);
+        self.maybe_flush_terminal_progress();
+    }
+
     fn maybe_flush_terminal_progress(&mut self) {
         let now = Instant::now();
         if let Some(bytes) = self
@@ -841,8 +976,10 @@ impl BuildEventProtocolUploader {
                 }
             }
         }
-        self.handle_progress_event(&event);
-        self.maybe_flush_terminal_progress();
+        if !self.config.mirror_terminal_output {
+            self.handle_progress_event(&event);
+            self.maybe_flush_terminal_progress();
+        }
     }
 
     fn handle_progress_event(&mut self, event: &BuckEvent) {
@@ -891,8 +1028,10 @@ impl BuildEventProtocolUploader {
 
     async fn finish(mut self, result: &CommandResult) -> bz_error::Result<()> {
         self.handle_command_result(result);
-        self.queue_results_url_progress();
-        self.flush_terminal_progress_now();
+        if !self.config.mirror_terminal_output {
+            self.queue_results_url_progress();
+            self.flush_terminal_progress_now();
+        }
         self.send_finished();
         let build_tool_logs = self.build_tool_logs().await;
         self.flush_terminal_progress_now();

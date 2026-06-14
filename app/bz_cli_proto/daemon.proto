@@ -214,7 +214,16 @@ message BesOptions {
   repeated string target_patterns = 7;
   bool sync = 8;
   google.protobuf.Timestamp start_time = 9;
+  // Mirror the exact terminal byte stream from the client to BEP Progress events.
+  bool mirror_terminal_output = 10;
 }
+
+message BepTerminalOutputRequest {
+  string trace_id = 1;
+  bytes data = 2;
+}
+
+message BepTerminalOutputResponse {}
 
 message ClientEnvironmentVariable {
   string name = 1;
@@ -1123,6 +1132,10 @@ service DaemonApi {
 
   // Interact with daemon I/O tracing.
   rpc TraceIo(TraceIoRequest) returns (stream MultiCommandProgress);
+
+  // Streams exact terminal bytes from the client back to the daemon-side BEP uploader.
+  rpc BepTerminalOutput(stream BepTerminalOutputRequest)
+      returns (BepTerminalOutputResponse);
 }
 
 // This struct is written to `~/.buck/paranoid.info` by `bz paranoid

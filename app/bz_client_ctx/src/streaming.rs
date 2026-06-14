@@ -283,12 +283,18 @@ impl<T: StreamingCommand> BuckSubcommand for T {
             };
 
             events_ctx.cgroup_path_of_bz_daemon = buckd.cgroup_path_of_bz_daemon.clone();
+            if let Some(receiver) = ctx.take_bep_output_rx() {
+                let forwarder =
+                    buckd.start_bep_output_forwarder(ctx.trace_id.to_string(), receiver);
+                ctx.set_bep_output_forwarder(forwarder);
+            }
 
             let command_result = self
                 .exec_impl(&mut buckd, matches, &mut ctx, events_ctx)
                 .await;
 
             ctx.restarter.observe(&buckd, events_ctx);
+            ctx.finish_bep_output_forwarder().await;
 
             command_result
         };

@@ -80,6 +80,7 @@ use bz_test::executor_launcher::get_all_test_executors;
 use bz_util::system_stats::num_cores;
 use bz_util::system_stats::system_memory_stats;
 use bz_util::threads::thread_spawn;
+use bz_wrapper_common::invocation_id::TraceId;
 use dice::DetectCycles;
 use dice::Dice;
 use dice_futures::cancellation::CancellationContext;
@@ -112,6 +113,9 @@ use tonic::transport::Server;
 use crate::active_commands::ActiveCommand;
 use crate::active_commands::ActiveCommandStateWriter;
 use crate::bep::BuildEventProtocolUploaderHandle;
+use crate::bep::finish_deferred_bep_terminal_output;
+use crate::bep::has_deferred_bep_upload;
+use crate::bep::send_deferred_bep_terminal_output;
 use crate::clean::clean_command;
 use crate::clean_stale::clean_stale_command;
 use crate::ctx::ServerCommandContext;
@@ -764,6 +768,14 @@ fn pump_events(
             // computation won't be producing any more events.
             Event::CommandResult(result) => {
                 if let Some(bep_uploader) = &bep_uploader {
+                    if bep_uploader.mirror_terminal_output() {
+                        let bep_result = result.clone();
+                        bep_uploader.defer_finish(*bep_result);
+                        let _ignore = output_send.send(Ok(CommandProgress {
+                            progress: Some(command_progress::Progress::Result(result)),
+                        }));
+                        return;
+                    }
                     if bep_uploader.is_sync() {
                         bep_uploader.finish(&result);
                     } else {
@@ -892,6 +904,17 @@ where
     Response::new(Box::pin(SyncStream {
         wrapped: sync_wrapper::SyncWrapper::new(DropTogether::new(events, spawned)),
     }))
+}
+
+async fn wait_for_deferred_bep_upload(trace_id: &TraceId) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(30) {
+        if has_deferred_bep_upload(trace_id) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    false
 }
 
 struct QueryCommandOptions {
@@ -1671,6 +1694,49 @@ impl DaemonApi for BuckdServer {
             },
         )
         .await
+    }
+
+    async fn bep_terminal_output(
+        &self,
+        req: Request<tonic::Streaming<BepTerminalOutputRequest>>,
+    ) -> Result<Response<BepTerminalOutputResponse>, Status> {
+        let mut stream = req.into_inner();
+        let mut trace_id = None;
+
+        while let Some(chunk) = stream.message().await? {
+            let chunk_trace_id: TraceId = chunk
+                .trace_id
+                .parse()
+                .map_err(|e| Status::invalid_argument(format!("invalid trace id: {e:#}")))?;
+            if let Some(trace_id) = &trace_id {
+                if trace_id != &chunk_trace_id {
+                    return Err(Status::invalid_argument(
+                        "BEP terminal output stream changed trace id",
+                    ));
+                }
+            } else {
+                if !wait_for_deferred_bep_upload(&chunk_trace_id).await {
+                    return Err(Status::not_found(format!(
+                        "BEP uploader for `{chunk_trace_id}` was not registered"
+                    )));
+                }
+                trace_id = Some(chunk_trace_id.dupe());
+            }
+
+            if !send_deferred_bep_terminal_output(&chunk_trace_id, chunk.data) {
+                return Err(Status::not_found(format!(
+                    "BEP uploader for `{chunk_trace_id}` is no longer active"
+                )));
+            }
+        }
+
+        if let Some(trace_id) = trace_id
+            && !finish_deferred_bep_terminal_output(&trace_id)
+        {
+            tracing::warn!("BEP terminal output stream ended for unknown trace id `{trace_id}`");
+        }
+
+        Ok(Response::new(BepTerminalOutputResponse {}))
     }
 }
 

@@ -31,6 +31,8 @@ use futures::TryStreamExt;
 use futures::future::BoxFuture;
 use futures::pin_mut;
 use futures::stream;
+use tokio::task::JoinHandle;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::Request;
 use tonic::Status;
 use tonic::codegen::InterceptedService;
@@ -43,6 +45,7 @@ use crate::events_ctx::DaemonEventsCtx;
 use crate::events_ctx::EventsCtx;
 use crate::events_ctx::PartialResultCtx;
 use crate::events_ctx::PartialResultHandler;
+use crate::stdio::OutputEvent;
 
 pub mod connect;
 pub mod kill;
@@ -68,6 +71,36 @@ impl BuckdClientConnector {
         FlushingBuckdClient {
             inner: &mut self.client,
         }
+    }
+
+    pub fn start_bep_output_forwarder(
+        &mut self,
+        trace_id: String,
+        receiver: tokio::sync::mpsc::UnboundedReceiver<OutputEvent>,
+    ) -> JoinHandle<bz_error::Result<BepTerminalOutputResponse>> {
+        let mut client = self.client.client.clone();
+        tokio::spawn(async move {
+            let init_trace_id = trace_id.clone();
+            let init = stream::once(async move {
+                BepTerminalOutputRequest {
+                    trace_id: init_trace_id,
+                    data: Vec::new(),
+                }
+            });
+            let chunks = UnboundedReceiverStream::new(receiver).map(move |event| {
+                let OutputEvent { bytes, .. } = event;
+                BepTerminalOutputRequest {
+                    trace_id: trace_id.clone(),
+                    data: bytes,
+                }
+            });
+            let stream = init.chain(chunks);
+            let response = client
+                .bep_terminal_output(Request::new(stream))
+                .await
+                .map_err(tonic_status_to_error)?;
+            Ok(response.into_inner())
+        })
     }
 
     pub fn daemon_constraints(&self) -> &bz_cli_proto::DaemonConstraints {

@@ -13,6 +13,7 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use bz_cli_proto::BepTerminalOutputResponse;
 use bz_cli_proto::BesOptions;
 use bz_cli_proto::ClientContext;
 use bz_cli_proto::ClientEnvironmentVariable;
@@ -55,6 +56,9 @@ use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
 use crate::immediate_config::ImmediateConfigContext;
 use crate::restarter::Restarter;
+use crate::stdio::OutputEvent;
+use crate::stdio::OutputTapGuard;
+use crate::stdio::install_output_tap;
 use crate::streaming::StreamingCommand;
 
 pub struct ClientCommandContext<'a> {
@@ -83,6 +87,10 @@ pub struct ClientCommandContext<'a> {
     pub(crate) remote_execution_startup_config: RemoteExecutionStartupConfig,
     pub(crate) buildbuddy_bes: bool,
     rbe_implies_remote_only: bool,
+    bep_output_rx: Option<tokio::sync::mpsc::UnboundedReceiver<OutputEvent>>,
+    bep_output_tap_guard: Option<OutputTapGuard>,
+    bep_output_forwarder:
+        Option<tokio::task::JoinHandle<bz_error::Result<BepTerminalOutputResponse>>>,
 }
 
 impl<'a> ClientCommandContext<'a> {
@@ -131,6 +139,9 @@ impl<'a> ClientCommandContext<'a> {
             remote_execution_startup_config,
             buildbuddy_bes,
             rbe_implies_remote_only,
+            bep_output_rx: None,
+            bep_output_tap_guard: None,
+            bep_output_forwarder: None,
         }
     }
 
@@ -183,11 +194,12 @@ impl<'a> ClientCommandContext<'a> {
 
     // Handles setting up subscribers, executing a command and finalizing logging.
     pub async fn exec_async<T: BuckSubcommand>(
-        self,
+        mut self,
         cmd: T,
         matches: BuckArgMatches<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
+        self.install_bep_output_tap_if_needed(&cmd);
         if let Err(error) = cmd.update_events_ctx(matches, &self, events_ctx) {
             return ExitResult::err(error);
         }
@@ -198,6 +210,51 @@ impl<'a> ClientCommandContext<'a> {
             .as_ref()
             .map(|path| path.resolve(&self.working_dir));
         cmd.exec_impl(matches, self, events_ctx).await
+    }
+
+    fn install_bep_output_tap_if_needed<T: BuckSubcommand>(&mut self, cmd: &T) {
+        if cmd
+            .event_log_opts()
+            .bes_backend_with_buildbuddy_default(self.buildbuddy_bes())
+            .is_none()
+        {
+            return;
+        }
+
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        self.bep_output_tap_guard = Some(install_output_tap(sender));
+        self.bep_output_rx = Some(receiver);
+    }
+
+    pub(crate) fn take_bep_output_rx(
+        &mut self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<OutputEvent>> {
+        self.bep_output_rx.take()
+    }
+
+    pub(crate) fn set_bep_output_forwarder(
+        &mut self,
+        forwarder: tokio::task::JoinHandle<bz_error::Result<BepTerminalOutputResponse>>,
+    ) {
+        self.bep_output_forwarder = Some(forwarder);
+    }
+
+    pub(crate) async fn finish_bep_output_forwarder(&mut self) {
+        self.bep_output_tap_guard.take();
+
+        let Some(forwarder) = self.bep_output_forwarder.take() else {
+            return;
+        };
+
+        match forwarder.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!("BEP terminal output forwarding failed: {error:#}");
+            }
+            Err(error) => {
+                tracing::warn!("BEP terminal output forwarding task failed: {error:#}");
+            }
+        }
     }
 
     pub fn stdin(&mut self) -> &mut Stdin {
@@ -370,6 +427,7 @@ impl<'a> ClientCommandContext<'a> {
             target_patterns: cmd.build_event_protocol_target_patterns(),
             sync: event_log_opts.bes_sync,
             start_time: Some(system_time_to_proto(self.start_time)),
+            mirror_terminal_output: true,
         }))
     }
 
