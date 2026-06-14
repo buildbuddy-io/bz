@@ -102,10 +102,14 @@ impl DiceComputations<'_> {
     ///   version), but they re-validate against the recomputed values when next
     ///   requested at a later version. Callers that need specific dependents
     ///   recomputed *now* must include them in `keys`.
-    /// - A key that is currently being computed is not restarted; its eventual
-    ///   result is treated as the post-rewind result. Concurrent rewinds of the same
-    ///   key are safe but may observe each other's recomputations; callers should
-    ///   re-check their failure condition and bound their retries.
+    /// - A key that is currently being computed is detached from the cache, but
+    ///   not cancelled. Existing waiters may still observe its pre-rewind result;
+    ///   requests made after the rewind returns will not join that in-flight
+    ///   computation and will instead start or join work that began after the
+    ///   rewind.
+    /// - Concurrent rewinds of the same key are safe but may observe each other's
+    ///   recomputations; callers should re-check their failure condition and bound
+    ///   their retries.
     /// - Injected keys cannot recompute and are skipped.
     ///
     /// The rewind has been applied when the returned future resolves; requests made

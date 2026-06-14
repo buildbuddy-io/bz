@@ -162,22 +162,21 @@ impl SharedCache {
         working_entry
     }
 
-    /// Discards the completed result for `key` at this version so that the next
-    /// request recomputes it. A currently-running task for `key` is not restarted:
-    /// it began before the rewind and its (eventual) result is treated as the
-    /// post-rewind result. Callers wanting strictly-after semantics must rewind
-    /// again after observing a result they consider stale.
+    /// Discards the result for `key` at this version so that the next request
+    /// recomputes it. A currently-running task for `key` is detached from the
+    /// cache rather than cancelled: existing waiters may still observe its
+    /// pre-rewind result, but requests made after this rewind returns will not
+    /// join it or promote it into the rewind overlay.
     pub(crate) fn rewind(&self, key: DiceKey) {
+        // Drop any task that was published before this rewind, whether pending or
+        // finished. Existing promises hold their own task refs, so old waiters can
+        // still complete; the cache no longer uses that task for post-rewind
+        // requests.
+        self.data.storage.remove(&key);
         self.data.rewound.insert(key, None);
         // `Release` pairs with the `Acquire` loads in `try_get_rewound`/`get`: a
         // reader that observes the flag also observes the tombstone inserted above.
         self.data.has_rewound.store(true, Ordering::Release);
-        // A finished task still sitting in `storage` is the same stale result that
-        // the tombstone above shadows in `completed`; drop it so the next request
-        // spawns a fresh computation instead of promoting it into the overlay.
-        self.data
-            .storage
-            .remove_if(&key, |_, task| matches!(task.get_finished_value(), Some(Ok(_))));
     }
 
     pub(crate) fn new() -> Self {

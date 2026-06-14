@@ -24,6 +24,7 @@ use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use pagable::PagablePanic;
 use pagable::pagable_typetag;
+use tokio::sync::Semaphore;
 
 use crate::Dice;
 use crate::DiceKeyDyn;
@@ -79,6 +80,47 @@ impl Key for CountingKey {
 struct ConstantValueKey {
     #[derivative(Hash = "ignore", PartialEq = "ignore")]
     computes: Arc<AtomicUsize>,
+}
+
+/// Blocks until released, while returning the order in which each compute
+/// started. This lets tests observe whether a request joined an existing
+/// in-flight task or spawned a post-rewind task.
+#[derive(Clone, Dupe, Debug, Derivative, Allocative, Display, PagablePanic)]
+#[derivative(PartialEq, Eq, Hash)]
+#[display("blocking")]
+#[allocative(skip)]
+#[pagable_typetag(DiceKeyDyn)]
+struct BlockingKey {
+    #[derivative(Hash = "ignore", PartialEq = "ignore")]
+    computes: Arc<AtomicUsize>,
+    #[derivative(Hash = "ignore", PartialEq = "ignore")]
+    started: Arc<Semaphore>,
+    #[derivative(Hash = "ignore", PartialEq = "ignore")]
+    release: Arc<Semaphore>,
+}
+
+#[async_trait]
+impl Key for BlockingKey {
+    type Value = usize;
+
+    async fn compute(
+        &self,
+        _ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let compute_id = self.computes.fetch_add(1, Ordering::SeqCst) + 1;
+        self.started.add_permits(1);
+        let _permit = self.release.acquire().await.unwrap();
+        compute_id
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        x == y
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
 }
 
 #[async_trait]
@@ -236,6 +278,39 @@ async fn rewind_within_a_computing_key() -> anyhow::Result<()> {
     // recomputed value on re-request.
     assert_eq!(ctx.compute(&consumer).await?, (1, 2));
     assert_eq!(dep.computes.load(Ordering::SeqCst), 2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn rewind_detaches_pending_task_for_next_request() -> anyhow::Result<()> {
+    let dice = Dice::builder().build(DetectCycles::Disabled);
+    let key = BlockingKey {
+        computes: Arc::new(AtomicUsize::new(0)),
+        started: Arc::new(Semaphore::new(0)),
+        release: Arc::new(Semaphore::new(0)),
+    };
+
+    let mut first_ctx = dice.updater().commit().await;
+    let first_key = key.dupe();
+    let first = tokio::spawn(async move { first_ctx.compute(&first_key).await });
+
+    let _permit = key.started.acquire().await?;
+    assert_eq!(key.computes.load(Ordering::SeqCst), 1);
+
+    let mut second_ctx = dice.updater().commit().await;
+    assert_eq!(second_ctx.rewind_keys([key.dupe()]).await, 1);
+
+    let second_key = key.dupe();
+    let second = tokio::spawn(async move { second_ctx.compute(&second_key).await });
+
+    let _permit = key.started.acquire().await?;
+    assert_eq!(key.computes.load(Ordering::SeqCst), 2);
+
+    key.release.add_permits(2);
+
+    assert_eq!(first.await??, 1);
+    assert_eq!(second.await??, 2);
 
     Ok(())
 }
