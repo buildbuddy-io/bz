@@ -79,10 +79,10 @@ fn update_events_ctx<T: StreamingCommand>(
         || std::env::var_os("BUCK2_TEST_SLOW_BUILD_CHECK").is_some();
 
     let bes_results_url = if event_log_opts
-        .bes_backend_with_buildbuddy_default(ctx.buildbuddy_bes())
+        .bes_backend_with_buildbuddy_default(ctx.buildbuddy_bes(), ctx.dev())
         .is_some()
     {
-        event_log_opts.bes_results_url_with_buildbuddy_default(ctx.buildbuddy_bes())
+        event_log_opts.bes_results_url_with_buildbuddy_default(ctx.buildbuddy_bes(), ctx.dev())
     } else {
         None
     };

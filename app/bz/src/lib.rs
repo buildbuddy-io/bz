@@ -83,7 +83,8 @@ pub(crate) mod commands;
 pub mod panic;
 pub mod process_context;
 
-const BUILDBUDDY_REMOTE_ENDPOINT: &str = "remote.buildbuddy.dev";
+const BUILDBUDDY_REMOTE_ENDPOINT: &str = "remote.buildbuddy.io";
+const BUILDBUDDY_REMOTE_ENDPOINT_DEV: &str = "remote.buildbuddy.dev";
 const BUILDBUDDY_DEFAULT_RBE_CONTAINER_IMAGE: &str = "docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:f7db0d4791247f032fdb4451b7c3ba90e567923a341cc6dc43abfc283436791a";
 const BUILDBUDDY_API_KEY_ENV_VAR: &str = "BUILDBUDDY_API_KEY";
 const BZ_BUILDBUDDY_API_KEY_ENV_VAR: &str = "BZ_BUILDBUDDY_API_KEY";
@@ -271,6 +272,14 @@ struct BeforeSubcommandOptions {
     #[clap(long = "bb", alias = "buildbuddy", global = true)]
     buildbuddy: bool,
 
+    /// Point the default BuildBuddy endpoints at the dev environment
+    /// (`*.buildbuddy.dev`) instead of production (`*.buildbuddy.io`).
+    ///
+    /// Only affects the defaults applied by `--rbe`/`--cache`/`--bb`/`--bep`;
+    /// explicit `--remote_cache`/`--bes_backend`/etc. still take precedence.
+    #[clap(long = "dev", global = true, hide = true)]
+    dev: bool,
+
     /// BuildBuddy API key to send to BuildBuddy gRPC endpoints.
     ///
     /// Can also be set with the `BUILDBUDDY_API_KEY` or `BZ_BUILDBUDDY_API_KEY`
@@ -360,6 +369,16 @@ impl BeforeSubcommandOptions {
         }
     }
 
+    /// The default BuildBuddy remote endpoint, selecting the dev environment
+    /// when `--dev` is passed.
+    fn buildbuddy_remote_endpoint(&self) -> &'static str {
+        if self.dev {
+            BUILDBUDDY_REMOTE_ENDPOINT_DEV
+        } else {
+            BUILDBUDDY_REMOTE_ENDPOINT
+        }
+    }
+
     fn remote_execution_startup_config(&self) -> RemoteExecutionStartupConfig {
         self.remote_execution_startup_config_with_buildbuddy_api_key_env(
             buildbuddy_api_key_from_env(),
@@ -390,13 +409,13 @@ impl BeforeSubcommandOptions {
         RemoteExecutionStartupConfig {
             remote_cache: self.remote_cache.clone().or_else(|| {
                 (self.rbe || self.cache || self.buildbuddy)
-                    .then(|| BUILDBUDDY_REMOTE_ENDPOINT.to_owned())
+                    .then(|| self.buildbuddy_remote_endpoint().to_owned())
             }),
             remote_executor: self.remote_executor.clone().or_else(|| {
-                (self.rbe || self.buildbuddy).then(|| BUILDBUDDY_REMOTE_ENDPOINT.to_owned())
+                (self.rbe || self.buildbuddy).then(|| self.buildbuddy_remote_endpoint().to_owned())
             }),
             remote_downloader: self.remote_downloader.clone().or_else(|| {
-                (self.rbe || self.buildbuddy).then(|| BUILDBUDDY_REMOTE_ENDPOINT.to_owned())
+                (self.rbe || self.buildbuddy).then(|| self.buildbuddy_remote_endpoint().to_owned())
             }),
             experimental_remote_repo_contents_cache: self.experimental_remote_repo_contents_cache
                 && !self.no_experimental_remote_repo_contents_cache,
@@ -752,6 +771,7 @@ impl CommandKind {
         let remote_execution_startup_config = common_opts.remote_execution_startup_config();
         let remote_download_outputs_override = common_opts.remote_download_outputs_override();
         let buildbuddy_bes = common_opts.buildbuddy_bes();
+        let dev = common_opts.dev;
         let rbe_implies_remote_only = common_opts.rbe || common_opts.buildbuddy;
 
         let start_in_process_daemon = if common_opts.no_buckd {
@@ -797,6 +817,7 @@ impl CommandKind {
             remote_execution_startup_config,
             remote_download_outputs_override,
             buildbuddy_bes,
+            dev,
             rbe_implies_remote_only,
         );
         if let Some(recorder) = events_ctx.recorder.as_mut() {
@@ -1136,6 +1157,40 @@ mod tests {
         assert_eq!(
             remote_execution.remote_downloader.as_deref(),
             Some(BUILDBUDDY_REMOTE_ENDPOINT)
+        );
+    }
+
+    #[test]
+    fn buildbuddy_remote_endpoints_default_to_production() {
+        let opts = Opt::try_parse_from(["buck2", "build", "--bb", "//:target"]).unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert_eq!(
+            remote_execution.remote_cache.as_deref(),
+            Some("remote.buildbuddy.io")
+        );
+        assert_eq!(
+            remote_execution.remote_executor.as_deref(),
+            Some("remote.buildbuddy.io")
+        );
+    }
+
+    #[test]
+    fn dev_flag_points_buildbuddy_remote_endpoints_at_dev() {
+        let opts = Opt::try_parse_from(["buck2", "build", "--bb", "--dev", "//:target"]).unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert_eq!(
+            remote_execution.remote_cache.as_deref(),
+            Some("remote.buildbuddy.dev")
+        );
+        assert_eq!(
+            remote_execution.remote_executor.as_deref(),
+            Some("remote.buildbuddy.dev")
+        );
+        assert_eq!(
+            remote_execution.remote_downloader.as_deref(),
+            Some("remote.buildbuddy.dev")
         );
     }
 

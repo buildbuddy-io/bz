@@ -49,8 +49,10 @@ use crate::path_arg::PathArg;
 
 pub const EVENT_LOG: &str = "event-log";
 pub const NO_EVENT_LOG: &str = "no-event-log";
-const BUILDBUDDY_BES_BACKEND: &str = "remote.buildbuddy.dev";
-const BUILDBUDDY_BES_RESULTS_URL: &str = "https://app.buildbuddy.dev/invocation/";
+const BUILDBUDDY_BES_BACKEND: &str = "remote.buildbuddy.io";
+const BUILDBUDDY_BES_RESULTS_URL: &str = "https://app.buildbuddy.io/invocation/";
+const BUILDBUDDY_BES_BACKEND_DEV: &str = "remote.buildbuddy.dev";
+const BUILDBUDDY_BES_RESULTS_URL_DEV: &str = "https://app.buildbuddy.dev/invocation/";
 const BAZEL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:java_language_version";
 const BAZEL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:java_runtime_version";
 const BAZEL_TOOL_JAVA_LANGUAGE_VERSION: &str = "//command_line_option:tool_java_language_version";
@@ -276,23 +278,35 @@ pub struct CommonEventLogOptions {
 
 impl CommonEventLogOptions {
     pub fn bes_backend(&self) -> Option<&str> {
-        self.bes_backend_with_buildbuddy_default(false)
+        self.bes_backend_with_buildbuddy_default(false, false)
     }
 
-    pub fn bes_backend_with_buildbuddy_default(&self, buildbuddy: bool) -> Option<&str> {
-        self.bes_backend
-            .as_deref()
-            .or_else(|| (self.bep || buildbuddy).then_some(BUILDBUDDY_BES_BACKEND))
+    pub fn bes_backend_with_buildbuddy_default(&self, buildbuddy: bool, dev: bool) -> Option<&str> {
+        self.bes_backend.as_deref().or_else(|| {
+            (self.bep || buildbuddy).then_some(if dev {
+                BUILDBUDDY_BES_BACKEND_DEV
+            } else {
+                BUILDBUDDY_BES_BACKEND
+            })
+        })
     }
 
     pub fn bes_results_url(&self) -> Option<&str> {
-        self.bes_results_url_with_buildbuddy_default(false)
+        self.bes_results_url_with_buildbuddy_default(false, false)
     }
 
-    pub fn bes_results_url_with_buildbuddy_default(&self, buildbuddy: bool) -> Option<&str> {
-        self.bes_results_url
-            .as_deref()
-            .or_else(|| (self.bep || buildbuddy).then_some(BUILDBUDDY_BES_RESULTS_URL))
+    pub fn bes_results_url_with_buildbuddy_default(
+        &self,
+        buildbuddy: bool,
+        dev: bool,
+    ) -> Option<&str> {
+        self.bes_results_url.as_deref().or_else(|| {
+            (self.bep || buildbuddy).then_some(if dev {
+                BUILDBUDDY_BES_RESULTS_URL_DEV
+            } else {
+                BUILDBUDDY_BES_RESULTS_URL
+            })
+        })
     }
 
     pub(crate) fn bes_timeout_duration(&self) -> bz_error::Result<Option<std::time::Duration>> {
@@ -1787,12 +1801,26 @@ mod tests {
         let opts = CommonEventLogOptions::default();
 
         assert_eq!(
-            opts.bes_backend_with_buildbuddy_default(true),
+            opts.bes_backend_with_buildbuddy_default(true, false),
             Some(BUILDBUDDY_BES_BACKEND)
         );
         assert_eq!(
-            opts.bes_results_url_with_buildbuddy_default(true),
+            opts.bes_results_url_with_buildbuddy_default(true, false),
             Some(BUILDBUDDY_BES_RESULTS_URL)
+        );
+    }
+
+    #[test]
+    fn test_dev_uses_buildbuddy_dev_bes_defaults() {
+        let opts = CommonEventLogOptions::default();
+
+        assert_eq!(
+            opts.bes_backend_with_buildbuddy_default(true, true),
+            Some(BUILDBUDDY_BES_BACKEND_DEV)
+        );
+        assert_eq!(
+            opts.bes_results_url_with_buildbuddy_default(true, true),
+            Some(BUILDBUDDY_BES_RESULTS_URL_DEV)
         );
     }
 

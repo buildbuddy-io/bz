@@ -86,6 +86,7 @@ pub struct ClientCommandContext<'a> {
     pub(crate) remote_download_outputs_override: Option<RemoteDownloadOutputsMode>,
     pub(crate) remote_execution_startup_config: RemoteExecutionStartupConfig,
     pub(crate) buildbuddy_bes: bool,
+    pub(crate) dev: bool,
     rbe_implies_remote_only: bool,
     bep_output_rx: Option<tokio::sync::mpsc::UnboundedReceiver<OutputEvent>>,
     bep_output_tap_guard: Option<OutputTapGuard>,
@@ -115,6 +116,7 @@ impl<'a> ClientCommandContext<'a> {
         remote_execution_startup_config: RemoteExecutionStartupConfig,
         remote_download_outputs_override: Option<RemoteDownloadOutputsMode>,
         buildbuddy_bes: bool,
+        dev: bool,
         rbe_implies_remote_only: bool,
     ) -> Self {
         ClientCommandContext {
@@ -138,6 +140,7 @@ impl<'a> ClientCommandContext<'a> {
             remote_download_outputs_override,
             remote_execution_startup_config,
             buildbuddy_bes,
+            dev,
             rbe_implies_remote_only,
             bep_output_rx: None,
             bep_output_tap_guard: None,
@@ -215,7 +218,7 @@ impl<'a> ClientCommandContext<'a> {
     fn install_bep_output_tap_if_needed<T: BuckSubcommand>(&mut self, cmd: &T) {
         if cmd
             .event_log_opts()
-            .bes_backend_with_buildbuddy_default(self.buildbuddy_bes())
+            .bes_backend_with_buildbuddy_default(self.buildbuddy_bes(), self.dev())
             .is_none()
         {
             return;
@@ -398,7 +401,7 @@ impl<'a> ClientCommandContext<'a> {
     fn bes_options<T: StreamingCommand>(&self, cmd: &T) -> bz_error::Result<Option<BesOptions>> {
         let event_log_opts = cmd.event_log_opts();
         let Some(backend) = event_log_opts
-            .bes_backend_with_buildbuddy_default(self.buildbuddy_bes())
+            .bes_backend_with_buildbuddy_default(self.buildbuddy_bes(), self.dev())
             .map(ToOwned::to_owned)
         else {
             return Ok(None);
@@ -422,7 +425,7 @@ impl<'a> ClientCommandContext<'a> {
                 .bes_timeout_duration()?
                 .map(duration_to_proto),
             results_url: event_log_opts
-                .bes_results_url_with_buildbuddy_default(self.buildbuddy_bes())
+                .bes_results_url_with_buildbuddy_default(self.buildbuddy_bes(), self.dev())
                 .map(ToOwned::to_owned),
             target_patterns: cmd.build_event_protocol_target_patterns(),
             sync: event_log_opts.bes_sync,
@@ -444,6 +447,11 @@ impl<'a> ClientCommandContext<'a> {
 
     pub fn buildbuddy_bes(&self) -> bool {
         self.buildbuddy_bes
+    }
+
+    /// Whether to use the BuildBuddy dev environment for default endpoints.
+    pub fn dev(&self) -> bool {
+        self.dev
     }
 
     pub fn daemon_startup_config(&self) -> bz_error::Result<DaemonStartupConfig> {
@@ -627,8 +635,8 @@ mod tests {
             headers_with_buildbuddy_api_key(
                 vec!["x-other=value".to_owned()],
                 Some("secret"),
-                "remote.buildbuddy.dev",
-                Some("remote.buildbuddy.dev"),
+                "remote.buildbuddy.io",
+                Some("remote.buildbuddy.io"),
             ),
             vec!["x-other=value", "x-buildbuddy-api-key=secret"]
         );
@@ -640,8 +648,8 @@ mod tests {
             headers_with_buildbuddy_api_key(
                 vec!["x-other=value".to_owned()],
                 Some("secret"),
-                "grpc://remote.buildbuddy.dev",
-                Some("https://remote.buildbuddy.dev/"),
+                "grpc://remote.buildbuddy.io",
+                Some("https://remote.buildbuddy.io/"),
             ),
             vec!["x-other=value", "x-buildbuddy-api-key=secret"]
         );
@@ -656,8 +664,8 @@ mod tests {
                     "x-other=value".to_owned()
                 ],
                 Some("new"),
-                "remote.buildbuddy.dev",
-                Some("remote.buildbuddy.dev"),
+                "remote.buildbuddy.io",
+                Some("remote.buildbuddy.io"),
             ),
             vec!["x-other=value", "x-buildbuddy-api-key=new"]
         );
@@ -672,8 +680,8 @@ mod tests {
                     "x-other=value".to_owned()
                 ],
                 Some(""),
-                "remote.buildbuddy.dev",
-                Some("remote.buildbuddy.dev"),
+                "remote.buildbuddy.io",
+                Some("remote.buildbuddy.io"),
             ),
             vec!["x-other=value"]
         );
@@ -685,7 +693,7 @@ mod tests {
             headers_with_buildbuddy_api_key(
                 vec!["x-other=value".to_owned()],
                 Some("secret"),
-                "remote.buildbuddy.dev",
+                "remote.buildbuddy.io",
                 Some("example.com"),
             ),
             vec!["x-other=value"]
@@ -701,7 +709,7 @@ mod tests {
                     "x-other=value".to_owned()
                 ],
                 Some("secret"),
-                "remote.buildbuddy.dev",
+                "remote.buildbuddy.io",
                 None,
             ),
             vec!["x-buildbuddy-api-key=manual", "x-other=value"]

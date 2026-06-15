@@ -41,8 +41,8 @@ mod tests {
     #[test]
     fn bes_results_url_info_prefix_is_not_bold() {
         assert_eq!(
-            bes_results_url_message("https://app.buildbuddy.dev/invocation", "abc", true),
-            "\x1b[32mINFO:\x1b[0m Streaming build results to: \x1b[4;36mhttps://app.buildbuddy.dev/invocation/abc\x1b[0m"
+            bes_results_url_message("https://app.buildbuddy.io/invocation", "abc", true),
+            "\x1b[32mINFO:\x1b[0m Streaming build results to: \x1b[4;36mhttps://app.buildbuddy.io/invocation/abc\x1b[0m"
         );
     }
 }

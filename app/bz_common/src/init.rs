@@ -863,7 +863,7 @@ mod tests {
     #[test]
     fn remote_cache_endpoint_enables_uploading_local_results() {
         let config = RemoteExecutionStartupConfig {
-            remote_cache: Some("remote.buildbuddy.dev".to_owned()),
+            remote_cache: Some("remote.buildbuddy.io".to_owned()),
             ..Default::default()
         };
 
@@ -916,7 +916,7 @@ mod tests {
     #[test]
     fn remote_executor_endpoint_implies_remote_cache() {
         let config = RemoteExecutionStartupConfig {
-            remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+            remote_executor: Some("remote.buildbuddy.io".to_owned()),
             ..Default::default()
         };
 
@@ -928,13 +928,13 @@ mod tests {
     #[test]
     fn remote_repo_contents_cache_requires_flag_and_remote_cache() {
         let default_config = RemoteExecutionStartupConfig {
-            remote_cache: Some("remote.buildbuddy.dev".to_owned()),
+            remote_cache: Some("remote.buildbuddy.io".to_owned()),
             ..Default::default()
         };
         assert!(!default_config.should_use_remote_repo_contents_cache());
 
         let enabled = RemoteExecutionStartupConfig {
-            remote_cache: Some("remote.buildbuddy.dev".to_owned()),
+            remote_cache: Some("remote.buildbuddy.io".to_owned()),
             experimental_remote_repo_contents_cache: true,
             ..Default::default()
         };
@@ -951,7 +951,7 @@ mod tests {
     fn empty_remote_cache_disables_remote_repo_contents_cache() {
         let config = RemoteExecutionStartupConfig {
             remote_cache: Some(String::new()),
-            remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+            remote_executor: Some("remote.buildbuddy.io".to_owned()),
             experimental_remote_repo_contents_cache: true,
             ..Default::default()
         };
@@ -963,7 +963,7 @@ mod tests {
     fn empty_remote_cache_endpoint_disables_uploading_local_results() {
         let config = RemoteExecutionStartupConfig {
             remote_cache: Some(String::new()),
-            remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+            remote_executor: Some("remote.buildbuddy.io".to_owned()),
             ..Default::default()
         };
 

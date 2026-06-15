@@ -681,7 +681,7 @@ async fn output_rage(no_paste: bool, output: &str) -> bz_error::Result<()> {
             Err(e) => {
                 bz_client_ctx::eprintln!(
                     "Failed to generate paste automatically with error \"{:?}\".
-                    Please create paste manually with `bunnylol paste` using the output below:\n\n\n",
+                    Copy the output below into your bug report:\n\n\n",
                     e
                 )?;
                 bz_client_ctx::println!("{}", output)?;

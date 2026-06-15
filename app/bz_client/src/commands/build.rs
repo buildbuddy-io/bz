@@ -310,9 +310,12 @@ impl StreamingCommand for BuildCommand {
         };
 
         let console = self.common_opts.console_opts.final_console();
-        let final_bes_results_url =
-            bes_results_url(&self.common_opts.event_log_opts, ctx.buildbuddy_bes())
-                .map(ToOwned::to_owned);
+        let final_bes_results_url = bes_results_url(
+            &self.common_opts.event_log_opts,
+            ctx.buildbuddy_bes(),
+            ctx.dev(),
+        )
+        .map(ToOwned::to_owned);
         let invocation_id = ctx.trace_id.to_string();
         print_build_id_after_superconsole(
             &console,
@@ -547,17 +550,19 @@ pub(crate) fn print_build_id_after_superconsole(
 pub(crate) fn has_bes_results_url(
     event_log_opts: &CommonEventLogOptions,
     buildbuddy_bes: bool,
+    dev: bool,
 ) -> bool {
-    bes_results_url(event_log_opts, buildbuddy_bes).is_some()
+    bes_results_url(event_log_opts, buildbuddy_bes, dev).is_some()
 }
 
 pub(crate) fn bes_results_url(
     event_log_opts: &CommonEventLogOptions,
     buildbuddy_bes: bool,
+    dev: bool,
 ) -> Option<&str> {
     event_log_opts
-        .bes_backend_with_buildbuddy_default(buildbuddy_bes)
-        .and_then(|_| event_log_opts.bes_results_url_with_buildbuddy_default(buildbuddy_bes))
+        .bes_backend_with_buildbuddy_default(buildbuddy_bes, dev)
+        .and_then(|_| event_log_opts.bes_results_url_with_buildbuddy_default(buildbuddy_bes, dev))
 }
 
 fn print_bes_results_url_after_build(
@@ -907,10 +912,10 @@ mod tests {
         let opts = parse(&["--bep"])?;
         let event_log_opts = &opts.common_opts.event_log_opts;
 
-        assert_eq!(event_log_opts.bes_backend(), Some("remote.buildbuddy.dev"));
+        assert_eq!(event_log_opts.bes_backend(), Some("remote.buildbuddy.io"));
         assert_eq!(
             event_log_opts.bes_results_url(),
-            Some("https://app.buildbuddy.dev/invocation/")
+            Some("https://app.buildbuddy.io/invocation/")
         );
 
         Ok(())
@@ -921,10 +926,10 @@ mod tests {
         let opts = parse(&["--bes"])?;
         let event_log_opts = &opts.common_opts.event_log_opts;
 
-        assert_eq!(event_log_opts.bes_backend(), Some("remote.buildbuddy.dev"));
+        assert_eq!(event_log_opts.bes_backend(), Some("remote.buildbuddy.io"));
         assert_eq!(
             event_log_opts.bes_results_url(),
-            Some("https://app.buildbuddy.dev/invocation/")
+            Some("https://app.buildbuddy.io/invocation/")
         );
 
         Ok(())
@@ -953,7 +958,7 @@ mod tests {
         let opts = parse(&["--bes"])?;
         let event_log_opts = &opts.common_opts.event_log_opts;
 
-        assert!(has_bes_results_url(event_log_opts, false));
+        assert!(has_bes_results_url(event_log_opts, false, false));
         assert!(!should_reprint_build_id(true, true));
 
         Ok(())
@@ -962,8 +967,8 @@ mod tests {
     #[test]
     fn final_bes_results_url_uses_initial_bes_styling() {
         assert_eq!(
-            bes_results_url_message("https://app.buildbuddy.dev/invocation", "abc", true),
-            "\x1b[32mINFO:\x1b[0m Streaming build results to: \x1b[4;36mhttps://app.buildbuddy.dev/invocation/abc\x1b[0m"
+            bes_results_url_message("https://app.buildbuddy.io/invocation", "abc", true),
+            "\x1b[32mINFO:\x1b[0m Streaming build results to: \x1b[4;36mhttps://app.buildbuddy.io/invocation/abc\x1b[0m"
         );
     }
 

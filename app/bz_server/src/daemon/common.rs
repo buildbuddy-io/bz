@@ -796,14 +796,14 @@ mod tests {
 
     fn remote_cache_overrides() -> BazelRemoteEndpointOverrides {
         BazelRemoteEndpointOverrides::from_startup_config(&RemoteExecutionStartupConfig {
-            remote_cache: Some("remote.buildbuddy.dev".to_owned()),
+            remote_cache: Some("remote.buildbuddy.io".to_owned()),
             ..Default::default()
         })
     }
 
     fn remote_executor_overrides() -> BazelRemoteEndpointOverrides {
         BazelRemoteEndpointOverrides::from_startup_config(&RemoteExecutionStartupConfig {
-            remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+            remote_executor: Some("remote.buildbuddy.io".to_owned()),
             ..Default::default()
         })
     }
@@ -855,7 +855,7 @@ mod tests {
         let executor = executor_with_bazel_remote_endpoint_overrides(
             &Executor::Local(LocalExecutorOptions::default()),
             BazelRemoteEndpointOverrides::from_startup_config(&RemoteExecutionStartupConfig {
-                remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+                remote_executor: Some("remote.buildbuddy.io".to_owned()),
                 remote_default_exec_properties: Some(remote_default_exec_properties()),
                 ..Default::default()
             }),
@@ -972,7 +972,7 @@ mod tests {
         let overrides =
             BazelRemoteEndpointOverrides::from_startup_config(&RemoteExecutionStartupConfig {
                 remote_cache: Some(String::new()),
-                remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+                remote_executor: Some("remote.buildbuddy.io".to_owned()),
                 ..Default::default()
             });
 
