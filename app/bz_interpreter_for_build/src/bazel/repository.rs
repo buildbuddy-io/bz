@@ -967,17 +967,16 @@ mod tests {
 
     #[test]
     fn test_repository_ctx_rewrites_embedded_project_paths_for_remote_execution() {
-        let project_root = Path::new("/Users/siggi/Code/buildbuddy");
+        let project_root = Path::new("/workspace/buildbuddy");
         let repository_working_dir = Path::new(
-            "/Users/siggi/Code/buildbuddy/buck-out/v2/cache/bzlmod_generated_scratch/repo/repository_ctx",
+            "/workspace/buildbuddy/buck-out/v2/cache/bzlmod_generated_scratch/repo/repository_ctx",
         );
-        let command =
-            "patch -p0 < /Users/siggi/Code/buildbuddy/buildpatches/protobuf.js_inquire.patch";
+        let command = "patch -p0 < /workspace/buildbuddy/buildpatches/protobuf.js_inquire.patch";
 
         assert_eq!(
             repository_ctx_embedded_project_paths(command, project_root),
             vec![PathBuf::from(
-                "/Users/siggi/Code/buildbuddy/buildpatches/protobuf.js_inquire.patch"
+                "/workspace/buildbuddy/buildpatches/protobuf.js_inquire.patch"
             )],
         );
         assert_eq!(
@@ -993,11 +992,11 @@ mod tests {
 
     #[test]
     fn test_repository_ctx_rewrites_embedded_repository_working_dir_first() {
-        let project_root = Path::new("/Users/siggi/Code/buildbuddy");
+        let project_root = Path::new("/workspace/buildbuddy");
         let repository_working_dir = Path::new(
-            "/Users/siggi/Code/buildbuddy/buck-out/v2/cache/bzlmod_generated_scratch/repo/repository_ctx",
+            "/workspace/buildbuddy/buck-out/v2/cache/bzlmod_generated_scratch/repo/repository_ctx",
         );
-        let command = "cat /Users/siggi/Code/buildbuddy/buck-out/v2/cache/bzlmod_generated_scratch/repo/repository_ctx/package.json";
+        let command = "cat /workspace/buildbuddy/buck-out/v2/cache/bzlmod_generated_scratch/repo/repository_ctx/package.json";
 
         assert_eq!(
             repository_ctx_rewrite_embedded_project_paths(
