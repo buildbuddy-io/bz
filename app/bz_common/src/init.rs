@@ -39,9 +39,9 @@ pub const BUILDBUDDY_API_KEY_HEADER: &str = "x-buildbuddy-api-key";
 #[serde(rename_all = "lowercase")]
 pub enum RemoteDownloadOutputsMode {
     /// Download only outputs required by later local actions.
-    #[default]
     Minimal,
     /// Download requested top-level outputs.
+    #[default]
     Toplevel,
     /// Download all declared remote outputs.
     All,
@@ -872,11 +872,11 @@ mod tests {
     }
 
     #[test]
-    fn remote_download_outputs_defaults_to_minimal() -> bz_error::Result<()> {
+    fn remote_download_outputs_defaults_to_toplevel() -> bz_error::Result<()> {
         let startup_config = DaemonStartupConfig::new(&LegacyBuckConfig::empty())?;
         assert_eq!(
             startup_config.remote_download_outputs,
-            RemoteDownloadOutputsMode::Minimal
+            RemoteDownloadOutputsMode::Toplevel
         );
         Ok(())
     }
