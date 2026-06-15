@@ -1,15 +1,11 @@
 [cells]
-bz = .
+root = .
 prelude = cells/prelude
 bazel_tools = cells/bazel_tools
 third_party = third_party
 
 [cell_aliases]
-root = bz
-bz = bz
-prelude = prelude
-bazel_tools = bazel_tools
-third_party = third_party
+bz = root
 
 [project]
 ignore = \
