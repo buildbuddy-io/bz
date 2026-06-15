@@ -278,7 +278,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             .ctx
             .get_command_executor_from_dice(&executor_config)
             .await?;
-        let command_executor = CommandExecutor::new_with_remote_action_building_semaphore(
+        let command_executor = CommandExecutor::new(
             response.executor,
             response.action_cache_checker,
             response.remote_dep_file_cache_checker,
@@ -286,7 +286,6 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             artifact_fs.clone(),
             executor_config.options,
             response.platform,
-            response.remote_action_building_semaphore,
         );
         Ok(BazelRepositoryCommandExecutor::Remote(Arc::new(
             BazelRemoteRepositoryCommandExecutor::new(

@@ -20,10 +20,6 @@ use bz_common::legacy_configs::key::BuckconfigKeyRef;
 
 static BUCK2_RE_CLIENT_CFG_SECTION: &str = "buck2_re_client";
 
-fn available_parallelism() -> usize {
-    std::thread::available_parallelism().map_or(1, |value| value.get())
-}
-
 /// We put functions here that both things need to implement for code that isn't gated behind a
 /// standalone build metadata.
 pub trait RemoteExecutionStaticMetadataImpl: Sized {
@@ -32,7 +28,6 @@ pub trait RemoteExecutionStaticMetadataImpl: Sized {
         &mut self,
         config: &RemoteExecutionStartupConfig,
     ) -> bz_error::Result<()>;
-    fn remote_action_building_semaphore_size(&self) -> usize;
     fn exec_semaphore_size(&self) -> usize;
 }
 
@@ -184,10 +179,6 @@ impl RemoteExecutionStaticMetadataImpl for RemoteExecutionStaticMetadata {
         config: &RemoteExecutionStartupConfig,
     ) -> bz_error::Result<()> {
         self.0.apply_remote_execution_startup_config(config)
-    }
-
-    fn remote_action_building_semaphore_size(&self) -> usize {
-        available_parallelism()
     }
 
     fn exec_semaphore_size(&self) -> usize {
@@ -588,14 +579,5 @@ mod tests {
         assert_eq!(config.remote_timeout_secs, Some(56));
 
         Ok(())
-    }
-    #[test]
-    fn remote_action_building_semaphore_matches_available_parallelism() {
-        let metadata = RemoteExecutionStaticMetadata(RemoteExecutionClientConfig::default());
-
-        assert_eq!(
-            metadata.remote_action_building_semaphore_size(),
-            available_parallelism()
-        );
     }
 }

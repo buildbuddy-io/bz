@@ -55,7 +55,6 @@ use remote_execution::TCode;
 use remote_execution::TCodeReasonGroup;
 use remote_execution::TDigest;
 use remote_execution::UploadRequest;
-use tokio::sync::Semaphore;
 use tokio::sync::oneshot;
 
 use crate::digest::CasDigestFromReExt;
@@ -177,10 +176,6 @@ impl UploadDeduper {
 
 static UPLOAD_DEDUPER: Lazy<Mutex<UploadDeduper>> =
     Lazy::new(|| Mutex::new(UploadDeduper::default()));
-
-static UPLOAD_SETUP_SEMAPHORE: Lazy<Semaphore> = Lazy::new(|| {
-    Semaphore::new(std::thread::available_parallelism().map_or(1, |value| value.get()))
-});
 
 #[derive(Default)]
 struct UploadClaim {
@@ -445,16 +440,6 @@ impl Uploader {
         deduplicate_get_digests_ttl_calls: bool,
         force_reupload: bool,
     ) -> bz_error::Result<UploadStats> {
-        // Bazel limits remote action building/input upload setup to CPU count.
-        // Keep this process-wide so multiple RE client instances cannot stampede
-        // get_digests_ttl/upload calls on the same daemon.
-        let _upload_setup = UPLOAD_SETUP_SEMAPHORE.acquire().await.map_err(|_| {
-            bz_error::bz_error!(
-                bz_error::ErrorTag::InternalError,
-                "remote upload setup semaphore was closed"
-            )
-        })?;
-
         let (mut upload_blobs, mut missing_digests) = Self::find_missing(
             client,
             input_dir,

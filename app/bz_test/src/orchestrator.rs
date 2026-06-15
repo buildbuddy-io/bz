@@ -1528,7 +1528,6 @@ impl BuckTestOrchestrator<'_> {
             remote_dep_file_cache_checker: _,
             cache_uploader,
             output_trees_download_config: _,
-            remote_action_building_semaphore,
         } = dice.get_command_executor_from_dice(executor_config).await?;
 
         let (cache_uploader, action_cache_checker) = match stage {
@@ -1546,7 +1545,7 @@ impl BuckTestOrchestrator<'_> {
             }
         };
 
-        let executor = CommandExecutor::new_with_remote_action_building_semaphore(
+        let executor = CommandExecutor::new(
             executor,
             action_cache_checker,
             Arc::new(NoOpCommandOptionalExecutor {}),
@@ -1554,7 +1553,6 @@ impl BuckTestOrchestrator<'_> {
             fs.clone(),
             executor_config.options,
             platform,
-            remote_action_building_semaphore,
         );
         Ok(executor)
     }
@@ -1578,11 +1576,10 @@ impl BuckTestOrchestrator<'_> {
             remote_dep_file_cache_checker: _,
             cache_uploader: _,
             output_trees_download_config: _,
-            remote_action_building_semaphore,
         } = dice
             .get_command_executor_from_dice(&executor_config)
             .await?;
-        let executor = CommandExecutor::new_with_remote_action_building_semaphore(
+        let executor = CommandExecutor::new(
             executor,
             Arc::new(NoOpCommandOptionalExecutor {}),
             Arc::new(NoOpCommandOptionalExecutor {}),
@@ -1590,7 +1587,6 @@ impl BuckTestOrchestrator<'_> {
             fs.clone(),
             executor_config.options,
             platform,
-            remote_action_building_semaphore,
         );
         Ok(executor)
     }

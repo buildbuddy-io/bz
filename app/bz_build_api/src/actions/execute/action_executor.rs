@@ -328,7 +328,6 @@ impl HasActionExecutor for DiceComputations<'_> {
             remote_dep_file_cache_checker,
             cache_uploader,
             output_trees_download_config,
-            remote_action_building_semaphore,
         } = self.get_command_executor_from_dice(executor_config).await?;
         let blocking_executor = self.get_blocking_executor();
         let materializer = self.per_transaction_data().get_materializer();
@@ -341,7 +340,7 @@ impl HasActionExecutor for DiceComputations<'_> {
         let invalidation_tracking_enabled = self.get_invalidation_tracking_config().enabled;
 
         Ok(Arc::new(BuckActionExecutor::new(
-            CommandExecutor::new_with_remote_action_building_semaphore(
+            CommandExecutor::new(
                 executor,
                 action_cache_checker,
                 remote_dep_file_cache_checker,
@@ -349,7 +348,6 @@ impl HasActionExecutor for DiceComputations<'_> {
                 artifact_fs,
                 executor_config.options,
                 platform,
-                remote_action_building_semaphore,
             ),
             blocking_executor,
             materializer,

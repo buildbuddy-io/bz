@@ -104,7 +104,6 @@ pub struct CommandExecutorFactory {
     local_executor_shared_state: LocalExecutorSharedState,
     deduplicate_get_digests_ttl_calls: bool,
     output_trees_download_config: OutputTreesDownloadConfig,
-    remote_action_building_semaphore: Arc<Semaphore>,
     remote_metadata_semaphore: Arc<Semaphore>,
     remote_action_cache_semaphore: Arc<Semaphore>,
     daemon_id: DaemonId,
@@ -170,9 +169,6 @@ impl CommandExecutorFactory {
             local_executor_shared_state: LocalExecutorSharedState::default(),
             deduplicate_get_digests_ttl_calls,
             output_trees_download_config,
-            remote_action_building_semaphore: Arc::new(Semaphore::new(
-                std::thread::available_parallelism().map_or(1, |value| value.get()),
-            )),
             remote_metadata_semaphore: Arc::new(Semaphore::new(remote_metadata_concurrency)),
             remote_action_cache_semaphore: Arc::new(Semaphore::new(
                 remote_action_cache_concurrency,
@@ -514,9 +510,6 @@ impl HasCommandExecutor for CommandExecutorFactory {
                         remote_dep_file_cache_checker: Arc::new(NoOpCommandOptionalExecutor {}),
                         cache_uploader: Arc::new(NoOpCacheUploader {}),
                         output_trees_download_config: self.output_trees_download_config.dupe(),
-                        remote_action_building_semaphore: self
-                            .remote_action_building_semaphore
-                            .dupe(),
                     })
                 }
             }
@@ -723,7 +716,6 @@ impl HasCommandExecutor for CommandExecutorFactory {
                     remote_dep_file_cache_checker,
                     cache_uploader,
                     output_trees_download_config: self.output_trees_download_config.dupe(),
-                    remote_action_building_semaphore: self.remote_action_building_semaphore.dupe(),
                 })
             }
         };

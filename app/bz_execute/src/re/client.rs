@@ -358,20 +358,6 @@ impl RemoteExecutionClient {
         deduplicate_get_digests_ttl_calls: bool,
         force_reupload: bool,
     ) -> bz_error::Result<UploadStats> {
-        // Bazel limits remote action building/input upload setup to CPU count.
-        let _remote_action_building = self
-            .data
-            .client
-            .remote_action_building_semaphore
-            .acquire()
-            .await
-            .map_err(|_| {
-                bz_error!(
-                    bz_error::ErrorTag::InternalError,
-                    "remote action building semaphore was closed"
-                )
-            })?;
-
         let mut delay = RE_TRANSIENT_RETRY_INITIAL_DELAY;
         for attempt in 0..=RE_TRANSIENT_RETRY_ATTEMPTS {
             let result = self
@@ -629,9 +615,6 @@ struct RemoteExecutionClientImpl {
     #[allocative(skip)]
     client: Option<REClient>,
     skip_remote_cache: bool,
-    /// How many remote action input upload setup operations may run at once.
-    #[allocative(skip)]
-    remote_action_building_semaphore: Arc<Semaphore>,
     /// How many simultaneous execute requests to RE
     #[allocative(skip)]
     exec_semaphore: Arc<Semaphore>,
@@ -785,9 +768,6 @@ impl RemoteExecutionClientImpl {
             Self {
                 client: Some(client),
                 skip_remote_cache: re_config.skip_remote_cache,
-                remote_action_building_semaphore: Arc::new(Semaphore::new(
-                    static_metadata.remote_action_building_semaphore_size(),
-                )),
                 exec_semaphore: Arc::new(Semaphore::new(static_metadata.exec_semaphore_size())),
                 download_files_semapore: Arc::new(PrioritySemaphore::new(
                     "buck2-download-priority-sem",
