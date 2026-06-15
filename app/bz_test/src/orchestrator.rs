@@ -53,6 +53,9 @@ use bz_build_api::interpreter::rule_defs::provider::builtin::external_runner_tes
 use bz_build_api::interpreter::rule_defs::provider::builtin::local_resource_info::FrozenLocalResourceInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use bz_build_api::keep_going::KeepGoing;
+use bz_build_api::materialize::HasMaterializationQueueTracker;
+use bz_build_api::materialize::MaterializationAndUploadContext;
+use bz_build_api::materialize::materialize_and_upload_artifact_group;
 use bz_build_signals::env::NodeDuration;
 use bz_build_signals::env::WaitingData;
 use bz_common::dice::cells::HasCellResolver;
@@ -120,6 +123,7 @@ use bz_execute::execute::result::CommandExecutionStatus;
 use bz_execute::execute::target::CommandExecutionTarget;
 use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_execute::materialize::materializer::HasMaterializer;
+use bz_execute::materialize::materializer::LostRemoteCasArtifacts;
 use bz_execute::re::action_identity::ReActionIdentity;
 use bz_execute_impl::executors::local::EnvironmentBuilder;
 use bz_execute_impl::executors::local::apply_local_execution_environment;
@@ -551,139 +555,164 @@ impl<'a> BuckTestOrchestrator<'a> {
             effective_test_execution_caching,
         )
         .await?;
-        let test_executable_expanded = Self::expand_test_executable(
-            dice,
-            &test_target,
-            test_info_ref,
-            Cow::Borrowed(&cmd),
-            Cow::Borrowed(&env),
-            Cow::Borrowed(&pre_create_dirs),
-            &test_executor.executor().executor_fs(),
-            &stage,
-            options,
-        )
-        .boxed()
-        .await?;
-        let ExpandedTestExecutable {
-            cwd,
-            cmd: expanded_cmd,
-            env: expanded_env,
-            ensured_inputs,
-            runfiles_inputs,
-            supports_re,
-            declared_outputs,
-            worker,
-        } = test_executable_expanded;
+        let mut retried_after_lost_remote_cas = false;
+        let mut required_resources = None;
 
-        let input_deps_action_keys: Vec<_> = ensured_inputs
-            .iter()
-            .flat_map(|(_, agv)| {
-                agv.iter()
-                    .filter_map(|(artifact, _)| artifact.action_key().map(|k| k.dupe()))
-            })
-            .collect::<StdBuckHashSet<_>>() // dedupe
-            .into_iter()
-            .collect();
+        loop {
+            let test_executable_expanded = Self::expand_test_executable(
+                dice,
+                &test_target,
+                test_info_ref,
+                Cow::Borrowed(&cmd),
+                Cow::Borrowed(&env),
+                Cow::Borrowed(&pre_create_dirs),
+                &test_executor.executor().executor_fs(),
+                &stage,
+                options,
+            )
+            .boxed()
+            .await?;
+            let ExpandedTestExecutable {
+                cwd,
+                cmd: expanded_cmd,
+                env: expanded_env,
+                ensured_inputs,
+                runfiles_inputs,
+                supports_re,
+                declared_outputs,
+                worker,
+            } = test_executable_expanded;
 
-        let executor_preference = Self::executor_preference(options, supports_re)?;
-        let required_resources = if test_executor
-            .executor()
-            .is_local_execution_possible(executor_preference)
-        {
-            let setup_local_resources_executor = Self::get_local_executor(dice, &fs).await?;
-            let simple_stage = stage.as_ref().into();
+            let input_deps_action_keys: Vec<_> = ensured_inputs
+                .iter()
+                .flat_map(|(_, agv)| {
+                    agv.iter()
+                        .filter_map(|(artifact, _)| artifact.action_key().map(|k| k.dupe()))
+                })
+                .collect::<StdBuckHashSet<_>>() // dedupe
+                .into_iter()
+                .collect();
+            let retry_inputs = ensured_inputs.clone();
 
-            let required_providers = {
-                required_providers(
-                    dice,
-                    test_info_ref.as_external(),
-                    &required_local_resources,
-                    &simple_stage,
-                )
-                .await?
-            };
-            // If some timeout is neeeded, use the same value as for the test itself which is better than nothing.
-            Self::setup_local_resources(
+            let executor_preference = Self::executor_preference(options, supports_re)?;
+            if required_resources.is_none()
+                && test_executor
+                    .executor()
+                    .is_local_execution_possible(executor_preference)
+            {
+                let setup_local_resources_executor = Self::get_local_executor(dice, &fs).await?;
+                let simple_stage = stage.as_ref().into();
+
+                let required_providers = {
+                    required_providers(
+                        dice,
+                        test_info_ref.as_external(),
+                        &required_local_resources,
+                        &simple_stage,
+                    )
+                    .await?
+                };
+                // If some timeout is neeeded, use the same value as for the test itself which is better than nothing.
+                required_resources = Some(
+                    Self::setup_local_resources(
+                        dice,
+                        cancellation,
+                        required_providers,
+                        setup_local_resources_executor,
+                        timeout,
+                        liveliness_observer.dupe(),
+                    )
+                    .await?,
+                );
+            }
+            let execution_request = Self::create_command_execution_request(
+                dice,
+                cwd,
+                expanded_cmd,
+                expanded_env,
+                ensured_inputs,
+                runfiles_inputs,
+                declared_outputs,
+                &fs,
+                Some(timeout),
+                Some(host_sharing_requirements.dupe()),
+                Some(executor_preference),
+                required_resources.clone().unwrap_or_default(),
+                worker,
+                test_executor.re_dynamic_image(),
+                test_executor.remote_execution_extra_params(),
+                network_access,
+            )
+            .boxed()
+            .await?;
+            let result = Self::execute_request(
                 dice,
                 cancellation,
-                required_providers,
-                setup_local_resources_executor,
-                timeout,
+                &test_target,
+                &stage,
+                test_executor.executor(),
+                execution_request,
                 liveliness_observer.dupe(),
+                test_executor.re_cache_enabled(),
+                effective_test_execution_caching,
             )
-            .await?
-        } else {
-            vec![]
-        };
-        let execution_request = Self::create_command_execution_request(
-            dice,
-            cwd,
-            expanded_cmd,
-            expanded_env,
-            ensured_inputs,
-            runfiles_inputs,
-            declared_outputs,
-            &fs,
-            Some(timeout),
-            Some(host_sharing_requirements),
-            Some(executor_preference),
-            required_resources,
-            worker,
-            test_executor.re_dynamic_image(),
-            test_executor.remote_execution_extra_params(),
-            network_access,
-        )
-        .boxed()
-        .await?;
-        let result = Self::execute_request(
-            dice,
-            cancellation,
-            &test_target,
-            &stage,
-            test_executor.executor(),
-            execution_request,
-            liveliness_observer.dupe(),
-            test_executor.re_cache_enabled(),
-            effective_test_execution_caching,
-        )
-        .boxed()
-        .await?;
+            .boxed()
+            .await;
 
-        if let Some(signals) = dice.per_transaction_data().get_build_signals() {
-            let duration = NodeDuration {
-                user: result.timing.execution_time,
-                total: result.timing.time_span,
-                queue: result.timing.queue_duration,
+            let result = match result {
+                Ok(result) => result,
+                Err(error)
+                    if !retried_after_lost_remote_cas
+                        && Self::is_lost_remote_cas_execute_error(&error) =>
+                {
+                    retried_after_lost_remote_cas = true;
+                    Self::rematerialize_test_inputs_after_lost_remote_cas(
+                        dice,
+                        cancellation,
+                        &retry_inputs,
+                    )
+                    .await?;
+                    continue;
+                }
+                Err(error) => return Err(error),
             };
 
-            match stage.as_ref() {
-                TestStage::Listing { suite, .. } => {
-                    signals.test_listing(
-                        test_target.target().dupe(),
-                        suite.to_owned(),
-                        duration.to_owned(),
-                        &input_deps_action_keys,
-                    );
-                }
-                TestStage::Testing {
-                    suite,
-                    testcases,
-                    variant,
-                    ..
-                } => {
-                    signals.test_execution(
-                        test_target.target().dupe(),
-                        suite.to_owned(),
+            if let Some(signals) = dice.per_transaction_data().get_build_signals() {
+                let duration = NodeDuration {
+                    user: result.timing.execution_time,
+                    total: result.timing.time_span,
+                    queue: result.timing.queue_duration,
+                };
+
+                match stage.as_ref() {
+                    TestStage::Listing { suite, .. } => {
+                        signals.test_listing(
+                            test_target.target().dupe(),
+                            suite.to_owned(),
+                            duration.to_owned(),
+                            &input_deps_action_keys,
+                        );
+                    }
+                    TestStage::Testing {
+                        suite,
                         testcases,
-                        variant.to_owned(),
-                        duration,
-                        &input_deps_action_keys,
-                    );
+                        variant,
+                        ..
+                    } => {
+                        signals.test_execution(
+                            test_target.target().dupe(),
+                            suite.to_owned(),
+                            testcases,
+                            variant.to_owned(),
+                            duration,
+                            &input_deps_action_keys,
+                        );
+                    }
                 }
             }
-        }
 
-        Ok(result)
+            return Ok(result);
+        }
     }
 }
 
@@ -1152,6 +1181,39 @@ impl BuckTestOrchestrator<'_> {
         Ok(executor_preference)
     }
 
+    fn is_lost_remote_cas_execute_error(error: &ExecuteError) -> bool {
+        match error {
+            ExecuteError::Error(error) => error
+                .find_typed_context::<LostRemoteCasArtifacts>()
+                .is_some(),
+            ExecuteError::Cancelled(_) => false,
+        }
+    }
+
+    async fn rematerialize_test_inputs_after_lost_remote_cas(
+        dice: &mut DiceComputations<'_>,
+        cancellation: &CancellationContext,
+        ensured_inputs: &[(ArtifactGroup, ArtifactGroupValues)],
+    ) -> Result<(), ExecuteError> {
+        let queue_tracker = dice
+            .per_transaction_data()
+            .get_materialization_queue_tracker();
+        for (artifact_group, _) in ensured_inputs {
+            materialize_and_upload_artifact_group(
+                dice,
+                cancellation,
+                artifact_group,
+                MaterializationAndUploadContext::materialize(),
+                &queue_tracker,
+            )
+            .await
+            .with_buck_error_context(|| {
+                format!("Error materializing test input `{artifact_group}` after lost remote CAS")
+            })?;
+        }
+        Ok(())
+    }
+
     /// Core request execution logic.
     async fn execute_request(
         dice: &mut DiceComputations<'_>,
@@ -1383,16 +1445,24 @@ impl BuckTestOrchestrator<'_> {
                 error,
                 execution_kind,
                 ..
-            } => ExecuteData {
-                stdout: ExecutionStream::Inline(Default::default()),
-                stderr: ExecutionStream::Inline(format!("{error:?}").into_bytes()),
-                status: ExecutionStatus::Finished {
-                    exitcode: exit_code.unwrap_or(1),
-                },
-                timing,
-                execution_kind,
-                outputs,
-            },
+            } => {
+                if error
+                    .find_typed_context::<LostRemoteCasArtifacts>()
+                    .is_some()
+                {
+                    return Err(ExecuteError::Error(error));
+                }
+                ExecuteData {
+                    stdout: ExecutionStream::Inline(Default::default()),
+                    stderr: ExecutionStream::Inline(format!("{error:?}").into_bytes()),
+                    status: ExecutionStatus::Finished {
+                        exitcode: exit_code.unwrap_or(1),
+                    },
+                    timing,
+                    execution_kind,
+                    outputs,
+                }
+            }
             CommandExecutionStatus::Cancelled {
                 execution_kind: _,
                 reason,

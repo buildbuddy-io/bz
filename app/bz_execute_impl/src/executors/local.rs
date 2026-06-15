@@ -4334,7 +4334,7 @@ pub async fn materialize_inputs(
                         producer_path_hint: lost_remote_cas_producer_path_hints
                             .get(source.path.as_ref())
                             .cloned(),
-                        origin,
+                        origin: Some(origin),
                     });
                     continue;
                 }

@@ -32,6 +32,7 @@ use crate::directory::ResolvedSymlinkUploadPath;
 use crate::directory::finalize_lazy_action_directory;
 use crate::directory::insert_artifact_lazy_for_execution;
 use crate::execute::request::ActionMetadataBlobData;
+use crate::execute::request::ArtifactUploadPathInfo;
 use crate::execute::request::CommandExecutionInput;
 
 pub fn inputs_directory(
@@ -40,11 +41,13 @@ pub fn inputs_directory(
     fs: &ArtifactFs,
 ) -> bz_error::Result<(
     ActionDirectoryBuilder,
+    Vec<ArtifactUploadPathInfo>,
     Vec<ExternalSymlinkUploadPath>,
     Vec<ResolvedSymlinkUploadPath>,
     Vec<(TrackedFileDigest, ActionMetadataBlobData)>,
 )> {
     let mut builder = LazyActionDirectoryBuilder::empty();
+    let mut artifact_upload_paths = Vec::new();
     let mut external_symlink_upload_paths = Vec::new();
     let mut resolved_symlink_upload_paths = Vec::new();
     let mut input_blobs = Vec::new();
@@ -60,6 +63,7 @@ pub fn inputs_directory(
                     &mut external_symlink_upload_paths,
                     &mut resolved_symlink_upload_paths,
                 )?;
+                add_artifact_group_upload_paths(group.as_ref(), fs, &mut artifact_upload_paths)?;
             }
             CommandExecutionInput::ArtifactWithExecutableOverrides {
                 group,
@@ -74,12 +78,15 @@ pub fn inputs_directory(
                     &mut external_symlink_upload_paths,
                     &mut resolved_symlink_upload_paths,
                 )?;
+                add_artifact_group_upload_paths(group.as_ref(), fs, &mut artifact_upload_paths)?;
             }
             CommandExecutionInput::ArtifactPathAlias {
                 source_path,
+                source_requires_materialization,
+                remote_cache_cas_info,
+                owner,
                 path,
                 value,
-                ..
             } => {
                 let abs_path = fs.fs().resolve(source_path);
                 let value =
@@ -93,6 +100,14 @@ pub fn inputs_directory(
                     &mut external_symlink_upload_paths,
                     &mut resolved_symlink_upload_paths,
                 )?;
+                artifact_upload_paths.push(ArtifactUploadPathInfo {
+                    path: path.clone(),
+                    source_path: source_path.clone(),
+                    source_requires_materialization: *source_requires_materialization,
+                    remote_cache_cas_info: remote_cache_cas_info.clone(),
+                    owner: owner.clone(),
+                    is_dir: value.is_dir(),
+                });
             }
             CommandExecutionInput::EmptyFile(path) => {
                 builder.insert(
@@ -145,10 +160,38 @@ pub fn inputs_directory(
     }
     Ok((
         finalize_lazy_action_directory(builder)?,
+        artifact_upload_paths,
         external_symlink_upload_paths,
         resolved_symlink_upload_paths,
         input_blobs,
     ))
+}
+
+fn add_artifact_group_upload_paths(
+    group: &dyn ArtifactGroupValuesDyn,
+    fs: &ArtifactFs,
+    upload_paths: &mut Vec<ArtifactUploadPathInfo>,
+) -> bz_error::Result<()> {
+    for (artifact, value, remote_cache_cas_info) in group.iter_with_remote_cache_cas_info() {
+        let path = artifact.resolve_path(
+            fs,
+            if artifact.has_content_based_path() {
+                Some(value.content_based_path_hash())
+            } else {
+                None
+            }
+            .as_ref(),
+        )?;
+        upload_paths.push(ArtifactUploadPathInfo {
+            path: path.clone(),
+            source_path: path,
+            source_requires_materialization: artifact.requires_materialization(fs),
+            remote_cache_cas_info: remote_cache_cas_info.cloned(),
+            owner: artifact.input_owner(),
+            is_dir: value.is_dir(),
+        });
+    }
+    Ok(())
 }
 
 fn add_artifact_group_to_directory_for_execution(

@@ -234,6 +234,7 @@ pub struct CommandExecutionPaths {
     outputs: BuckIndexSet<CommandExecutionOutput>,
 
     input_directory: ActionImmutableDirectory,
+    artifact_upload_paths: Vec<ArtifactUploadPathInfo>,
     external_symlink_upload_paths: Vec<ExternalSymlinkUploadPath>,
     resolved_symlink_upload_paths: Vec<ResolvedSymlinkUploadPath>,
     input_blobs: Vec<(TrackedFileDigest, ActionMetadataBlobData)>,
@@ -241,6 +242,16 @@ pub struct CommandExecutionPaths {
 
     /// Total size of input files.
     input_files_bytes: u64,
+}
+
+#[derive(Clone)]
+pub struct ArtifactUploadPathInfo {
+    pub path: ProjectRelativePathBuf,
+    pub source_path: ProjectRelativePathBuf,
+    pub source_requires_materialization: bool,
+    pub remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
+    pub owner: Option<CommandExecutionInputOwner>,
+    pub is_dir: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -261,6 +272,7 @@ impl CommandExecutionPaths {
     ) -> bz_error::Result<Self> {
         let (
             mut builder,
+            artifact_upload_paths,
             external_symlink_upload_paths,
             resolved_symlink_upload_paths,
             input_blobs,
@@ -303,6 +315,7 @@ impl CommandExecutionPaths {
             inputs,
             outputs,
             input_directory,
+            artifact_upload_paths,
             external_symlink_upload_paths,
             resolved_symlink_upload_paths,
             input_blobs,
@@ -350,6 +363,7 @@ impl CommandExecutionPaths {
             mut inputs,
             outputs,
             input_directory: _,
+            artifact_upload_paths: _,
             external_symlink_upload_paths: _,
             resolved_symlink_upload_paths: _,
             input_blobs: _,
@@ -364,18 +378,8 @@ impl CommandExecutionPaths {
         &self.input_directory
     }
 
-    pub fn artifact_path_alias_upload_paths(
-        &self,
-    ) -> impl Iterator<Item = (&ProjectRelativePath, &ProjectRelativePath, bool)> {
-        self.inputs.iter().filter_map(|input| match input {
-            CommandExecutionInput::ArtifactPathAlias {
-                source_path,
-                path,
-                value,
-                ..
-            } => Some((path.as_ref(), source_path.as_ref(), value.is_dir())),
-            _ => None,
-        })
+    pub fn artifact_upload_paths(&self) -> &[ArtifactUploadPathInfo] {
+        &self.artifact_upload_paths
     }
 
     pub fn external_symlink_upload_paths(&self) -> &[ExternalSymlinkUploadPath] {

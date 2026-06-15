@@ -22,6 +22,7 @@ use bz_core::bz_env;
 use bz_core::execution_types::executor_config::RemoteExecutorUseCase;
 use bz_core::fs::project::ProjectRoot;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
+use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
 use bz_data::ReUploadMetrics;
 use bz_directory::directory::directory::Directory;
 use bz_directory::directory::directory_iterator::DirectoryIterator;
@@ -32,6 +33,7 @@ use bz_directory::directory::fingerprinted_directory::FingerprintedDirectory;
 use bz_error::BuckErrorContext;
 use bz_error::conversion::from_any_with_tag;
 use bz_error::internal_error;
+use bz_fs::fs_util;
 use bz_hash::StdBuckHashMap;
 use bz_hash::StdBuckHashSet;
 use chrono::DateTime;
@@ -65,6 +67,7 @@ use crate::directory::ActionImmutableDirectory;
 use crate::directory::ReDirectorySerializer;
 use crate::execute::blobs::ActionBlobs;
 use crate::execute::cpu_load_gate::acquire_remote_action_building_cpu_permit;
+use crate::execute::request::ArtifactUploadPathInfo;
 use crate::execute::request::CommandExecutionPaths;
 use crate::materialize::materializer::ArtifactNotMaterializedReason;
 use crate::materialize::materializer::LostRemoteCasArtifact;
@@ -83,6 +86,19 @@ pub struct UploadStats {
 }
 
 pub struct Uploader {}
+
+#[derive(Clone)]
+struct UploadFileCandidate {
+    path: ProjectRelativePathBuf,
+    digest: TrackedFileDigest,
+    source: Option<ArtifactUploadPathInfo>,
+}
+
+impl UploadFileCandidate {
+    fn digest(&self) -> TDigest {
+        self.digest.to_re()
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct UploadDigestKey {
@@ -463,14 +479,15 @@ impl Uploader {
 
         if !missing_digests.is_empty() {
             let cpu_permit = acquire_remote_action_building_cpu_permit().await;
-            let artifact_path_alias_upload_paths = input_paths.map(|input_paths| {
+            let artifact_upload_paths = input_paths.map(|input_paths| {
                 let mut exact_paths = StdBuckHashMap::default();
                 let mut directory_paths = Vec::new();
-                for (path, source_path, is_dir) in input_paths.artifact_path_alias_upload_paths() {
-                    if is_dir {
-                        directory_paths.push((path, source_path));
+                for upload_path in input_paths.artifact_upload_paths() {
+                    if upload_path.is_dir {
+                        directory_paths.push((&upload_path.path, upload_path));
                     } else {
-                        exact_paths.insert(path.as_forward_relative_path(), source_path);
+                        exact_paths
+                            .insert(upload_path.path.as_forward_relative_path(), upload_path);
                     }
                 }
                 (exact_paths, directory_paths)
@@ -505,8 +522,7 @@ impl Uploader {
                 }
                 (exact_paths, directory_paths)
             });
-            let mut upload_file_paths = Vec::new();
-            let mut upload_file_digests = Vec::new();
+            let mut upload_file_candidates = Vec::new();
 
             {
                 let mut walk = input_dir.unordered_walk();
@@ -544,8 +560,11 @@ impl Uploader {
                                     None
                                 })
                             {
-                                upload_file_paths.push(upload_file_path);
-                                upload_file_digests.push(digest.to_re());
+                                upload_file_candidates.push(UploadFileCandidate {
+                                    path: upload_file_path,
+                                    digest: digest.dupe(),
+                                    source: None,
+                                });
                                 continue;
                             }
                             if let Some(upload_file_path) = external_symlink_upload_paths
@@ -571,24 +590,34 @@ impl Uploader {
                                 });
                                 continue;
                             }
-                            let upload_file_path = artifact_path_alias_upload_paths
+                            let (upload_file_path, upload_file_source) = artifact_upload_paths
                                 .as_ref()
                                 .and_then(|(exact_paths, directory_paths)| {
-                                    if let Some(source_path) = exact_paths.get(input_path) {
-                                        return Some(source_path.to_buf());
+                                    if let Some(source) = exact_paths.get(input_path) {
+                                        return Some((
+                                            source.source_path.clone(),
+                                            (*source).clone(),
+                                        ));
                                     }
-                                    for (path, source_path) in directory_paths {
+                                    for (path, source) in directory_paths {
                                         if let Some(suffix) = input_path
                                             .strip_prefix_opt(path.as_forward_relative_path())
                                         {
-                                            return Some(source_path.join(suffix));
+                                            let mut source = (*source).clone();
+                                            source.path = source.path.join(suffix);
+                                            source.source_path = source.source_path.join(suffix);
+                                            return Some((source.source_path.clone(), source));
                                         }
                                     }
                                     None
                                 })
-                                .unwrap_or_else(|| dir_path.join(input_path));
-                            upload_file_paths.push(upload_file_path);
-                            upload_file_digests.push(digest.to_re());
+                                .map(|(path, source)| (path, Some(source)))
+                                .unwrap_or_else(|| (dir_path.join(input_path), None));
+                            upload_file_candidates.push(UploadFileCandidate {
+                                path: upload_file_path,
+                                digest: digest.dupe(),
+                                source: upload_file_source,
+                            });
                         }
                         DirectoryEntry::Leaf(..) => unreachable!(), // TODO: Better representation of this.
                     };
@@ -611,15 +640,21 @@ impl Uploader {
             // it's actually needed for a local run, B might not have been
             // copied yet (or ever), so we should upload A directly instead.
             let upload_file_paths = materializer
-                .get_materialized_file_paths(upload_file_paths)
+                .get_materialized_file_paths(
+                    upload_file_candidates
+                        .iter()
+                        .map(|candidate| candidate.path.clone())
+                        .collect(),
+                )
                 .await?;
 
-            for (name, digest) in upload_file_paths.into_iter().zip(upload_file_digests) {
+            for (name, candidate) in upload_file_paths.into_iter().zip(upload_file_candidates) {
                 match name {
                     Ok(name) => {
+                        ensure_upload_file_exists(fs, &name, &candidate)?;
                         upload_files.push(NamedDigest {
                             name: fs.resolve(&name).as_maybe_relativized_str()?.to_owned(),
-                            digest,
+                            digest: candidate.digest(),
                             ..Default::default()
                         });
                     }
@@ -637,14 +672,20 @@ impl Uploader {
                             // artifact was uploaded, if it was the result of an action we just ran, it
                             // won't be here. On the flip side, if a digest has been in the CAS for
                             // a very long time, it might have expired.
-                            if file.digest.to_re() == digest {
+                            if file.digest == candidate.digest {
                                 if let Some(origin) = info.remote_origin() {
                                     let lost = LostRemoteCasArtifact {
                                         path: Arc::new(path.clone()),
-                                        owner: None,
+                                        owner: candidate
+                                            .source
+                                            .as_ref()
+                                            .and_then(|source| source.owner.clone()),
                                         missing_digests: Arc::from(vec![file.digest.dupe()]),
-                                        producer_path_hint: None,
-                                        origin,
+                                        producer_path_hint: candidate
+                                            .source
+                                            .as_ref()
+                                            .map(|source| Arc::new(source.source_path.clone())),
+                                        origin: Some(origin),
                                     };
                                     return Err(bz_error::bz_error!(
                                         bz_error::ErrorTag::Input,
@@ -663,22 +704,26 @@ impl Uploader {
                             }
                         }
 
-                        return Err(error_for_missing_file(&digest, err));
+                        return Err(error_for_missing_file(&candidate.digest(), err));
                     }
                     Err(ArtifactNotMaterializedReason::RequiresMaterialization { path }) => {
+                        let path_for_upload = path.clone();
                         upload_files.push(NamedDigest {
-                            name: fs.resolve(&path).as_maybe_relativized_str()?.to_owned(),
-                            digest,
+                            name: fs
+                                .resolve(&path_for_upload)
+                                .as_maybe_relativized_str()?
+                                .to_owned(),
+                            digest: candidate.digest(),
                             ..Default::default()
                         });
-                        paths_to_materialize.push(path);
+                        paths_to_materialize.push((path, candidate));
                     }
                     Err(
                         ref err @ ArtifactNotMaterializedReason::DeferredMaterializerCorruption {
                             ..
                         },
                     ) => {
-                        return Err(error_for_missing_file(&digest, err));
+                        return Err(error_for_missing_file(&candidate.digest(), err));
                     }
                 };
             }
@@ -686,9 +731,17 @@ impl Uploader {
 
         if !paths_to_materialize.is_empty() {
             materializer
-                .ensure_materialized(paths_to_materialize)
+                .ensure_materialized(
+                    paths_to_materialize
+                        .iter()
+                        .map(|(path, _candidate)| path.clone())
+                        .collect(),
+                )
                 .await
                 .buck_error_context("Error materializing paths for upload")?;
+            for (path, candidate) in &paths_to_materialize {
+                ensure_upload_file_exists(fs, path, candidate)?;
+            }
         }
 
         let (upload_files, upload_blobs, mut upload_claim) =
@@ -784,6 +837,45 @@ where
         blob: ReDirectorySerializer::serialize_entries(d.entries()),
         ..Default::default()
     }
+}
+
+fn ensure_upload_file_exists(
+    fs: &ProjectRoot,
+    path: &ProjectRelativePath,
+    candidate: &UploadFileCandidate,
+) -> bz_error::Result<()> {
+    if fs_util::try_exists(fs.resolve(path).as_abs_path())? {
+        return Ok(());
+    }
+
+    if let Some(source) = &candidate.source
+        && source.source_requires_materialization
+        && (source.owner.is_some() || source.remote_cache_cas_info.is_some())
+    {
+        let lost = LostRemoteCasArtifact {
+            path: Arc::new(path.to_buf()),
+            owner: source.owner.clone(),
+            missing_digests: Arc::from(vec![candidate.digest.dupe()]),
+            producer_path_hint: Some(Arc::new(source.source_path.clone())),
+            origin: source
+                .remote_cache_cas_info
+                .as_ref()
+                .and_then(|info| info.remote_origin()),
+        };
+        return Err(bz_error::bz_error!(
+            bz_error::ErrorTag::Input,
+            "Materialized artifact `{}` was selected for remote input upload but is missing on disk",
+            path,
+        )
+        .context(LostRemoteCasArtifacts::new(vec![lost])));
+    }
+
+    Err(error_for_missing_file(
+        &candidate.digest(),
+        &ArtifactNotMaterializedReason::RequiresMaterialization {
+            path: path.to_buf(),
+        },
+    ))
 }
 
 fn error_for_missing_file(

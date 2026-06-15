@@ -809,7 +809,7 @@ pub struct LostRemoteRewindRecord {
     artifact: Option<Artifact>,
     artifact_group: Option<ArtifactGroup>,
     missing_digests: Arc<[TrackedFileDigest]>,
-    origin: RemoteActionCacheOrigin,
+    origin: Option<RemoteActionCacheOrigin>,
 }
 
 pub struct LostRemoteRewindPlan {
@@ -921,7 +921,12 @@ impl LostRemoteRewindPlan {
                     owner,
                     producer,
                     artifact,
-                    record.origin.action_digest(),
+                    record
+                        .origin
+                        .as_ref()
+                        .map_or_else(|| "<local materializer/action cache>".to_owned(), |origin| {
+                            origin.action_digest().to_string()
+                        }),
                     missing_digests,
                 )
             })
@@ -931,7 +936,7 @@ impl LostRemoteRewindPlan {
 
     fn rewind_reason(&self) -> String {
         format!(
-            "remote-backed inputs are missing from CAS; purged remote cache metadata and rewound {} producer action(s) plus the failed action input graph:\n{}",
+            "materialized inputs are missing; rewound {} producer action(s) plus the failed action input graph:\n{}",
             self.producers.len(),
             self.display_summary(),
         )
@@ -995,7 +1000,7 @@ async fn prepare_lost_remote_rewind(
     plan: &LostRemoteRewindPlan,
 ) -> bz_error::Result<()> {
     tracing::warn!(
-        "Remote-backed inputs are missing from CAS; purging remote cache metadata and rewinding {} producer action(s): {}",
+        "Materialized inputs are missing; rewinding {} producer action(s): {}",
         plan.producers.len(),
         plan.producers
             .values()
@@ -1005,7 +1010,9 @@ async fn prepare_lost_remote_rewind(
     );
 
     invalidate_rewind_action_outputs(ctx, failed_action, plan).await?;
-    purge_remote_cache_metadata(ctx).await?;
+    if plan.records.iter().any(|record| record.origin.is_some()) {
+        purge_remote_cache_metadata(ctx).await?;
+    }
     // The failed action's own retry bypasses the action cache via its local retry
     // loop; only the rewound producers need a recorded bypass for when their
     // recomputation reaches `build_action_impl`.

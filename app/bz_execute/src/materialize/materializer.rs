@@ -52,7 +52,7 @@ pub struct LostRemoteCasArtifact {
     pub missing_digests: Arc<[TrackedFileDigest]>,
     pub producer_path_hint: Option<Arc<ProjectRelativePathBuf>>,
     #[allocative(skip)]
-    pub origin: RemoteActionCacheOrigin,
+    pub origin: Option<RemoteActionCacheOrigin>,
 }
 
 #[derive(Debug, Clone, Allocative)]
@@ -118,16 +118,15 @@ fn display_lost_remote_cas_artifacts<'a>(
 ) -> String {
     let artifacts: Vec<_> = artifacts.collect();
     let mut message = format!(
-        "{} remote-backed CAS artifact{} missing",
+        "{} materialized artifact{} missing",
         artifacts.len(),
         if artifacts.len() == 1 { " is" } else { "s are" },
     );
     for artifact in artifacts {
-        message.push_str(&format!(
-            "\n  `{}` for action `{}`",
-            artifact.path,
-            artifact.origin.action_digest(),
-        ));
+        message.push_str(&format!("\n  `{}`", artifact.path));
+        if let Some(origin) = &artifact.origin {
+            message.push_str(&format!(" for action `{}`", origin.action_digest()));
+        }
         if let Some(path) = &artifact.producer_path_hint {
             message.push_str(&format!(", producer path hint `{path}`"));
         }
