@@ -41,7 +41,14 @@ install_bz() (
   artifact="bz-${os}-${arch}"
   latest_binary_url="$(
     curl -fsSL "https://api.github.com/repos/buildbuddy-io/bz/releases/${release}" |
-      perl -nle 'if (/"browser_download_url":\s*"(.*?'"${artifact}"')"/) { print $1 }'
+      awk -v artifact="$artifact" '
+        /"browser_download_url"/ && index($0, artifact) {
+          sub(/^.*"browser_download_url":[[:space:]]*"/, "")
+          sub(/".*$/, "")
+          print
+          exit
+        }
+      '
   )"
 
   if [[ -z "$latest_binary_url" ]]; then

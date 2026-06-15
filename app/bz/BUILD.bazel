@@ -1,4 +1,5 @@
-load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_deps")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro")
 
@@ -21,6 +22,53 @@ COMMON_RUSTC_ENV = {
     "CARGO_PKG_VERSION_PRE": "",
     }
 
+BZ_COMMON_CRATES = [
+    "backtrace",
+    "blake3",
+    "clap",
+    "fbinit",
+    "hex",
+    "libc",
+    "rustls",
+    "tokio",
+    "tracing",
+]
+
+BZ_HOST_UNIX_PLATFORMS = (
+    "@rules_rust//rust/platform:aarch64-apple-darwin",
+    "@rules_rust//rust/platform:aarch64-unknown-linux-gnu",
+    "@rules_rust//rust/platform:x86_64-apple-darwin",
+    "@rules_rust//rust/platform:x86_64-unknown-linux-gnu",
+    "@rules_rust//rust/platform:x86_64-unknown-nixos-gnu",
+)
+
+BZ_HOST_UNIX_CRATES = [
+    "dirs",
+    "nix",
+]
+
+BZ_WINDOWS_PLATFORMS = (
+    "@rules_rust//rust/platform:aarch64-pc-windows-msvc",
+    "@rules_rust//rust/platform:x86_64-pc-windows-msvc",
+)
+
+BZ_WINDOWS_CRATES = [
+    "mimalloc",
+    "windows-sys",
+]
+
+BZ_CRATE_DEPS = (
+    crate_deps(BZ_COMMON_CRATES) +
+    selects.with_or({
+        BZ_HOST_UNIX_PLATFORMS: crate_deps(BZ_HOST_UNIX_CRATES),
+        "//conditions:default": [],
+    }) +
+    selects.with_or({
+        BZ_WINDOWS_PLATFORMS: crate_deps(BZ_WINDOWS_CRATES),
+        "//conditions:default": [],
+    })
+)
+
 rust_library(
     name = "bz_lib",
     crate_name = "bz",
@@ -28,7 +76,7 @@ rust_library(
     srcs = glob(["src/**/*.rs"]),
     edition = "2024",
     aliases = aliases(),
-    deps = all_crate_deps(normal = True) + [
+    deps = BZ_CRATE_DEPS + [
         "//app/bz_action_impl:bz_action_impl",
         "//app/bz_analysis:bz_analysis",
         "//app/bz_anon_target:bz_anon_target",
@@ -82,6 +130,7 @@ rust_library(
         "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_flags = ["--cfg=buck_build"],
     rustc_env = COMMON_RUSTC_ENV,
     compile_data = glob([
         "**/*",
@@ -100,7 +149,7 @@ rust_binary(
     srcs = ["bin/bz.rs"],
     edition = "2024",
     aliases = aliases(),
-    deps = all_crate_deps(normal = True) + [
+    deps = BZ_CRATE_DEPS + [
         ":bz_lib",
         "//app/bz_action_impl:bz_action_impl",
         "//app/bz_analysis:bz_analysis",
@@ -155,6 +204,7 @@ rust_binary(
         "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_flags = ["--cfg=buck_build"],
     rustc_env = COMMON_RUSTC_ENV,
     compile_data = glob([
         "**/*",

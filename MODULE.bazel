@@ -5,12 +5,13 @@ module(
 
 bazel_dep(name = "rules_rust", version = "0.70.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.2")
-bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.19")
 bazel_dep(name = "rules_java", version = "9.1.0")
 bazel_dep(name = "rules_python", version = "1.7.0")
 bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4")
+bazel_dep(name = "llvm", version = "0.8.5")
 
 RUST_EDITION = "2024"
 RUST_VERSION = "nightly/2026-01-18"
@@ -28,6 +29,10 @@ SUPPORTED_RUST_PLATFORM_TRIPLES = [
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = RUST_EDITION,
+    extra_target_triples = SUPPORTED_RUST_PLATFORM_TRIPLES + [
+        "aarch64-unknown-linux-musl",
+        "x86_64-unknown-linux-musl",
+    ],
     extra_rustc_flags = [
         "--cfg=tokio_unstable",
     ],
@@ -35,6 +40,15 @@ rust.toolchain(
 )
 use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
+
+register_toolchains(
+    "@llvm//toolchain:linux_aarch64_to_linux_aarch64",
+    "@llvm//toolchain:linux_x86_64_to_linux_x86_64",
+    "@llvm//toolchain:macos_aarch64_to_linux_aarch64",
+    "@llvm//toolchain:macos_aarch64_to_linux_x86_64",
+    "@llvm//toolchain:macos_x86_64_to_linux_aarch64",
+    "@llvm//toolchain:macos_x86_64_to_linux_x86_64",
+)
 
 buildbuddy = use_extension("@toolchains_buildbuddy//:extensions.bzl", "buildbuddy")
 buildbuddy.platform(buildbuddy_container_image = "UBUNTU24_04_IMAGE")
