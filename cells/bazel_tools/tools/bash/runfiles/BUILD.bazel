@@ -1,3 +1,5 @@
+load(":runfiles.bzl", "bazel_tools_runfiles")
+
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
@@ -5,8 +7,7 @@ filegroup(
     srcs = glob(["**"]),
 )
 
-alias(
+bazel_tools_runfiles(
     name = "runfiles",
-    actual = "@rules_shell//shell/runfiles",
-    visibility = ["//visibility:public"],
+    src = "runfiles.bash",
 )
