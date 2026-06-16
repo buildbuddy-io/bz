@@ -3037,6 +3037,15 @@ fn bzlmod_dep_graph_from_selection(
         .iter()
         .map(|(name, version)| (name.clone(), version.clone()))
         .collect::<BTreeMap<_, _>>();
+    let root_visible_override_dep_keys = root_deps
+        .iter()
+        .filter(|dep| dep.version.is_empty() && dep.apparent_name.is_some())
+        .filter_map(|dep| {
+            selected_versions
+                .get(&dep.name)
+                .map(|version| (dep.name.clone(), version.clone()))
+        })
+        .collect::<BTreeSet<_>>();
     let mut root_aliases_by_key = BTreeMap::<(String, String), BTreeSet<String>>::new();
     let mut cell_aliases_by_cell = BzlmodCellAliasesByCell::default();
     if !root_module.repo_name.is_empty() {
@@ -3073,6 +3082,15 @@ fn bzlmod_dep_graph_from_selection(
             &canonical_repo_name,
             &cell_name,
         );
+        if root_visible_override_dep_keys.contains(key) {
+            for alias in &module.module_aliases {
+                add_bzlmod_cell_alias(&mut cell_aliases_by_cell, "root", alias, &cell_name);
+                root_aliases_by_key
+                    .entry(key.clone())
+                    .or_default()
+                    .insert(alias.clone());
+            }
+        }
         if module.dep.name == "platforms" {
             root_aliases_by_key
                 .entry(key.clone())
@@ -6019,6 +6037,88 @@ mod tests {
 
         assert_eq!(root_deps.len(), 1);
         assert_eq!(root_deps[0].apparent_name.as_deref(), Some("llvm"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_direct_override_dep_module_aliases_are_visible_in_root() -> bz_error::Result<()>
+    {
+        let key = ("rules_docker".to_owned(), String::new());
+        let root_deps = vec![super::BazelDep {
+            name: key.0.clone(),
+            version: key.1.clone(),
+            apparent_name: Some("io_bazel_rules_docker".to_owned()),
+        }];
+        let root_module = super::RootBzlmodModule {
+            name: "root".to_owned(),
+            version: String::new(),
+            repo_name: "root".to_owned(),
+            canonical_repo_name: String::new(),
+            lockfile_extension_generated_repos: std::collections::BTreeMap::new(),
+            lockfile_extension_facts: std::collections::BTreeSet::new(),
+            constants: Vec::new(),
+            extension_usages: Vec::new(),
+            use_repo_rule_invocations: Vec::new(),
+            registered_toolchains: Vec::new(),
+        };
+        let module = super::DiscoveredBcrModule {
+            dep: super::BazelDep {
+                name: key.0.clone(),
+                version: key.1.clone(),
+                apparent_name: None,
+            },
+            source_json: super::empty_bcr_source_json(),
+            module_aliases: vec![
+                "rules_docker".to_owned(),
+                "io_bazel_rules_docker".to_owned(),
+            ],
+            use_repo_aliases: Vec::new(),
+            extension_usages: Vec::new(),
+            use_repo_rule_invocations: Vec::new(),
+            constants: Vec::new(),
+            registered_toolchains: Vec::new(),
+            deps: Vec::new(),
+        };
+        let mut discovered = std::collections::BTreeMap::new();
+        discovered.insert(key.clone(), module);
+        let selected_keys = std::collections::BTreeSet::from([key.clone()]);
+        let selection = super::BzlmodSelectionResult {
+            discovered: discovered.clone(),
+            selected_keys: selected_keys.clone(),
+            selected_keys_in_bfs_order: vec![key.clone()],
+            selected_keys_in_dependency_order: vec![key.clone()],
+            canonical_repo_names_by_key: super::bzlmod_canonical_repo_names_by_key(&selected_keys),
+        };
+
+        let dep_graph = super::bzlmod_dep_graph_from_selection(
+            &root_deps,
+            root_module,
+            discovered,
+            &selection,
+        )?;
+
+        assert_eq!(
+            super::bzlmod_cell_alias_target(
+                &dep_graph.cell_aliases_by_cell,
+                "root",
+                "io_bazel_rules_docker",
+            ),
+            Some("rules_docker+")
+        );
+        assert_eq!(
+            super::bzlmod_cell_alias_target(
+                &dep_graph.cell_aliases_by_cell,
+                "root",
+                "rules_docker",
+            ),
+            Some("rules_docker+")
+        );
+        assert!(
+            dep_graph
+                .root_aliases_by_key
+                .get(&key)
+                .is_some_and(|aliases| aliases.contains("rules_docker"))
+        );
         Ok(())
     }
 
