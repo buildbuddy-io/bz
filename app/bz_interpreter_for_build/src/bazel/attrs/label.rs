@@ -22,6 +22,19 @@ impl AttrTypeCoerce for BazelLabelAttrType {
     ) -> bz_error::Result<CoercedAttr> {
         if let Some(value_str) = value.unpack_str() {
             if ctx.is_bazel_compat_cell() {
+                // This attr type is only built when `allow_files` is set, so source
+                // files are permitted alongside rule deps. Bazel exempts source
+                // files matching `allow_files` (e.g. `.lds` linker scripts listed in
+                // a cc rule's `deps`) from the attribute's provider requirement. A
+                // same-cell reference may therefore name an actual source file; try
+                // source coercion first (it only succeeds for a file present in the
+                // package listing) and fall back to treating it as a dependency.
+                let is_cross_cell = value_str.starts_with("//") || value_str.starts_with('@');
+                if !is_cross_cell {
+                    if let Ok(coerced) = self.source.coerce_item(configurable, ctx, value) {
+                        return Ok(coerced);
+                    }
+                }
                 return self
                     .dep
                     .coerce_item(configurable, ctx, value)
