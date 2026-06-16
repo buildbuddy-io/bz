@@ -6105,6 +6105,36 @@ mod tests {
     }
 
     #[test]
+    fn test_bzlmod_single_version_override_accepts_canonical_root_patch_label()
+    -> bz_error::Result<()> {
+        let evaluated = eval_bzlmod_module(indoc!(
+            r#"
+            single_version_override(
+                module_name = "googleapis",
+                patch_strip = 1,
+                patches = [
+                    "@@//buildpatches:bzlmod_googleapis.patch",
+                ],
+            )
+            "#
+        ))?;
+        let override_config = evaluated
+            .single_version_overrides
+            .get("googleapis")
+            .unwrap();
+
+        assert_eq!(
+            override_config
+                .patches
+                .iter()
+                .map(|patch| patch.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["buildpatches/bzlmod_googleapis.patch"]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_bzlmod_archive_override_preserves_url_mirror_order() -> bz_error::Result<()> {
         let evaluated = eval_bzlmod_module(indoc!(
             r#"

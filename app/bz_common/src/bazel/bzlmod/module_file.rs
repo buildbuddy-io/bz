@@ -569,11 +569,11 @@ pub(super) fn bzlmod_include_label_to_path(
 }
 
 fn module_include_to_path(current_module_file: &str, label: &str) -> Option<String> {
-    if label.starts_with('@') {
-        return None;
-    }
-
-    if let Some(rest) = label.strip_prefix("//") {
+    if let Some(rest) = label
+        .strip_prefix("//")
+        .or_else(|| label.strip_prefix("@//"))
+        .or_else(|| label.strip_prefix("@@//"))
+    {
         let (package, name) = rest.split_once(':')?;
         return Some(if package.is_empty() {
             name.to_owned()
