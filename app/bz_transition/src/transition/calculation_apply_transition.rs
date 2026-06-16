@@ -25,12 +25,14 @@ use bz_build_api::transition::TRANSITION_CALCULATION;
 use bz_build_api::transition::TransitionAttrs;
 use bz_build_api::transition::TransitionCalculation;
 use bz_common::dice::cells::HasCellResolver;
+use bz_core::bzl::ImportPath;
 use bz_core::configuration::cfg_diff::cfg_diff;
 use bz_core::configuration::data::BazelBuildSettingValue;
 use bz_core::configuration::data::ConfigurationData;
 use bz_core::configuration::data::ConfigurationDataData;
 use bz_core::configuration::transition::applied::TransitionApplied;
 use bz_core::configuration::transition::id::TransitionId;
+use bz_core::package::PackageLabel;
 use bz_core::provider::label::ProvidersLabel;
 use bz_core::target::label::label::TargetLabel;
 use bz_error::BuckErrorContext;
@@ -41,6 +43,7 @@ use bz_interpreter::factory::BuckStarlarkModule;
 use bz_interpreter::factory::StarlarkEvaluatorProvider;
 use bz_interpreter::print_handler::EventDispatcherPrintHandler;
 use bz_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use bz_interpreter::types::bazel::label_context::StarlarkLabelResolutionContext;
 use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use bz_node::attrs::coerced_attr::CoercedAttr;
@@ -97,6 +100,37 @@ enum ApplyTransitionError {
 }
 
 const BAZEL_PLATFORMS_OPTION: &str = "//command_line_option:platforms";
+
+fn transition_import_path(transition_id: &TransitionId) -> Option<&ImportPath> {
+    match transition_id {
+        TransitionId::MagicObject { path, .. } => Some(path),
+        TransitionId::BazelAttribute(inner) => transition_import_path(inner),
+        TransitionId::Target(_) | TransitionId::BazelAnalysisTest { .. } => None,
+    }
+}
+
+async fn transition_label_resolution_context(
+    ctx: &mut DiceComputations<'_>,
+    transition_id: &TransitionId,
+) -> bz_error::Result<Option<StarlarkLabelResolutionContext>> {
+    let Some(path) = transition_import_path(transition_id) else {
+        return Ok(None);
+    };
+    let cell_name = path.cell();
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let cell_alias_resolver = ctx.get_cell_alias_resolver(cell_name).await?;
+    let package = PackageLabel::from_cell_path(
+        path.package_root()
+            .map(|path| path.as_ref())
+            .unwrap_or_else(|| path.path_parent()),
+    )?;
+    Ok(Some(StarlarkLabelResolutionContext::new(
+        cell_name,
+        cell_resolver,
+        cell_alias_resolver,
+        Some(package),
+    )))
+}
 
 fn bazel_transition_input_value<'v>(
     key: &str,
@@ -793,11 +827,15 @@ async fn do_apply_transition(
         refs_refs.push(provider_collection_value);
     }
     let print = EventDispatcherPrintHandler(get_dispatcher());
+    let label_resolution_context = transition_label_resolution_context(ctx, transition_id).await?;
     let eval_kind = StarlarkEvalKind::Transition(Arc::new(transition_id.clone()));
     let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind).await?;
     let applied = BuckStarlarkModule::with_profiling(|module| {
         let (finished_eval, res) =
             provider.with_evaluator(&module, cancellation.into(), |eval, _| {
+                if let Some(label_resolution_context) = &label_resolution_context {
+                    eval.extra = Some(label_resolution_context);
+                }
                 eval.set_print_handler(&print);
                 eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
                 let refs = module.heap().alloc(AllocStruct(refs));
