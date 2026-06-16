@@ -10,11 +10,18 @@
 | --- | --- |
 | `bz targets //absl/strings:strings` | ✅ resolves |
 | `bz build //absl/strings:strings` | ✅ builds `libstrings.a` + `.so` (41 actions, ~13s first run) |
-| `bz build //...` | ❌ then ✅ — library targets all build; `cc_test` targets hit F1 |
+| `bz build //...` | ✅ **entire repo builds** (1152 actions, exit 0) after F1+F2+F3 |
 
-## Bugs surfaced
+## Status: ✅ FULLY BUILDS with bz
 
-- **F1** — `ctx.exec_groups` missing on `AnalysisContext` (cc_test). See FINDINGS.md.
+`bz build //...` completes successfully (libraries, cc_test, cc_binary benchmarks
+incl. `@google_benchmark` external dep, linker scripts). Required three bz fixes.
+
+## Bugs surfaced & fixed
+
+- **F1** — `ctx.exec_groups` missing on `AnalysisContext` (cc_test). Fixed.
+- **F2** — `config_setting` rejected `define_values` attr (perfcounters). Fixed.
+- **F3** — source files (`.lds`) in cc `deps` failed `CcInfo` provider check. Fixed.
 
 ## Notes
 

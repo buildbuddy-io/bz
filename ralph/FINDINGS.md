@@ -11,6 +11,39 @@ Format per finding:
 
 ---
 
+## F3: source files (e.g. `.lds`) in cc `deps` fail provider check
+- **Repo:** abseil-cpp (`//absl/flags:flag_benchmark`, a cc_binary)
+- **Symptom:** `Attribute requires a dep that provides 'CcInfo', but it was not
+  found on '...flag_benchmark.lds'. Found these providers: DefaultInfo`.
+- **Root cause:** rules_cc declares `deps = attr.label_list(allow_files =
+  ALLOWED_FILES_IN_DEPS, providers = [CcInfo])` (`.lds`/`.ld` linker scripts are in
+  ALLOWED_FILES_IN_DEPS). Bazel exempts source files matching `allow_files` from the
+  provider requirement. bz models this attr as `AttrType::bazel_label(dep, source)`
+  (a union), but `BazelLabelAttrType::coerce_item`
+  (`app/bz_interpreter_for_build/src/bazel/attrs/label.rs`) **unconditionally**
+  coerced every string as `dep` in bazel-compat cells, so a source file ran through
+  dep-resolution and failed `check_providers`.
+- **Fix:** In bazel-compat cells, for same-cell references (not `//`/`@`), try
+  `source` coercion first (succeeds only for a real source file in the package
+  listing) and fall back to `dep`. Matches Bazel's allow_files exemption.
+- **Status:** fixing
+
+---
+
+## F2: `config_setting` rejects `define_values`
+- **Repo:** abseil-cpp (`bz build //...`, e.g. `//absl/.../perfcounters`)
+- **Symptom:** `Found 'define_values' extra named parameter(s) for call to config_setting`.
+- **Root cause:** bz's `config_setting` (prelude `core_rules.bzl` decl +
+  `configurations/rules.bzl` impl) supports `values`/`constraint_values`/`flag_values`
+  but not Bazel's `define_values` attr (sugar for matching `--define K=V`).
+- **Fix:** Added `define_values` dict attr; impl folds entries into per-define
+  command-line build settings. bz doesn't model `--define`, so these conditions are
+  inert (never match unless set) — correct default. Prelude is bundled into the bz
+  binary (`//:prelude_sources`), so a rebuild is required.
+- **Status:** fixing
+
+---
+
 ## F1: `ctx.exec_groups` missing on `AnalysisContext`
 - **Repo:** abseil-cpp (`bz build //...`)
 - **Symptom:** `cc_test` targets fail analysis with
