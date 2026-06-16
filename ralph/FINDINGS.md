@@ -11,6 +11,42 @@ Format per finding:
 
 ---
 
+## F5: bare native cc rules (no `@rules_cc` load) are unimplemented
+- **Repo:** re2 (`//app:_re2.js`, a bare `cc_binary` with no load statement)
+- **Symptom:** `fail: Unimplemented rule type 'cc_binary' for target '//app:_re2.js'`.
+- **Root cause:** bz wires bare `cc_binary`/`cc_library`/`cc_test` globals
+  (`cells/prelude/bazel/native_rules.bzl`) to buck2-style prelude impls that are NOT
+  in `_implemented_rules`, so they resolve to `_unimplemented_impl`. bz expects cc
+  rules to be loaded from `@rules_cc` (which works well). Bazel 7's autoloads rewrite
+  bare cc rules to `@rules_cc//cc:*.bzl`, so bare usage builds there.
+- **Impact:** Affects projects with old-style BUILD files that use cc rules without
+  loading from rules_cc. Modern projects (incl. re2's main targets) load from
+  rules_cc and are unaffected.
+- **Fix:** Not implemented. Proper fix = autoload bare cc rules to rules_cc (or
+  implement buck2-style cc rule impls) — a substantial change with cell-bootstrap
+  complications. Documented for upstream. The re2 case also needs Emscripten, so it
+  can't be fully verified on this VM anyway.
+- **Status:** documented / open
+
+---
+
+## F4: `py_internal.cc_helper` is None (rules_python + cc)
+- **Repo:** re2 (`//python:re2_test`, pybind11 Python bindings)
+- **Symptom:** `Object of type 'NoneType' has no attribute
+  'is_valid_shared_library_artifact'` at rules_python `common.bzl:454`.
+- **Root cause:** rules_python does `cc_helper = getattr(py_internal, "cc_helper",
+  None)` and calls `cc_helper.is_valid_shared_library_artifact(f)` for files in a
+  py_library's cc deps. bz's `BazelPyInternal` (`app/bz_interpreter_for_build/src/
+  bazel/python.rs`) exposed no `cc_helper`, so the getattr default `None` was used.
+- **Fix:** Add a `cc_helper` attribute on `py_internal` returning a `BazelCcHelper`
+  value implementing `is_valid_shared_library_artifact` (checks shared-library
+  extensions + versioned `.so.N`). Other cc_helper methods (find_cpp_toolchain,
+  is_stamping_enabled, get_static_mode_params...) used by py_binary/py_executable
+  are not yet implemented — add if a later target needs them.
+- **Status:** fixing
+
+---
+
 ## F3: source files (e.g. `.lds`) in cc `deps` fail provider check
 - **Repo:** abseil-cpp (`//absl/flags:flag_benchmark`, a cc_binary)
 - **Symptom:** `Attribute requires a dep that provides 'CcInfo', but it was not

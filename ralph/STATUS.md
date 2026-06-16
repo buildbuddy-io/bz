@@ -4,12 +4,17 @@ _Last updated: 2026-06-17 00:00 UTC_
 
 ## Now
 
-- abseil-cpp ✅ fully builds. Moving to next repo: **re2** (cloned, ready).
+- re2 ✅ core + Python bindings build. Moving to next repo: **protobuf**.
 
 ## Done
 
 - Built `bz` binary (`bazel build //app/bz:bz`), wrapped at `~/bin/bz`.
-- **abseil-cpp: `bz build //...` fully succeeds** after fixing F1, F2, F3 (all committed).
+- **abseil-cpp: `bz build //...` fully succeeds** after fixing F1, F2, F3.
+- **re2: core lib + pybind extension + py_library/py_test build** after F4.
+  Only `//app` (emscripten WASM) unbuildable — needs emcc + bare cc_binary (F5).
+
+## Bugs fixed (committed): F1 exec_groups, F2 define_values, F3 .lds-in-deps, F4 cc_helper.
+## Open: F5 bare native cc rules unimplemented (documented).
 
 ## Environment
 
