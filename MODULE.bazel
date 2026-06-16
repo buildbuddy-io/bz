@@ -15,6 +15,9 @@ bazel_dep(name = "llvm", version = "0.8.5")
 
 RUST_EDITION = "2024"
 RUST_VERSION = "nightly/2026-01-18"
+RUST_EXTRA_RUSTC_FLAGS = [
+    "--cfg=tokio_unstable",
+]
 SUPPORTED_RUST_PLATFORM_TRIPLES = [
     "aarch64-apple-darwin",
     "aarch64-unknown-linux-gnu",
@@ -29,13 +32,35 @@ SUPPORTED_RUST_PLATFORM_TRIPLES = [
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = RUST_EDITION,
-    extra_target_triples = SUPPORTED_RUST_PLATFORM_TRIPLES + [
-        "aarch64-unknown-linux-musl",
-        "x86_64-unknown-linux-musl",
+    extra_target_triples = SUPPORTED_RUST_PLATFORM_TRIPLES,
+    extra_rustc_flags = RUST_EXTRA_RUSTC_FLAGS,
+    versions = [RUST_VERSION],
+)
+
+rust.repository_set(
+    name = "rust_linux_aarch64_musl",
+    edition = RUST_EDITION,
+    exec_triple = "aarch64-unknown-linux-gnu",
+    extra_rustc_flags = RUST_EXTRA_RUSTC_FLAGS,
+    target_compatible_with = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+        "@llvm//constraints/libc:musl",
     ],
-    extra_rustc_flags = [
-        "--cfg=tokio_unstable",
+    target_triple = "aarch64-unknown-linux-musl",
+    versions = [RUST_VERSION],
+)
+rust.repository_set(
+    name = "rust_linux_x86_64_musl",
+    edition = RUST_EDITION,
+    exec_triple = "x86_64-unknown-linux-gnu",
+    extra_rustc_flags = RUST_EXTRA_RUSTC_FLAGS,
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+        "@llvm//constraints/libc:musl",
     ],
+    target_triple = "x86_64-unknown-linux-musl",
     versions = [RUST_VERSION],
 )
 use_repo(rust, "rust_toolchains")
