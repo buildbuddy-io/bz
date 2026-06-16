@@ -8,6 +8,8 @@ use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
+use std::process::Command;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -68,6 +70,8 @@ use bz_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
 use bz_core::cells::external::BzlmodShellConfigSetup;
 use bz_core::cells::external::BzlmodXcodeConfigSetup;
 use bz_core::cells::external::ExternalCellOrigin;
+use bz_core::cells::external::GitCellSetup;
+use bz_core::cells::external::GitObjectFormat;
 use bz_core::cells::external::bzlmod_cell_name;
 use bz_core::cells::external::register_bzlmod_cell_aliases_from_refs;
 use bz_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
@@ -154,6 +158,7 @@ use crate::dice::progress::dice_state_update_stage;
 use crate::legacy_configs::configs::BazelCompatCellAlias;
 use crate::legacy_configs::configs::BazelCompatExternalModule;
 use crate::legacy_configs::configs::BazelCompatGeneratedModule;
+use crate::legacy_configs::configs::BazelCompatGitModule;
 use crate::legacy_configs::configs::BazelCompatRegistryModule;
 use crate::legacy_configs::configs::LegacyBuckConfig;
 use crate::legacy_configs::dice::HasLegacyConfigs;
@@ -213,8 +218,7 @@ type DiscoveredBcrModules = BTreeMap<(String, String), DiscoveredBcrModule>;
 static BZLMOD_HTTP_CLIENT: LazyLock<tokio::sync::OnceCell<HttpClient>> =
     LazyLock::new(tokio::sync::OnceCell::new);
 
-const BAZEL_TOOLS_MODULE_TOOLS: &str =
-    include_str!("../../../../cells/bazel_tools/MODULE.tools");
+const BAZEL_TOOLS_MODULE_TOOLS: &str = include_str!("../../../../cells/bazel_tools/MODULE.tools");
 
 #[derive(
     Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Allocative, Pagable
@@ -629,6 +633,13 @@ struct BzlmodSingleVersionOverride {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Allocative, Pagable)]
+struct BzlmodGitOverride {
+    module_name: String,
+    remote: String,
+    commit: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Allocative, Pagable)]
 struct BzlmodLocalPathOverride {
     module_name: String,
     path: String,
@@ -644,6 +655,7 @@ struct BzlmodRootResolutionInput {
     builtin_bazel_tools_module: DiscoveredBcrModule,
     archive_overrides: BTreeMap<String, BzlmodArchiveOverride>,
     single_version_overrides: BTreeMap<String, BzlmodSingleVersionOverride>,
+    git_overrides: BTreeMap<String, BzlmodGitOverride>,
     local_path_overrides: BTreeMap<String, BzlmodLocalPathOverride>,
 }
 
@@ -805,12 +817,14 @@ async fn read_bazel_module_resolution_inputs(
         &mut root_deps,
         &evaluated.archive_overrides,
         &evaluated.single_version_overrides,
+        &evaluated.git_overrides,
         &evaluated.local_path_overrides,
     );
     apply_bzlmod_dep_overrides(
         &mut builtin_bazel_tools_module.deps,
         &evaluated.archive_overrides,
         &evaluated.single_version_overrides,
+        &evaluated.git_overrides,
         &evaluated.local_path_overrides,
     );
 
@@ -833,6 +847,7 @@ async fn read_bazel_module_resolution_inputs(
         builtin_bazel_tools_module,
         archive_overrides: evaluated.archive_overrides,
         single_version_overrides: evaluated.single_version_overrides,
+        git_overrides: evaluated.git_overrides,
         local_path_overrides: evaluated.local_path_overrides,
     })
 }
@@ -1591,6 +1606,9 @@ impl Key for BzlmodModuleFileKey {
             version: self.version.clone(),
             apparent_name: None,
         };
+        if let Some(git_override) = root.git_overrides.get(&dep.name).cloned() {
+            return Ok(Arc::new(fetch_git_bzlmod_module(dep, git_override).await?));
+        }
         if let Some(local_path_override) = root.local_path_overrides.get(&dep.name).cloned() {
             return Ok(Arc::new(
                 fetch_local_bzlmod_module(dep, local_path_override).await?,
@@ -1721,7 +1739,12 @@ fn bzlmod_discovery_result_fingerprint(
         bzlmod_fingerprint_opt_str(&mut hasher, archive_override.strip_prefix.as_deref());
         bzlmod_fingerprint_opt_str(&mut hasher, archive_override.archive_type.as_deref());
         bzlmod_fingerprint_patches(&mut hasher, &archive_override.patches);
-        hasher.update(&archive_override.patch_strip.unwrap_or(u32::MAX).to_le_bytes());
+        hasher.update(
+            &archive_override
+                .patch_strip
+                .unwrap_or(u32::MAX)
+                .to_le_bytes(),
+        );
     }
     for (name, single_version_override) in &root.single_version_overrides {
         bzlmod_fingerprint_str(&mut hasher, name);
@@ -1733,6 +1756,12 @@ fn bzlmod_discovery_result_fingerprint(
                 .unwrap_or(u32::MAX)
                 .to_le_bytes(),
         );
+    }
+    for (name, git_override) in &root.git_overrides {
+        bzlmod_fingerprint_str(&mut hasher, name);
+        bzlmod_fingerprint_str(&mut hasher, &git_override.module_name);
+        bzlmod_fingerprint_str(&mut hasher, &git_override.remote);
+        bzlmod_fingerprint_str(&mut hasher, &git_override.commit);
     }
     for (name, local_path_override) in &root.local_path_overrides {
         bzlmod_fingerprint_str(&mut hasher, name);
@@ -1762,7 +1791,12 @@ fn read_bzlmod_discovery_result_cache(
         cached
             .modules
             .into_iter()
-            .map(|module| ((module.dep.name.clone(), module.dep.version.clone()), module))
+            .map(|module| {
+                (
+                    (module.dep.name.clone(), module.dep.version.clone()),
+                    module,
+                )
+            })
             .collect(),
     )
 }
@@ -1824,6 +1858,7 @@ impl Key for BzlmodDiscoveryKey {
                 &root.root_module.name,
                 &root.archive_overrides,
                 &root.single_version_overrides,
+                &root.git_overrides,
                 &root.local_path_overrides,
             ) && scheduled.insert((dep.name.clone(), dep.version.clone()))
             {
@@ -1852,6 +1887,7 @@ impl Key for BzlmodDiscoveryKey {
                         &root.root_module.name,
                         &root.archive_overrides,
                         &root.single_version_overrides,
+                        &root.git_overrides,
                         &root.local_path_overrides,
                     ) && scheduled.insert((child.name.clone(), child.version.clone()))
                     {
@@ -1985,6 +2021,12 @@ impl Key for BzlmodRepoSpecKey {
             version: self.version.clone(),
             apparent_name: None,
         };
+        if root.git_overrides.contains_key(&dep.name) {
+            return Ok(Arc::new(BzlmodRepoSpecValue {
+                source_json: empty_bcr_source_json(),
+                registry_file_hashes: BTreeMap::new(),
+            }));
+        }
         let project_fs = ctx.global_data().get_io_provider().project_root().dupe();
         let repo = format!("{}@{}", dep.name, dep.version);
         let source_json_path = format!("modules/{}/{}/source.json", dep.name, dep.version);
@@ -2215,6 +2257,7 @@ impl Key for BzlmodResolutionKey {
             &dep_graph,
             &root.archive_overrides,
             &root.single_version_overrides,
+            &root.git_overrides,
             &root.local_path_overrides,
             &extension_usages_json_by_id,
             &host_platform_setup,
@@ -2622,6 +2665,7 @@ async fn collect_bzlmod_yanked_versions(
     for (name, version) in &selection.selected_keys {
         if name == "bazel_tools"
             || root.archive_overrides.contains_key(name)
+            || root.git_overrides.contains_key(name)
             || root.local_path_overrides.contains_key(name)
         {
             continue;
@@ -2631,8 +2675,7 @@ async fn collect_bzlmod_yanked_versions(
             .get(&(name.clone(), version.clone()))
         {
             if bzlmod_yanked_version_allowed(&allowed_yanked_versions, name, version) {
-                selected_yanked_versions
-                    .insert((name.clone(), version.clone()), info.clone());
+                selected_yanked_versions.insert((name.clone(), version.clone()), info.clone());
                 continue;
             }
             return Err(bzlmod_yanked_version_error(name, version, info));
@@ -2692,6 +2735,7 @@ async fn bzlmod_resolution_lockfile_write_back(
         for (name, version) in selection.discovered.keys() {
             if name == "bazel_tools"
                 || root.archive_overrides.contains_key(name)
+                || root.git_overrides.contains_key(name)
                 || root.local_path_overrides.contains_key(name)
             {
                 continue;
@@ -2705,21 +2749,14 @@ async fn bzlmod_resolution_lockfile_write_back(
             // registry files are recorded; mutable metadata.json is not.
             for kind in ["MODULE.bazel", "source.json"] {
                 let cache_path = bzlmod_bcr_discovery_cache_path(&registry.url, &dep, kind);
-                if let Some(contents) =
-                    read_bzlmod_bcr_discovery_cache(&project_fs, &cache_path)?
-                {
-                    let url =
-                        format!("{}/modules/{name}/{version}/{kind}", registry.url);
+                if let Some(contents) = read_bzlmod_bcr_discovery_cache(&project_fs, &cache_path)? {
+                    let url = format!("{}/modules/{name}/{version}/{kind}", registry.url);
                     registry_file_hashes
                         .insert(url, Some(bzlmod_registry_file_sha256(contents.as_bytes())));
                 }
             }
         }
-        bzlmod_write_back_lockfile(
-            &project_fs,
-            &registry_file_hashes,
-            selected_yanked_versions,
-        )
+        bzlmod_write_back_lockfile(&project_fs, &registry_file_hashes, selected_yanked_versions)
     }
     .await;
     if let Err(error) = result {
@@ -2821,12 +2858,15 @@ fn bzlmod_discovery_dep(
     root_module_name: &str,
     archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
     single_version_overrides: &BTreeMap<String, BzlmodSingleVersionOverride>,
+    git_overrides: &BTreeMap<String, BzlmodGitOverride>,
     local_path_overrides: &BTreeMap<String, BzlmodLocalPathOverride>,
 ) -> Option<BazelDep> {
     if dep.name == root_module_name {
         return None;
     }
     if archive_overrides.contains_key(&dep.name) {
+        dep.version.clear();
+    } else if git_overrides.contains_key(&dep.name) {
         dep.version.clear();
     } else if local_path_overrides.contains_key(&dep.name) {
         dep.version.clear();
@@ -2965,10 +3005,13 @@ fn apply_bzlmod_dep_overrides(
     deps: &mut [BazelDep],
     archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
     single_version_overrides: &BTreeMap<String, BzlmodSingleVersionOverride>,
+    git_overrides: &BTreeMap<String, BzlmodGitOverride>,
     local_path_overrides: &BTreeMap<String, BzlmodLocalPathOverride>,
 ) {
     for dep in deps {
         if archive_overrides.contains_key(&dep.name) {
+            dep.version.clear();
+        } else if git_overrides.contains_key(&dep.name) {
             dep.version.clear();
         } else if local_path_overrides.contains_key(&dep.name) {
             dep.version.clear();
@@ -3108,6 +3151,7 @@ fn resolve_bcr_modules_from_dep_graph(
     dep_graph: &BzlmodDepGraph,
     archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
     single_version_overrides: &BTreeMap<String, BzlmodSingleVersionOverride>,
+    git_overrides: &BTreeMap<String, BzlmodGitOverride>,
     local_path_overrides: &BTreeMap<String, BzlmodLocalPathOverride>,
     extension_usages_json_by_id: &BTreeMap<BzlmodExtensionId, String>,
     host_platform_setup: &BzlmodHostPlatformSetup,
@@ -3166,6 +3210,21 @@ fn resolve_bcr_modules_from_dep_graph(
         if module.dep.name == "bazel_tools" {
             continue;
         }
+        if let Some(git_override) = git_overrides.get(&module.dep.name) {
+            resolved.insert(
+                cell_name.clone(),
+                BazelCompatExternalModule::Git(BazelCompatGitModule {
+                    cell_name,
+                    aliases,
+                    module_name: module.dep.name.clone(),
+                    version: module.dep.version.clone(),
+                    canonical_repo_name,
+                    git_origin: git_override.remote.clone(),
+                    commit_hash: git_override.commit.clone(),
+                }),
+            );
+            continue;
+        }
         resolved.insert(
             cell_name.clone(),
             BazelCompatExternalModule::Registry(BazelCompatRegistryModule {
@@ -3194,10 +3253,7 @@ fn resolve_bcr_modules_from_dep_graph(
         discovered,
         &dep_graph.selected_keys_in_dependency_order,
         canonical_repo_names_by_key,
-        &bzlmod_direct_root_dep_cells(
-            canonical_repo_names_by_key,
-            &dep_graph.root_aliases_by_key,
-        )?,
+        &bzlmod_direct_root_dep_cells(canonical_repo_names_by_key, &dep_graph.root_aliases_by_key)?,
         &mut cell_aliases_by_cell,
         &dep_graph.canonical_repo_names_by_cell,
         &dep_graph.extension_unique_names,
@@ -4805,10 +4861,11 @@ fn bzlmod_direct_root_dep_cells(
     root_aliases_by_key
         .keys()
         .map(|(name, version)| {
-            bzlmod_selected_canonical_repo_name(canonical_repo_names_by_key, name, version)
-                .map(|canonical_repo_name| {
+            bzlmod_selected_canonical_repo_name(canonical_repo_names_by_key, name, version).map(
+                |canonical_repo_name| {
                     bzlmod_cell_name_for_canonical_repo_name(&canonical_repo_name)
-                })
+                },
+            )
         })
         .collect()
 }
@@ -4944,6 +5001,155 @@ async fn fetch_local_bzlmod_module(
         },
     )?;
     discovered_bzlmod_module_from_eval(dep, empty_bcr_source_json(), evaluated)
+}
+
+fn bzlmod_git_cell_setup(git_override: &BzlmodGitOverride) -> GitCellSetup {
+    GitCellSetup {
+        git_origin: Arc::from(git_override.remote.as_str()),
+        commit: Arc::from(git_override.commit.as_str()),
+        object_format: None,
+    }
+}
+
+fn run_bzlmod_git(cwd: &Path, f: impl FnOnce(&mut Command)) -> bz_error::Result<()> {
+    let mut command = Command::new("git");
+    f(&mut command);
+    let output = command
+        .current_dir(cwd)
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .output()
+        .buck_error_context("Could not run git while fetching bzlmod git_override")?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(bz_error!(
+        bz_error::ErrorTag::Tier0,
+        "Error fetching bzlmod git_override in `{}`, exit code: {}, stderr:\n{}",
+        cwd.display(),
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    ))
+}
+
+fn checkout_bzlmod_git_override(
+    checkout_dir: &Path,
+    git_override: &BzlmodGitOverride,
+) -> bz_error::Result<()> {
+    let setup = bzlmod_git_cell_setup(git_override);
+    fs::create_dir_all(checkout_dir)
+        .with_buck_error_context(|| format!("Error creating `{}`", checkout_dir.display()))?;
+    run_bzlmod_git(checkout_dir, |command| {
+        match &setup.object_format {
+            None => command.arg("init"),
+            Some(object_format) => command
+                .arg("init")
+                .arg("--object-format")
+                .arg(object_format.to_string()),
+        };
+    })?;
+    run_bzlmod_git(checkout_dir, |command| {
+        command
+            .arg("remote")
+            .arg("add")
+            .arg("origin")
+            .arg(setup.git_origin.as_ref());
+    })?;
+    run_bzlmod_git(checkout_dir, |command| {
+        command
+            .arg("fetch")
+            .arg("origin")
+            .arg(setup.commit.as_ref());
+    })?;
+    run_bzlmod_git(checkout_dir, |command| {
+        command.arg("reset").arg("--hard").arg("FETCH_HEAD");
+    })
+}
+
+fn read_bzlmod_compiled_module_file_set_from_dir(
+    module_root: &Path,
+    root_module_file: &str,
+) -> bz_error::Result<(
+    Arc<BzlmodCompiledModuleFile>,
+    BTreeMap<String, Arc<BzlmodCompiledModuleFile>>,
+)> {
+    let read_module = |module_file: String| -> bz_error::Result<Arc<BzlmodCompiledModuleFile>> {
+        let path = module_root.join(&module_file);
+        let module_text = fs::read_to_string(&path)
+            .with_buck_error_context(|| format!("Error reading `{}`", path.display()))?;
+        Ok(Arc::new(compile_bzlmod_module_file(
+            module_file,
+            module_text,
+        )?))
+    };
+
+    let root = read_module(root_module_file.to_owned())?;
+    let mut included_modules = BTreeMap::<String, Arc<BzlmodCompiledModuleFile>>::new();
+    let mut stack = root
+        .includes
+        .iter()
+        .map(|label| (root.module_file.clone(), label.clone()))
+        .collect::<Vec<_>>();
+    while let Some((including_module_file, label)) = stack.pop() {
+        if included_modules.contains_key(&label) {
+            continue;
+        }
+        let include_file = bzlmod_include_label_to_path(&including_module_file, &label)?;
+        let compiled = read_module(include_file)?;
+        stack.extend(
+            compiled
+                .includes
+                .iter()
+                .map(|label| (compiled.module_file.clone(), label.clone())),
+        );
+        included_modules.insert(label, compiled);
+    }
+    Ok((root, included_modules))
+}
+
+async fn fetch_git_bzlmod_module(
+    dep: BazelDep,
+    git_override: BzlmodGitOverride,
+) -> bz_error::Result<DiscoveredBcrModule> {
+    let temp = bzlmod_temp_dir(&format!(
+        "git-{}",
+        sanitize_bzlmod_temp_name(&git_override.module_name)
+    ))?;
+    let checkout_dir = temp.join("repo");
+    let result = (|| -> bz_error::Result<DiscoveredBcrModule> {
+        checkout_bzlmod_git_override(&checkout_dir, &git_override).with_buck_error_context(
+            || {
+                format!(
+                    "Error checking out git_override for module `{}` from `{}` at `{}`",
+                    git_override.module_name, git_override.remote, git_override.commit
+                )
+            },
+        )?;
+        let (compiled, included_modules) =
+            read_bzlmod_compiled_module_file_set_from_dir(&checkout_dir, BAZEL_MODULE_FILE)
+                .with_buck_error_context(|| {
+                    format!(
+                        "Error reading MODULE.bazel files from git_override for module `{}`",
+                        git_override.module_name
+                    )
+                })?;
+        let evaluated = eval_bzlmod_module_file(
+            &compiled,
+            BzlmodModuleEvalOptions {
+                is_root: false,
+                allow_include: true,
+                ignore_dev_dependency: true,
+                default_name: dep.name.clone(),
+                default_version: dep.version.clone(),
+                default_repo_name: dep.name.clone(),
+                cell_project_path: None,
+                included_modules,
+            },
+        )?;
+        discovered_bzlmod_module_from_eval(dep, empty_bcr_source_json(), evaluated)
+    })();
+    let _ = fs::remove_dir_all(&temp);
+    result
 }
 
 fn builtin_bazel_tools_module() -> bz_error::Result<DiscoveredBcrModule> {
@@ -5439,11 +5645,7 @@ fn apply_bzlmod_root_patch_to_directory(
     result
 }
 
-fn run_bzlmod_patch(
-    directory: &Path,
-    patch_file: &Path,
-    patch_strip: u32,
-) -> bz_error::Result<()> {
+fn run_bzlmod_patch(directory: &Path, patch_file: &Path, patch_strip: u32) -> bz_error::Result<()> {
     crate::bazel::bzlmod::patch::apply_unified_patch_file(directory, patch_file, patch_strip)
 }
 
@@ -5739,9 +5941,7 @@ mod tests {
         )
     }
 
-    fn eval_bzlmod_module(
-        module_text: &str,
-    ) -> bz_error::Result<super::BzlmodEvaluatedModuleFile> {
+    fn eval_bzlmod_module(module_text: &str) -> bz_error::Result<super::BzlmodEvaluatedModuleFile> {
         eval_bzlmod_module_for_test(module_text, false)
     }
 
@@ -5823,8 +6023,8 @@ mod tests {
     }
 
     #[test]
-    fn test_bzlmod_configure_repo_detection_uses_structured_generator_kind()
-    -> bz_error::Result<()> {
+    fn test_bzlmod_configure_repo_detection_uses_structured_generator_kind() -> bz_error::Result<()>
+    {
         fn generated(
             canonical_repo_name: &str,
             generator_json: String,
@@ -5872,8 +6072,8 @@ mod tests {
     }
 
     #[test]
-    fn test_bzlmod_single_version_override_allows_patches_without_version()
-    -> bz_error::Result<()> {
+    fn test_bzlmod_single_version_override_allows_patches_without_version() -> bz_error::Result<()>
+    {
         let evaluated = eval_bzlmod_module(indoc!(
             r#"
             single_version_override(
@@ -5991,6 +6191,72 @@ mod tests {
             vec!["https://example.com/abc123.tar.gz"]
         );
         Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_git_override_accepts_commit_override() -> bz_error::Result<()> {
+        let evaluated = eval_bzlmod_module(indoc!(
+            r#"
+            git_override(
+                module_name = "rules_claude",
+                remote = "https://github.com/buildbuddy-io/rules_claude.git",
+                commit = "1c9e3bf914070d790c29220487c0a6a776ca29d5",
+            )
+            "#
+        ))?;
+        let git_override = evaluated.git_overrides.get("rules_claude").unwrap();
+
+        assert_eq!(git_override.module_name, "rules_claude");
+        assert_eq!(
+            git_override.remote,
+            "https://github.com/buildbuddy-io/rules_claude.git"
+        );
+        assert_eq!(
+            git_override.commit,
+            "1c9e3bf914070d790c29220487c0a6a776ca29d5"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_git_override_rejects_tags() {
+        let error = eval_bzlmod_module(indoc!(
+            r#"
+            git_override(
+                module_name = "example",
+                remote = "https://example.com/example.git",
+                tag = "v1.0.0",
+            )
+            "#
+        ))
+        .unwrap_err();
+
+        let error = format!("{error:?}");
+        assert!(
+            error.contains("unsupported attribute `tag`"),
+            "error: {error}"
+        );
+    }
+
+    #[test]
+    fn test_bzlmod_git_override_rejects_remote_patches() {
+        let error = eval_bzlmod_module(indoc!(
+            r#"
+            git_override(
+                module_name = "example",
+                remote = "https://example.com/example.git",
+                commit = "1c9e3bf914070d790c29220487c0a6a776ca29d5",
+                remote_patches = {"https://example.com/fix.patch": "sha256-deadbeef"},
+            )
+            "#
+        ))
+        .unwrap_err();
+
+        let error = format!("{error:?}");
+        assert!(
+            error.contains("unsupported attribute `remote_patches`"),
+            "error: {error}"
+        );
     }
 
     #[test]
@@ -6268,8 +6534,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bzlmod_extension_tags_expand_split_tuple_list_comprehensions() -> bz_error::Result<()>
-    {
+    fn test_bzlmod_extension_tags_expand_split_tuple_list_comprehensions() -> bz_error::Result<()> {
         let usages = eval_bzlmod_module(indoc!(
             r#"
             maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
@@ -6502,8 +6767,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bzlmod_extension_usages_ignore_dev_dependency_when_requested() -> bz_error::Result<()>
-    {
+    fn test_bzlmod_extension_usages_ignore_dev_dependency_when_requested() -> bz_error::Result<()> {
         let usages = eval_bzlmod_module_for_test(
             indoc!(
                 r#"
@@ -6792,8 +7056,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bzlmod_non_root_extension_without_lockfile_uses_static_repos() -> bz_error::Result<()>
-    {
+    fn test_bzlmod_non_root_extension_without_lockfile_uses_static_repos() -> bz_error::Result<()> {
         let usage = super::BzlmodExtensionUsage {
             proxy_name: "npm".to_owned(),
             extension_bzl_file: "@aspect_rules_js//npm:extensions.bzl".to_owned(),
@@ -7064,8 +7327,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bzlmod_registered_toolchains_resolve_declaring_repo_mapping() -> bz_error::Result<()>
-    {
+    fn test_bzlmod_registered_toolchains_resolve_declaring_repo_mapping() -> bz_error::Result<()> {
         let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
         let rules_go_cell = bzlmod_cell_name("rules_go+0.57.0");
         let go_toolchains_cell = bzlmod_cell_name("rules_go+0.57.0+go_sdk+go_toolchains");

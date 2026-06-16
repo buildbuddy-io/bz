@@ -247,6 +247,7 @@ pub(crate) fn dedup_preserve_order<T: Ord + Clone>(values: &mut Vec<T>) {
 pub(crate) fn bzlmod_external_module_is_local(module: &BazelCompatExternalModule) -> bool {
     match module {
         BazelCompatExternalModule::Registry(module) => module.local_path.is_some(),
+        BazelCompatExternalModule::Git(_) => false,
         BazelCompatExternalModule::Generated(_) => false,
     }
 }
@@ -254,6 +255,7 @@ pub(crate) fn bzlmod_external_module_is_local(module: &BazelCompatExternalModule
 pub(crate) fn bzlmod_external_module_is_configure_repo(module: &BazelCompatExternalModule) -> bool {
     match module {
         BazelCompatExternalModule::Registry(_) => false,
+        BazelCompatExternalModule::Git(_) => false,
         BazelCompatExternalModule::Generated(module) => {
             match serde_json::from_str::<BzlmodGeneratedCellGenerator>(&module.generator_json) {
                 Ok(
@@ -324,6 +326,11 @@ pub(crate) fn external_cell_origin_from_bazel_module(
                 patch_strip: module.patch_strip,
             }))
         }
+        BazelCompatExternalModule::Git(module) => Ok(ExternalCellOrigin::Git(GitCellSetup {
+            git_origin: Arc::from(module.git_origin.as_str()),
+            commit: Arc::from(module.commit_hash.as_str()),
+            object_format: None,
+        })),
         BazelCompatExternalModule::Generated(module) => {
             let generator: BzlmodGeneratedCellGenerator =
                 serde_json::from_str(&module.generator_json)

@@ -115,6 +115,7 @@ use crate::cells::external::BZLMOD_EXTERNAL_CELL_KIND;
 use crate::cells::external::BZLMOD_GENERATED_EXTERNAL_CELL_KIND;
 use crate::cells::external::ExternalCellOrigin;
 use crate::cells::external::bzlmod_cell_name;
+use crate::cells::external::bzlmod_canonical_repo_name_for_cell;
 use crate::cells::external::external_cell_origin_for_cell;
 use crate::cells::external::external_cell_source_path;
 use crate::cells::external::is_bzlmod_cell_name;
@@ -243,13 +244,17 @@ static DYNAMIC_EXTERNAL_CELL_INSTANCES: once_cell::sync::Lazy<
 fn dynamic_external_cell_instance(cell: CellName) -> Option<&'static CellInstance> {
     let origin = external_cell_origin_for_cell(cell.as_str())?;
     let (kind, canonical_repo_name) = match &origin {
-        ExternalCellOrigin::Bzlmod(setup) => (
-            BZLMOD_EXTERNAL_CELL_KIND,
-            setup.canonical_repo_name.as_ref(),
-        ),
+        ExternalCellOrigin::Bzlmod(setup) => {
+            (BZLMOD_EXTERNAL_CELL_KIND, setup.canonical_repo_name.to_string())
+        }
         ExternalCellOrigin::BzlmodGenerated(setup) => (
             BZLMOD_GENERATED_EXTERNAL_CELL_KIND,
-            setup.canonical_repo_name.as_ref(),
+            setup.canonical_repo_name.to_string(),
+        ),
+        ExternalCellOrigin::Git(_) if is_bzlmod_cell_name(cell.as_str()) => (
+            "git",
+            bzlmod_canonical_repo_name_for_cell(cell.as_str())
+                .unwrap_or_else(|| cell.as_str().to_owned()),
         ),
         _ => return None,
     };
@@ -262,7 +267,7 @@ fn dynamic_external_cell_instance(cell: CellName) -> Option<&'static CellInstanc
         return Some(*instance);
     }
     let path = CellRootPathBuf::new(ProjectRelativePathBuf::unchecked_new(
-        external_cell_source_path(kind, canonical_repo_name),
+        external_cell_source_path(kind, &canonical_repo_name),
     ));
     let instance = CellInstance::new(cell, path, Some(origin), NestedCells::empty()).ok()?;
     let instance = Box::leak(Box::new(instance));
@@ -274,6 +279,7 @@ fn dynamic_external_cell_path(path: &ProjectRelativePath) -> Option<CellPath> {
     for kind in [
         BZLMOD_GENERATED_EXTERNAL_CELL_KIND,
         BZLMOD_EXTERNAL_CELL_KIND,
+        "git",
     ] {
         let prefix = external_cell_source_path(kind, "");
         let Some(suffix) = path.as_str().strip_prefix(&prefix) else {

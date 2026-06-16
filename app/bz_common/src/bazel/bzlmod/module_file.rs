@@ -17,6 +17,7 @@ pub(super) struct BzlmodEvaluatedModuleFile {
     pub(super) deps: Vec<BazelDep>,
     pub(super) archive_overrides: BTreeMap<String, BzlmodArchiveOverride>,
     pub(super) single_version_overrides: BTreeMap<String, BzlmodSingleVersionOverride>,
+    pub(super) git_overrides: BTreeMap<String, BzlmodGitOverride>,
     pub(super) local_path_overrides: BTreeMap<String, BzlmodLocalPathOverride>,
     pub(super) extension_usages: Vec<BzlmodExtensionUsage>,
     pub(super) use_repo_rule_invocations: Vec<BzlmodUseRepoRuleInvocation>,
@@ -52,6 +53,7 @@ struct BzlmodModuleEvalContext {
     deps: RefCell<Vec<BazelDep>>,
     archive_overrides: RefCell<BTreeMap<String, BzlmodArchiveOverride>>,
     single_version_overrides: RefCell<BTreeMap<String, BzlmodSingleVersionOverride>>,
+    git_overrides: RefCell<BTreeMap<String, BzlmodGitOverride>>,
     local_path_overrides: RefCell<BTreeMap<String, BzlmodLocalPathOverride>>,
     extension_usages: RefCell<Vec<BzlmodExtensionUsage>>,
     use_repo_rule_invocations: RefCell<Vec<BzlmodUseRepoRuleInvocation>>,
@@ -76,6 +78,7 @@ impl BzlmodModuleEvalContext {
             deps: RefCell::new(Vec::new()),
             archive_overrides: RefCell::new(BTreeMap::new()),
             single_version_overrides: RefCell::new(BTreeMap::new()),
+            git_overrides: RefCell::new(BTreeMap::new()),
             local_path_overrides: RefCell::new(BTreeMap::new()),
             extension_usages: RefCell::new(Vec::new()),
             use_repo_rule_invocations: RefCell::new(Vec::new()),
@@ -147,6 +150,7 @@ impl BzlmodModuleEvalContext {
             deps: self.deps.into_inner(),
             archive_overrides: self.archive_overrides.into_inner(),
             single_version_overrides: self.single_version_overrides.into_inner(),
+            git_overrides: self.git_overrides.into_inner(),
             local_path_overrides: self.local_path_overrides.into_inner(),
             extension_usages: self.extension_usages.into_inner(),
             use_repo_rule_invocations: self.use_repo_rule_invocations.into_inner(),
@@ -690,6 +694,16 @@ fn bzlmod_kwarg_string_list(
         .map(Option::unwrap_or_default)
 }
 
+fn bzlmod_kwarg_bool(
+    kwargs: &SmallMap<String, Value<'_>>,
+    name: &str,
+    what: &str,
+) -> starlark::Result<Option<bool>> {
+    bzlmod_kwarg(kwargs, name)
+        .map(|value| bzlmod_value_to_bool(value, what))
+        .transpose()
+}
+
 fn bzlmod_kwarg_u32(
     kwargs: &SmallMap<String, Value<'_>>,
     name: &str,
@@ -701,6 +715,26 @@ fn bzlmod_kwarg_u32(
             u32::try_from(value).map_err(|_| {
                 bzlmod_starlark_error(format!("{what} must be non-negative, got `{value}`"))
             })
+        })
+        .transpose()
+}
+
+fn bzlmod_kwarg_dict_is_empty(
+    kwargs: &SmallMap<String, Value<'_>>,
+    name: &str,
+    what: &str,
+) -> starlark::Result<Option<bool>> {
+    bzlmod_kwarg(kwargs, name)
+        .map(|value| {
+            starlark::values::dict::DictRef::from_value(value)
+                .map(|dict| dict.is_empty())
+                .ok_or_else(|| {
+                    bzlmod_starlark_error(format!(
+                        "{what} must be a dict, got `{}` of type `{}`",
+                        value.to_repr(),
+                        value.get_type()
+                    ))
+                })
         })
         .transpose()
 }
@@ -1297,10 +1331,77 @@ fn bzlmod_module_globals_builder(builder: &mut GlobalsBuilder) {
     ) -> starlark::Result<NoneType> {
         let context = bzlmod_eval_context(eval)?;
         context.set_non_module_called();
-        let _ = kwargs;
-        Err(bzlmod_starlark_error(format!(
-            "git_override is not implemented in Buck2 bzlmod resolution yet: module `{module_name}`"
-        )))
+        if !context.is_root {
+            return Ok(NoneType);
+        }
+
+        let unsupported_attr_error = |attr: &str| {
+            bzlmod_starlark_error(format!(
+                "git_override for module `{module_name}` only supports commit-based overrides with `remote` and `commit`; unsupported attribute `{attr}`"
+            ))
+        };
+        for attr in [
+            "tag",
+            "branch",
+            "strip_prefix",
+            "remote_module_file_integrity",
+        ] {
+            if bzlmod_kwarg_string(&kwargs, attr, &format!("git_override {attr}"))?
+                .is_some_and(|value| !value.is_empty())
+            {
+                return Err(unsupported_attr_error(attr));
+            }
+        }
+        for attr in [
+            "patches",
+            "patch_args",
+            "patch_cmds",
+            "patch_cmds_win",
+            "remote_module_file_urls",
+        ] {
+            if !bzlmod_kwarg_string_list(&kwargs, attr, &format!("git_override {attr}"))?.is_empty()
+            {
+                return Err(unsupported_attr_error(attr));
+            }
+        }
+        if bzlmod_kwarg_dict_is_empty(&kwargs, "remote_patches", "git_override remote_patches")?
+            .is_some_and(|is_empty| !is_empty)
+        {
+            return Err(unsupported_attr_error("remote_patches"));
+        }
+        for attr in ["init_submodules", "recursive_init_submodules"] {
+            if bzlmod_kwarg_bool(&kwargs, attr, &format!("git_override {attr}"))?.unwrap_or(false) {
+                return Err(unsupported_attr_error(attr));
+            }
+        }
+
+        let remote = bzlmod_kwarg_string(&kwargs, "remote", "git_override remote")?
+            .filter(|remote| !remote.is_empty())
+            .ok_or_else(|| {
+                bzlmod_starlark_error(format!(
+                    "git_override for module `{module_name}` must have non-empty `remote`"
+                ))
+            })?;
+        let commit = bzlmod_kwarg_string(&kwargs, "commit", "git_override commit")?
+            .filter(|commit| !commit.is_empty())
+            .ok_or_else(|| {
+                bzlmod_starlark_error(format!(
+                    "git_override for module `{module_name}` must have non-empty `commit`"
+                ))
+            })?;
+        GitObjectFormat::Sha1
+            .check(&commit)
+            .map_err(|error| bzlmod_starlark_error(format!("{error}")))?;
+
+        context.git_overrides.borrow_mut().insert(
+            module_name.clone(),
+            BzlmodGitOverride {
+                module_name,
+                remote,
+                commit,
+            },
+        );
+        Ok(NoneType)
     }
 
     fn local_path_override(

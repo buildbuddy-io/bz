@@ -150,6 +150,7 @@ pub struct LegacyBuckConfigSection {
 #[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) enum BazelCompatExternalModule {
     Registry(BazelCompatRegistryModule),
+    Git(BazelCompatGitModule),
     Generated(BazelCompatGeneratedModule),
 }
 
@@ -195,6 +196,17 @@ pub(crate) struct BazelCompatRegistryModule {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
+pub(crate) struct BazelCompatGitModule {
+    pub cell_name: String,
+    pub aliases: Vec<String>,
+    pub module_name: String,
+    pub version: String,
+    pub canonical_repo_name: String,
+    pub git_origin: String,
+    pub commit_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) struct BazelCompatGeneratedModule {
     pub cell_name: String,
     pub aliases: Vec<String>,
@@ -206,6 +218,7 @@ impl BazelCompatExternalModule {
     pub(crate) fn cell_name(&self) -> &str {
         match self {
             Self::Registry(module) => &module.cell_name,
+            Self::Git(module) => &module.cell_name,
             Self::Generated(module) => &module.cell_name,
         }
     }
@@ -213,6 +226,7 @@ impl BazelCompatExternalModule {
     pub(crate) fn canonical_repo_name(&self) -> &str {
         match self {
             Self::Registry(module) => &module.canonical_repo_name,
+            Self::Git(module) => &module.canonical_repo_name,
             Self::Generated(module) => &module.canonical_repo_name,
         }
     }
@@ -220,6 +234,7 @@ impl BazelCompatExternalModule {
     fn external_cell_kind(&self) -> &'static str {
         match self {
             Self::Registry(_) => BZLMOD_EXTERNAL_CELL_KIND,
+            Self::Git(_) => "git",
             Self::Generated(_) => BZLMOD_GENERATED_EXTERNAL_CELL_KIND,
         }
     }
@@ -655,6 +670,19 @@ impl LegacyBuckConfig {
                     section_values
                         .entry("patch_strip".to_owned())
                         .or_insert_with(|| synthetic_config_value(&module.patch_strip.to_string()));
+                }
+                BazelCompatExternalModule::Git(module) => {
+                    for (key, value) in [
+                        ("module_name", module.module_name.as_str()),
+                        ("version", module.version.as_str()),
+                        ("canonical_repo_name", module.canonical_repo_name.as_str()),
+                        ("git_origin", module.git_origin.as_str()),
+                        ("commit_hash", module.commit_hash.as_str()),
+                    ] {
+                        section_values
+                            .entry(key.to_owned())
+                            .or_insert_with(|| synthetic_config_value(value));
+                    }
                 }
                 BazelCompatExternalModule::Generated(module) => {
                     for (key, value) in [

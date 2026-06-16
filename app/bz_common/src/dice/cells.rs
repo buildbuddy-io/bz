@@ -300,9 +300,17 @@ impl Key for CellAliasResolverKey {
                 &[],
                 &BazelCompatBazelrcOptions::default(),
             );
-            resolver.get(self.0).map_err(|_| {
-                bz_error::bz_error!(bz_error::ErrorTag::Input, "Unknown cell `{}`", self.0)
-            })?;
+            if self.0.as_str() == "bazel_tools" {
+                resolver.get(self.0).map_err(|_| {
+                    bz_error::bz_error!(bz_error::ErrorTag::Input, "Unknown cell `{}`", self.0)
+                })?;
+            } else if !cell_exists && external_origin.is_none() {
+                return Err(bz_error::bz_error!(
+                    bz_error::ErrorTag::Input,
+                    "Unknown cell `{}`",
+                    self.0
+                ));
+            }
             return BuckConfigBasedCells::get_bazel_cell_alias_resolver_from_config(
                 self.0, &resolver, &config,
             );
