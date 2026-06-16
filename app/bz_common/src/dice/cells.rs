@@ -14,8 +14,11 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use bz_core::cells::CellAliasResolver;
 use bz_core::cells::CellResolver;
+use bz_core::cells::external::BZLMOD_EXTERNAL_CELL_KIND;
+use bz_core::cells::external::BZLMOD_GENERATED_EXTERNAL_CELL_KIND;
 use bz_core::cells::external::ExternalCellOrigin;
 use bz_core::cells::external::external_cell_origin_for_cell;
+use bz_core::cells::external::external_cell_source_path;
 use bz_core::cells::external::is_bzlmod_cell_name;
 use bz_core::cells::name::CellName;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
@@ -173,6 +176,28 @@ fn external_cell_origin_shape_equal(
     }
 }
 
+fn is_declared_bzlmod_external_cell(resolver: &CellResolver, cell: CellName) -> bool {
+    if !resolver.contains_declared(cell) {
+        return false;
+    }
+    let Ok(instance) = resolver.get(cell) else {
+        return false;
+    };
+    let cell_path = instance.path().as_project_relative_path().as_str();
+    [
+        BZLMOD_EXTERNAL_CELL_KIND,
+        BZLMOD_GENERATED_EXTERNAL_CELL_KIND,
+    ]
+    .into_iter()
+    .any(|kind| {
+        let prefix = external_cell_source_path(kind, "");
+        let Some(canonical_repo_name) = cell_path.strip_prefix(&prefix) else {
+            return false;
+        };
+        !canonical_repo_name.is_empty() && !canonical_repo_name.contains('/')
+    })
+}
+
 #[async_trait]
 impl HasCellResolver for DiceComputations<'_> {
     async fn get_cell_resolver(&mut self) -> bz_error::Result<CellResolver> {
@@ -207,11 +232,11 @@ impl HasExternalCellOrigins for DiceComputations<'_> {
         &mut self,
         cell: CellName,
     ) -> bz_error::Result<Option<ExternalCellOrigin>> {
+        let resolver = self.compute(&CellResolverKey).await?;
         if is_bzlmod_cell_name(cell.as_str()) {
-            let cell_in_resolver = match self.compute(&CellResolverKey).await? {
-                Some(resolver) => resolver.contains_declared(cell),
-                None => false,
-            };
+            let cell_in_resolver = resolver
+                .as_ref()
+                .is_some_and(|resolver| resolver.contains_declared(cell));
             if !cell_in_resolver {
                 if external_cell_origin_for_cell(cell.as_str()).is_none() {
                     let _aliases = get_bazel_module_resolution_on_dice(self).await?;
@@ -223,7 +248,10 @@ impl HasExternalCellOrigins for DiceComputations<'_> {
         if origin.is_some() {
             return Ok(origin);
         }
-        if is_bzlmod_cell_name(cell.as_str()) {
+        let declared_bzlmod_external_cell = resolver
+            .as_ref()
+            .is_some_and(|resolver| is_declared_bzlmod_external_cell(resolver, cell));
+        if is_bzlmod_cell_name(cell.as_str()) || declared_bzlmod_external_cell {
             if external_cell_origin_for_cell(cell.as_str()).is_none() {
                 let _aliases = get_bazel_module_resolution_on_dice(self).await?;
             }
@@ -252,9 +280,11 @@ impl Key for CellAliasResolverKey {
     ) -> Self::Value {
         let resolver = ctx.get_cell_resolver().await?;
         let root_aliases = resolver.root_cell_cell_alias_resolver();
+        let declared_bzlmod_external_cell = is_declared_bzlmod_external_cell(&resolver, self.0);
         let bzlmod_module_aliases = if (self.0 == resolver.root_cell()
             || self.0.as_str() == "bazel_tools"
-            || is_bzlmod_cell_name(self.0.as_str()))
+            || is_bzlmod_cell_name(self.0.as_str())
+            || declared_bzlmod_external_cell)
             && bzlmod_resolution_enabled_on_dice(ctx).await?
         {
             Some(get_bazel_module_resolution_on_dice(ctx).await?)
@@ -411,5 +441,81 @@ impl SetExternalCellOrigins for DiceTransactionUpdater {
             }
         }
         Ok(self.changed_to(changed)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bz_core::cells::cell_root_path::CellRootPathBuf;
+    use bz_core::cells::instance::CellInstance;
+    use bz_core::cells::nested::NestedCells;
+    use bz_hash::StdBuckHashMap;
+
+    use super::*;
+
+    fn resolver_with_extra_cell(
+        cell_name: &str,
+        cell_path: &str,
+    ) -> bz_error::Result<CellResolver> {
+        let root = CellName::testing_new("root");
+        let extra = CellName::testing_new(cell_name);
+        let root_aliases = CellAliasResolver::new(root, StdBuckHashMap::default())?;
+        CellResolver::new(
+            vec![
+                CellInstance::new(
+                    root,
+                    CellRootPathBuf::testing_new(""),
+                    None,
+                    NestedCells::empty(),
+                )?,
+                CellInstance::new(
+                    extra,
+                    CellRootPathBuf::testing_new(cell_path),
+                    None,
+                    NestedCells::empty(),
+                )?,
+            ],
+            root_aliases,
+        )
+    }
+
+    #[test]
+    fn detects_declared_bzlmod_external_cell() -> bz_error::Result<()> {
+        let resolver =
+            resolver_with_extra_cell("platforms", "buck-out/v2/external_cells/bzlmod/platforms")?;
+
+        assert!(is_declared_bzlmod_external_cell(
+            &resolver,
+            CellName::testing_new("platforms")
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn ignores_regular_declared_cell() -> bz_error::Result<()> {
+        let resolver = resolver_with_extra_cell("platforms", "third_party/platforms")?;
+
+        assert!(!is_declared_bzlmod_external_cell(
+            &resolver,
+            CellName::testing_new("platforms")
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn ignores_nested_path_under_bzlmod_external_root() -> bz_error::Result<()> {
+        let resolver = resolver_with_extra_cell(
+            "platforms_host",
+            "buck-out/v2/external_cells/bzlmod/platforms/host",
+        )?;
+
+        assert!(!is_declared_bzlmod_external_cell(
+            &resolver,
+            CellName::testing_new("platforms_host")
+        ));
+
+        Ok(())
     }
 }
