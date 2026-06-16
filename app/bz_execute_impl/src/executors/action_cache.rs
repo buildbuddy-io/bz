@@ -362,7 +362,7 @@ async fn query_action_cache_and_download_result(
 
     let mut res = match res {
         DownloadResult::Result(res) => res,
-        DownloadResult::CacheMiss(manager) => return ControlFlow::Continue(manager),
+        DownloadResult::CacheMiss { manager, .. } => return ControlFlow::Continue(manager),
     };
     let remote_cache_origin = RemoteActionCacheOrigin::new(
         action_digest.dupe(),

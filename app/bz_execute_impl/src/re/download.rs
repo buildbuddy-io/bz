@@ -54,7 +54,10 @@ use bz_execute::execute::result::CommandExecutionMetadata;
 use bz_execute::execute::result::CommandExecutionResult;
 use bz_execute::materialize::materializer::CasDownloadInfo;
 use bz_execute::materialize::materializer::DeclareArtifactPayload;
+use bz_execute::materialize::materializer::LostRemoteCasArtifact;
+use bz_execute::materialize::materializer::LostRemoteCasArtifacts;
 use bz_execute::materialize::materializer::Materializer;
+use bz_execute::materialize::materializer::RemoteActionCacheOrigin;
 use bz_execute::re::action_identity::ReActionIdentity;
 use bz_execute::re::error::RemoteExecutionError;
 use bz_execute::re::manager::ManagedRemoteExecutionClient;
@@ -125,14 +128,18 @@ fn artifact_value_file_digests(
 ) -> Vec<TrackedFileDigest> {
     let mut digests = Vec::new();
     for value in outputs.values() {
-        let mut walk = unordered_entry_walk(value.entry().as_ref().map_dir(Directory::as_ref));
-        while let Some((_path, entry)) = walk.next() {
-            if let DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) = entry {
-                digests.push(file.digest.dupe());
-            }
-        }
+        digests.extend(artifact_file_digests(value));
     }
     digests
+}
+
+fn artifact_file_digests(value: &ArtifactValue) -> impl Iterator<Item = TrackedFileDigest> + '_ {
+    unordered_entry_walk(value.entry().as_ref().map_dir(Directory::as_ref))
+        .without_paths()
+        .filter_map(|entry| match entry {
+            DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) => Some(file.digest.dupe()),
+            _ => None,
+        })
 }
 
 async fn remote_cache_digests_presence(
@@ -447,7 +454,10 @@ impl CasDownloader<'_> {
                                 "Remote result for `{}` referenced missing CAS metadata; treating it as a miss",
                                 details.action_digest,
                             );
-                            return ControlFlow::Break(DownloadResult::CacheMiss(manager));
+                            return ControlFlow::Break(DownloadResult::CacheMiss {
+                                manager,
+                                missing: None,
+                            });
                         }
                         let is_storage_resource_exhausted = error
                             .find_typed_context::<RemoteExecutionError>()
@@ -468,13 +478,33 @@ impl CasDownloader<'_> {
             if missing_cas_is_cache_miss {
                 if let Some(known_missing_remote_cas) = known_missing_remote_cas
                     && known_missing_remote_cas
-                        .remove_artifact_values(artifacts.mapped_outputs.values())
+                        .contains_artifact_values(artifacts.mapped_outputs.values())
                 {
                     tracing::debug!(
                         "Remote result for `{}` referenced a known-missing CAS blob; treating it as a miss",
                         details.action_digest,
                     );
-                    return ControlFlow::Break(DownloadResult::CacheMiss(manager));
+                    let origin = Some(RemoteActionCacheOrigin::new(
+                        details.action_digest.dupe(),
+                        artifacts.now,
+                        artifacts.ttl,
+                    ));
+                    let missing = match lost_remote_cas_artifacts_for_outputs(
+                        artifact_fs,
+                        &artifacts.mapped_outputs,
+                        |digest| known_missing_remote_cas.contains_tracked_file_digest(digest),
+                        origin,
+                    ) {
+                        Ok(missing) => missing,
+                        Err(e) => {
+                            return ControlFlow::Break(DownloadResult::Result(manager.error(
+                                "verify_cached_outputs",
+                                e.context(format!("action_digest={}", details.action_digest)),
+                            )));
+                        }
+                    };
+                    known_missing_remote_cas.remove_artifact_values(artifacts.mapped_outputs.values());
+                    return ControlFlow::Break(DownloadResult::CacheMiss { manager, missing });
                 }
 
                 match remote_artifact_values_presence(self.re_client, &artifacts.mapped_outputs)
@@ -489,7 +519,30 @@ impl CasDownloader<'_> {
                             "Remote result for `{}` referenced missing output CAS blobs; treating it as a miss",
                             details.action_digest,
                         );
-                        return ControlFlow::Break(DownloadResult::CacheMiss(manager));
+                        let origin = Some(RemoteActionCacheOrigin::new(
+                            details.action_digest.dupe(),
+                            artifacts.now,
+                            artifacts.ttl,
+                        ));
+                        let missing = match lost_remote_cas_artifacts_for_outputs(
+                            artifact_fs,
+                            &artifacts.mapped_outputs,
+                            |digest| {
+                                missing
+                                    .iter()
+                                    .any(|missing_digest| missing_digest.data() == digest.data())
+                            },
+                            origin,
+                        ) {
+                            Ok(missing) => missing,
+                            Err(e) => {
+                                return ControlFlow::Break(DownloadResult::Result(manager.error(
+                                    "verify_cached_outputs",
+                                    e.context(format!("action_digest={}", details.action_digest)),
+                                )));
+                            }
+                        };
+                        return ControlFlow::Break(DownloadResult::CacheMiss { manager, missing });
                     }
                     Err(e) => {
                         return ControlFlow::Break(DownloadResult::Result(manager.error(
@@ -752,14 +805,52 @@ struct ExtractedArtifacts {
     ttl: Duration,
 }
 
+fn lost_remote_cas_artifacts_for_outputs(
+    artifact_fs: &ArtifactFs,
+    outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    is_missing: impl Fn(&TrackedFileDigest) -> bool,
+    origin: Option<RemoteActionCacheOrigin>,
+) -> bz_error::Result<Option<LostRemoteCasArtifacts>> {
+    let mut lost = Vec::new();
+    for (output, value) in outputs {
+        let missing_digests = artifact_file_digests(value)
+            .into_iter()
+            .filter(|digest| is_missing(digest))
+            .collect::<Vec<_>>();
+        if missing_digests.is_empty() {
+            continue;
+        }
+
+        let content_hash = output
+            .has_content_based_path()
+            .then(|| value.content_based_path_hash());
+        let path = output
+            .as_ref()
+            .resolve(artifact_fs, content_hash.as_ref())?
+            .path;
+        lost.push(LostRemoteCasArtifact {
+            path: Arc::new(path),
+            owner: None,
+            missing_digests: Arc::from(missing_digests),
+            producer_path_hint: None,
+            origin: origin.clone(),
+        });
+    }
+
+    Ok((!lost.is_empty()).then(|| LostRemoteCasArtifacts::new(lost)))
+}
+
 /// Did this download work out?
 pub enum DownloadResult {
     /// Got a result: might be a success, might be a failure. Caller needs to deal with this
     /// result.
     Result(CommandExecutionResult),
-    /// A cache hit referenced missing CAS data before claiming outputs. The caller may retry the
+    /// A remote result referenced missing CAS data before claiming outputs. The caller may retry the
     /// action with cache lookup disabled.
-    CacheMiss(CommandExecutionManager),
+    CacheMiss {
+        manager: CommandExecutionManager,
+        missing: Option<LostRemoteCasArtifacts>,
+    },
 }
 
 impl FromResidual<ControlFlow<Self, Infallible>> for DownloadResult {

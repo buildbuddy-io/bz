@@ -542,7 +542,7 @@ impl PreparedCommandExecutor for ReExecutor {
             }
         }
 
-        let mut retried_missing_remote_cas = false;
+        let mut missing_remote_cas_retries = 0;
         let mut res = loop {
             manager.start_waiting_category(WaitingCategory::RemoteDownloading);
             let exit_code = response.execute_response.action_result.exit_code;
@@ -587,20 +587,52 @@ impl PreparedCommandExecutor for ReExecutor {
 
             match download {
                 DownloadResult::Result(res) => break res,
-                DownloadResult::CacheMiss(retry_manager) if !retried_missing_remote_cas => {
+                DownloadResult::CacheMiss {
+                    manager: retry_manager,
+                    ..
+                } if missing_remote_cas_retries < RE_TRANSIENT_RETRY_ATTEMPTS => {
+                    missing_remote_cas_retries += 1;
                     if cached_result {
                         tracing::debug!(
-                            "Remote execution returned cached result for `{}` with missing CAS blobs; retrying with cache lookup disabled",
+                            "Remote execution returned cached result for `{}` with missing CAS blobs; retrying with cache lookup disabled and forced input upload (attempt {} of {})",
                             action_and_blobs.action,
+                            missing_remote_cas_retries,
+                            RE_TRANSIENT_RETRY_ATTEMPTS,
                         );
                     } else {
                         tracing::debug!(
-                            "Remote execution returned result for `{}` with missing CAS blobs; retrying with cache lookup disabled",
+                            "Remote execution returned result for `{}` with missing CAS blobs; retrying with cache lookup disabled and forced input upload (attempt {} of {})",
                             action_and_blobs.action,
+                            missing_remote_cas_retries,
+                            RE_TRANSIENT_RETRY_ATTEMPTS,
                         );
                     }
-                    retried_missing_remote_cas = true;
                     execution_time = TimeSpan::start_now();
+                    let retry_manager = self
+                        .upload(
+                            retry_manager,
+                            &identity,
+                            &action_and_blobs.blobs,
+                            request.paths(),
+                            *digest_config,
+                            true,
+                        )
+                        .await?;
+                    let retry_manager = if let (Some(worker), Some(worker_tool_init_action)) =
+                        (request.remote_worker(), worker_tool_init_action)
+                    {
+                        self.upload(
+                            retry_manager,
+                            &identity,
+                            &worker_tool_init_action.blobs,
+                            &worker.input_paths,
+                            *digest_config,
+                            true,
+                        )
+                        .await?
+                    } else {
+                        retry_manager
+                    };
                     let retry = self
                         .re_execute(
                             retry_manager,
@@ -621,11 +653,21 @@ impl PreparedCommandExecutor for ReExecutor {
                     manager = retry.0;
                     response = retry.1;
                 }
-                DownloadResult::CacheMiss(retry_manager) => {
+                DownloadResult::CacheMiss {
+                    manager: retry_manager,
+                    missing,
+                } => {
+                    let missing = missing
+                        .as_ref()
+                        .map(|missing| format!("\n{}", missing.display_summary()))
+                        .unwrap_or_default();
                     break retry_manager.error(
                         "re_download",
-                        bz_error::internal_error!(
-                            "remote execution result referenced missing CAS blobs after retry"
+                        bz_error::bz_error!(
+                            bz_error::ErrorTag::ReInvalidGetCasResponse,
+                            "remote execution result referenced missing CAS blobs after {} cache-bypass retry attempt(s){}",
+                            missing_remote_cas_retries,
+                            missing,
                         ),
                     );
                 }
