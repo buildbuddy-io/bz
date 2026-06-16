@@ -827,6 +827,7 @@ async fn read_bazel_module_resolution_inputs(
         &evaluated.git_overrides,
         &evaluated.local_path_overrides,
     );
+    add_bzlmod_root_dep_aliases(&mut aliases, &root_deps);
 
     let root_module = RootBzlmodModule {
         name: evaluated.name,
@@ -955,6 +956,19 @@ fn merge_extra_bzlmod_root_deps(root_deps: &mut Vec<BazelDep>, extra_root_deps: 
             continue;
         }
         root_deps.push(dep);
+    }
+}
+
+fn add_bzlmod_root_dep_aliases(aliases: &mut BazelModuleCellAliases, root_deps: &[BazelDep]) {
+    for dep in root_deps {
+        let Some(alias) = dep.apparent_name.as_ref() else {
+            continue;
+        };
+        let canonical_repo_name = bzlmod_canonical_repo_name(&dep.name, &dep.version, false);
+        aliases.root_aliases.push(BazelCompatCellAlias {
+            alias: alias.clone(),
+            cell_name: bzlmod_cell_name_for_canonical_repo_name(&canonical_repo_name),
+        });
     }
 }
 
@@ -6038,6 +6052,26 @@ mod tests {
         assert_eq!(root_deps.len(), 1);
         assert_eq!(root_deps[0].apparent_name.as_deref(), Some("llvm"));
         Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_root_dep_alias_uses_repo_name() {
+        let mut aliases = super::BazelModuleCellAliases::default();
+        let root_deps = vec![super::BazelDep {
+            name: "rules_docker".to_owned(),
+            version: String::new(),
+            apparent_name: Some("io_bazel_rules_docker".to_owned()),
+        }];
+
+        super::add_bzlmod_root_dep_aliases(&mut aliases, &root_deps);
+
+        assert_eq!(
+            aliases.root_aliases,
+            vec![super::BazelCompatCellAlias {
+                alias: "io_bazel_rules_docker".to_owned(),
+                cell_name: "rules_docker+".to_owned(),
+            }]
+        );
     }
 
     #[test]
