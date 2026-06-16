@@ -21,8 +21,8 @@ use crate::attrs::coerced_attr::CoercedAttr;
 use crate::attrs::coerced_attr_full::CoercedAttrFull;
 use crate::attrs::inspect_options::AttrInspectOptions;
 use crate::attrs::spec::internal::INCOMING_TRANSITION_ATTRIBUTE;
-use crate::attrs::spec::internal::METADATA_ATTRIBUTE;
 use crate::attrs::spec::internal::common_internal_attrs;
+use crate::attrs::spec::internal::is_bazel_overridable_internal_attr;
 use crate::attrs::spec::internal::is_internal_attr;
 use crate::attrs::values::AttrValues;
 use crate::rule::RuleIncomingTransition;
@@ -87,7 +87,7 @@ impl AttributeSpec {
         attributes: Vec<(String, Attribute)>,
         is_anon: bool,
         cfg: &RuleIncomingTransition,
-        allow_bazel_metadata_attr: bool,
+        allow_bazel_internal_attr_overrides: bool,
     ) -> bz_error::Result<Self> {
         let internal_attrs = common_internal_attrs();
 
@@ -113,7 +113,7 @@ impl AttributeSpec {
             }
 
             let can_override_internal =
-                allow_bazel_metadata_attr && name == METADATA_ATTRIBUTE.name;
+                allow_bazel_internal_attr_overrides && is_bazel_overridable_internal_attr(&name);
             if is_internal_attr(&name) && !can_override_internal {
                 return Err(AttributeSpecError::InternalAttributeRedefined(name.to_owned()).into());
             }
@@ -254,6 +254,63 @@ impl AttributeSpec {
         } else {
             Err(AttributeSpecError::UnknownAttribute(key.to_owned()).into())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::attrs::attr::Attribute;
+    use crate::attrs::attr_type::AttrType;
+    use crate::attrs::spec::AttributeSpec;
+    use crate::rule::RuleIncomingTransition;
+
+    fn string_attr() -> Attribute {
+        Attribute::new_const(None, "", AttrType::string())
+    }
+
+    #[test]
+    fn bazel_rules_can_override_buck_only_internal_attrs() {
+        let spec = AttributeSpec::from(
+            vec![("tests".to_owned(), string_attr())],
+            false,
+            &RuleIncomingTransition::None,
+            true,
+        )
+        .unwrap();
+
+        assert!(spec.attribute("tests").unwrap().default().is_none());
+    }
+
+    #[test]
+    fn buck_rules_still_reject_internal_attr_overrides() {
+        let err = AttributeSpec::from(
+            vec![("tests".to_owned(), string_attr())],
+            false,
+            &RuleIncomingTransition::None,
+            false,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            "User provided attribute `tests` overrides internal attribute",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn bazel_rules_still_reject_core_bazel_internal_attrs() {
+        let err = AttributeSpec::from(
+            vec![("visibility".to_owned(), string_attr())],
+            false,
+            &RuleIncomingTransition::None,
+            true,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            "User provided attribute `visibility` overrides internal attribute",
+            err.to_string()
+        );
     }
 }
 

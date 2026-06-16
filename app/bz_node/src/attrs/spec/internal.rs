@@ -239,6 +239,13 @@ pub fn is_internal_attr(name: &str) -> bool {
     ATTRS.contains(name)
 }
 
+pub(crate) fn is_bazel_overridable_internal_attr(name: &str) -> bool {
+    matches!(
+        name,
+        "default_target_platform" | "within_view" | "metadata" | "tests" | "modifiers"
+    )
+}
+
 pub(super) fn common_internal_attrs() -> &'static OrderedMap<&'static str, Attribute> {
     static ATTRS: Lazy<OrderedMap<&'static str, Attribute>> = Lazy::new(|| {
         OrderedMap::from_iter(INTERNAL_ATTRS.iter().map(|attr| (attr.name, (attr.attr)())))
