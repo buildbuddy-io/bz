@@ -366,6 +366,85 @@ impl<'v> StarlarkValue<'v> for AnalysisToolchains<'v> {
     }
 }
 
+/// Bazel `ctx.exec_groups` collection. Indexing by an execution-group name yields
+/// a context exposing `.toolchains`. bz does not model execution groups as a
+/// separate concept, so every group exposes the rule's flat toolchain set, and
+/// toolchains that were not resolved surface as `None` (matching Bazel's optional
+/// toolchain access via `ctx.exec_groups[name].toolchains[type]`) rather than an
+/// error. This lets rules like `cc_test` take their legacy code path when an
+/// execution-group toolchain (e.g. the cc test runner) is absent.
+#[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
+pub struct BazelExecGroups<'v> {
+    toolchains: ValueTyped<'v, AnalysisToolchains<'v>>,
+}
+
+impl Display for BazelExecGroups<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "<ctx.exec_groups>")
+    }
+}
+
+impl<'v> AllocValue<'v> for BazelExecGroups<'v> {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex_no_freeze(self)
+    }
+}
+
+#[starlark_value(type = "ExecGroupCollection")]
+impl<'v> StarlarkValue<'v> for BazelExecGroups<'v> {
+    fn at(&self, _index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        Ok(heap.alloc(AllocStruct([(
+            "toolchains",
+            heap.alloc(BazelExecGroupToolchains {
+                toolchains: self.toolchains,
+            }),
+        )])))
+    }
+
+    /// `name in ctx.exec_groups`: bz does not model named execution groups, so no
+    /// group is ever reported as present. Rules use this to choose between an
+    /// exec-group code path and a flat-toolchain fallback; reporting absence routes
+    /// them to the toolchain-based path that bz supports.
+    fn is_in(&self, _other: Value<'v>) -> starlark::Result<bool> {
+        Ok(false)
+    }
+}
+
+/// The `.toolchains` view of a single Bazel execution group. Lenient variant of
+/// `AnalysisToolchains`: indexing by a toolchain type returns the resolved value
+/// or `None` when the toolchain was not declared/resolved, instead of erroring.
+#[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
+pub struct BazelExecGroupToolchains<'v> {
+    toolchains: ValueTyped<'v, AnalysisToolchains<'v>>,
+}
+
+impl Display for BazelExecGroupToolchains<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "<ctx.exec_groups[...].toolchains>")
+    }
+}
+
+impl<'v> AllocValue<'v> for BazelExecGroupToolchains<'v> {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex_no_freeze(self)
+    }
+}
+
+#[starlark_value(type = "ExecGroupToolchainContext")]
+impl<'v> StarlarkValue<'v> for BazelExecGroupToolchains<'v> {
+    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        Ok(self
+            .toolchains
+            .as_ref()
+            .resolved_value_for(index)
+            .unwrap_or_else(Value::new_none))
+    }
+
+    fn is_in(&self, other: Value<'v>) -> starlark::Result<bool> {
+        Ok(self.toolchains.as_ref().contains_value(other))
+    }
+}
+
 impl<'v> AnalysisActions<'v> {
     pub fn state(&self) -> bz_error::Result<RefMut<'_, AnalysisRegistry<'v>>> {
         let state = self
@@ -615,8 +694,9 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
 
     #[starlark(attribute)]
     fn exec_groups<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(heap.alloc(AllocDict::EMPTY))
+        Ok(heap.alloc(BazelExecGroups {
+            toolchains: this.bazel_toolchains(),
+        }))
     }
 
     #[starlark(attribute)]
@@ -2276,7 +2356,12 @@ pub fn analysis_actions_to_bazel_ctx_with_overrides<'v>(
             bazel_coverage_instrumented_function(heap),
         ),
         ("disabled_features", heap.alloc(AllocList::EMPTY)),
-        ("exec_groups", heap.alloc(AllocDict::EMPTY)),
+        (
+            "exec_groups",
+            heap.alloc(BazelExecGroups {
+                toolchains: this.bazel_toolchains(),
+            }),
+        ),
         ("executable", empty_struct),
         ("features", heap.alloc(AllocList::EMPTY)),
         ("file", empty_struct),
@@ -4108,6 +4193,19 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         this: RefAnalysisContext<'v>,
     ) -> starlark::Result<ValueTyped<'v, AnalysisToolchains<'v>>> {
         Ok(this.0.toolchains)
+    }
+
+    /// Returns the Bazel execution-group collection for this rule. Indexing by an
+    /// execution-group name yields a context whose `.toolchains` exposes the rule's
+    /// toolchains (unresolved toolchains read back as `None`).
+    #[starlark(attribute)]
+    fn exec_groups<'v>(
+        this: RefAnalysisContext<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(heap.alloc(BazelExecGroups {
+            toolchains: this.0.toolchains,
+        }))
     }
 
     /// Returns the configured value of this Bazel build-setting target.
