@@ -28,9 +28,7 @@ use crate::interpreter::module_internals::ModuleInternals;
 #[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
 enum BazelNativeError {
-    #[error(
-        "Bazel native rule `{0}` requires the `bz_bazel_native_rules` prelude backing struct"
-    )]
+    #[error("Bazel native rule `{0}` requires the `bz_bazel_native_rules` prelude backing struct")]
     MissingNativeRuleBacking(&'static str),
     #[error("`bz_bazel_native_rules` must be a struct, got `{0}`")]
     InvalidNativeRuleBacking(String),
@@ -65,12 +63,9 @@ impl<'v> StarlarkValue<'v> for NativeRuleCallable {
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let backing = eval
-            .module()
-            .get("bz_bazel_native_rules")
-            .ok_or_else(|| {
-                bz_error::Error::from(BazelNativeError::MissingNativeRuleBacking(self.name))
-            })?;
+        let backing = eval.module().get("bz_bazel_native_rules").ok_or_else(|| {
+            bz_error::Error::from(BazelNativeError::MissingNativeRuleBacking(self.name))
+        })?;
         let backing = StructRef::from_value(backing).ok_or_else(|| {
             bz_error::Error::from(BazelNativeError::InvalidNativeRuleBacking(
                 backing.get_type().to_owned(),
@@ -79,9 +74,7 @@ impl<'v> StarlarkValue<'v> for NativeRuleCallable {
         let rule = backing
             .iter()
             .find_map(|(name, rule)| (name.as_str() == self.name).then_some(rule))
-            .ok_or_else(|| {
-                bz_error::Error::from(BazelNativeError::MissingNativeRule(self.name))
-            })?;
+            .ok_or_else(|| bz_error::Error::from(BazelNativeError::MissingNativeRule(self.name)))?;
         if self.name == "sh_binary" {
             return invoke_bazel_sh_binary(rule, args, eval);
         }
@@ -197,10 +190,12 @@ fn bazel_native_module(builder: &mut GlobalsBuilder) {
         let _build_context = BuildContext::from_context(eval)?;
         for toolchain in toolchains.items {
             if toolchain.unpack_str().is_none() {
-                return Err(bz_error::Error::from(
-                    BazelNativeError::RegisterToolchainsNonString(toolchain.get_type().to_owned()),
-                )
-                .into());
+                return Err(
+                    bz_error::Error::from(BazelNativeError::RegisterToolchainsNonString(
+                        toolchain.get_type().to_owned(),
+                    ))
+                    .into(),
+                );
             }
         }
         Ok(NoneType)
@@ -214,10 +209,12 @@ fn bazel_native_module(builder: &mut GlobalsBuilder) {
             return Ok(input);
         }
         let Some(label) = input.unpack_str() else {
-            return Err(bz_error::Error::from(
-                BazelNativeError::PackageRelativeLabelInvalidInput(input.get_type().to_owned()),
-            )
-            .into());
+            return Err(
+                bz_error::Error::from(BazelNativeError::PackageRelativeLabelInvalidInput(
+                    input.get_type().to_owned(),
+                ))
+                .into(),
+            );
         };
         let build_context = ModuleInternals::from_context(eval, "native.package_relative_label")?;
         let label = build_context
