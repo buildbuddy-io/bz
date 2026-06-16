@@ -34,6 +34,7 @@ use bz_error::BuckErrorContext;
 use bz_error::conversion::from_any_with_tag;
 use bz_error::internal_error;
 use bz_fs::fs_util;
+use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use bz_hash::StdBuckHashMap;
 use bz_hash::StdBuckHashSet;
 use chrono::DateTime;
@@ -507,6 +508,26 @@ impl Uploader {
                 }
                 (exact_paths, directory_paths)
             });
+            let artifact_upload_path_for_input = |input_path: &ForwardRelativePath| {
+                artifact_upload_paths
+                    .as_ref()
+                    .and_then(|(exact_paths, directory_paths)| {
+                        if let Some(source) = exact_paths.get(input_path) {
+                            return Some((source.source_path.clone(), (*source).clone()));
+                        }
+                        for (path, source) in directory_paths {
+                            if let Some(suffix) =
+                                input_path.strip_prefix_opt(path.as_forward_relative_path())
+                            {
+                                let mut source = (*source).clone();
+                                source.path = source.path.join(suffix);
+                                source.source_path = source.source_path.join(suffix);
+                                return Some((source.source_path.clone(), source));
+                            }
+                        }
+                        None
+                    })
+            };
             let mut upload_file_candidates = Vec::new();
 
             {
@@ -545,10 +566,12 @@ impl Uploader {
                                     None
                                 })
                             {
+                                let upload_file_source = artifact_upload_path_for_input(input_path)
+                                    .map(|(_, source)| source);
                                 upload_file_candidates.push(UploadFileCandidate {
                                     path: upload_file_path,
                                     digest: digest.dupe(),
-                                    source: None,
+                                    source: upload_file_source,
                                 });
                                 continue;
                             }
@@ -575,29 +598,10 @@ impl Uploader {
                                 });
                                 continue;
                             }
-                            let (upload_file_path, upload_file_source) = artifact_upload_paths
-                                .as_ref()
-                                .and_then(|(exact_paths, directory_paths)| {
-                                    if let Some(source) = exact_paths.get(input_path) {
-                                        return Some((
-                                            source.source_path.clone(),
-                                            (*source).clone(),
-                                        ));
-                                    }
-                                    for (path, source) in directory_paths {
-                                        if let Some(suffix) = input_path
-                                            .strip_prefix_opt(path.as_forward_relative_path())
-                                        {
-                                            let mut source = (*source).clone();
-                                            source.path = source.path.join(suffix);
-                                            source.source_path = source.source_path.join(suffix);
-                                            return Some((source.source_path.clone(), source));
-                                        }
-                                    }
-                                    None
-                                })
-                                .map(|(path, source)| (path, Some(source)))
-                                .unwrap_or_else(|| (dir_path.join(input_path), None));
+                            let (upload_file_path, upload_file_source) =
+                                artifact_upload_path_for_input(input_path)
+                                    .map(|(path, source)| (path, Some(source)))
+                                    .unwrap_or_else(|| (dir_path.join(input_path), None));
                             upload_file_candidates.push(UploadFileCandidate {
                                 path: upload_file_path,
                                 digest: digest.dupe(),
