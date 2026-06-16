@@ -9,7 +9,6 @@ use bz_core::configuration::data::BazelBuildSettingValue;
 use bz_core::configuration::data::ConfigurationData;
 use bz_core::provider::label::ProvidersLabel;
 use bz_core::target::label::label::TargetLabel;
-use bz_error::BuckErrorContext;
 use bz_node::attrs::coerced_attr::CoercedAttr;
 use bz_node::attrs::inspect_options::AttrInspectOptions;
 use bz_node::nodes::frontend::TargetGraphCalculation;
@@ -75,6 +74,40 @@ fn bazel_starlark_label_to_build_setting_key(key: &str) -> Option<String> {
     Some(format!("{cell}//{target}"))
 }
 
+pub(crate) fn is_bazel_apparent_label_build_setting_key(key: &str) -> bool {
+    if key.starts_with("@@") {
+        return false;
+    }
+    let Some(key) = key.strip_prefix('@') else {
+        return false;
+    };
+    let Some((repo, package_and_target)) = key.split_once("//") else {
+        return false;
+    };
+    if repo.is_empty()
+        || package_and_target.is_empty()
+        || package_and_target.ends_with(':')
+        || package_and_target.contains("...")
+        || package_and_target.contains('[')
+        || package_and_target.contains(']')
+    {
+        return false;
+    }
+    if repo
+        .chars()
+        .any(|c| c == '/' || c == ':' || c == '@' || c.is_whitespace())
+    {
+        return false;
+    }
+    if package_and_target
+        .chars()
+        .any(|c| c == '@' || c.is_whitespace())
+    {
+        return false;
+    }
+    true
+}
+
 async fn bazel_command_line_build_settings(
     ctx: &mut DiceComputations<'_>,
 ) -> bz_error::Result<BTreeMap<String, BazelBuildSettingValue>> {
@@ -109,11 +142,17 @@ async fn bazel_command_line_build_settings(
         } else if let Some(key) = bazel_starlark_label_to_build_setting_key(raw_key) {
             key
         } else {
-            ProvidersLabel::parse(raw_key, root_cell, &cell_resolver, &cell_alias_resolver)
-                .with_buck_error_context(|| {
-                    format!("Parsing Bazel command-line build setting `{raw_key}`")
-                })?
-                .to_string()
+            match ProvidersLabel::parse(raw_key, root_cell, &cell_resolver, &cell_alias_resolver) {
+                Ok(label) => label.to_string(),
+                Err(error) if is_bazel_apparent_label_build_setting_key(raw_key) => {
+                    raw_key.to_owned()
+                }
+                Err(error) => {
+                    return Err(error.context(format!(
+                        "Parsing Bazel command-line build setting `{raw_key}`"
+                    )));
+                }
+            }
         };
         let value = match kind {
             "bool" => BazelBuildSettingValue::Bool(matches!(raw_value, "true" | "True" | "1")),
@@ -215,13 +254,18 @@ async fn bazel_build_setting_scope(
     let cell_alias_resolver = ctx
         .get_cell_alias_resolver(cell_resolver.root_cell())
         .await?;
-    let target = TargetLabel::parse(
+    let target = match TargetLabel::parse(
         setting,
         cell_resolver.root_cell(),
         &cell_resolver,
         &cell_alias_resolver,
-    )
-    .with_buck_error_context(|| format!("Parsing Bazel build setting `{setting}`"))?;
+    ) {
+        Ok(target) => target,
+        Err(_) if is_bazel_apparent_label_build_setting_key(setting) => return Ok(None),
+        Err(error) => {
+            return Err(error.context(format!("Parsing Bazel build setting `{setting}`")));
+        }
+    };
     let node = ctx.get_target_node(&target).await?;
     Ok(node
         .attr_or_none("scope", AttrInspectOptions::All)
@@ -310,5 +354,22 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn bazel_apparent_label_keys_are_preserved_when_unresolved() {
+        assert!(is_bazel_apparent_label_build_setting_key(
+            "@io_bazel_rules_docker//transitions:enable"
+        ));
+        assert!(is_bazel_apparent_label_build_setting_key(
+            "@some_repo//config"
+        ));
+        assert!(!is_bazel_apparent_label_build_setting_key(
+            "@@rules_cc+//cc/toolchains/args/archiver_flags:use_libtool_on_macos"
+        ));
+        assert!(!is_bazel_apparent_label_build_setting_key(
+            "@some_repo//pkg:"
+        ));
+        assert!(!is_bazel_apparent_label_build_setting_key("not-a-label"));
     }
 }

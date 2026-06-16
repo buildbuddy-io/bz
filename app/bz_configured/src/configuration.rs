@@ -50,6 +50,8 @@ use ref_cast::RefCast;
 use starlark_map::ordered_map::OrderedMap;
 use starlark_map::unordered_map::UnorderedMap;
 
+use crate::bazel::command_line_options::is_bazel_apparent_label_build_setting_key;
+
 #[derive(Debug, bz_error::Error)]
 #[buck2(input)]
 pub enum ConfigurationError {
@@ -200,12 +202,16 @@ async fn bazel_build_setting_default(
     let cell_alias_resolver = ctx
         .get_cell_alias_resolver(cell_resolver.root_cell())
         .await?;
-    let target = TargetLabel::parse(
+    let target = match TargetLabel::parse(
         setting,
         cell_resolver.root_cell(),
         &cell_resolver,
         &cell_alias_resolver,
-    )?;
+    ) {
+        Ok(target) => target,
+        Err(_) if is_bazel_apparent_label_build_setting_key(setting) => return Ok(None),
+        Err(error) => return Err(error),
+    };
     let node = ctx.get_target_node(&target).await?;
     let Some(default_attr) = node
         .attr_or_none("build_setting_default", AttrInspectOptions::All)
