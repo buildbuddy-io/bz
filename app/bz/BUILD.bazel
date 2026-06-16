@@ -42,6 +42,8 @@ BZ_HOST_UNIX_PLATFORMS = (
     "@rules_rust//rust/platform:x86_64-unknown-nixos-gnu",
 )
 
+BZ_LINUX_PLATFORMS = ("@platforms//os:linux",)
+
 BZ_HOST_UNIX_CRATES = [
     "dirs",
     "nix",
@@ -68,6 +70,13 @@ BZ_CRATE_DEPS = (
         "//conditions:default": [],
     })
 )
+
+BZ_COMMON_RUSTC_FLAGS = ["--cfg=buck_build"]
+
+BZ_BINARY_RUSTC_FLAGS = BZ_COMMON_RUSTC_FLAGS + selects.with_or({
+    BZ_LINUX_PLATFORMS: ["-Clink-arg=-Wl,--build-id=sha1"],
+    "//conditions:default": [],
+})
 
 rust_library(
     name = "bz_lib",
@@ -130,7 +139,7 @@ rust_library(
         "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
-    rustc_flags = ["--cfg=buck_build"],
+    rustc_flags = BZ_COMMON_RUSTC_FLAGS,
     rustc_env = COMMON_RUSTC_ENV,
     compile_data = glob([
         "**/*",
@@ -204,7 +213,7 @@ rust_binary(
         "//deps/superconsole:superconsole",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True) + [],
-    rustc_flags = ["--cfg=buck_build"],
+    rustc_flags = BZ_BINARY_RUSTC_FLAGS,
     rustc_env = COMMON_RUSTC_ENV,
     compile_data = glob([
         "**/*",
