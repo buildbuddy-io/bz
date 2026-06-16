@@ -24,6 +24,7 @@ use bz_core::cells::external::GitCellSetup;
 use bz_core::cells::external::GitObjectFormat;
 use bz_core::cells::external::bzlmod_cell_aliases_for_cell;
 use bz_core::cells::external::is_bzlmod_cell_name;
+use bz_core::cells::external::register_bzlmod_cell_aliases;
 use bz_core::cells::external::register_external_cell_origin;
 use bz_core::cells::name::CellName;
 use bz_core::fs::project::ProjectRoot;
@@ -608,16 +609,14 @@ impl BuckConfigBasedCells {
             }
             aliases.insert(alias, destination);
         }
-        if is_bzlmod_cell_name(cell_name.as_str()) || cell_name.as_str() == "bazel_tools" {
-            for (alias, destination) in bzlmod_cell_aliases_for_cell(cell_name.as_str()) {
-                if alias == "bazel_tools" {
-                    continue;
-                }
-                aliases.insert(
-                    NonEmptyCellAlias::new(alias)?,
-                    CellName::unchecked_new(&destination)?,
-                );
+        for (alias, destination) in bzlmod_cell_aliases_for_cell(cell_name.as_str()) {
+            if alias == "bazel_tools" {
+                continue;
             }
+            aliases.insert(
+                NonEmptyCellAlias::new(alias)?,
+                CellName::unchecked_new(&destination)?,
+            );
         }
         CellAliasResolver::new(cell_name, aliases)
     }
@@ -1837,6 +1836,44 @@ mod tests {
 
         assert_eq!("bz", resolver.resolve("root")?.as_str());
         assert!(resolver.resolve("bazel_tools").is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bazel_cell_alias_resolver_includes_bzlmod_root_aliases() -> bz_error::Result<()> {
+        let mut file_ops = TestConfigParserFileOps::new(&[(
+            ".buckconfig",
+            indoc!(
+                r#"
+                    [cells]
+                        bz_test_root = .
+                        prelude = prelude
+                "#
+            ),
+        )])?;
+        let cells = BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[]).await?;
+        let root_cell = cells.cell_resolver.root_cell();
+        register_bzlmod_cell_aliases(
+            root_cell.as_str(),
+            [(
+                "io_test_rules_docker".to_owned(),
+                "rules_docker+".to_owned(),
+            )],
+        );
+        let config = cells
+            .parse_single_cell_with_file_ops(root_cell, &mut file_ops)
+            .await?;
+        let resolver = BuckConfigBasedCells::get_bazel_cell_alias_resolver_from_config(
+            root_cell,
+            &cells.cell_resolver,
+            &config,
+        )?;
+
+        assert_eq!(
+            "rules_docker+",
+            resolver.resolve("io_test_rules_docker")?.as_str()
+        );
 
         Ok(())
     }
