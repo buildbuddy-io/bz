@@ -17,7 +17,6 @@ use starlark::values::StarlarkValue;
 use starlark::values::Value;
 use starlark::values::ValueLike;
 use starlark::values::dict::AllocDict;
-use starlark::values::list::ListRef;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::structs::StructRef;
@@ -90,10 +89,6 @@ impl<'v> StarlarkValue<'v> for NativeRuleCallable {
     }
 }
 
-fn list_first<'v>(value: Value<'v>) -> Option<Value<'v>> {
-    ListRef::from_value(value).and_then(|list| list.iter().next())
-}
-
 fn invoke_bazel_sh_binary<'v>(
     rule: Value<'v>,
     args: &Arguments<'v, '_>,
@@ -101,29 +96,22 @@ fn invoke_bazel_sh_binary<'v>(
 ) -> starlark::Result<Value<'v>> {
     let positions = args.positions(eval.heap())?.collect::<Vec<_>>();
     let named = args.names_map()?;
-    let has_main = named.iter().any(|(name, _)| name.as_str() == "main");
-    let has_resources = named.iter().any(|(name, _)| name.as_str() == "resources");
-    let srcs = named
+    let has_content_based_path = named
         .iter()
-        .find(|(name, _)| name.as_str() == "srcs")
-        .map(|(_, value)| *value);
-    let data = named
+        .any(|(name, _)| name.as_str() == "has_content_based_path");
+    let has_copy_resources = named
         .iter()
-        .find(|(name, _)| name.as_str() == "data")
-        .map(|(_, value)| *value);
+        .any(|(name, _)| name.as_str() == "copy_resources");
 
-    let mut kwargs_owned = Vec::new();
-    for (name, value) in named {
-        match name.as_str() {
-            "srcs" | "data" => {}
-            _ => kwargs_owned.push((name.as_str().to_owned(), value)),
-        }
+    let mut kwargs_owned = named
+        .iter()
+        .map(|(name, value)| (name.as_str().to_owned(), *value))
+        .collect::<Vec<_>>();
+    if !has_content_based_path {
+        kwargs_owned.push(("has_content_based_path".to_owned(), Value::new_bool(false)));
     }
-    if !has_main && let Some(main) = srcs.and_then(list_first) {
-        kwargs_owned.push(("main".to_owned(), main));
-    }
-    if !has_resources && let Some(data) = data {
-        kwargs_owned.push(("resources".to_owned(), data));
+    if !has_copy_resources {
+        kwargs_owned.push(("copy_resources".to_owned(), Value::new_bool(true)));
     }
 
     let kwargs = kwargs_owned
@@ -321,6 +309,8 @@ pub(crate) fn register_bazel_native(builder: &mut GlobalsBuilder) {
             "java_toolchain",
             "package_group",
             "platform",
+            "sh_binary",
+            "sh_test",
             "starlark_doc_extract",
             "test_suite",
             "toolchain",

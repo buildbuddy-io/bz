@@ -74,6 +74,9 @@ def _generate_script(
             # callees disambiguate (see D28960177 for more context).
             "export BUCK_SH_BINARY_VERSION_UNSTABLE=2",
             cmd_args("export BUCK_PROJECT_ROOT=\"$__SCRIPT_DIR/", resources_dir, "\"", delimiter = ""),
+            "if [[ ! -d \"$BUCK_PROJECT_ROOT\" && -d \"$__SCRIPT_DIR/resources\" ]]; then",
+            "  export BUCK_PROJECT_ROOT=\"$__SCRIPT_DIR/resources\"",
+            "fi",
             # Normalize backslashes to forward slashes for the Windows-host /
             # Linux-target (RE) case where relative_to produces Windows-style separators.
             "export BUCK_PROJECT_ROOT=\"${BUCK_PROJECT_ROOT//\\\\//}\"",
@@ -103,6 +106,7 @@ def _generate_script(
             'for %%a in ("%__SRC%") do set "__SCRIPT_DIR=%%~dpa"',
             "set BUCK_SH_BINARY_VERSION_UNSTABLE=2",
             cmd_args("set BUCK_PROJECT_ROOT=%__SCRIPT_DIR%\\", resources_dir, delimiter = ""),
+            "if not exist \"%BUCK_PROJECT_ROOT%\" if exist \"%__SCRIPT_DIR%\\resources\" set BUCK_PROJECT_ROOT=%__SCRIPT_DIR%\\resources",
             "set BUCK_DEFAULT_RUNTIME_RESOURCES=%BUCK_PROJECT_ROOT%",
             "set RUNFILES_DIR=%BUCK_PROJECT_ROOT%",
             "set TEST_SRCDIR=%RUNFILES_DIR%",
@@ -131,6 +135,7 @@ def _add_bazel_runfiles(resources: dict[str, Artifact], runfiles):
 # "srcs": attrs.list(attrs.source(), default = []),
 # "data": attrs.list(attrs.source(), default = []),
 # "resources": attrs.list(attrs.source(), default = []),
+# "args": attrs.list(attrs.arg(), default = []),
 # "copy_resources": attrs.bool(default = False),
 def sh_binary_impl(ctx):
     main = ctx.attrs.main
@@ -163,6 +168,6 @@ def sh_binary_impl(ctx):
         RunInfo(
             # TODO(cjhopman): Figure out if we need to specify the link targets
             # as inputs. We shouldn't need to, but need to verify it.
-            args = cmd_args(script, hidden = resources_dir),
+            args = cmd_args(script, ctx.attrs.args, hidden = resources_dir),
         ),
     ]

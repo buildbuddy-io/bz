@@ -81,6 +81,9 @@ sh_binary = prelude_rule(
                  that contains all the resources, laid out in their locations relative to
                  the original buck project root.
             """),
+            "args": attrs.list(attrs.arg(), default = [], doc = """
+                Bazel-compatible list of arguments to invoke this script with.
+            """),
             "append_script_extension": attrs.bool(default = True, doc = """
                 By default, sh_binary ensures that the script has an appropriate extension (e.g. `.sh` or `.bat`),
                   appending one itself if necessary. Setting this to False prevents that behavior and makes the caller
@@ -187,6 +190,8 @@ sh_test = prelude_rule(
             "env_inherit": attrs.list(attrs.string(), default = [], doc = """
                 Bazel-compatible list of environment variable names inherited by the test runner.
             """),
+            "flaky": attrs.bool(default = False),
+            "local": attrs.bool(default = False),
             "network_access": attrs.option(attrs.enum(["all", "none"]), default = None),
             "type": attrs.option(attrs.string(), default = None, doc = """
                 If provided, this will be sent to any configured `.buckconfig`
@@ -198,6 +203,7 @@ sh_test = prelude_rule(
             "run_args": attrs.list(attrs.string(), default = []),
             "run_env": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
             "run_test_separately": attrs.bool(default = False),
+            "shard_count": attrs.option(attrs.int(), default = None),
             "size": attrs.option(attrs.string(), default = None),
             "timeout": attrs.option(attrs.enum(["short", "moderate", "long", "eternal"]), default = None),
             "test_rule_timeout_ms": attrs.option(attrs.int(), default = None),
