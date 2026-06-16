@@ -26,6 +26,14 @@ def _config_setting_values(values):
 
 def config_setting_impl(ctx):
     buckconfig_values, command_line_values = _config_setting_values(ctx.attrs.values)
+
+    # Bazel's `define_values = {"K": "V"}` is sugar for matching `--define K=V`.
+    # bz does not model `--define`, so these conditions are simply inactive unless
+    # the define is set; key them under a per-define command-line option so they
+    # never collide and never spuriously match.
+    for key, value in ctx.attrs.define_values.items():
+        command_line_values["//command_line_option:define:" + key] = value
+
     subinfos = [util.constraint_values_to_configuration(ctx.attrs.constraint_values)]
     subinfos.append(ConfigurationInfo(
         constraints = {},
