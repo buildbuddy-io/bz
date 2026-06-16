@@ -67,12 +67,8 @@ use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
 
 register_toolchains(
-    "@llvm//toolchain:linux_aarch64_to_linux_aarch64",
-    "@llvm//toolchain:linux_x86_64_to_linux_x86_64",
-    "@llvm//toolchain:macos_aarch64_to_linux_aarch64",
-    "@llvm//toolchain:macos_aarch64_to_linux_x86_64",
-    "@llvm//toolchain:macos_x86_64_to_linux_aarch64",
-    "@llvm//toolchain:macos_x86_64_to_linux_x86_64",
+    "//toolchains/llvm:linux_aarch64_musl_cc_toolchain",
+    "//toolchains/llvm:linux_x86_64_musl_cc_toolchain",
 )
 
 buildbuddy = use_extension("@toolchains_buildbuddy//:extensions.bzl", "buildbuddy")
