@@ -67,6 +67,7 @@ impl<'v> StarlarkValue<'v> for BazelPyInternal {
 
     fn dir_attr(&self) -> Vec<String> {
         vec![
+            "cc_helper".to_owned(),
             "get_current_os_name".to_owned(),
             "get_label_repo_runfiles_path".to_owned(),
             "get_legacy_external_runfiles".to_owned(),
@@ -306,6 +307,14 @@ fn ctx_is_tool_configuration<'v>(ctx: Value<'v>, heap: Heap<'v>) -> starlark::Re
 
 #[starlark_module]
 fn bazel_py_internal_methods(builder: &mut MethodsBuilder) {
+    /// Adapter for Bazel's internal `cc_helper`, accessed by rules_python as
+    /// `getattr(py_internal, "cc_helper", None)`.
+    #[starlark(attribute)]
+    fn cc_helper<'v>(this: &BazelPyInternal, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(heap.alloc(BazelCcHelper))
+    }
+
     fn is_singleton_depset<'v>(
         #[starlark(this)] _this: &BazelPyInternal,
         value: Value<'v>,
@@ -449,6 +458,67 @@ fn bazel_py_internal_methods(builder: &mut MethodsBuilder) {
         #[starlark(default = NoneOr::None)] _ctx: NoneOr<Value<'v>>,
     ) -> starlark::Result<bool> {
         Ok(false)
+    }
+}
+
+/// Returns whether a file name denotes a shared library, mirroring Bazel's
+/// `cc_helper.is_valid_shared_library_artifact`: a direct shared-library
+/// extension, or a versioned shared object such as `libfoo.so.1.2`.
+fn is_valid_shared_library_basename(name: &str) -> bool {
+    const SHARED_LIBRARY_EXTENSIONS: &[&str] = &[".so", ".dll", ".dylib", ".wasm", ".pyd"];
+    if SHARED_LIBRARY_EXTENSIONS
+        .iter()
+        .any(|ext| name.ends_with(ext))
+    {
+        return true;
+    }
+    if let Some(pos) = name.find(".so.") {
+        let version = &name[pos + ".so.".len()..];
+        return !version.is_empty()
+            && version
+                .split('.')
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()));
+    }
+    false
+}
+
+/// Bazel-internal `cc_helper` adapter exposed to rules_python via
+/// `py_internal.cc_helper`. Only the subset of helpers used by the Python rules
+/// is implemented.
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelCcHelper;
+
+impl fmt::Display for BazelCcHelper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("cc_helper")
+    }
+}
+
+starlark::starlark_simple_value!(BazelCcHelper);
+
+#[starlark_value(type = "cc_helper")]
+impl<'v> StarlarkValue<'v> for BazelCcHelper {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_cc_helper_methods)
+    }
+}
+
+#[starlark_module]
+fn bazel_cc_helper_methods(builder: &mut MethodsBuilder) {
+    /// Returns whether the given artifact is a (possibly versioned) shared library.
+    fn is_valid_shared_library_artifact<'v>(
+        #[starlark(this)] _this: &BazelCcHelper,
+        #[starlark(require = pos)] artifact: Value<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<bool> {
+        let Some(artifact) = ValueAsInputArtifactLike::unpack_value(artifact)? else {
+            return Ok(false);
+        };
+        let basename = artifact
+            .0
+            .with_filename(&|filename| heap.alloc_str(filename.as_str()))?;
+        Ok(is_valid_shared_library_basename(basename.as_str()))
     }
 }
 
