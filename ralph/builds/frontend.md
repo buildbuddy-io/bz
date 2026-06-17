@@ -23,9 +23,11 @@ F19 when a js_binary gathers runfiles through aspect_bazel_lib's `copy_to_bin`
 
 - **F18** — NODEP_LABEL string attr (`native.toolchain`'s `toolchain`) rejected a
   `Label` object. **Fixed** (unblocked the build to 1,632 actions).
-- **F19** — toolchain key matching doesn't resolve apparent repo aliases
-  (`@bazel_lib` vs canonical `aspect_bazel_lib+`). Documented, deferred (needs cell
-  alias resolver in static toolchain-key matching).
+- **F19** — toolchain key matching didn't resolve apparent repo aliases
+  (`@bazel_lib` vs canonical `aspect_bazel_lib+`). **Fixed** (keys_match repo-relative
+  fallback) → coreutils toolchain resolves, build reaches ~1,664 actions.
+- **F24** — copy-to-bin double-bind in js_binary runfiles (`Attempted to bind an
+  artifact which was already bound`). Documented, deferred — last gap for js_binary.
 
 ## Note
 

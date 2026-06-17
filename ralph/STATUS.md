@@ -1,19 +1,19 @@
 # Status
 
-_Last updated: 2026-06-17 02:30 UTC_
+_Last updated: 2026-06-17 03:15 UTC_
 
 ## Summary
 
 Built `bz` from source and ran the build-loop across 12 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
 rules_js (JS/TS), rules_oci, rules_proto, custom Starlark rules, and a huge
-multi-language repo. **14 `bz` bugs found, fixed, verified, and committed; 10 deeper
+multi-language repo. **15 `bz` bugs found, fixed, verified, and committed; 10 deeper
 ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
-Maven, Go, Rust** (build + run + test); **JS/TS** largely works (1,632 actions before
-a deferred toolchain-key gap). Custom Starlark rule-authoring APIs: **17/19
+Maven, Go, Rust** (build + run + test); **JS/TS** largely works (~1,664 actions before
+a deferred copy-to-bin gap). Custom Starlark rule-authoring APIs: **17/19
 bazel-examples/rules examples build**.
 
-## Bugs fixed & committed (14)
+## Bugs fixed & committed (15)
 
 | ID | Fix | Surfaced by |
 | --- | --- | --- |
@@ -29,6 +29,7 @@ bazel-examples/rules examples build**.
 | F14 | tighten F3 source-coercion to bare names | java-maven (regression guard) |
 | F15 | `repository_ctx.download(block=False)` | java-maven (rules_oci) |
 | F18 | NODEP_LABEL string attr accepts `Label` | frontend (rules_js) |
+| F19 | toolchain key apparent↔canonical repo alias | frontend (rules_js) |
 | F22 | `ctx.rule.files`/`file`/`executable` for aspects | rules aspect example |
 | F23 | `File` artifacts comparable (`sorted([files])`) | rules custom-rule examples |
 
@@ -42,9 +43,9 @@ bazel-examples/rules examples build**.
 | F12 | go `//...` shared-action conflict (narrow) | config-transition output-path dedup; specific targets work |
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
 | F17 | `local_path_override` outside project root | bz path model is project-rooted; setup-specific |
-| F19 | toolchain key apparent-vs-canonical repo alias | needs cell alias resolver in key matching; JS/TS otherwise works |
 | F20 | zlib header path in proto/protobuf transitive build | deep transitive-dep materialization |
-| F21 | `ctx.outputs.executable` for executable/test rules | needs optional predeclared-output binding |
+| F21 | `ctx.outputs.executable` for executable/test rules | needs lazy predeclared-output binding |
+| F24 | copy-to-bin double-bind in js_binary runfiles | aspect_bazel_lib copy dedup; JS/TS ~1,664 actions |
 
 ## Repos tested
 
@@ -59,7 +60,7 @@ bazel-examples/rules examples build**.
 | bazel-examples/java-maven | rules_jvm_external + rules_oci | ✅ Maven+Java (F13/F15 fixed); OCI image F16 |
 | bazel-examples/cpp-tutorial | rules_cc | ✅ all stages build+run (no bugs) |
 | rules_rust (standalone) | rules_rust | ✅ binary+library+test build, run, pass |
-| bazel-examples/frontend | rules_js (JS/TS) | ⏳ 1,632 actions build (F18 fixed); F19 toolchain-key gap |
+| bazel-examples/frontend | rules_js (JS/TS) | ⏳ ~1,664 actions build (F18/F19 fixed); F24 copy-to-bin gap |
 | bazel-examples/rules | custom Starlark rules | ✅ 17/19 examples build (only runfiles/test_rule fail — F21) |
 | proto-standalone | rules_proto/protobuf | ⏸ F20 (zlib header, transitive) |
 

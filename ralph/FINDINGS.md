@@ -87,6 +87,21 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   protoc → protobuf → zlib. Consistent with protobuf-as-root being deferred (F9).
 - **Status:** documented / open (deferred — deep transitive materialization).
 
+## F24: copy-to-bin double-bind in js_binary runfiles
+- **Repo:** bazel-examples/frontend (rules_js js_binary → aspect_bazel_lib copy_to_bin).
+- **Symptom:** `Attempted to bind an artifact which was already bound` at
+  `copy_file.bzl:80` (`ctx.actions.run(outputs=[dst], ...)`), reached via
+  `gather_runfiles` → `copy_js_file_to_bin_action` → `copy_file_to_bin_action`.
+- **Analysis:** the same destination artifact is produced by two copy actions —
+  either the same source file is copied to bin more than once (runfiles not deduped
+  the way aspect_bazel_lib expects under bz) or two sources collapse to the same bin
+  path. bz binds an output by exactly one action, so the second bind fails. Needs the
+  copy_to_bin dedup mechanism + actual runfiles content to pin down (external cells
+  are virtual, not on disk).
+- **Scope:** JS/TS otherwise runs **~1,664 build actions** (TS compile, SWC,
+  bundling) — only final js_binary runfiles gathering fails. Reached only after F19.
+- **Status:** documented / open (deferred).
+
 ## F19: toolchain key matching doesn't resolve apparent repo aliases
 - **Repo:** bazel-examples/frontend (rules_js → aspect_bazel_lib `copy_to_bin`).
 - **Symptom:** `toolchain "@bazel_lib//lib:coreutils_toolchain_type" was not declared
@@ -107,7 +122,8 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
 - **Scope:** The JS/TS ecosystem otherwise **largely works** (1,632 actions: TS
   compile, SWC, bundling). This blocked targets that gather runfiles through
   copy_to_bin's coreutils toolchain.
-- **Status:** fixing
+- **Status:** ✅ fixed & verified — coreutils toolchain now resolves; build progresses
+  past F19 (~1,664 actions) to a separate copy-to-bin issue (F24).
 
 ## F18: string attr (NODEP_LABEL) rejects a `Label` value
 - **Repo:** bazel-examples/frontend (rules_js; aspect_bazel_lib `ape` toolchain regn).
