@@ -4,11 +4,12 @@ _Last updated: 2026-06-17 01:00 UTC_
 
 ## Summary
 
-Built `bz` from source and ran the build-loop across 9 repos/projects spanning
+Built `bz` from source and ran the build-loop across 10 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
-rules_oci, and a huge multi-language repo. **11 `bz` bugs found, fixed, verified, and
-committed; 6 deeper ones documented and deferred.** Ecosystems validated end-to-end:
-**C++, Python, Java, Maven, Go (single-pkg), Rust** (build + run + test).
+rules_js (JS/TS), rules_oci, and a huge multi-language repo. **12 `bz` bugs found,
+fixed, verified, and committed; 7 deeper ones documented and deferred.** Ecosystems
+validated end-to-end: **C++, Python, Java, Maven, Go, Rust** (build + run + test);
+**JS/TS** largely works (1,632 actions before a deferred toolchain-key gap).
 
 ## Bugs fixed & committed (11)
 
@@ -25,6 +26,7 @@ committed; 6 deeper ones documented and deferred.** Ecosystems validated end-to-
 | F13 | `ctx.actions.run` `unused_inputs_list` | java-maven (tar/oci) |
 | F14 | tighten F3 source-coercion to bare names | java-maven (regression guard) |
 | F15 | `repository_ctx.download(block=False)` | java-maven (rules_oci) |
+| F18 | NODEP_LABEL string attr accepts `Label` | frontend (rules_js) |
 
 ## Documented / deferred (5 — deeper)
 
@@ -36,6 +38,7 @@ committed; 6 deeper ones documented and deferred.** Ecosystems validated end-to-
 | F12 | go `//...` shared-action conflict (narrow) | config-transition output-path dedup; specific targets work |
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
 | F17 | `local_path_override` outside project root | bz path model is project-rooted; setup-specific |
+| F19 | toolchain key apparent-vs-canonical repo alias | needs cell alias resolver in key matching; JS/TS otherwise works |
 
 ## Repos tested
 
@@ -50,6 +53,7 @@ committed; 6 deeper ones documented and deferred.** Ecosystems validated end-to-
 | bazel-examples/java-maven | rules_jvm_external + rules_oci | ✅ Maven+Java (F13/F15 fixed); OCI image F16 |
 | bazel-examples/cpp-tutorial | rules_cc | ✅ all stages build+run (no bugs) |
 | rules_rust (standalone) | rules_rust | ✅ binary+library+test build, run, pass |
+| bazel-examples/frontend | rules_js (JS/TS) | ⏳ 1,632 actions build (F18 fixed); F19 toolchain-key gap |
 
 ## Environment
 

@@ -11,6 +11,41 @@ Format per finding:
 
 ---
 
+## F19: toolchain key matching doesn't resolve apparent repo aliases
+- **Repo:** bazel-examples/frontend (rules_js → aspect_bazel_lib `copy_to_bin`).
+- **Symptom:** `toolchain "@bazel_lib//lib:coreutils_toolchain_type" was not declared
+  by this rule (internal error)` during js_binary runfiles gathering (after 1,632
+  build actions succeeded).
+- **Root cause:** `ctx.toolchains[key]` matching (`AnalysisToolchains` in
+  `.../rule_defs/context.rs`) compares keys after only stripping a leading `@`
+  (`normalize_key`). The access uses the **apparent** repo name `@bazel_lib//...`,
+  while the declared toolchain is canonicalized (via `bazel_canonical_label_key`) to
+  `aspect_bazel_lib+//...`. (The build cache shows both `bazel_lib++...` and
+  `aspect_bazel_lib++...` repos.) Apparent ≠ canonical → no match.
+- **Fix:** Not implemented — `key_from_value`/`keys_match` are static and lack the
+  cell alias resolver needed to map apparent→canonical repo names. Threading that
+  context through toolchain-key resolution is a deeper change. Documented; deferred.
+- **Scope:** The JS/TS ecosystem otherwise **largely works** (1,632 actions: TS
+  compile, SWC, bundling). This blocks targets that gather runfiles through
+  copy_to_bin's coreutils toolchain.
+- **Status:** documented / open (deferred)
+
+## F18: string attr (NODEP_LABEL) rejects a `Label` value
+- **Repo:** bazel-examples/frontend (rules_js; aspect_bazel_lib `ape` toolchain regn).
+- **Symptom:** `Error coercing attribute 'toolchain' of type 'attrs.string()' ...
+  Expected 'str', but got 'Label (repr: @@ape+//ape/toolchain/info:diff)'` at
+  `native.toolchain(...)`.
+- **Root cause:** bz models Bazel's NODEP_LABEL (label-shaped, no dependency — e.g.
+  the `toolchain` rule's `toolchain` attr) as `attrs.string()`. Its coercer only
+  accepted strings (`value.unpack_str_err()`), but Bazel's NODEP_LABEL also accepts a
+  `Label` object (which the aspect rule passes).
+- **Fix:** Extend the string attr coercer (`.../coerce/attr_type/string.rs`): if the
+  value is a `Label` (StarlarkProvidersLabel / StarlarkTargetLabel), store its
+  canonical string form (round-trips for bz's resolution), mirroring the visibility
+  coercer's pattern. Falls back to the original error otherwise.
+- **Status:** ✅ fixed & verified — frontend build went from instant failure to 1,632
+  build actions (JS/TS compile + bundle). Next gap is F19 (toolchain key alias).
+
 ## F17: `local_path_override` can't point outside the project root
 - **Repo:** rules_rust in-tree example hello_world_no_cargo
   (`local_path_override(module_name="rules_rust", path="../..")`).
