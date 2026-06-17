@@ -11,6 +11,7 @@
 use std::borrow::Cow;
 use std::convert::Infallible;
 use std::fmt::Display;
+use std::cmp::Ordering;
 use std::hash::Hash;
 use std::hash::Hasher;
 
@@ -504,9 +505,32 @@ pub trait StarlarkArtifactLike<'v>: Display {
             .is_some_and(|other| self.fingerprint() == other.fingerprint()))
     }
 
+    /// Orders artifacts by their path, so `sorted([file1, file2, ...])` works as in
+    /// Bazel (where `File` objects are comparable).
+    fn compare(&self, other: Value<'v>) -> starlark::Result<Ordering> {
+        match <&dyn StarlarkArtifactLike<'v>>::unpack_value(other)? {
+            Some(other) => Ok(artifact_fingerprint_sort_key(self.fingerprint())
+                .cmp(&artifact_fingerprint_sort_key(other.fingerprint()))),
+            None => Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
+                "Cannot compare a `File` with `{}`",
+                other.get_type(),
+            )
+            .into()),
+        }
+    }
+
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         self.fingerprint().hash(hasher);
         Ok(())
+    }
+}
+
+/// A total-order key for an artifact, used to sort `File` objects by path.
+fn artifact_fingerprint_sort_key(fingerprint: ArtifactFingerprint<'_>) -> String {
+    match fingerprint {
+        ArtifactFingerprint::Normal { path, .. } => bazel_artifact_path(path),
+        ArtifactFingerprint::Promise { id } => format!("{id:?}"),
     }
 }
 

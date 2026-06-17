@@ -381,6 +381,10 @@ impl<'v> StarlarkValue<'v> for StarlarkArtifact {
         StarlarkArtifactLike::equals(self, other)
     }
 
+    fn compare(&self, other: Value<'v>) -> starlark::Result<std::cmp::Ordering> {
+        StarlarkArtifactLike::compare(self, other)
+    }
+
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         StarlarkArtifactLike::write_hash(self, hasher)
     }
