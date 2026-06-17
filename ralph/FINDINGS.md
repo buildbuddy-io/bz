@@ -723,6 +723,13 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
 - **Impact:** Affects projects with old-style BUILD files that use cc rules without
   loading from rules_cc. Modern projects (incl. re2's main targets) load from
   rules_cc and are unaffected.
+- **Confirmed real-world occurrence (2026-06-17):** `tcmalloc//tcmalloc:
+  huge_page_aware_allocator_fuzz` (a cc_test) depends on **snappy**, whose
+  `@@snappy+//:config` target uses a bare native `cc_library` →
+  `fail: Unimplemented rule type 'cc_library' for target '@@snappy+//:config'`. This is a
+  buildable-on-Linux real-world repro (unlike the re2 emscripten case). tcmalloc's core
+  library and most targets load cc rules from rules_cc and build fine; only deps that use
+  bare native cc rules (snappy here) hit F5.
 - **Fix:** Not implemented. Proper fix = autoload bare cc rules to rules_cc (or
   implement buck2-style cc rule impls) — a substantial change with cell-bootstrap
   complications. Documented for upstream. The re2 case also needs Emscripten, so it

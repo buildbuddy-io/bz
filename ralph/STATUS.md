@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-06-17 10:25 UTC_
+_Last updated: 2026-06-17 10:50 UTC_
 
 ## Summary
 
@@ -49,7 +49,7 @@ bazel-examples/rules examples build**.
 
 | ID | Issue | Why deferred |
 | --- | --- | --- |
-| F5 | bare native cc rules unimplemented | autoload to rules_cc; modern repos load explicitly |
+| F5 | bare native cc rules unimplemented (e.g. snappy via tcmalloc fuzz) | autoload to rules_cc; modern repos load explicitly |
 | F36 | `hasattr`/`dir` report unset provider fields as present | needs unset-sentinel (cheap fix broke rules_cc, reverted); blocks protobuf/grpc/cel-cpp |
 | F10 | `linkstatic=0` drops cc_library deps | deep cc dynamic-linking internals |
 | F12 | go `//...` shared-action conflict (narrow) | config-transition output-path dedup; specific targets work |
