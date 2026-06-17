@@ -172,6 +172,20 @@ fn bazel_run_identifier<'v>(
     })
 }
 
+fn bazel_run_output_signature<'v>(
+    outputs: &BuckIndexSet<OutputArtifact<'v>>,
+) -> Vec<(String, String)> {
+    outputs
+        .iter()
+        .map(|output| {
+            (
+                output.get_path().with_full_path(|path| path.to_string()),
+                format!("{:?}", output.output_type()),
+            )
+        })
+        .collect()
+}
+
 fn bazel_run_add_hidden<'v>(
     args: &mut StarlarkCmdArgs<'v>,
     value: Value<'v>,
@@ -703,6 +717,12 @@ fn register_bazel_run_action<'v>(
     };
 
     let executor_preference = new_executor_preference(local_only, false, false)?;
+    let category = mnemonic.unwrap_or_else(|| eval.heap().alloc_str("BazelRun"));
+    let effective_supports_bazel_path_mapping = supports_bazel_path_mapping && !local_only;
+    let action_signature = format!(
+        "bazel_run:{:?}:{exe:?}:{args:?}:{bazel_inputs:?}:{bazel_executable:?}:{bazel_executable_runfiles:?}:{env:?}:{worker:?}:{remote_worker:?}:{category:?}:{use_default_shell_env:?}:{local_only:?}:{effective_supports_bazel_path_mapping:?}:{bazel_string_args:?}:{bazel_cc_command_line:?}:{precomputed_local_action_cache_command_line_digest:?}",
+        bazel_run_output_signature(&outputs),
+    );
     let starlark_values = eval.heap().alloc_complex(StarlarkRunActionValues {
         exe: eval.heap().alloc_typed(exe),
         args: eval.heap().alloc_typed(args),
@@ -714,7 +734,7 @@ fn register_bazel_run_action<'v>(
         env,
         worker,
         remote_worker,
-        category: mnemonic.unwrap_or_else(|| eval.heap().alloc_str("BazelRun")),
+        category,
         identifier,
         outputs_for_error_handler: Vec::new(),
     });
@@ -741,13 +761,16 @@ fn register_bazel_run_action<'v>(
         expected_eligible_for_dedupe: None,
         timeout: None,
         bazel_use_default_shell_env: Some(use_default_shell_env),
-        supports_bazel_path_mapping: supports_bazel_path_mapping && !local_only,
+        supports_bazel_path_mapping: effective_supports_bazel_path_mapping,
         bazel_string_args,
         precomputed_local_action_cache_command_line_digest,
     };
 
-    this.state()?
-        .register_action(outputs, action, Some(starlark_values), None)?;
+    let mut state = this.state()?;
+    if !state.should_register_bazel_shareable_action_for_outputs(&outputs, action_signature)? {
+        return Ok(NoneType);
+    }
+    state.register_action(outputs, action, Some(starlark_values), None)?;
     Ok(NoneType)
 }
 

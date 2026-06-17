@@ -408,37 +408,78 @@ impl<'v> AnalysisRegistry<'v> {
             .find_map(|(key, artifact)| (artifact == &**output).then_some(key.as_str()))
     }
 
-    /// Returns whether a Bazel shareable action should be registered.
-    ///
-    /// Bazel interns derived artifacts by path during analysis and then allows duplicate
-    /// shareable actions when their action keys match. Buck binds outputs immediately, so for
-    /// the Bazel action surface we track a compact action signature before binding and skip an
-    /// identical second registration.
+    /// Single-output wrapper around `should_register_bazel_shareable_action_for_outputs`.
     pub fn should_register_bazel_shareable_action(
         &mut self,
         output: &OutputArtifact<'v>,
         signature: String,
     ) -> bz_error::Result<bool> {
-        let Some(key) = self
-            .bazel_shareable_output_key_for_artifact(output)
-            .map(str::to_owned)
-        else {
+        self.should_register_bazel_shareable_action_for_outputs(
+            &BuckIndexSet::from_iter([output.dupe()]),
+            signature,
+        )
+    }
+
+    /// Returns whether a Bazel shareable action should be registered.
+    ///
+    /// Bazel interns derived artifacts by path during analysis and then tolerates duplicate
+    /// shareable actions when their action key, mandatory inputs, and outputs match. Buck binds
+    /// outputs immediately, so for the Bazel action surface we track a compact action signature
+    /// before binding and skip an identical second registration.
+    pub fn should_register_bazel_shareable_action_for_outputs(
+        &mut self,
+        outputs: &BuckIndexSet<OutputArtifact<'v>>,
+        signature: String,
+    ) -> bz_error::Result<bool> {
+        let keys = outputs
+            .iter()
+            .filter_map(|output| {
+                self.bazel_shareable_output_key_for_artifact(output)
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>();
+        if keys.is_empty() {
             return Ok(true);
         };
-        match self.bazel_shareable_action_signatures.get(&key) {
-            Some(previous) if previous == &signature => Ok(false),
-            Some(previous) => Err(DeclaredArtifactError::BazelShareableActionConflict {
-                path: key,
-                previous: previous.to_owned(),
-                current: signature,
-            }
-            .into()),
-            None => {
-                self.bazel_shareable_action_signatures
-                    .insert(key, signature);
-                Ok(true)
+
+        let mut existing = None;
+        let mut has_new_key = false;
+        for key in &keys {
+            match self.bazel_shareable_action_signatures.get(key) {
+                Some(previous) if previous == &signature => {
+                    existing.get_or_insert_with(|| (key.to_owned(), previous.to_owned()));
+                }
+                Some(previous) => {
+                    return Err(DeclaredArtifactError::BazelShareableActionConflict {
+                        path: key.to_owned(),
+                        previous: previous.to_owned(),
+                        current: signature,
+                    }
+                    .into());
+                }
+                None => has_new_key = true,
             }
         }
+
+        if let Some((path, previous)) = existing {
+            if has_new_key || keys.len() != outputs.len() {
+                return Err(DeclaredArtifactError::BazelShareableActionConflict {
+                    path,
+                    previous,
+                    current: format!(
+                        "{signature} (partially overlaps an already registered shareable action)"
+                    ),
+                }
+                .into());
+            }
+            return Ok(false);
+        }
+
+        for key in keys {
+            self.bazel_shareable_action_signatures
+                .insert(key, signature.clone());
+        }
+        Ok(true)
     }
 
     pub fn register_bazel_solib_symlink_action(

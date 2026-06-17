@@ -231,3 +231,91 @@ fn declare_output_require_bound() -> bz_error::Result<()> {
         _ => panic!("Expected a specific failure containing `{expect}`, got {ret:?}"),
     })
 }
+
+#[test]
+fn bazel_run_allows_duplicate_shareable_action() -> bz_error::Result<()> {
+    let content = indoc!(
+        r#"
+         def test(c):
+             out1 = c.actions.declare_file("shared.js")
+             out2 = c.actions.declare_file("shared.js")
+             c.actions.run(
+                 arguments = ["hello"],
+                 executable = "echo",
+                 outputs = [out1],
+                 mnemonic = "Echo",
+             )
+             c.actions.run(
+                 arguments = ["hello"],
+                 executable = "echo",
+                 outputs = [out2],
+                 mnemonic = "Echo",
+             )
+             return "ok"
+         "#
+    );
+
+    run_ctx_test(content, |ret| {
+        assert_eq!("ok", ret.unwrap().unpack_str().unwrap());
+        Ok(())
+    })
+}
+
+#[test]
+fn bazel_run_rejects_conflicting_shareable_action() -> bz_error::Result<()> {
+    let content = indoc!(
+        r#"
+         def test(c):
+             out1 = c.actions.declare_file("conflict.js")
+             out2 = c.actions.declare_file("conflict.js")
+             c.actions.run(
+                 arguments = ["hello"],
+                 executable = "echo",
+                 outputs = [out1],
+                 mnemonic = "Echo",
+             )
+             c.actions.run(
+                 arguments = ["goodbye"],
+                 executable = "echo",
+                 outputs = [out2],
+                 mnemonic = "Echo",
+             )
+         "#
+    );
+
+    let expect = "Bazel shareable output";
+    run_ctx_test(content, |ret| match ret {
+        Err(e) if e.to_string().contains(expect) => Ok(()),
+        _ => panic!("Expected a specific failure containing `{expect}`, got {ret:?}"),
+    })
+}
+
+#[test]
+fn bazel_run_rejects_partial_shareable_action_overlap() -> bz_error::Result<()> {
+    let content = indoc!(
+        r#"
+         def test(c):
+             out1 = c.actions.declare_file("partial.js")
+             extra = c.actions.declare_file("partial-extra.js")
+             out2 = c.actions.declare_file("partial.js")
+             c.actions.run(
+                 arguments = ["hello"],
+                 executable = "echo",
+                 outputs = [out1, extra],
+                 mnemonic = "Echo",
+             )
+             c.actions.run(
+                 arguments = ["hello"],
+                 executable = "echo",
+                 outputs = [out2],
+                 mnemonic = "Echo",
+             )
+         "#
+    );
+
+    let expect = "Bazel shareable output";
+    run_ctx_test(content, |ret| match ret {
+        Err(e) if e.to_string().contains(expect) => Ok(()),
+        _ => panic!("Expected a specific failure containing `{expect}`, got {ret:?}"),
+    })
+}
