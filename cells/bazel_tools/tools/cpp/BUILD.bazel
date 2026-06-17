@@ -8,6 +8,7 @@ filegroup(
     name = "pkg_sources",
     srcs = glob(["**"]) + [
         "//cells/bazel_tools/tools/cpp/modules_tools:pkg_sources",
+        "//cells/bazel_tools/tools/cpp/runfiles:pkg_sources",
     ],
 )
 

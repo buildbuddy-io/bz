@@ -1,0 +1,20 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])
+
+# Deprecated forwarder for the C++ runfiles library, which now lives in
+# @rules_cc//cc/runfiles. Kept for compatibility with targets that still depend
+# on @bazel_tools//tools/cpp/runfiles:runfiles (e.g. boringssl's tests).
+cc_library(
+    name = "runfiles",
+    hdrs = ["runfiles.h"],
+    deps = ["@rules_cc//cc/runfiles"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]),
+)
