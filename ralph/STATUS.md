@@ -69,6 +69,15 @@ bazel-examples/rules examples build**.
 | proto-standalone | rules_proto/protobuf | ⏸ F20 (zlib header, transitive) |
 | kotlin-standalone | rules_kotlin (JVM) | ✅ kt_jvm_library compiles (F25–F28); kt_jvm_binary F29 (=F21) |
 
+## Regression sweep (2026-06-17 03:50)
+
+With all 19 fixes in one binary, re-ran a cross-ecosystem sweep — **all pass, no
+regressions**: abseil (`//absl/strings`, `//absl/flags:flag_benchmark`), re2 (`//:re2`),
+googletest (`//:gtest`,`//:gtest_main`), cpp-tutorial stage3 `//...`, go-tutorial
+stage2 `//:print_fortune`, rust-standalone `//...`, custom rules
+(`//aspect/...`,`//predeclared_outputs/...`,`//depsets/...`). The fixes are mutually
+compatible and stable.
+
 ## Environment
 
 - VM: Linux x86_64, 8 cores, 31 GiB RAM, ~159 GiB free disk.
