@@ -498,6 +498,36 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   deferred. Workaround: `linkstatic = 1` on the affected target.
 - **Status:** documented / open (deferred)
 
+## F36: `hasattr()`/`dir()` on a provider instance report unset fields as present
+- **Repo:** protobuf (`//:protobuf_lite`) and grpc (`//:gpr`) — both via the rules_kotlin
+  `kotlin_repositories` module extension.
+- **Symptom:** `Object of type 'NoneType' has no attribute 'format'` at rules_kotlin
+  `repositories/versions.bzl:18`:
+  `if hasattr(version, "strip_prefix_template"): rule_arguments["strip_prefix"] =
+  version.strip_prefix_template.format(...)`. The `version` is a `provider()` instance built
+  *without* `strip_prefix_template` (e.g. `versions.PINTEREST_KTLINT`), so Bazel's `hasattr`
+  guard returns False and skips the line; bz's returns True and then `.format()` hits None.
+- **Minimal repro:** `P = provider(fields = {"a": "..", "b": ".."})`; `p = P(a = "set")`;
+  `hasattr(p, "b")` → bz prints `True` (Bazel: `False`); `dir(p)` → `["a","b"]` (Bazel: `["a"]`).
+- **Root cause:** `UserProviderGen` (`bz_build_api/.../provider/user.rs`) stores
+  `attributes: Box<[V]>` with exactly one slot per *declared* schema field (asserts
+  `fields.len() == attributes.len()`). At construction (`user_provider_creator`), a field that
+  isn't passed falls back to `UserProviderField.default`, which for a `provider(fields={name:
+  doc})` declaration is the implicit `Some(None)` (`UserProviderField::default()` in
+  `callable.rs`). So every declared field is always materialized (unset ⇒ stored as `None`),
+  and `dir_attr`/`get_attr_hashed` (and thus `hasattr`) always report it present. Bazel keeps
+  unset provider fields *absent* (access raises, `hasattr` is False).
+- **Fix shape (deferred — architectural, broad blast radius):** give provider fields a 3rd
+  optionality state (Required | Optional-absent | Defaulted) — `provider(fields={...})`
+  Bazel-compat fields are Optional-absent, not Defaulted-None. At construction, store an
+  "unset" sentinel `Value` in the `attributes` slot for Optional-absent fields that weren't
+  passed (keeps the `len == fields.len()` invariant). Then filter the sentinel in
+  `get_attr_hashed` (return None ⇒ hasattr False), `dir_attr`, and `iter_items` (which
+  `equals`/`write_hash`/`serialize`/`Display`/`ProviderLike::items` all flow through). Must be
+  done with full provider-subsystem test coverage (freeze/coerce, equality, hashing,
+  serialization) — not attempted unsupervised.
+- **Status:** documented / open (deferred — blocks protobuf & grpc at rules_kotlin ext)
+
 ## F35: `rule()` rejects deprecated no-op `incompatible_use_toolchain_transition` — ✅ FIXED
 - **Repo:** tcmalloc (`//tcmalloc:tcmalloc`), after F33.
 - **Symptom:** `Found 'incompatible_use_toolchain_transition' extra named parameter(s) for
