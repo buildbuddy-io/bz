@@ -123,6 +123,21 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
 - **Status:** ✅ fixed & verified — Kotlin build progresses past it; kt_jvm_library
   compiles. kt_jvm_binary then hits F29 (= F21, `ctx.outputs.executable`).
 
+## F31: `bz test` — test runfiles artifact not in action inputs
+- **Repo:** abseil-cpp (`bz test //absl/types:variant_test`, a cc_test).
+- **Symptom:** `Test execution request failed: Bazel test runfiles artifact was not
+  present in action inputs (internal error)`. The test **builds** fine; only
+  execution fails.
+- **Root cause:** the test action's inputs (`Execute2RequestExpander::get_inputs`,
+  `app/bz_test/src/orchestrator.rs`) were collected only from the test command line +
+  env. The Bazel test's full runfiles tree (data files reachable only via runfiles)
+  was not included, so `bazel_test_runfiles_inputs` couldn't find those artifacts in
+  the ensured inputs.
+- **Fix:** In `get_inputs`, also visit the test's runfiles artifacts
+  (`bazel_info().for_each_runfiles_entry`) so the full runfiles tree is part of the
+  action inputs before execution.
+- **Status:** fixing
+
 ## F30: rules_python pip version-matching select fails (`_no_matching_repository`)
 - **Repo:** standalone rules_python + pip project (py_binary with a PyPI dep `six`).
 - **Symptom:** `None of 1 conditions matched configuration ... and no default was set:
