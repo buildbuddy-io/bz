@@ -1,15 +1,15 @@
 # Status
 
-_Last updated: 2026-06-17 00:40 UTC_
+_Last updated: 2026-06-17 01:00 UTC_
 
 ## Summary
 
-Built `bz` from source and ran the build-loop across 6 open-source repos spanning
-rules_cc, rules_python/pybind, rules_java, rules_go, and a huge multi-language repo.
-**8 `bz` bugs found, fixed, verified, and committed; 4 deeper ones documented and
-deferred.**
+Built `bz` from source and ran the build-loop across 7 open-source repos spanning
+rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_oci,
+and a huge multi-language repo. **11 `bz` bugs found, fixed, verified, and committed;
+5 deeper ones documented and deferred.**
 
-## Bugs fixed & committed (8)
+## Bugs fixed & committed (11)
 
 | ID | Fix | Surfaced by |
 | --- | --- | --- |
@@ -21,8 +21,11 @@ deferred.**
 | F7 | `repository_ctx.getenv` | protobuf (rules_android) |
 | F8 | bare relative `Label("foo.bzl")` | protobuf (rules_kotlin) |
 | F11 | `cc_common.merge_cc_infos` | go-tutorial |
+| F13 | `ctx.actions.run` `unused_inputs_list` | java-maven (tar/oci) |
+| F14 | tighten F3 source-coercion to bare names | java-maven (regression guard) |
+| F15 | `repository_ctx.download(block=False)` | java-maven (rules_oci) |
 
-## Documented / deferred (4 — deeper)
+## Documented / deferred (5 — deeper)
 
 | ID | Issue | Why deferred |
 | --- | --- | --- |
@@ -30,6 +33,7 @@ deferred.**
 | F9 | android `config_feature_flag` undefined | android ecosystem; protobuf graph only |
 | F10 | `linkstatic=0` drops cc_library deps | deep cc dynamic-linking internals |
 | F12 | go multi-package shared-action conflict | config-transition output-path dedup |
+| F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
 
 ## Repos tested
 
@@ -41,6 +45,7 @@ deferred.**
 | googletest | rules_cc | ✅ all but 1 `linkstatic=0` target (F10) |
 | bazel-examples/java-tutorial | rules_java | ✅ full build (remotejdk) |
 | bazel-examples/go-tutorial | rules_go | ✅ single-package builds+runs (F11); multi-pkg F12 |
+| bazel-examples/java-maven | rules_jvm_external + rules_oci | ✅ Maven+Java (F13/F15 fixed); OCI image F16 |
 
 ## Environment
 

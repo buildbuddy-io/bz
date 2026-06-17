@@ -11,6 +11,17 @@ Format per finding:
 
 ---
 
+## F16: rules_oci/tar `layer_mtree` output not found (OCI image path)
+- **Repo:** bazel-examples/java-maven (`//:image`, rules_oci + aspect_bazel_lib tar).
+- **Symptom:** `File not found: root//layer_mtree. Included in BUILD but does not
+  exist` when completing `//:layer` (layer.tar) / `//:image`.
+- **Analysis:** the tar/oci layer rule declares an `*_mtree` manifest intermediate
+  that bz isn't materializing/tracking as a declared output (looked up as a missing
+  source). Another gap in the rules_oci/tar (container-image) path, after F13 and
+  F15 were fixed there. Deep + peripheral.
+- **Status:** documented / open (deferred). Core java-maven (rules_jvm_external Maven
+  resolution + rules_java) builds fine; only the OCI image packaging is affected.
+
 ## F15: `repository_ctx.download(block=False)` rejected (async download)
 - **Repo:** bazel-examples/java-maven (rules_oci toolchain fetch).
 - **Symptom:** `repository_ctx.download(block = False) is not supported because
@@ -23,7 +34,8 @@ Format per finding:
   downloads synchronously; `block=False` now returns a pending-download token that
   resolves immediately (and `.wait()` returns the result), matching the existing
   token path. (The helper remains, still used by module_ctx.download + a unit test.)
-- **Status:** fixing
+- **Status:** ✅ fixed & verified — OCI toolchain fetch proceeds past the download;
+  next OCI gap is F16 (`layer_mtree`).
 
 ## F14: F3 refinement — restrict source-first coercion to bare names
 - **Repo:** bazel-examples/java-maven (rules_oci / aspect_bazel_lib `directory_path`).
@@ -56,7 +68,7 @@ Format per finding:
   the action writes listing unused inputs, for incremental pruning).
 - **Fix:** Accept `unused_inputs_list` as a named param and ignore it — bz does not
   perform input pruning; the action still runs and produces its real outputs.
-- **Status:** fixing
+- **Status:** ✅ fixed & verified — build proceeds past the tar action.
 - **Env note:** java-maven also needs a host `java` for coursier (the Maven
   resolver, run during repo fetch). No system JDK on this VM; ran with the bazel
   embedded JDK on PATH (`JAVA_HOME=.../embedded_tools/jdk PATH=$JAVA_HOME/bin:$PATH`).
