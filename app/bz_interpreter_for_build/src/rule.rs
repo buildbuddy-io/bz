@@ -1651,6 +1651,9 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         subrules: UnpackListOrTuple<Value<'v>>,
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         uses_plugins: UnpackListOrTuple<PluginKindArg>,
+        // Deprecated no-op rule() flag (removed in modern Bazel; still passed by some
+        // rule sets, e.g. tcmalloc's). Accept and ignore it.
+        #[starlark(require = named, default = false)] incompatible_use_toolchain_transition: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {
         let has_bazel_attrs = attrs.entries.iter().any(|(_, attr)| attr.is_bazel());
@@ -1681,6 +1684,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             parent,
             extendable,
             subrules,
+            incompatible_use_toolchain_transition,
         );
         let has_bazel_rule_options = has_bazel_attrs
             || !bazel_toolchains.is_empty()
