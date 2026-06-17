@@ -498,8 +498,20 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   deferred. Workaround: `linkstatic = 1` on the affected target.
 - **Status:** documented / open (deferred)
 
-## F33: `local_config_platform` not a known cell alias (bzlmod well-known repo)
-- **Repo:** grpc (`//:gpr`), surfaced after F9 fixed.
+## F35: `rule()` rejects deprecated no-op `incompatible_use_toolchain_transition` — ✅ FIXED
+- **Repo:** tcmalloc (`//tcmalloc:tcmalloc`), after F33.
+- **Symptom:** `Found 'incompatible_use_toolchain_transition' extra named parameter(s) for
+  call to rule`.
+- **Root cause:** modern Bazel removed the `incompatible_use_toolchain_transition` `rule()`
+  flag (it became a no-op), but some rule sets still pass it; bz erred on the unknown kwarg.
+- **Fix:** added `incompatible_use_toolchain_transition: bool` to `rule()`
+  (`bz_interpreter_for_build/src/rule.rs`), collected into `_unused` like other deprecated
+  flags — accepted and ignored.
+- **Verification:** with F33, tcmalloc `//tcmalloc:tcmalloc` builds (232 actions).
+- **Status:** ✅ fixed & verified (committed)
+
+## F33: `local_config_platform` not a known cell alias (bzlmod well-known repo) — ✅ FIXED
+- **Repo:** grpc (`//:gpr`), tcmalloc (`//tcmalloc:tcmalloc`), surfaced after F9 fixed.
 - **Symptom:** `unknown cell alias: 'local_config_platform'. In cell
   'aspect_bazel_lib++toolchains+bsd_tar_toolchains', known aliases are: ...host_platform,
   platforms...` while loading `@local_config_platform//:constraints.bzl` from a generated
@@ -509,18 +521,17 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   bzlmod. bz only generates/injects `host_platform` (from the `platforms` module's
   extension), not `local_config_platform`, so cells that reference `@local_config_platform`
   (very common via aspect_bazel_lib toolchains) fail to resolve the alias.
-- **Fix shape (deferred — core bzlmod resolution):** Generate a `local_config_platform`
-  well-known repo and inject it into every cell's repo mapping the way `bazel_tools` is
-  (`bzlmod.rs` ~L3085/3105 add aliases; `cells.rs` CellAliasResolver). Its content is
-  nearly identical to the existing `host_platform` generator
-  (`generated_repos.rs::write_host_platform_repo` → `constraints.bzl` with
-  `HOST_CONSTRAINTS`), but it ALSO needs a `:host` `platform()` target
-  (`@local_config_platform//:host`) that `host_platform` does not currently emit. Could
-  reuse the host_platform generator + add a `platform(name="host", constraint_values=[...])`
-  to its BUILD, then alias `local_config_platform`→that cell universally. Risk: broad blast
-  radius (touches every cell's mapping) + host_platform cell may not exist when no module
-  imports it. Architectural — not attempted unsupervised.
-- **Status:** documented / open (deferred — blocks grpc and any aspect_bazel_lib repo)
+- **Fix (turned out localized, not architectural):** in `bzlmod_cell_aliases_for_cell`
+  (`bz_core/src/cells/external.rs`) — the single read path every cell-alias resolver uses —
+  wherever a cell already exposes `host_platform`, also expose `local_config_platform` as an
+  alias to the *same destination cell* (its `constraints.bzl`/`HOST_CONSTRAINTS` is what the
+  observed repos load). Purely additive: only adds a resolvable name where `host_platform` is
+  already visible; never overrides existing aliases. A dedicated `:host` `platform()` target
+  is still not emitted — revisit if a repo references `@local_config_platform//:host`.
+- **Verification:** grpc `//:gpr` and tcmalloc both advance past F33. Full regression sweep
+  clean: abseil(163)/re2(196)/googletest/rust/cpp-tutorial/go-tutorial/custom-rules build,
+  abseil variant_test Pass 1/Fail 0.
+- **Status:** ✅ fixed & verified (committed)
 
 ## F9: `config_feature_flag` native rule not defined (Android) — ✅ FIXED
 - **Repo:** protobuf (`//:protoc`), grpc (`//:gpr`).

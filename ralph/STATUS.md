@@ -1,19 +1,19 @@
 # Status
 
-_Last updated: 2026-06-17 07:20 UTC_
+_Last updated: 2026-06-17 07:40 UTC_
 
 ## Summary
 
 Built `bz` from source and ran the build-loop across 12 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
 rules_js (JS/TS), rules_oci, rules_proto, rules_kotlin, custom Starlark rules, and a
-huge multi-language repo. **24 `bz` bugs found, fixed, verified, and committed; 8
+huge multi-language repo. **26 `bz` bugs found, fixed, verified, and committed; 7
 deeper ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
 Maven, Go, Rust** (build + run + test — `bz test` now works after F31 across cc/python/
 rust); **JS/TS** largely works (~1,664 actions before a deferred copy-to-bin gap). Custom Starlark rule-authoring APIs: **17/19
 bazel-examples/rules examples build**.
 
-## Bugs fixed & committed (24)
+## Bugs fixed & committed (26)
 
 | ID | Fix | Surfaced by |
 | --- | --- | --- |
@@ -41,13 +41,14 @@ bazel-examples/rules examples build**.
 | F20 | generated sources in allow_files attrs + file-dep provider exemption | proto/zlib, buildifier goyacc |
 | F9 | `config_feature_flag` native rule (loads stub androidsdk BUILD) | grpc //:gpr, protobuf |
 | F34 | bazelrc relative `import` escaping the project root | rules_scala scala3 example |
+| F33 | `@local_config_platform` resolves to host_platform repo | grpc, tcmalloc (aspect_bazel_lib) |
+| F35 | `rule()` accepts deprecated `incompatible_use_toolchain_transition` | tcmalloc |
 
-## Documented / deferred (8 — deeper)
+## Documented / deferred (7 — deeper)
 
 | ID | Issue | Why deferred |
 | --- | --- | --- |
 | F5 | bare native cc rules unimplemented | autoload to rules_cc; modern repos load explicitly |
-| F33 | `local_config_platform` not injected as well-known repo | core bzlmod repo-mapping; blocks grpc / aspect_bazel_lib |
 | F10 | `linkstatic=0` drops cc_library deps | deep cc dynamic-linking internals |
 | F12 | go `//...` shared-action conflict (narrow) | config-transition output-path dedup; specific targets work |
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
@@ -62,7 +63,8 @@ bazel-examples/rules examples build**.
 | abseil-cpp | rules_cc | ✅ `//...` full build |
 | re2 | rules_cc + pybind | ✅ core lib + Python bindings (only emscripten app blocked) |
 | protobuf | multi-language | ⏸ F6/F7/F8/F9 fixed; deferred at rules_kotlin module-ext |
-| grpc | rules_cc + protobuf + aspect_bazel_lib | ⏸ F9 fixed; deferred at F33 (local_config_platform) |
+| grpc | rules_cc + protobuf + aspect_bazel_lib | ⏸ F9/F33 fixed; deferred at rules_kotlin module-ext |
+| tcmalloc | rules_cc (real-world, aspect_bazel_lib) | ✅ `//tcmalloc:tcmalloc` builds (232 actions) after F33/F35 |
 | googletest | rules_cc | ✅ all but 1 `linkstatic=0` target (F10) |
 | bazel-examples/java-tutorial | rules_java | ✅ full build (remotejdk) |
 | bazel-examples/go-tutorial | rules_go | ✅ single + multi-package build+run (specific targets); `//...` hits F12 |
