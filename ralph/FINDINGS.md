@@ -517,16 +517,32 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   `callable.rs`). So every declared field is always materialized (unset ⇒ stored as `None`),
   and `dir_attr`/`get_attr_hashed` (and thus `hasattr`) always report it present. Bazel keeps
   unset provider fields *absent* (access raises, `hasattr` is False).
-- **Fix shape (deferred — architectural, broad blast radius):** give provider fields a 3rd
-  optionality state (Required | Optional-absent | Defaulted) — `provider(fields={...})`
-  Bazel-compat fields are Optional-absent, not Defaulted-None. At construction, store an
-  "unset" sentinel `Value` in the `attributes` slot for Optional-absent fields that weren't
-  passed (keeps the `len == fields.len()` invariant). Then filter the sentinel in
-  `get_attr_hashed` (return None ⇒ hasattr False), `dir_attr`, and `iter_items` (which
-  `equals`/`write_hash`/`serialize`/`Display`/`ProviderLike::items` all flow through). Must be
-  done with full provider-subsystem test coverage (freeze/coerce, equality, hashing,
-  serialization) — not attempted unsupervised.
-- **Status:** documented / open (deferred — blocks protobuf & grpc at rules_kotlin ext)
+- **Impact:** blocks **protobuf, grpc, AND cel-cpp** (and, transitively, ~everything that
+  depends on protobuf — a huge slice of the C++/proto ecosystem), all via the rules_kotlin
+  `kotlin_repositories` module extension that protobuf pulls into the graph.
+- **ATTEMPTED & REVERTED (2026-06-17) — important learning:** I tried the cheap approximation
+  "tag `provider(fields={...})`/list fields as `bazel_optional` and, in `get_attr`/`dir_attr`
+  only, treat a `bazel_optional` field whose stored value is `None` as absent." This fixed the
+  repro cleanly (`hasattr(b)→False`, `dir→["a"]`, `getattr(...,default)` works) and let
+  protobuf/grpc/cel-cpp past the rules_kotlin guard — **but it regressed the whole cc base**:
+  `rules_cc++cc_configure_extension+local_config_cc//:cc-compiler-k8` failed with
+  `struct has no attribute '_module_map'`. rules_cc's `get_cc_toolchain_provider` accesses an
+  optional provider field that is **`None`** and relies on bz's current lenient
+  "unset/None optional field ⇒ returns `None`" behavior. The approximation can't distinguish a
+  field explicitly set to `None` (rules_cc) from a field never set (rules_kotlin), so it broke
+  rules_cc. Reverted; base re-verified (abseil/tcmalloc/rust green). (The `_module_map` and
+  `cc_test size` errors seen "past F36" were artifacts of this broken state, not real findings —
+  bz's cc_test does accept `size`, confirmed via abseil.)
+- **Correct fix shape (deferred — needs supervision):** a true 3rd optionality state
+  (Required | Optional-absent | Defaulted) with an **unset sentinel** stored in the `attributes`
+  slot at construction for Optional-absent fields that weren't passed — so explicit `field=None`
+  stays *present* while truly-unset is *absent*. Filter the sentinel in `get_attr_hashed`
+  (⇒ hasattr False), `dir_attr`, and `iter_items` (feeds `Display`/`serialize`/`ProviderLike::
+  items`); keep `equals`/`write_hash` positional over the raw array so presence is part of
+  identity. Must verify rules_cc cc_toolchain still resolves (it may rely on truly-unset⇒None;
+  if so, that lenient access is itself non-Bazel and may need its own handling). Full
+  provider-subsystem test coverage required — not to be attempted unsupervised.
+- **Status:** documented / open (deferred — blocks protobuf, grpc, cel-cpp at rules_kotlin ext)
 
 ## F35: `rule()` rejects deprecated no-op `incompatible_use_toolchain_transition` — ✅ FIXED
 - **Repo:** tcmalloc (`//tcmalloc:tcmalloc`), after F33.
