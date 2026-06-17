@@ -136,7 +136,9 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
 - **Fix:** In `get_inputs`, also visit the test's runfiles artifacts
   (`bazel_info().for_each_runfiles_entry`) so the full runfiles tree is part of the
   action inputs before execution.
-- **Status:** fixing
+- **Status:** ✅ fixed & verified — `bz test` now passes across ecosystems:
+  abseil variant_test (7 tests), re2 search/charclass/compile, gmock_all_test, re2
+  python test, rust greeter_test — all Pass. Unblocked the whole test-execution path.
 
 ## F30: rules_python pip version-matching select fails (`_no_matching_repository`)
 - **Repo:** standalone rules_python + pip project (py_binary with a PyPI dep `six`).
