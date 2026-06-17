@@ -870,9 +870,38 @@ fn bazelrc_import_path(
     if let Ok(path) = AbsPath::new(import_path) {
         return Ok(Some(ConfigPath::Global(path.to_owned())));
     }
-    current_path
-        .join_to_parent_normalized(RelativePath::new(import_path))
-        .map(Some)
+    // Relative import: resolve against the directory of the importing rc file.
+    let rel = RelativePath::new(import_path);
+    match current_path.join_to_parent_normalized(rel) {
+        Ok(path) => Ok(Some(path)),
+        Err(_) => {
+            // The normalized join escaped the project root (e.g. `import ../../.bazelrc`
+            // from a nested project that is itself the workspace root). Bazel treats
+            // bazelrc imports as plain filesystem paths, so fall back to resolving against
+            // the importing file's directory as an absolute path (mirrors the
+            // `%workspace%`-escapes-project branch above).
+            match current_path {
+                ConfigPath::Project(path) => {
+                    let base = path.parent().ok_or_else(|| {
+                        bz_error!(bz_error::ErrorTag::Input, "rc file `{}` has no parent", path)
+                    })?;
+                    file_ops
+                        .resolve_project_relative_to_absolute(base, rel)
+                        .map(|path| path.map(ConfigPath::Global))
+                }
+                ConfigPath::Global(path) => {
+                    let base = path.parent().ok_or_else(|| {
+                        bz_error!(
+                            bz_error::ErrorTag::Input,
+                            "rc file `{}` has no parent",
+                            path.display()
+                        )
+                    })?;
+                    Ok(Some(ConfigPath::Global(base.join(import_path))))
+                }
+            }
+        }
+    }
 }
 
 fn collect_bazelrc_records<'a>(
