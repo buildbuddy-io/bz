@@ -15,6 +15,7 @@ filegroup(
         "//cells/bazel_tools/src/conditions:pkg_sources",
         "//cells/bazel_tools/src/main/cpp/util:pkg_sources",
         "//cells/bazel_tools/src/tools/launcher:pkg_sources",
+        "//cells/bazel_tools/third_party/def_parser:pkg_sources",
         "//cells/bazel_tools/third_party/ijar:pkg_sources",
         "//cells/bazel_tools/tools/android:pkg_sources",
         "//cells/bazel_tools/tools/bash:pkg_sources",

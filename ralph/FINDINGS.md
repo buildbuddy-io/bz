@@ -123,6 +123,21 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
 - **Status:** ✅ fixed & verified — Kotlin build progresses past it; kt_jvm_library
   compiles. kt_jvm_binary then hits F29 (= F21, `ctx.outputs.executable`).
 
+## F32: `bz query deps()` over cc targets — missing `third_party/def_parser`
+- **Repo:** abseil-cpp (`bz query "deps(//absl/strings:strings)"`).
+- **Symptom:** `package 'bazel_tools//third_party/def_parser' has no build file`. cc
+  rules carry an implicit (Windows-only) reference to
+  `@bazel_tools//tools/def_parser:def_parser` → `//third_party/def_parser:def_parser`,
+  and `bz query deps()` traverses all select branches — so it's broken for ~all cc
+  targets. (Builds are fine: the Linux build doesn't select that branch.)
+- **Root cause:** bz's bundled `bazel_tools` ships `tools/def_parser` but not
+  `third_party/def_parser` (the actual def_parser tool package).
+- **Fix:** Add a minimal `third_party/def_parser` package (def_parser cc_library +
+  cc_binary mirroring upstream, omitting the py_test that pulls in `//src/...`
+  packages bz doesn't ship) + sources + `pkg_sources`, registered in
+  `bazel_tools_sources`. Same class as F25.
+- **Status:** fixing
+
 ## F31: `bz test` — test runfiles artifact not in action inputs
 - **Repo:** abseil-cpp (`bz test //absl/types:variant_test`, a cc_test).
 - **Symptom:** `Test execution request failed: Bazel test runfiles artifact was not

@@ -1,0 +1,29 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+licenses(["notice"])  # 3-clause BSD
+
+package(default_visibility = ["//visibility:public"])
+
+# Minimal mirror of @bazel_tools//third_party/def_parser. cc rules carry an
+# implicit (Windows-only) reference to `//third_party/def_parser:def_parser`, so
+# this package must exist for `bz query deps(...)` over cc targets to traverse it.
+# (The upstream package also defines a py_test that pulls in `//src/...` packages
+# bz's bundled bazel_tools doesn't ship; omitted here.)
+cc_library(
+    name = "def_parser_lib",
+    srcs = ["def_parser.cc"],
+    hdrs = ["def_parser.h"],
+    tags = ["__DONT_DEPEND_ON_DEF_PARSER__"],
+)
+
+cc_binary(
+    name = "def_parser",
+    srcs = ["def_parser_main.cc"],
+    tags = ["__DONT_DEPEND_ON_DEF_PARSER__"],
+    deps = [":def_parser_lib"],
+)
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]),
+)
