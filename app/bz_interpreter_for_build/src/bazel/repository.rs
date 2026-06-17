@@ -4505,7 +4505,9 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        repository_ctx_reject_nonblocking_download(block, "repository_ctx.download")?;
+        // bz executes downloads synchronously; `block = False` is honored by doing
+        // the download now and returning a pending-download token that resolves
+        // immediately (same as module_ctx.download), rather than rejecting it.
         let auth_headers = module_ctx_download_auth_headers_from_entries(&auth)?;
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
@@ -4557,7 +4559,8 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        repository_ctx_reject_nonblocking_download(block, "repository_ctx.download_and_extract")?;
+        // See `download`: `block = False` is honored by downloading synchronously and
+        // returning a pending-download token that resolves immediately.
         let working_dir = repository_ctx_working_dir(this);
         let archive_name = if r#type.is_empty() {
             ".bz_download_and_extract.archive".to_owned()

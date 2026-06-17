@@ -26,11 +26,14 @@ impl AttrTypeCoerce for BazelLabelAttrType {
                 // files are permitted alongside rule deps. Bazel exempts source
                 // files matching `allow_files` (e.g. `.lds` linker scripts listed in
                 // a cc rule's `deps`) from the attribute's provider requirement. A
-                // same-cell reference may therefore name an actual source file; try
-                // source coercion first (it only succeeds for a file present in the
-                // package listing) and fall back to treating it as a dependency.
-                let is_cross_cell = value_str.starts_with("//") || value_str.starts_with('@');
-                if !is_cross_cell {
+                // *bare* relative reference (no `:`, `@`, or `//`) may name an actual
+                // source file; try source coercion first for those (it only succeeds
+                // for a file present in the package listing) and fall back to a
+                // dependency. Explicit label forms (`:foo`, `//pkg:foo`, `@repo//...`)
+                // always resolve as dependencies, matching Bazel — otherwise a label
+                // pointing at a rule target's output (e.g. a TreeArtifact) could be
+                // mis-coerced as a source.
+                if !looks_like_label(value_str) {
                     if let Ok(coerced) = self.source.coerce_item(configurable, ctx, value) {
                         return Ok(coerced);
                     }

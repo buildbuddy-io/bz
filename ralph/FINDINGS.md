@@ -11,6 +11,58 @@ Format per finding:
 
 ---
 
+## F15: `repository_ctx.download(block=False)` rejected (async download)
+- **Repo:** bazel-examples/java-maven (rules_oci toolchain fetch).
+- **Symptom:** `repository_ctx.download(block = False) is not supported because
+  downloads are currently executed synchronously`.
+- **Root cause:** `repository_ctx.download` / `download_and_extract` explicitly
+  rejected `block=False` via `repository_ctx_reject_nonblocking_download`, even though
+  the pending-download token infrastructure (`StarlarkPendingDownload` with `.wait()`,
+  and `module_ctx_pending_download`) already exists and handles `block=False`.
+- **Fix:** Remove the rejection from both repository_ctx download methods. bz still
+  downloads synchronously; `block=False` now returns a pending-download token that
+  resolves immediately (and `.wait()` returns the result), matching the existing
+  token path. (The helper remains, still used by module_ctx.download + a unit test.)
+- **Status:** fixing
+
+## F14: F3 refinement — restrict source-first coercion to bare names
+- **Repo:** bazel-examples/java-maven (rules_oci / aspect_bazel_lib `directory_path`).
+- **Symptom:** `Expected directory to be a TreeArtifact ... but <source artifact
+  image> is either a source file or does not exist` — `directory = ":image"` (an
+  oci_image rule target) was resolved to a *source* artifact, so `.is_directory`
+  was false.
+- **Root cause:** the F3 fix tried `source` coercion first for ANY same-cell
+  reference (anything not starting with `//`/`@`), which over-broadly included
+  explicit `:label` deps. The oci `:image` target got coerced as a source instead
+  of a dependency. (abseil's `:flag` deps survived only because no source file named
+  `flag` exists; `:image` hit a path where source coercion succeeded.)
+- **Fix:** Restrict F3's source-first attempt to **bare** relative names
+  (`!looks_like_label` — no `:`, `@`, `//`), matching the non-bazel-compat branch.
+  Keeps the abseil `.lds` fix (bare filename) and stops mis-coercing explicit labels.
+- **Status:** ✅ refined & verified safe — abseil `.lds` (flag_benchmark) still builds.
+  NOTE: this was first hypothesized as the OCI TreeArtifact cause, but clearing the
+  cache exposed F15 *before* the TreeArtifact check, so whether the original OCI error
+  was stale cache or a distinct issue is still unconfirmed. The F14 change is kept as
+  a safe, conservative refinement of F3 regardless.
+- **Lesson:** broadening coercion in bazel-compat cells is risky — keep source-first
+  to bare names only.
+
+## F13: `ctx.actions.run` rejects `unused_inputs_list`
+- **Repo:** bazel-examples/java-maven (aspect_bazel_lib `tar.bzl`, via rules_oci).
+- **Symptom:** `Found 'unused_inputs_list' extra named parameter(s) for call to run`
+  at `tar.bzl:395` (`ctx.actions.run(..., unused_inputs_list = unused_inputs_file)`).
+- **Root cause:** bz's `ctx.actions.run` (`app/bz_action_impl/src/context/run.rs`)
+  did not accept Bazel's `unused_inputs_list` param (an input-pruning hint: a file
+  the action writes listing unused inputs, for incremental pruning).
+- **Fix:** Accept `unused_inputs_list` as a named param and ignore it — bz does not
+  perform input pruning; the action still runs and produces its real outputs.
+- **Status:** fixing
+- **Env note:** java-maven also needs a host `java` for coursier (the Maven
+  resolver, run during repo fetch). No system JDK on this VM; ran with the bazel
+  embedded JDK on PATH (`JAVA_HOME=.../embedded_tools/jdk PATH=$JAVA_HOME/bin:$PATH`).
+  Not a bz bug — `--java_runtime_version` only sets the build toolchain, not repo-rule
+  execution.
+
 ## F12: Bazel shared-action conflict for go_library deps (multi-package Go)
 - **Repo:** bazel-examples/go-tutorial/stage2 & stage3 (`//:print_fortune` go_binary
   with `deps = ["//fortune"]`, a go_library).
