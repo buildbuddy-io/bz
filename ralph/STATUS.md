@@ -4,10 +4,11 @@ _Last updated: 2026-06-17 01:00 UTC_
 
 ## Summary
 
-Built `bz` from source and ran the build-loop across 7 open-source repos spanning
-rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_oci,
-and a huge multi-language repo. **11 `bz` bugs found, fixed, verified, and committed;
-5 deeper ones documented and deferred.**
+Built `bz` from source and ran the build-loop across 9 repos/projects spanning
+rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
+rules_oci, and a huge multi-language repo. **11 `bz` bugs found, fixed, verified, and
+committed; 6 deeper ones documented and deferred.** Ecosystems validated end-to-end:
+**C++, Python, Java, Maven, Go (single-pkg), Rust** (build + run + test).
 
 ## Bugs fixed & committed (11)
 
@@ -34,6 +35,7 @@ and a huge multi-language repo. **11 `bz` bugs found, fixed, verified, and commi
 | F10 | `linkstatic=0` drops cc_library deps | deep cc dynamic-linking internals |
 | F12 | go multi-package shared-action conflict | config-transition output-path dedup |
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
+| F17 | `local_path_override` outside project root | bz path model is project-rooted; setup-specific |
 
 ## Repos tested
 
@@ -46,6 +48,8 @@ and a huge multi-language repo. **11 `bz` bugs found, fixed, verified, and commi
 | bazel-examples/java-tutorial | rules_java | ✅ full build (remotejdk) |
 | bazel-examples/go-tutorial | rules_go | ✅ single-package builds+runs (F11); multi-pkg F12 |
 | bazel-examples/java-maven | rules_jvm_external + rules_oci | ✅ Maven+Java (F13/F15 fixed); OCI image F16 |
+| bazel-examples/cpp-tutorial | rules_cc | ✅ all stages build+run (no bugs) |
+| rules_rust (standalone) | rules_rust | ✅ binary+library+test build, run, pass |
 
 ## Environment
 

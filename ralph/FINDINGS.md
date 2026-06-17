@@ -11,6 +11,23 @@ Format per finding:
 
 ---
 
+## F17: `local_path_override` can't point outside the project root
+- **Repo:** rules_rust in-tree example hello_world_no_cargo
+  (`local_path_override(module_name="rules_rust", path="../..")`).
+- **Symptom:** `expected a normalized path but got an un-normalized path instead:
+  '../..'` at MODULE.bazel.
+- **Root cause:** bz resolves the override path via
+  `cell_project_path.join_normalized("../..")` into a project-relative
+  `ForwardRelativePath`, which cannot represent a path that escapes the project root
+  (no `..`). The example points two levels up (to the rules_rust source), i.e.
+  outside the bz project (the example dir). Bazel allows local overrides to reference
+  directories outside the workspace.
+- **Scope:** Affects in-tree examples / monorepo setups using `local_path_override`
+  to a parent/sibling dir. Standalone projects using registry deps are unaffected.
+  Deep (bz's path model is project-rooted). Documented; deferred. Tested rules_rust
+  via a standalone project instead (see builds/rules_rust.md).
+- **Status:** documented / open (deferred)
+
 ## F16: rules_oci/tar `layer_mtree` output not found (OCI image path)
 - **Repo:** bazel-examples/java-maven (`//:image`, rules_oci + aspect_bazel_lib tar).
 - **Symptom:** `File not found: root//layer_mtree. Included in BUILD but does not
