@@ -32,17 +32,27 @@ Format per finding:
   optional-output-binding semantics. Documented; deferred.
 - **Status:** documented / open (deferred — needs optional predeclared-output support).
 
+## F23: `File` artifacts not comparable — `sorted([files])` fails
+- **Repo:** bazel-examples/rules (`//predeclared_outputs`).
+- **Symptom:** `Operation 'compare' not supported for types 'File' and 'File'` at
+  `hash.bzl:44` (`sorted(ctx.outputs.hashes)`).
+- **Root cause:** bz's `File` artifact types (`StarlarkDeclaredArtifact`,
+  `StarlarkArtifact`) implemented `equals` but not `compare`, so `sorted()` on a list
+  of File objects failed. Bazel's `File` is comparable (orders by path).
+- **Fix:** Add a `compare` method on the `StarlarkArtifactLike` trait that orders by
+  the artifact's bazel path (derived from the fingerprint), and wire it into both
+  `File` StarlarkValue impls. `app/bz_build_api/.../artifact/`.
+- **Status:** ✅ fixed & verified — `//predeclared_outputs` now builds. Custom-rules
+  coverage 15/19 → 16/19.
+
 ## F22: aspect example — `has no attribute 'files'`
 - **Repo:** bazel-examples/rules (`//aspect`).
 - **Symptom:** `has no attribute 'files'` during aspect analysis.
 - **Status:** documented / open — aspect API gap, not yet root-caused.
 
 ## Coverage note (bazel-examples/rules custom Starlark rules)
-**15/19 examples build** with bz: actions_run, actions_write, attributes, buck-out,
-computed_dependencies, depsets, empty, executable, expand_template, features,
-generating_code, implicit_output, mandatory_provider, optional_provider,
-shell_command. Failing: runfiles (F21), test_rule (F21), aspect (F22),
-predeclared_outputs. Good breadth of Starlark rule-authoring API support.
+**16/19 examples build** with bz (after F23). Failing: runfiles (F21),
+test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API support.
 
 ## F20: zlib header `zlib/include/crc32.h` not found (proto/protobuf transitive)
 - **Repo:** standalone proto project (`proto_library` → needs protoc → protobuf →

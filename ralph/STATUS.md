@@ -4,13 +4,14 @@ _Last updated: 2026-06-17 01:00 UTC_
 
 ## Summary
 
-Built `bz` from source and ran the build-loop across 10 repos/projects spanning
+Built `bz` from source and ran the build-loop across 12 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
-rules_js (JS/TS), rules_oci, and a huge multi-language repo. **12 `bz` bugs found,
-fixed, verified, and committed; 10 deeper ones documented and deferred.** Ecosystems
-validated end-to-end: **C++, Python, Java, Maven, Go, Rust** (build + run + test);
-**JS/TS** largely works (1,632 actions before a deferred toolchain-key gap).
-Custom Starlark rule-authoring APIs: **15/19 bazel-examples/rules examples build**.
+rules_js (JS/TS), rules_oci, rules_proto, custom Starlark rules, and a huge
+multi-language repo. **13 `bz` bugs found, fixed, verified, and committed; 10 deeper
+ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
+Maven, Go, Rust** (build + run + test); **JS/TS** largely works (1,632 actions before
+a deferred toolchain-key gap). Custom Starlark rule-authoring APIs: **16/19
+bazel-examples/rules examples build**.
 
 ## Bugs fixed & committed (11)
 
@@ -28,6 +29,7 @@ Custom Starlark rule-authoring APIs: **15/19 bazel-examples/rules examples build
 | F14 | tighten F3 source-coercion to bare names | java-maven (regression guard) |
 | F15 | `repository_ctx.download(block=False)` | java-maven (rules_oci) |
 | F18 | NODEP_LABEL string attr accepts `Label` | frontend (rules_js) |
+| F23 | `File` artifacts comparable (`sorted([files])`) | rules custom-rule examples |
 
 ## Documented / deferred (5 — deeper)
 
