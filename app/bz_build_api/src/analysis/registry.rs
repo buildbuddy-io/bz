@@ -105,10 +105,36 @@ pub struct AnalysisRegistry<'v> {
     pub analysis_value_storage: AnalysisValueStorage<'v>,
     bazel_predeclared_outputs: SmallMap<String, DeclaredArtifact<'v>>,
     bazel_shareable_outputs: SmallMap<String, DeclaredArtifact<'v>>,
-    bazel_shareable_action_signatures: SmallMap<String, String>,
+    bazel_shareable_output_keys: SmallMap<OutputArtifact<'v>, String>,
+    bazel_shareable_action_identities: SmallMap<String, BazelShareableActionIdentity>,
     bazel_pending_solib_symlink_actions: Vec<BazelPendingSolibSymlinkAction<'v>>,
     pub short_path_assertions: HashMap<PromiseArtifactId, ForwardRelativePathBuf>,
     pub content_based_path_assertions: HashSet<PromiseArtifactId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Trace, Allocative)]
+pub struct BazelShareableActionIdentity {
+    action_key: String,
+    mandatory_inputs: Vec<String>,
+    outputs: Vec<String>,
+}
+
+impl BazelShareableActionIdentity {
+    pub fn new(
+        action_key: impl Into<String>,
+        mandatory_inputs: Vec<String>,
+        outputs: Vec<String>,
+    ) -> Self {
+        Self {
+            action_key: action_key.into(),
+            mandatory_inputs,
+            outputs,
+        }
+    }
+
+    fn conflict_message(&self) -> String {
+        format!("{self:?}")
+    }
 }
 
 #[derive(Debug, Trace, Allocative)]
@@ -159,7 +185,8 @@ impl<'v> AnalysisRegistry<'v> {
             analysis_value_storage: AnalysisValueStorage::new(self_key),
             bazel_predeclared_outputs: SmallMap::new(),
             bazel_shareable_outputs: SmallMap::new(),
-            bazel_shareable_action_signatures: SmallMap::new(),
+            bazel_shareable_output_keys: SmallMap::new(),
+            bazel_shareable_action_identities: SmallMap::new(),
             bazel_pending_solib_symlink_actions: Vec::new(),
             short_path_assertions: HashMap::new(),
             content_based_path_assertions: HashSet::new(),
@@ -383,7 +410,10 @@ impl<'v> AnalysisRegistry<'v> {
             bazel_output_path_kind,
             heap,
         )?;
-        self.bazel_shareable_outputs.insert(key, artifact.dupe());
+        self.bazel_shareable_outputs
+            .insert(key.clone(), artifact.dupe());
+        self.bazel_shareable_output_keys
+            .insert(artifact.as_output(), key);
         Ok(artifact)
     }
 
@@ -403,33 +433,72 @@ impl<'v> AnalysisRegistry<'v> {
     }
 
     fn bazel_shareable_output_key_for_artifact(&self, output: &OutputArtifact<'v>) -> Option<&str> {
-        self.bazel_shareable_outputs
+        self.bazel_shareable_output_keys
+            .get(output)
+            .map(String::as_str)
+    }
+
+    pub fn bazel_shareable_output_identity(&self, output: &OutputArtifact<'v>) -> String {
+        let path = self
+            .bazel_shareable_output_key_for_artifact(output)
+            .map(str::to_owned)
+            .unwrap_or_else(|| output.get_path().with_full_path(|path| path.to_string()));
+        format!("{path}:{:?}", output.output_type())
+    }
+
+    pub fn bazel_shareable_output_identities(
+        &self,
+        outputs: &BuckIndexSet<OutputArtifact<'v>>,
+    ) -> Vec<String> {
+        outputs
             .iter()
-            .find_map(|(key, artifact)| (artifact == &**output).then_some(key.as_str()))
+            .map(|output| self.bazel_shareable_output_identity(output))
+            .collect()
+    }
+
+    pub fn bazel_shareable_artifact_group_identity(&self, input: &ArtifactGroup) -> String {
+        match input {
+            ArtifactGroup::Artifact(artifact) => {
+                artifact.get_path().with_full_path(|path| path.to_string())
+            }
+            ArtifactGroup::TransitiveSetProjection(_) | ArtifactGroup::Promise(_) => {
+                format!("{input:?}")
+            }
+        }
+    }
+
+    pub fn bazel_shareable_artifact_group_identities<'a>(
+        &self,
+        inputs: impl IntoIterator<Item = &'a ArtifactGroup>,
+    ) -> Vec<String> {
+        inputs
+            .into_iter()
+            .map(|input| self.bazel_shareable_artifact_group_identity(input))
+            .collect()
     }
 
     /// Single-output wrapper around `should_register_bazel_shareable_action_for_outputs`.
     pub fn should_register_bazel_shareable_action(
         &mut self,
         output: &OutputArtifact<'v>,
-        signature: String,
+        identity: impl FnOnce(&Self) -> bz_error::Result<BazelShareableActionIdentity>,
     ) -> bz_error::Result<bool> {
         self.should_register_bazel_shareable_action_for_outputs(
             &BuckIndexSet::from_iter([output.dupe()]),
-            signature,
+            identity,
         )
     }
 
     /// Returns whether a Bazel shareable action should be registered.
     ///
     /// Bazel interns derived artifacts by path during analysis and then tolerates duplicate
-    /// shareable actions when their action key, mandatory inputs, and outputs match. Buck binds
-    /// outputs immediately, so for the Bazel action surface we track a compact action signature
-    /// before binding and skip an identical second registration.
+    /// shareable actions when their action key, mandatory inputs, and ownerless outputs match.
+    /// Buck binds outputs immediately, so for the Bazel action surface we track that Bazel
+    /// identity before binding and skip an identical second registration.
     pub fn should_register_bazel_shareable_action_for_outputs(
         &mut self,
         outputs: &BuckIndexSet<OutputArtifact<'v>>,
-        signature: String,
+        identity: impl FnOnce(&Self) -> bz_error::Result<BazelShareableActionIdentity>,
     ) -> bz_error::Result<bool> {
         let keys = outputs
             .iter()
@@ -442,18 +511,19 @@ impl<'v> AnalysisRegistry<'v> {
             return Ok(true);
         };
 
+        let identity = identity(self)?;
         let mut existing = None;
         let mut has_new_key = false;
         for key in &keys {
-            match self.bazel_shareable_action_signatures.get(key) {
-                Some(previous) if previous == &signature => {
-                    existing.get_or_insert_with(|| (key.to_owned(), previous.to_owned()));
+            match self.bazel_shareable_action_identities.get(key) {
+                Some(previous) if previous == &identity => {
+                    existing.get_or_insert_with(|| (key.to_owned(), previous.clone()));
                 }
                 Some(previous) => {
                     return Err(DeclaredArtifactError::BazelShareableActionConflict {
                         path: key.to_owned(),
-                        previous: previous.to_owned(),
-                        current: signature,
+                        previous: previous.conflict_message(),
+                        current: identity.conflict_message(),
                     }
                     .into());
                 }
@@ -465,9 +535,10 @@ impl<'v> AnalysisRegistry<'v> {
             if has_new_key || keys.len() != outputs.len() {
                 return Err(DeclaredArtifactError::BazelShareableActionConflict {
                     path,
-                    previous,
+                    previous: previous.conflict_message(),
                     current: format!(
-                        "{signature} (partially overlaps an already registered shareable action)"
+                        "{} (partially overlaps an already registered shareable action)",
+                        identity.conflict_message()
                     ),
                 }
                 .into());
@@ -476,8 +547,8 @@ impl<'v> AnalysisRegistry<'v> {
         }
 
         for key in keys {
-            self.bazel_shareable_action_signatures
-                .insert(key, signature.clone());
+            self.bazel_shareable_action_identities
+                .insert(key, identity.clone());
         }
         Ok(true)
     }
@@ -486,9 +557,9 @@ impl<'v> AnalysisRegistry<'v> {
         &mut self,
         src: DeclaredArtifact<'v>,
         output: OutputArtifact<'v>,
-        signature: String,
+        identity: BazelShareableActionIdentity,
     ) -> bz_error::Result<()> {
-        if !self.should_register_bazel_shareable_action(&output, signature)? {
+        if !self.should_register_bazel_shareable_action(&output, |_| Ok(identity))? {
             return Ok(());
         }
         self.register_or_defer_bazel_solib_symlink_action(src, output)?;
@@ -703,7 +774,8 @@ impl<'v> AnalysisRegistry<'v> {
             analysis_value_storage,
             bazel_predeclared_outputs: _,
             bazel_shareable_outputs: _,
-            bazel_shareable_action_signatures: _,
+            bazel_shareable_output_keys: _,
+            bazel_shareable_action_identities: _,
             bazel_pending_solib_symlink_actions: _,
             short_path_assertions: _,
             content_based_path_assertions: _,

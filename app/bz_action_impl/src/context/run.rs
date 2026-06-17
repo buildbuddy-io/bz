@@ -16,6 +16,7 @@ use bz_artifact::artifact::artifact_type::ArtifactErrors;
 use bz_artifact::artifact::artifact_type::DeclaredArtifact;
 use bz_artifact::artifact::artifact_type::OutputArtifact;
 use bz_build_api::actions::impls::expanded_command_line::ExpandedCommandLineDigest;
+use bz_build_api::analysis::registry::BazelShareableActionIdentity;
 use bz_build_api::artifact_groups::ArtifactGroup;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
@@ -170,20 +171,6 @@ fn bazel_run_identifier<'v>(
         let identifier = output.get_path().with_full_path(|path| path.to_string());
         eval.heap().alloc_str(&identifier)
     })
-}
-
-fn bazel_run_output_signature<'v>(
-    outputs: &BuckIndexSet<OutputArtifact<'v>>,
-) -> Vec<(String, String)> {
-    outputs
-        .iter()
-        .map(|output| {
-            (
-                output.get_path().with_full_path(|path| path.to_string()),
-                format!("{:?}", output.output_type()),
-            )
-        })
-        .collect()
 }
 
 fn bazel_run_add_hidden<'v>(
@@ -516,6 +503,290 @@ fn bazel_static_env_entries<'v>(env: Value<'v>) -> Option<Vec<(&'v str, &'v str)
         .collect()
 }
 
+fn bazel_artifact_is_run_action_output<'v>(
+    outputs: &BuckIndexSet<OutputArtifact<'v>>,
+    artifact: &Artifact,
+) -> bool {
+    outputs
+        .iter()
+        .any(|output| output.get_path() == artifact.get_path())
+}
+
+fn bazel_artifact_group_is_run_action_output<'v>(
+    outputs: &BuckIndexSet<OutputArtifact<'v>>,
+    artifact_group: &ArtifactGroup,
+) -> bool {
+    match artifact_group {
+        ArtifactGroup::Artifact(artifact) => bazel_artifact_is_run_action_output(outputs, artifact),
+        ArtifactGroup::TransitiveSetProjection(_) | ArtifactGroup::Promise(_) => false,
+    }
+}
+
+struct BazelRunOutputFilteringArtifactVisitor<'a, 'v> {
+    outputs: &'a BuckIndexSet<OutputArtifact<'v>>,
+    inner: &'a mut dyn CommandLineArtifactVisitor<'v>,
+}
+
+impl<'a, 'v> BazelRunOutputFilteringArtifactVisitor<'a, 'v> {
+    fn new(
+        outputs: &'a BuckIndexSet<OutputArtifact<'v>>,
+        inner: &'a mut dyn CommandLineArtifactVisitor<'v>,
+    ) -> Self {
+        Self { outputs, inner }
+    }
+}
+
+impl<'v> CommandLineArtifactVisitor<'v> for BazelRunOutputFilteringArtifactVisitor<'_, 'v> {
+    fn visit_input(&mut self, input: ArtifactGroup, tags: Vec<&ArtifactTag>) {
+        if !bazel_artifact_group_is_run_action_output(self.outputs, &input) {
+            self.inner.visit_input(input, tags);
+        }
+    }
+
+    fn visit_declared_output(&mut self, artifact: OutputArtifact<'v>, tags: Vec<&ArtifactTag>) {
+        self.inner.visit_declared_output(artifact, tags);
+    }
+
+    fn visit_frozen_output(&mut self, artifact: Artifact, tags: Vec<&ArtifactTag>) {
+        if !bazel_artifact_is_run_action_output(self.outputs, &artifact) {
+            self.inner.visit_frozen_output(artifact, tags);
+        }
+    }
+
+    fn visit_declared_artifact(
+        &mut self,
+        declared_artifact: DeclaredArtifact<'v>,
+        tags: Vec<&ArtifactTag>,
+    ) -> bz_error::Result<()> {
+        let output = declared_artifact.as_output();
+        if self.outputs.contains(&output) {
+            self.inner.visit_declared_output(output, tags);
+            return Ok(());
+        }
+        self.inner.visit_input(
+            ArtifactGroup::Artifact(declared_artifact.ensure_bound()?.into_artifact()),
+            tags,
+        );
+        Ok(())
+    }
+
+    fn push_frame(&mut self) -> bz_error::Result<()> {
+        self.inner.push_frame()
+    }
+
+    fn pop_frame(&mut self) {
+        self.inner.pop_frame()
+    }
+
+    fn skip_hidden(&self) -> bool {
+        self.inner.skip_hidden()
+    }
+}
+
+fn bazel_visit_run_action_command_line_artifacts<'v>(
+    outputs: &BuckIndexSet<OutputArtifact<'v>>,
+    command_line: &dyn CommandLineArgLike<'v>,
+    artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> bz_error::Result<()> {
+    let mut artifact_visitor =
+        BazelRunOutputFilteringArtifactVisitor::new(outputs, artifact_visitor);
+    command_line.visit_artifacts(&mut artifact_visitor)
+}
+
+fn bazel_visit_runfiles_artifacts<'v>(
+    runfiles: Value<'v>,
+    artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> starlark::Result<()> {
+    let entries = ListRef::from_value(runfiles)
+        .ok_or_else(|| bz_error::internal_error!("Bazel executable runfiles should be a list"))?;
+    for entry in entries.iter() {
+        let entry = StructRef::from_value(entry).ok_or_else(|| {
+            bz_error::internal_error!("Bazel executable runfiles entry should be a struct")
+        })?;
+        let mut target_file = None;
+        for (name, value) in entry.iter() {
+            if name.as_str() == "target_file" {
+                target_file = Some(value);
+            }
+        }
+        let target_file = target_file.ok_or_else(|| {
+            bz_error::internal_error!(
+                "Bazel executable runfiles entry should have field `target_file`"
+            )
+        })?;
+        let artifact = ValueAsInputArtifactLike::unpack_value(target_file)?.ok_or_else(|| {
+            bz_error::internal_error!("Bazel executable runfiles target_file should be File")
+        })?;
+        artifact_visitor.visit_input(artifact.0.get_artifact_group()?, Vec::new());
+    }
+    Ok(())
+}
+
+fn bazel_visit_tool_runfiles_artifacts<'v>(
+    tool_runfiles: Value<'v>,
+    artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> starlark::Result<()> {
+    let tools = ListRef::from_value(tool_runfiles)
+        .ok_or_else(|| bz_error::internal_error!("Bazel tool runfiles should be a list"))?;
+    for tool in tools.iter() {
+        let tool = StructRef::from_value(tool)
+            .ok_or_else(|| bz_error::internal_error!("Bazel tool runfiles entry should be a struct"))?;
+        let mut executable = None;
+        let mut runfiles = None;
+        for (name, value) in tool.iter() {
+            match name.as_str() {
+                "executable" => executable = Some(value),
+                "runfiles" => runfiles = Some(value),
+                _ => {}
+            }
+        }
+        let executable = executable.ok_or_else(|| {
+            bz_error::internal_error!("Bazel tool runfiles entry should have field `executable`")
+        })?;
+        let executable = ValueAsInputArtifactLike::unpack_value(executable)?.ok_or_else(|| {
+            bz_error::internal_error!("Bazel tool runfiles executable should be File")
+        })?;
+        artifact_visitor.visit_input(executable.0.get_artifact_group()?, Vec::new());
+        let runfiles = runfiles.ok_or_else(|| {
+            bz_error::internal_error!("Bazel tool runfiles entry should have field `runfiles`")
+        })?;
+        bazel_visit_runfiles_artifacts(runfiles, artifact_visitor)?;
+    }
+    Ok(())
+}
+
+fn bazel_visit_worker_artifacts<'v>(
+    worker: ValueTypedComplex<'v, WorkerInfo<'v>>,
+    outputs: &BuckIndexSet<OutputArtifact<'v>>,
+    artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> starlark::Result<()> {
+    match worker.unpack() {
+        Either::Left(worker) => {
+            bazel_visit_run_action_command_line_artifacts(
+                outputs,
+                worker.exe_command_line(),
+                artifact_visitor,
+            )?;
+            for (_, value) in worker.env() {
+                bazel_visit_run_action_command_line_artifacts(outputs, value, artifact_visitor)?;
+            }
+        }
+        Either::Right(worker) => {
+            bazel_visit_run_action_command_line_artifacts(
+                outputs,
+                worker.exe_command_line(),
+                artifact_visitor,
+            )?;
+            for (_, value) in worker.env() {
+                bazel_visit_run_action_command_line_artifacts(outputs, value, artifact_visitor)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn bazel_run_mandatory_inputs<'v>(
+    outputs: &BuckIndexSet<OutputArtifact<'v>>,
+    exe: &StarlarkCmdArgs<'v>,
+    args: &StarlarkCmdArgs<'v>,
+    bazel_inputs: &StarlarkCmdArgs<'v>,
+    env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
+    worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
+    remote_worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
+    bazel_executable_runfiles: Option<Value<'v>>,
+    bazel_tool_runfiles: Option<Value<'v>>,
+) -> starlark::Result<BuckIndexSet<ArtifactGroup>> {
+    let mut artifact_visitor = SimpleCommandLineArtifactVisitor::new();
+    bazel_visit_run_action_command_line_artifacts(outputs, exe, &mut artifact_visitor)?;
+    bazel_visit_run_action_command_line_artifacts(outputs, args, &mut artifact_visitor)?;
+    bazel_visit_run_action_command_line_artifacts(outputs, bazel_inputs, &mut artifact_visitor)?;
+    if let Some(env) = env {
+        let dict = DictRef::from_value(env.get())
+            .ok_or_else(|| bz_error::internal_error!("Bazel action env should be a dict"))?;
+        for (_, value) in dict.iter() {
+            bazel_visit_run_action_command_line_artifacts(
+                outputs,
+                ValueAsCommandLineLike::unpack_value_err(value)?.0,
+                &mut artifact_visitor,
+            )?;
+        }
+    }
+    if let Some(worker) = worker {
+        bazel_visit_worker_artifacts(worker, outputs, &mut artifact_visitor)?;
+    }
+    if let Some(remote_worker) = remote_worker {
+        bazel_visit_worker_artifacts(remote_worker, outputs, &mut artifact_visitor)?;
+    }
+    if let Some(runfiles) = bazel_executable_runfiles {
+        bazel_visit_runfiles_artifacts(runfiles, &mut artifact_visitor)?;
+    }
+    if let Some(tool_runfiles) = bazel_tool_runfiles {
+        bazel_visit_tool_runfiles_artifacts(tool_runfiles, &mut artifact_visitor)?;
+    }
+    Ok(artifact_visitor.inputs)
+}
+
+fn bazel_worker_action_key<'v>(
+    worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
+) -> String {
+    let Some(worker) = worker else {
+        return "none".to_owned();
+    };
+    match worker.unpack() {
+        Either::Left(worker) => format!(
+            "concurrency={:?}:streaming={}:local_protocol={}:remote_protocol={}:sandboxing={}",
+            worker.concurrency(),
+            worker.streaming(),
+            worker.supports_bazel_local_persistent_worker_protocol(),
+            worker.supports_bazel_remote_persistent_worker_protocol(),
+            worker.requires_bazel_worker_sandboxing(),
+        ),
+        Either::Right(worker) => format!(
+            "concurrency={:?}:streaming={}:local_protocol={}:remote_protocol={}:sandboxing={}",
+            worker.concurrency(),
+            worker.streaming(),
+            worker.supports_bazel_local_persistent_worker_protocol(),
+            worker.supports_bazel_remote_persistent_worker_protocol(),
+            worker.requires_bazel_worker_sandboxing(),
+        ),
+    }
+}
+
+fn bazel_run_action_key<'v>(
+    command_line_digest: Option<&ExpandedCommandLineDigest>,
+    exe: &StarlarkCmdArgs<'v>,
+    args: &StarlarkCmdArgs<'v>,
+    env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
+    worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
+    remote_worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
+    category: StringValue<'v>,
+    use_default_shell_env: bool,
+    local_only: bool,
+    supports_bazel_path_mapping: bool,
+    bazel_string_args: Option<&[String]>,
+    bazel_cc_command_line: Option<ValueTyped<'v, BazelCcCompileCommandLine<'v>>>,
+) -> String {
+    let command_line_key = command_line_digest
+        .map(|digest| format!("fingerprint:{digest:?}"))
+        .unwrap_or_else(|| {
+            format!(
+                "debug:{exe:?}:{args:?}:{env:?}:{bazel_string_args:?}:{bazel_cc_command_line:?}"
+            )
+        });
+    format!(
+        "SpawnAction:mnemonic={}:command_line={}:use_default_shell_env={}:local_only={}:supports_path_mapping={}:has_string_args={}:has_cc_command_line={}:worker={}:remote_worker={}",
+        category.as_str(),
+        command_line_key,
+        use_default_shell_env,
+        local_only,
+        supports_bazel_path_mapping,
+        bazel_string_args.is_some(),
+        bazel_cc_command_line.is_some(),
+        bazel_worker_action_key(worker),
+        bazel_worker_action_key(remote_worker),
+    )
+}
+
 fn bazel_resource_set_os_name() -> &'static str {
     if cfg!(target_os = "macos") {
         "osx"
@@ -719,17 +990,66 @@ fn register_bazel_run_action<'v>(
     let executor_preference = new_executor_preference(local_only, false, false)?;
     let category = mnemonic.unwrap_or_else(|| eval.heap().alloc_str("BazelRun"));
     let effective_supports_bazel_path_mapping = supports_bazel_path_mapping && !local_only;
-    let action_signature = format!(
-        "bazel_run:{:?}:{exe:?}:{args:?}:{bazel_inputs:?}:{bazel_executable:?}:{bazel_executable_runfiles:?}:{env:?}:{worker:?}:{remote_worker:?}:{category:?}:{use_default_shell_env:?}:{local_only:?}:{effective_supports_bazel_path_mapping:?}:{bazel_string_args:?}:{bazel_cc_command_line:?}:{precomputed_local_action_cache_command_line_digest:?}",
-        bazel_run_output_signature(&outputs),
-    );
+    let bazel_tool_runfiles = bazel_tool_runfiles(this, tools, eval)?;
+    {
+        let mut state = this.state()?;
+        if !state.should_register_bazel_shareable_action_for_outputs(&outputs, |state| {
+            let command_line_digest = precomputed_local_action_cache_command_line_digest
+                .clone()
+                .or_else(|| {
+                    if bazel_string_args.is_some() || bazel_cc_command_line.is_some() {
+                        return None;
+                    }
+                    static_env_entries.as_deref().and_then(|static_env_entries| {
+                        precompute_bazel_local_action_cache_command_line_digest_for_cmd_args(
+                            &exe,
+                            &args,
+                            static_env_entries,
+                            &outputs,
+                            this.digest_config,
+                        )
+                    })
+                });
+            let mandatory_inputs = bazel_run_mandatory_inputs(
+                &outputs,
+                &exe,
+                &args,
+                &bazel_inputs,
+                env,
+                worker,
+                remote_worker,
+                bazel_executable_runfiles,
+                bazel_tool_runfiles,
+            )?;
+            Ok(BazelShareableActionIdentity::new(
+                bazel_run_action_key(
+                    command_line_digest.as_ref(),
+                    &exe,
+                    &args,
+                    env,
+                    worker,
+                    remote_worker,
+                    category,
+                    use_default_shell_env,
+                    local_only,
+                    effective_supports_bazel_path_mapping,
+                    bazel_string_args.as_deref(),
+                    bazel_cc_command_line,
+                ),
+                state.bazel_shareable_artifact_group_identities(mandatory_inputs.iter()),
+                state.bazel_shareable_output_identities(&outputs),
+            ))
+        })? {
+            return Ok(NoneType);
+        }
+    }
     let starlark_values = eval.heap().alloc_complex(StarlarkRunActionValues {
         exe: eval.heap().alloc_typed(exe),
         args: eval.heap().alloc_typed(args),
         bazel_inputs: Some(eval.heap().alloc_typed(bazel_inputs)),
         bazel_executable,
         bazel_executable_runfiles,
-        bazel_tool_runfiles: bazel_tool_runfiles(this, tools, eval)?,
+        bazel_tool_runfiles,
         bazel_cc_command_line,
         env,
         worker,
@@ -766,11 +1086,8 @@ fn register_bazel_run_action<'v>(
         precomputed_local_action_cache_command_line_digest,
     };
 
-    let mut state = this.state()?;
-    if !state.should_register_bazel_shareable_action_for_outputs(&outputs, action_signature)? {
-        return Ok(NoneType);
-    }
-    state.register_action(outputs, action, Some(starlark_values), None)?;
+    this.state()?
+        .register_action(outputs, action, Some(starlark_values), None)?;
     Ok(NoneType)
 }
 

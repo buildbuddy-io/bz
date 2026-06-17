@@ -16,6 +16,7 @@ use bz_artifact::artifact::artifact_type::Artifact;
 use bz_artifact::artifact::artifact_type::OutputArtifact;
 use bz_build_api::actions::impls::json::JsonUnpack;
 use bz_build_api::actions::impls::workspace_status::WorkspaceStatusKind;
+use bz_build_api::analysis::registry::BazelShareableActionIdentity;
 use bz_build_api::artifact_groups::ArtifactGroup;
 use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use bz_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
@@ -392,8 +393,13 @@ fn transform_build_info_file<'v>(
         eval.heap(),
     )?;
     let output_artifact = declared.as_output();
-    let action_signature = format!("{kind:?}:{template_artifact:?}:{substitutions:?}");
-    if state.should_register_bazel_shareable_action(&output_artifact, action_signature)? {
+    if state.should_register_bazel_shareable_action(&output_artifact, |state| {
+        Ok(BazelShareableActionIdentity::new(
+            format!("{kind:?}:{substitutions:?}"),
+            vec![state.bazel_shareable_artifact_group_identity(&template_artifact)],
+            vec![state.bazel_shareable_output_identity(&output_artifact)],
+        ))
+    })? {
         state.register_action(
             buck_indexset![output_artifact],
             UnregisteredTemplateExpansionAction::new(template_artifact, substitutions, false),

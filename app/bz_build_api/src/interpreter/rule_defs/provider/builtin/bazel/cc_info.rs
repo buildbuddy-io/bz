@@ -63,6 +63,7 @@ use starlark_map::StarlarkHasher;
 
 use crate as bz_build_api;
 use crate::actions::impls::solib_symlink::UnregisteredSolibSymlinkAction;
+use crate::analysis::registry::BazelShareableActionIdentity;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLikeUnpack;
@@ -3110,18 +3111,29 @@ fn bazel_cc_register_solib_symlink<'v>(
         eval.heap(),
     )?;
     let output_artifact = artifact.as_output();
-    let action_signature = format!("SolibSymlink:{library_path}");
+    let action_key = format!("SolibSymlink:{library_path}");
     match &library {
         ValueAsInputArtifactLikeUnpack::DeclaredArtifact(declared) => {
+            let output_identity = state.bazel_shareable_output_identity(&output_artifact);
             state.register_bazel_solib_symlink_action(
                 declared.declared_artifact(),
                 output_artifact,
-                action_signature,
+                BazelShareableActionIdentity::new(
+                    action_key,
+                    vec![format!("artifact:{library_path}")],
+                    vec![output_identity],
+                ),
             )?;
         }
         _ => {
             let artifact_group = library_like.get_artifact_group()?;
-            if state.should_register_bazel_shareable_action(&output_artifact, action_signature)? {
+            if state.should_register_bazel_shareable_action(&output_artifact, |state| {
+                Ok(BazelShareableActionIdentity::new(
+                    action_key,
+                    vec![state.bazel_shareable_artifact_group_identity(&artifact_group)],
+                    vec![state.bazel_shareable_output_identity(&output_artifact)],
+                ))
+            })? {
                 state.register_action(
                     buck_indexset![output_artifact],
                     UnregisteredSolibSymlinkAction::new(artifact_group),

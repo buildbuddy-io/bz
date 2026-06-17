@@ -12,6 +12,7 @@ use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifa
 use bz_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use bz_build_api::analysis::registry::BazelShareableActionIdentity;
 use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
 use bz_execute::execute::request::OutputType;
 use bz_hash::buck_indexset;
@@ -63,8 +64,13 @@ fn copy_file_impl<'v>(
     let mut this = this.state()?;
     let (declaration, output_artifact) =
         this.get_or_declare_output(eval, dest, output_type, has_content_based_path)?;
-    let action_signature = format!("{output_type:?}:{copy:?}:{artifact:?}");
-    if !this.should_register_bazel_shareable_action(&output_artifact, action_signature)? {
+    if !this.should_register_bazel_shareable_action(&output_artifact, |state| {
+        Ok(BazelShareableActionIdentity::new(
+            format!("{output_type:?}:{copy:?}"),
+            vec![state.bazel_shareable_artifact_group_identity(&artifact)],
+            vec![state.bazel_shareable_output_identity(&output_artifact)],
+        ))
+    })? {
         return Ok(declaration.into_declared_artifact(
             associated_artifacts
                 .duped()
@@ -190,13 +196,13 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             let mut this = this.state()?;
             let (declaration, output_artifact) =
                 this.get_or_declare_output(eval, output, OutputType::Symlink, None)?;
-            let action_signature = format!(
-                "{:?}:{:?}:{}",
-                OutputType::Symlink,
-                target_type,
-                target_path
-            );
-            if !this.should_register_bazel_shareable_action(&output_artifact, action_signature)? {
+            if !this.should_register_bazel_shareable_action(&output_artifact, |state| {
+                Ok(BazelShareableActionIdentity::new(
+                    format!("{:?}:{:?}:{}", OutputType::Symlink, target_type, target_path),
+                    Vec::new(),
+                    vec![state.bazel_shareable_output_identity(&output_artifact)],
+                ))
+            })? {
                 return Ok(declaration.into_declared_artifact(AssociatedArtifacts::new()));
             }
             this.register_action(
