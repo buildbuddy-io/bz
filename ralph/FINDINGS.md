@@ -124,8 +124,12 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   correct for the common case (generated headers in `hdrs` already worked under
   dep-coercion in the F20 experiment); the only regression was `.lds`-in-cc-`deps`,
   which the provider exemption would fix properly.
-- **Status:** documented / open (deferred — needs deferred/listing-complete source
-  resolution; quick source-first/dep-first toggles each regress the other pattern).
+- **Status:** ATTEMPTING clean fix — (1) always dep-coerce in bazel-compat
+  (`label.rs`, removes the F14 source-first that mis-treats generated files); (2) give
+  the `allow_files` union's dep no required providers (`attrs_global.rs`), exempting
+  file deps from the provider check (Bazel's allow_files semantics). This should fix
+  F20 (generated sources) AND preserve F3 (`.lds`). Verifying exhaustively before
+  committing (full regression sweep + proto + buildifier + abseil `.lds` + `bz test`).
 
 ## F28: `java_common_internal.check_java_toolchain_is_declared_on_rule` missing
 - **Repo:** standalone rules_kotlin project (kt_jvm_library, via java_common).

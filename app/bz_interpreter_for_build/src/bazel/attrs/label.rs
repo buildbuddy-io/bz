@@ -22,22 +22,16 @@ impl AttrTypeCoerce for BazelLabelAttrType {
     ) -> bz_error::Result<CoercedAttr> {
         if let Some(value_str) = value.unpack_str() {
             if ctx.is_bazel_compat_cell() {
-                // This attr type is only built when `allow_files` is set, so source
-                // files are permitted alongside rule deps. Bazel exempts source
-                // files matching `allow_files` (e.g. `.lds` linker scripts listed in
-                // a cc rule's `deps`) from the attribute's provider requirement. A
-                // *bare* relative reference (no `:`, `@`, or `//`) may name an actual
-                // source file; try source coercion first for those (it only succeeds
-                // for a file present in the package listing) and fall back to a
-                // dependency. Explicit label forms (`:foo`, `//pkg:foo`, `@repo//...`)
-                // always resolve as dependencies, matching Bazel — otherwise a label
-                // pointing at a rule target's output (e.g. a TreeArtifact) could be
-                // mis-coerced as a source.
-                if !looks_like_label(value_str) {
-                    if let Ok(coerced) = self.source.coerce_item(configurable, ctx, value) {
-                        return Ok(coerced);
-                    }
-                }
+                // This attr type is only built when `allow_files` is set. Always
+                // dep-coerce in bazel-compat cells: this resolves source files (their
+                // implicit source-file target) AND generated files / rule outputs
+                // (e.g. genrule-generated headers like zlib's `zlib/include/crc32.h`,
+                // or goyacc-generated `*.baz.go`) to the right target — whereas
+                // source-first coercion mis-treats generated files as missing sources.
+                // The `allow_files` exemption from the provider requirement (Bazel
+                // semantics — e.g. a `.lds` linker script in a cc rule's `deps`) is
+                // handled by giving the union's dep no required providers (see
+                // `bazel_label_attr_type`), so file deps don't fail the provider check.
                 return self
                     .dep
                     .coerce_item(configurable, ctx, value)

@@ -322,15 +322,18 @@ fn bazel_label_attr_type<'v>(
     list: bool,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> bz_error::Result<AttrType> {
-    let dep = bazel_dep_attr_type(
-        dep_like_attr_handle_providers_arg(providers.items)?,
-        cfg,
-        eval,
-    )?;
+    let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
     let inner = if bazel_label_allows_files(allow_files, allow_single_file) {
-        AttrType::bazel_label(dep, AttrType::source(true))
+        // Bazel exempts files matching `allow_files` from the attribute's provider
+        // requirement (e.g. a `.lds` linker script or a generated header in a cc
+        // rule's deps/hdrs/srcs). Model that by giving this `allow_files` union's dep
+        // NO required providers, so file deps — source files and generated outputs
+        // alike — resolve without failing the provider check. Non-file rule deps still
+        // resolve normally; bz just doesn't enforce the provider type here.
+        let file_dep = bazel_dep_attr_type(ProviderIdSet::EMPTY, cfg, eval)?;
+        AttrType::bazel_label(file_dep, AttrType::source(true))
     } else {
-        dep
+        bazel_dep_attr_type(required_providers, cfg, eval)?
     };
     Ok(if list { AttrType::list(inner) } else { inner })
 }
