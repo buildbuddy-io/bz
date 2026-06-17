@@ -87,6 +87,16 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   protoc → protobuf → zlib. Consistent with protobuf-as-root being deferred (F9).
 - **Status:** documented / open (deferred — deep transitive materialization).
 
+## F28: `java_common_internal.check_java_toolchain_is_declared_on_rule` missing
+- **Repo:** standalone rules_kotlin project (kt_jvm_library, via java_common).
+- **Symptom:** `Object of type 'java_common_internal' has no attribute
+  'check_java_toolchain_is_declared_on_rule'`.
+- **Root cause:** rules_java/rules_kotlin call this java_common deprecation-check
+  internal method, which bz's `JavaCommonInternal`
+  (`.../provider/builtin/bazel/java_info.rs`) didn't implement.
+- **Fix:** Add it as a no-op (bz resolves java toolchains itself).
+- **Status:** fixing
+
 ## F27: `FilesToRunProvider` (no executable) rejected in `actions.run` tools
 - **Repo:** standalone rules_kotlin project (kt_jvm_library compile action).
 - **Symptom:** `expected hidden action input/tool to be a command-line value,
@@ -99,7 +109,7 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   `runfiles`, which was ignored.
 - **Fix:** Detect a FilesToRunProvider via its executable/runfiles fields and add
   both the executable (if any) and the files from its runfiles.
-- **Status:** fixing
+- **Status:** ✅ fixed & verified — Kotlin build progresses past it to F28.
 
 ## F26: `ctx.actions.run` rejects `input_manifests`
 - **Repo:** standalone rules_kotlin project (kt_jvm_binary, after F25).
