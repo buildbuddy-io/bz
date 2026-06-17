@@ -11,6 +11,55 @@ Format per finding:
 
 ---
 
+## F21: `ctx.outputs.executable` missing for executable/test rules
+- **Repo:** bazel-examples/rules (`//runfiles:tool`, `//test_rule`).
+- **Symptom:** `Object of type 'struct' has no attribute 'executable'` at
+  `runfiles/tool.bzl:43` (`output = ctx.outputs.executable`). Same on `//test_rule`.
+- **Root cause:** for a rule declared `rule(executable=True)` (or `test=True`), Bazel
+  predeclares an output artifact named after the target, exposed as
+  `ctx.outputs.executable`. bz tracks `is_bazel_executable_rule` but does not add an
+  `executable` entry to the `ctx.outputs` struct.
+- **Scope:** affects executable/test custom rules that write to the predeclared
+  executable (2 of the bazel-examples/rules examples). Executable rules that instead
+  `declare_file` + `DefaultInfo(executable=...)` work (`//executable` passes).
+- **Fix shape (non-trivial):** `declare_bazel_predeclared_outputs`
+  (`app/bz_analysis/src/analysis/env.rs:662`) builds `ctx.outputs` from output attrs +
+  implicit outputs; bz tracks `is_bazel_executable_rule()`. The catch: `//executable`
+  sets `DefaultInfo(executable=<a different declared file>)` and never writes
+  `ctx.outputs.executable`. Bazel makes the predeclared executable **optional**
+  (produce it OR set DefaultInfo.executable), but bz's registry requires declared
+  outputs to be bound — so naively predeclaring it would break that case. Needs
+  optional-output-binding semantics. Documented; deferred.
+- **Status:** documented / open (deferred — needs optional predeclared-output support).
+
+## F22: aspect example — `has no attribute 'files'`
+- **Repo:** bazel-examples/rules (`//aspect`).
+- **Symptom:** `has no attribute 'files'` during aspect analysis.
+- **Status:** documented / open — aspect API gap, not yet root-caused.
+
+## Coverage note (bazel-examples/rules custom Starlark rules)
+**15/19 examples build** with bz: actions_run, actions_write, attributes, buck-out,
+computed_dependencies, depsets, empty, executable, expand_template, features,
+generating_code, implicit_output, mandatory_provider, optional_provider,
+shell_command. Failing: runfiles (F21), test_rule (F21), aspect (F22),
+predeclared_outputs. Good breadth of Starlark rule-authoring API support.
+
+## F20: zlib header `zlib/include/crc32.h` not found (proto/protobuf transitive)
+- **Repo:** standalone proto project (`proto_library` → needs protoc → protobuf →
+  zlib). MODULE: rules_proto 7.1.0 + protobuf 29.0 + rules_cc.
+- **Symptom:** after 49 build actions (protoc + deps compiling),
+  `File not found: 'zlib+//zlib/include/crc32.h'. Included in BUILD.bazel but does
+  not exist`, failing the proto descriptor-set action.
+- **Analysis:** a BUILD in the zlib BCR module references the header at
+  `zlib/include/crc32.h`, but bz's materialized zlib repo doesn't have it at that
+  path (upstream zlib keeps `crc32.h` at the repo root). Likely a transitive-dep
+  materialization detail (module `strip_prefix` / overlay path / include layout) in
+  how bz lays out the zlib BCR module. Couldn't inspect further — external cells are
+  virtual/bundled, not on disk.
+- **Scope:** Blocks proto compilation (proto_library descriptor set) because it pulls
+  protoc → protobuf → zlib. Consistent with protobuf-as-root being deferred (F9).
+- **Status:** documented / open (deferred — deep transitive materialization).
+
 ## F19: toolchain key matching doesn't resolve apparent repo aliases
 - **Repo:** bazel-examples/frontend (rules_js → aspect_bazel_lib `copy_to_bin`).
 - **Symptom:** `toolchain "@bazel_lib//lib:coreutils_toolchain_type" was not declared

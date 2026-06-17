@@ -7,9 +7,10 @@ _Last updated: 2026-06-17 01:00 UTC_
 Built `bz` from source and ran the build-loop across 10 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
 rules_js (JS/TS), rules_oci, and a huge multi-language repo. **12 `bz` bugs found,
-fixed, verified, and committed; 7 deeper ones documented and deferred.** Ecosystems
+fixed, verified, and committed; 10 deeper ones documented and deferred.** Ecosystems
 validated end-to-end: **C++, Python, Java, Maven, Go, Rust** (build + run + test);
 **JS/TS** largely works (1,632 actions before a deferred toolchain-key gap).
+Custom Starlark rule-authoring APIs: **15/19 bazel-examples/rules examples build**.
 
 ## Bugs fixed & committed (11)
 
@@ -39,6 +40,9 @@ validated end-to-end: **C++, Python, Java, Maven, Go, Rust** (build + run + test
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
 | F17 | `local_path_override` outside project root | bz path model is project-rooted; setup-specific |
 | F19 | toolchain key apparent-vs-canonical repo alias | needs cell alias resolver in key matching; JS/TS otherwise works |
+| F20 | zlib header path in proto/protobuf transitive build | deep transitive-dep materialization |
+| F21 | `ctx.outputs.executable` for executable/test rules | needs optional predeclared-output binding |
+| F22 | aspect example `has no attribute 'files'` | aspect API gap, not root-caused |
 
 ## Repos tested
 
@@ -54,6 +58,8 @@ validated end-to-end: **C++, Python, Java, Maven, Go, Rust** (build + run + test
 | bazel-examples/cpp-tutorial | rules_cc | ✅ all stages build+run (no bugs) |
 | rules_rust (standalone) | rules_rust | ✅ binary+library+test build, run, pass |
 | bazel-examples/frontend | rules_js (JS/TS) | ⏳ 1,632 actions build (F18 fixed); F19 toolchain-key gap |
+| bazel-examples/rules | custom Starlark rules | ✅ 15/19 examples build (F21/F22 + predeclared_outputs fail) |
+| proto-standalone | rules_proto/protobuf | ⏸ F20 (zlib header, transitive) |
 
 ## Environment
 
