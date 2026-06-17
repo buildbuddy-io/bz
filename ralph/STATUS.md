@@ -1,6 +1,39 @@
 # Status
 
-_Last updated: 2026-06-17 10:50 UTC_
+_Last updated: 2026-06-17 11:15 UTC_
+
+## TL;DR
+
+A "Ralph Wiggum" loop that builds `bz` (BuildBuddy's Buck2-derived, Bazel-compatible build
+tool) from source and runs it against real-world open-source Bazel projects, fixing every
+shallow Bazel-compatibility bug it uncovers and documenting the deeper ones.
+
+- **27 `bz` bugs found, fixed, verified, and committed**; **11 deeper/architectural ones
+  root-caused and deferred** (with exact code locations + fix shapes). All work is in this
+  fork (`origin` = altdansalt/bz); none upstreamed yet.
+- **Ecosystems validated end-to-end (build + run + test):** C++ (rules_cc), Python
+  (rules_python/pybind), Java + Maven (rules_java/rules_jvm_external), Go (rules_go),
+  Rust (rules_rust); **JS/TS** largely builds; Kotlin (rules_kotlin) compiles; custom
+  Starlark rule APIs 17/19. `bz build/run/test/query/cquery/targets` all work; `aquery`
+  is an experimental stub.
+- **Real-world flagship repos building (and testing) under `bz`:** abseil-cpp (`//...`),
+  re2, googletest, **tcmalloc** (232 actions), **boringssl** (crypto 369 actions incl.
+  x86 asm; `ssl_test` **471 tests pass**). protobuf/grpc/cel-cpp advance deep into analysis
+  but stop at one shared blocker (F36).
+- **Highest-impact fixes:** F20 (generated sources in `srcs`/`hdrs` — unblocks codegen
+  everywhere), F33 (`@local_config_platform` — unblocks aspect_bazel_lib repos: grpc,
+  tcmalloc), F9 (`config_feature_flag`), F31 (`bz test` runfiles), F37 (bundled C++ runfiles).
+- **Highest-value *deferred* items (for supervised work):** **F36** `hasattr` on unset
+  provider fields (blocks protobuf + everything depending on it: grpc, cel-cpp), **F30**
+  rules_python pip per-version config (blocks any pip dep), **F38/F39** test `data`-fixture
+  runfiles, **F21** `ctx.outputs.executable` (executable/test rules). Each has a precise
+  root cause; two (F36, F38) had cheap fixes attempted, caught regressing the base, and
+  reverted — see FINDINGS.md.
+- **Discipline:** every fix was regression-swept across ecosystems before committing; risky
+  core changes that didn't fully land were reverted rather than shipped. The stable base
+  never regressed.
+
+Details: per-bug analysis in `ralph/FINDINGS.md`; per-repo logs in `ralph/builds/`.
 
 ## Summary
 
