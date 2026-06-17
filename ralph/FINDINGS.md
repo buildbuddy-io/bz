@@ -104,10 +104,18 @@ Format per finding:
   non-equivalent keys (the `cfg` output dir collapses distinct configurations to one
   path, or the lib is analyzed in two near-identical configs). Single-package Go
   (stage1) has no dep transition and works fine.
-- **Scope:** Blocks multi-package Go (any go_binary/go_test with go_library deps).
-  Single-package Go works (F11 fixed). Deep — config-transition output-path mapping
-  + shared-action equivalence. Documented; deferred.
-- **Status:** documented / open (deferred)
+- **Scope (refined):** Multi-package Go actually **works for specific targets** —
+  `bz build //:print_fortune` builds and runs (`Your tests will pass.`) in stage2/3.
+  The conflict only occurs with `bz build //...`, which builds `//fortune` in BOTH
+  the default config (directly) AND `print_fortune`'s transitioned config; both
+  collapse to `buck-out/bin/cfg/fortune/fortune.a` with different action keys. So the
+  bug is narrow: a go_library built under two configs collides because bz's Bazel
+  output path uses a generic `cfg` dir that doesn't encode the configuration.
+- **Fix:** Not implemented — the real fix (config-encoded output paths, or keying the
+  shared-action output set by config) is deep + risky (output-path layout). But Go is
+  usable in practice via specific targets. Documented; deferred.
+- **Status:** documented / open (deferred) — **narrower than first thought; Go
+  multi-package works for specific-target builds.**
 
 ## F11: `cc_common.merge_cc_infos` missing — blocks rules_go
 - **Repo:** bazel-examples/go-tutorial/stage1 (`//:hello`, a go_binary).

@@ -33,7 +33,7 @@ committed; 6 deeper ones documented and deferred.** Ecosystems validated end-to-
 | F5 | bare native cc rules unimplemented | autoload to rules_cc; modern repos load explicitly |
 | F9 | android `config_feature_flag` undefined | android ecosystem; protobuf graph only |
 | F10 | `linkstatic=0` drops cc_library deps | deep cc dynamic-linking internals |
-| F12 | go multi-package shared-action conflict | config-transition output-path dedup |
+| F12 | go `//...` shared-action conflict (narrow) | config-transition output-path dedup; specific targets work |
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
 | F17 | `local_path_override` outside project root | bz path model is project-rooted; setup-specific |
 
@@ -46,7 +46,7 @@ committed; 6 deeper ones documented and deferred.** Ecosystems validated end-to-
 | protobuf | multi-language | ⏸ F6/F7/F8 fixed; deferred at F9 (android) |
 | googletest | rules_cc | ✅ all but 1 `linkstatic=0` target (F10) |
 | bazel-examples/java-tutorial | rules_java | ✅ full build (remotejdk) |
-| bazel-examples/go-tutorial | rules_go | ✅ single-package builds+runs (F11); multi-pkg F12 |
+| bazel-examples/go-tutorial | rules_go | ✅ single + multi-package build+run (specific targets); `//...` hits F12 |
 | bazel-examples/java-maven | rules_jvm_external + rules_oci | ✅ Maven+Java (F13/F15 fixed); OCI image F16 |
 | bazel-examples/cpp-tutorial | rules_cc | ✅ all stages build+run (no bugs) |
 | rules_rust (standalone) | rules_rust | ✅ binary+library+test build, run, pass |
