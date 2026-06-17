@@ -49,7 +49,7 @@ bazel-examples/rules examples build**.
 | F12 | go `//...` shared-action conflict (narrow) | config-transition output-path dedup; specific targets work |
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
 | F17 | `local_path_override` outside project root | bz path model is project-rooted; setup-specific |
-| F20 | zlib header path in proto/protobuf transitive build | deep transitive-dep materialization |
+| F20 | generated sources in srcs/hdrs treated as missing (zlib, buildifier goyacc) | BROAD (codegen everywhere); allow_files provider exemption; architectural |
 | F21 | `ctx.outputs.executable` (executable/test rules; kt_jvm_binary — F29) | needs lazy predeclared-output value; single hardest remaining fix |
 | F24 | copy-to-bin double-bind in js_binary runfiles | aspect_bazel_lib copy dedup; JS/TS ~1,664 actions |
 
@@ -70,6 +70,7 @@ bazel-examples/rules examples build**.
 | bazel-examples/rules | custom Starlark rules | ✅ 17/19 examples build (only runfiles/test_rule fail — F21) |
 | proto-standalone | rules_proto/protobuf | ⏸ F20 (zlib header, transitive) |
 | google/benchmark | rules_cc (real-world) | ✅ C++ lib+cc_test build+pass; python tools F30 (pip) |
+| bazelbuild/buildtools | rules_go (real-world) | ⏸ F20 (goyacc-generated Go source in srcs) |
 | kotlin-standalone | rules_kotlin (JVM) | ✅ kt_jvm_library compiles (F25–F28); kt_jvm_binary F29 (=F21) |
 
 ## Build + test + query validation (2026-06-17 05:05)

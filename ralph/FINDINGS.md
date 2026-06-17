@@ -107,8 +107,23 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   `allow_files` labels to a phase where the package's full source + target listings
   are known (Bazel resolves this at loading over the whole package), or (b) make the
   bazel-compat listing eager/complete so `coerce_existing_path` is trustworthy.
-- **Scope:** generated headers in `hdrs` is common — affects zlib → protobuf/grpc/many
-  real C++ proto repos. High value, but the fix is architectural.
+- **Scope (BROADER than zlib):** any **generated source referenced by bare name in
+  `srcs`/`hdrs`** hits this — confirmed on zlib (genrule headers → proto/protobuf/grpc)
+  AND buildtools/buildifier (`build/parse.y.baz.go`, a **goyacc-generated Go source**
+  in a go_library's `srcs`). Codegen (proto, yacc, generated headers) is everywhere,
+  so this is one of the highest-impact deferred issues for real-world repos.
+- **Better fix direction (than coerce-time discrimination):** the root cause is that
+  Bazel exempts files matching `allow_files` from the attribute's provider requirement
+  (F3's original insight). The CORRECT implementation is **dep-coerce the label** (which
+  resolves generated files to their rule output AND source files to their source-file
+  target) and **exempt file deps (DefaultInfo-only single-file targets) from the
+  provider check when the attr allows files** — rather than the current "source-first"
+  coercion (F14) that mis-treats generated files as missing sources. This needs the
+  `allow_files` flag threaded into dep resolution / provider checking (a dep-or-file
+  attr variant) — multi-layer, hence architectural. NOTE: dep-first is actually
+  correct for the common case (generated headers in `hdrs` already worked under
+  dep-coercion in the F20 experiment); the only regression was `.lds`-in-cc-`deps`,
+  which the provider exemption would fix properly.
 - **Status:** documented / open (deferred — needs deferred/listing-complete source
   resolution; quick source-first/dep-first toggles each regress the other pattern).
 
