@@ -11,6 +11,35 @@ Format per finding:
 
 ---
 
+## F7: `repository_ctx.getenv` missing (only on module_ctx)
+- **Repo:** protobuf (`//:protoc`; transitively evaluates rules_android's
+  `android_sdk_repository`).
+- **Symptom:** `Object of type 'repository_ctx' has no attribute 'getenv'` at
+  `rules_android/.../android_sdk_repository/rule.bzl:97`:
+  `android_sdk_path = repo_ctx.getenv("ANDROID_HOME")`.
+- **Root cause:** bz implemented `getenv` on the module-extension ctx
+  (`StarlarkModuleExtensionContext`) but not on the repository-rule ctx
+  (`StarlarkRepositoryContext`) in `app/bz_interpreter_for_build/src/bazel/
+  repository.rs`.
+- **Fix:** Add `getenv(name, default=None)` to `repository_context_methods`,
+  mirroring the module_ctx version (reads + records the env var via
+  `record_repository_env_var` so the repo refetches on change).
+- **Status:** fixing
+
+## F6: override patch label by root module's own repo_name rejected
+- **Repo:** protobuf (`bz build //:protoc`, fails during MODULE.bazel eval)
+- **Symptom:** `single_version_override patch must be a root-module label, got
+  '@com_google_protobuf//:Disable_bundle_install.patch'`.
+- **Root cause:** protobuf's `module(... repo_name = "com_google_protobuf")`, so
+  `@com_google_protobuf//:...` is the root module referring to itself by its own
+  apparent repo name. bz's `module_include_to_path`
+  (`app/bz_common/src/bazel/bzlmod/module_file.rs`) only accepted `//`, `@//`, `@@//`
+  for override patch labels, not `@<root_repo_name>//`.
+- **Fix:** Thread the root module's apparent repo names (module `name` +
+  `repo_name`) into `module_include_to_path` and accept `@<name>//` / `@@<name>//`
+  as root-module labels. Applied to single_version_override + archive_override.
+- **Status:** fixing
+
 ## F5: bare native cc rules (no `@rules_cc` load) are unimplemented
 - **Repo:** re2 (`//app:_re2.js`, a bare `cc_binary` with no load statement)
 - **Symptom:** `fail: Unimplemented rule type 'cc_binary' for target '//app:_re2.js'`.

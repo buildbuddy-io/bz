@@ -4000,6 +4000,23 @@ fn repository_ctx_reject_nonblocking_download(
 
 #[starlark_module]
 fn repository_context_methods(builder: &mut MethodsBuilder) {
+    /// Returns the value of an environment variable, recording it as an input so
+    /// the repository is refetched when it changes. Mirrors Bazel's
+    /// `repository_ctx.getenv(name, default=None)`.
+    fn getenv<'v>(
+        this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+        #[starlark(require = pos)] name: &str,
+        #[starlark(require = pos, default = NoneOr::None)] default: NoneOr<StringValue<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneOr<StringValue<'v>>> {
+        let repo_env = repository_ctx_repo_env(this);
+        let recorded_inputs = repository_ctx_recorded_inputs(this);
+        match record_repository_env_var(&repo_env, &recorded_inputs, name) {
+            Some(value) => Ok(NoneOr::Other(eval.heap().alloc_str(&value))),
+            None => Ok(default),
+        }
+    }
+
     fn file<'v>(
         this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
         #[starlark(require = pos)] path: Value<'v>,

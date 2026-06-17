@@ -94,6 +94,23 @@ impl BzlmodModuleEvalContext {
         self.current_module_file.borrow().clone()
     }
 
+    /// The apparent repo names by which the root module can refer to itself
+    /// (its module name and, if different, its explicit `repo_name`). Labels of
+    /// the form `@<name>//:patch` are root-module labels and are accepted for
+    /// override patches.
+    fn root_apparent_repo_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        let name = self.name.borrow().clone();
+        if !name.is_empty() {
+            names.push(name.clone());
+        }
+        let repo_name = self.repo_name.borrow().clone();
+        if !repo_name.is_empty() && repo_name != name {
+            names.push(repo_name);
+        }
+        names
+    }
+
     fn should_ignore_dev_dependency(&self, dev_dependency: bool) -> bool {
         self.ignore_dev_dependency && dev_dependency
     }
@@ -540,7 +557,7 @@ pub(super) fn bzlmod_include_label_to_path(
             module_file
         ));
     }
-    let path = module_include_to_path(module_file, label).ok_or_else(|| {
+    let path = module_include_to_path(module_file, label, &[]).ok_or_else(|| {
         bz_error!(
             bz_error::ErrorTag::Input,
             "bad include label `{}` in `{}`: invalid repo-relative label",
@@ -568,12 +585,33 @@ pub(super) fn bzlmod_include_label_to_path(
     Ok(path)
 }
 
-fn module_include_to_path(current_module_file: &str, label: &str) -> Option<String> {
-    if let Some(rest) = label
+fn module_include_to_path(
+    current_module_file: &str,
+    label: &str,
+    root_repo_names: &[String],
+) -> Option<String> {
+    let mut root_rest = label
         .strip_prefix("//")
         .or_else(|| label.strip_prefix("@//"))
-        .or_else(|| label.strip_prefix("@@//"))
-    {
+        .or_else(|| label.strip_prefix("@@//"));
+    // A label that names the root module by its own apparent repo name (e.g.
+    // `@com_google_protobuf//:patch` when the root module sets
+    // `repo_name = "com_google_protobuf"`) is also a root-module label.
+    if root_rest.is_none() {
+        for name in root_repo_names {
+            if name.is_empty() {
+                continue;
+            }
+            if let Some(rest) = label
+                .strip_prefix(&format!("@{name}//"))
+                .or_else(|| label.strip_prefix(&format!("@@{name}//")))
+            {
+                root_rest = Some(rest);
+                break;
+            }
+        }
+    }
+    if let Some(rest) = root_rest {
         let (package, name) = rest.split_once(':')?;
         return Some(if package.is_empty() {
             name.to_owned()
@@ -743,11 +781,13 @@ fn bzlmod_override_patch_paths_from_value(
     current_module_file: &str,
     value: Value<'_>,
     what: &str,
+    root_repo_names: &[String],
 ) -> starlark::Result<Vec<BzlmodRootPatch>> {
     bzlmod_value_to_string_list(value, what)?
         .into_iter()
         .map(|label| {
-            let path = module_include_to_path(current_module_file, &label).ok_or_else(|| {
+            let path = module_include_to_path(current_module_file, &label, root_repo_names)
+                .ok_or_else(|| {
                 bzlmod_starlark_error(format!(
                     "{what} patch must be a root-module label, got `{label}`"
                 ))
@@ -764,9 +804,12 @@ fn bzlmod_patch_paths_from_kwargs(
     current_module_file: &str,
     kwargs: &SmallMap<String, Value<'_>>,
     what: &str,
+    root_repo_names: &[String],
 ) -> starlark::Result<Vec<BzlmodRootPatch>> {
     bzlmod_kwarg(kwargs, "patches")
-        .map(|value| bzlmod_override_patch_paths_from_value(current_module_file, value, what))
+        .map(|value| {
+            bzlmod_override_patch_paths_from_value(current_module_file, value, what, root_repo_names)
+        })
         .transpose()
         .map(Option::unwrap_or_default)
 }
@@ -1221,12 +1264,14 @@ fn bzlmod_module_globals_builder(builder: &mut GlobalsBuilder) {
             )));
         }
         let current_module_file = context.current_module_file();
+        let root_repo_names = context.root_apparent_repo_names();
         let patches = match patches {
             NoneOr::None => Vec::new(),
             NoneOr::Other(patches) => bzlmod_override_patch_paths_from_value(
                 &current_module_file,
                 patches,
                 "single_version_override",
+                &root_repo_names,
             )?,
         };
         let patch_strip = match patch_strip {
@@ -1294,6 +1339,7 @@ fn bzlmod_module_globals_builder(builder: &mut GlobalsBuilder) {
             )));
         }
         let current_module_file = context.current_module_file();
+        let root_repo_names = context.root_apparent_repo_names();
         context.archive_overrides.borrow_mut().insert(
             module_name.clone(),
             BzlmodArchiveOverride {
@@ -1313,6 +1359,7 @@ fn bzlmod_module_globals_builder(builder: &mut GlobalsBuilder) {
                     &current_module_file,
                     &kwargs,
                     "archive_override",
+                    &root_repo_names,
                 )?,
                 patch_strip: bzlmod_kwarg_u32(
                     &kwargs,
