@@ -11,6 +11,18 @@ Format per finding:
 
 ---
 
+## F8: `Label()` rejects bare relative labels
+- **Repo:** protobuf (`//:protoc`; transitively evaluates rules_kotlin bzlmod setup).
+- **Symptom:** `Error parsing target pattern 'capabilities_2.3.bzl', expected an
+  absolute pattern` at rules_kotlin `templates.bzl:17`:
+  `Label("capabilities_2.3.bzl")`.
+- **Root cause:** bz's `Label()` (`parse_providers_label` in
+  `app/bz_interpreter_for_build/src/label.rs`) handled `:target` (current-package
+  relative) but not a bare relative name (no `@`, no `//`, no `:`). Bazel resolves
+  `Label("foo.bzl")` as a target in the calling file's package, like `:foo.bzl`.
+- **Fix:** Add a bare-relative branch: treat `Label("foo")` as `<current_package>:foo`.
+- **Status:** fixing
+
 ## F7: `repository_ctx.getenv` missing (only on module_ctx)
 - **Repo:** protobuf (`//:protoc`; transitively evaluates rules_android's
   `android_sdk_repository`).
