@@ -45,10 +45,20 @@ Format per finding:
 - **Status:** ✅ fixed & verified — `//predeclared_outputs` now builds. Custom-rules
   coverage 15/19 → 16/19.
 
-## F22: aspect example — `has no attribute 'files'`
+## F22: `ctx.rule.files` missing in aspect context
 - **Repo:** bazel-examples/rules (`//aspect`).
-- **Symptom:** `has no attribute 'files'` during aspect analysis.
-- **Status:** documented / open — aspect API gap, not yet root-caused.
+- **Symptom:** `Object of type 'struct' has no attribute 'files'` at
+  `aspect/file_collector.bzl:18` (`for f in ctx.rule.files.srcs`).
+- **Root cause:** bz's `ctx.rule` struct (`analysis_context_rule` in
+  `.../rule_defs/context.rs`) exposed only `attr` and `kind`. Aspects read the
+  attached rule's file views via `ctx.rule.files` / `ctx.rule.file` (mirroring
+  `ctx.files`/`ctx.file` of a normal rule).
+- **Fix:** Add `files`, `file`, `executable` to the `ctx.rule` struct. The aspect ctx
+  is built by `analysis_actions_to_bazel_ctx_with_overrides` (the synthesized bazel
+  ctx struct), not `analysis_context_rule` — derive the file views from the dep rule's
+  attrs via `analysis_context_bazel_file_structs_from_attrs`. (Also added to the native
+  `analysis_context_rule` for consistency.)
+- **Status:** ✅ fixed & verified — `//aspect` now builds. Custom-rules 16/19 → 17/19.
 
 ## Coverage note (bazel-examples/rules custom Starlark rules)
 **16/19 examples build** with bz (after F23). Failing: runfiles (F21),
