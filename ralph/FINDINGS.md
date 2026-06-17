@@ -77,15 +77,34 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
 - **Symptom:** after 49 build actions (protoc + deps compiling),
   `File not found: 'zlib+//zlib/include/crc32.h'. Included in BUILD.bazel but does
   not exist`, failing the proto descriptor-set action.
-- **Analysis:** a BUILD in the zlib BCR module references the header at
-  `zlib/include/crc32.h`, but bz's materialized zlib repo doesn't have it at that
-  path (upstream zlib keeps `crc32.h` at the repo root). Likely a transitive-dep
-  materialization detail (module `strip_prefix` / overlay path / include layout) in
-  how bz lays out the zlib BCR module. Couldn't inspect further — external cells are
-  virtual/bundled, not on disk.
-- **Scope:** Blocks proto compilation (proto_library descriptor set) because it pulls
-  protoc → protobuf → zlib. Consistent with protobuf-as-root being deferred (F9).
-- **Status:** documented / open (deferred — deep transitive materialization).
+- **Root cause (regression from F3/F14!):** zlib's BCR overlay BUILD generates the
+  prefixed headers via a genrule (`copy_public_headers`: `cp $(SRCS) $(@D)/zlib/
+  include/`) and the cc_library's `hdrs = ["zlib/include/crc32.h", ...]` reference
+  those **genrule outputs**. bz's source coercion has a non-existence-checking
+  `coerce_path` fallback (source.rs:74), so my F14 "bare-name source-first" wrongly
+  coerced the genrule output as a (non-existent) source → "Included in BUILD but does
+  not exist". F3/F14's comment even wrongly claimed source coercion "only succeeds for
+  a file present in the package listing".
+- **The real tension (F3 ↔ F20):** in a bazel-compat `allow_files` label attr, a bare
+  name can be EITHER a source file (`.lds`) OR a rule output (zlib's genrule-generated
+  `zlib/include/crc32.h`). Source-first (F14) breaks genrule-outputs-in-`hdrs`;
+  dep-first breaks source-files-in-cc-`deps`. The correct discriminator is "is it an
+  existing source?" — but `ctx.coerce_existing_path` returns None even for the on-disk
+  `flag_benchmark.lds` (bz's package listing at coerce time doesn't reliably contain
+  it), so an existence-gated fix made everything dep-coerce → fixed proto/zlib but
+  **regressed abseil `.lds`**. Reverted.
+- **Verified:** with dep-coercion the proto-standalone build succeeds (284 actions) —
+  so the genrule-output resolution is the only blocker; the fix just needs a reliable
+  source-vs-output discriminator.
+- **Proper fix (deep):** defer the source-vs-dep decision for `allow_files` labels to
+  a phase where the package's full source + target listings are known (Bazel resolves
+  this at loading with the whole package), rather than per-attr at coerce time. Or fix
+  bz's coerce-time package listing to reliably include on-disk sources so
+  `coerce_existing_path` works as its name implies.
+- **Scope:** generated headers in `hdrs` is common — affects zlib → protobuf/grpc/many
+  real C++ proto repos. High value, but the fix is architectural.
+- **Status:** documented / open (deferred — needs deferred/listing-complete source
+  resolution; quick source-first/dep-first toggles each regress the other pattern).
 
 ## F28: `java_common_internal.check_java_toolchain_is_declared_on_rule` missing
 - **Repo:** standalone rules_kotlin project (kt_jvm_library, via java_common).
