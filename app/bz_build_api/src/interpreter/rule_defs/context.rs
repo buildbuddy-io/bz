@@ -998,8 +998,14 @@ fn analysis_context_rule<'v>(
 ) -> bz_error::Result<Value<'v>> {
     let attrs = analysis_context_attrs(ctx)?.get();
     let kind = ctx.rule_kind_name.as_deref().unwrap_or("");
+    // Aspects read the attached rule's file views via `ctx.rule.files`/`ctx.rule.file`
+    // (e.g. `ctx.rule.files.srcs`), mirroring `ctx.files`/`ctx.file` of a normal rule.
+    let file_structs = analysis_context_bazel_file_structs(ctx, heap)?;
     Ok(heap.alloc(AllocStruct([
         ("attr", attrs),
+        ("executable", file_structs.executable.get()),
+        ("file", file_structs.file.get()),
+        ("files", file_structs.files.get()),
         ("kind", heap.alloc_str(kind).to_value()),
     ])))
 }
@@ -2338,6 +2344,14 @@ pub fn analysis_actions_to_bazel_ctx_with_overrides<'v>(
     let label_value = label
         .map(|label| label.to_value())
         .unwrap_or_else(Value::new_none);
+    // Aspects read the attached rule's file views via `ctx.rule.files`/`ctx.rule.file`
+    // (e.g. `ctx.rule.files.srcs`). Derive them from the dep rule's attrs.
+    let (rule_file, rule_files, rule_executable) =
+        match analysis_context_bazel_file_structs_from_attrs(heap, ValueOfUnchecked::new(rule_attr))
+        {
+            Ok((file, files, executable)) => (file.get(), files.get(), executable.get()),
+            Err(_) => (empty_struct, empty_struct, empty_struct),
+        };
     heap.alloc(AllocStruct([
         ("actions", actions.to_value()),
         ("attr", attr),
@@ -2381,6 +2395,9 @@ pub fn analysis_actions_to_bazel_ctx_with_overrides<'v>(
             "rule",
             heap.alloc(AllocStruct([
                 ("attr", rule_attr),
+                ("executable", rule_executable),
+                ("file", rule_file),
+                ("files", rule_files),
                 ("kind", heap.alloc_str(&rule_kind).to_value()),
             ])),
         ),
