@@ -98,6 +98,24 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
 - **Status:** ✅ fixed & verified — Kotlin build progresses past it; kt_jvm_library
   compiles. kt_jvm_binary then hits F29 (= F21, `ctx.outputs.executable`).
 
+## F30: rules_python pip version-matching select fails (`_no_matching_repository`)
+- **Repo:** standalone rules_python + pip project (py_binary with a PyPI dep `six`).
+- **Symptom:** `None of 1 conditions matched configuration ... and no default was set:
+  rules_python+//python/config_settings:is_not_matching_current_config` — via
+  `pypi//six:pkg` → `pypi//six:_no_matching_repository`.
+- **Analysis:** pip **resolution works** (six was fetched from PyPI). The pip package
+  `:pkg` alias's `actual` is a `select()` over python-version config settings; bz's
+  build configuration doesn't satisfy the expected `@rules_python//python/
+  config_settings:python_version` value, so the select falls through to
+  `_no_matching_repository` (which itself selects on `is_not_matching_current_config`
+  with no default). Root cause: bz isn't propagating the module-extension-registered
+  default `python_version` flag into the configuration that selects evaluate against.
+- **Also:** bz's CLI rejects `--@repo//flag=value` build-setting syntax
+  (`unexpected argument`), so the flag can't be set manually as a workaround either.
+- **Scope:** pip dep RESOLUTION works; the multi-version config-flag plumbing is the
+  gap. Moderately deep (config default propagation). Documented; deferred.
+- **Status:** documented / open (deferred).
+
 ## F29: kt_jvm_binary blocked on `ctx.outputs.executable` (= F21)
 - **Repo:** standalone rules_kotlin (`kt_jvm_binary`, impl.bzl:120
   `output = ctx.outputs.executable`).
