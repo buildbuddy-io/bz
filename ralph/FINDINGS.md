@@ -30,7 +30,14 @@ Format per finding:
   (produce it OR set DefaultInfo.executable), but bz's registry requires declared
   outputs to be bound — so naively predeclaring it would break that case. Needs
   optional-output-binding semantics. Documented; deferred.
-- **Status:** documented / open (deferred — needs optional predeclared-output support).
+- **Empirically confirmed:** eagerly predeclaring `ctx.outputs.executable` for
+  executable/test rules made `//test_rule` pass but **regressed `//executable`** with
+  `Artifact must be bound by now` (it sets `DefaultInfo(executable=<other file>)` and
+  never produces the predeclared one). Reverted. The correct fix is a **lazy**
+  `ctx.outputs.executable` — declared only when the rule accesses it — which requires
+  making `ctx.outputs` a lazy value rather than a pre-built struct. (`runfiles` has a
+  second, separate issue beyond `ctx.outputs.executable`.)
+- **Status:** documented / open (deferred — needs lazy predeclared-output support).
 
 ## F23: `File` artifacts not comparable — `sorted([files])` fails
 - **Repo:** bazel-examples/rules (`//predeclared_outputs`).

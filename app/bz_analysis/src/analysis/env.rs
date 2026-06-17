@@ -701,6 +701,11 @@ fn declare_bazel_predeclared_outputs<'v>(
         output_file_targets.push((output_path, artifact));
         output_fields.push((output.name.to_string(), artifact));
     }
+    // NOTE: `ctx.outputs.executable` for executable/test rules is intentionally NOT
+    // predeclared here — see FINDINGS F21. Eager declaration regresses rules that set
+    // `DefaultInfo(executable=...)` and never produce the predeclared file (bz's
+    // registry requires declared outputs to be bound: "Artifact must be bound by
+    // now"). It needs a lazy `ctx.outputs.executable` (declared only on access).
 
     let outputs_struct = ValueOfUnchecked::new(eval.heap().alloc(AllocStruct(output_fields)));
     let predeclared_outputs = output_file_targets
