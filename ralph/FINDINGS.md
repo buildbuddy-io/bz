@@ -11,6 +11,25 @@ Format per finding:
 
 ---
 
+## F34: bazelrc relative `import` that escapes the project root — ✅ FIXED
+- **Repo:** rules_scala `examples/scala3` (`bz targets //...`).
+- **Symptom:** `expected a normalized path but got an un-normalized path instead:
+  '../../.bazelrc'` during "Parsing cells", from the example's `.bazelrc` containing
+  `import ../../.bazelrc`.
+- **Root cause:** the scala3 example is its own workspace root (has MODULE.bazel), so the
+  relative import points two levels *above* the project root. `bazelrc_import_path`
+  (`legacy_configs/cells.rs`) resolved relative imports via
+  `ConfigPath::join_to_parent_normalized`, which keeps the path project-relative and errors
+  when `..` segments escape the root (`ForwardRelativePathBuf::try_from` rejects the
+  un-normalized `../../.bazelrc`). Bazel treats bazelrc imports as plain filesystem paths.
+- **Fix:** on the escape (Err) case, fall back to resolving the import against the importing
+  rc file's directory as an absolute `ConfigPath::Global` — mirroring the existing
+  `%workspace%`-escapes-project branch (`resolve_project_relative_to_absolute`). Purely
+  additive: in-project imports keep the original behavior.
+- **Verification:** scala3 `.bazelrc` now resolves (build advances to MODULE.bazel, which
+  then hits deferred F17 `local_path_override(path="../..")`). Regression-clean: abseil, re2.
+- **Status:** ✅ fixed & verified (committed)
+
 ## F21: `ctx.outputs.executable` missing for executable/test rules
 - **Repo:** bazel-examples/rules (`//runfiles:tool`, `//test_rule`).
 - **Symptom:** `Object of type 'struct' has no attribute 'executable'` at

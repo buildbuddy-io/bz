@@ -1,19 +1,19 @@
 # Status
 
-_Last updated: 2026-06-17 07:05 UTC_
+_Last updated: 2026-06-17 07:20 UTC_
 
 ## Summary
 
 Built `bz` from source and ran the build-loop across 12 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
 rules_js (JS/TS), rules_oci, rules_proto, rules_kotlin, custom Starlark rules, and a
-huge multi-language repo. **23 `bz` bugs found, fixed, verified, and committed; 8
+huge multi-language repo. **24 `bz` bugs found, fixed, verified, and committed; 8
 deeper ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
 Maven, Go, Rust** (build + run + test — `bz test` now works after F31 across cc/python/
 rust); **JS/TS** largely works (~1,664 actions before a deferred copy-to-bin gap). Custom Starlark rule-authoring APIs: **17/19
 bazel-examples/rules examples build**.
 
-## Bugs fixed & committed (23)
+## Bugs fixed & committed (24)
 
 | ID | Fix | Surfaced by |
 | --- | --- | --- |
@@ -40,6 +40,7 @@ bazel-examples/rules examples build**.
 | F32 | bundled `bazel_tools//third_party/def_parser` (`bz query`) | abseil cc query |
 | F20 | generated sources in allow_files attrs + file-dep provider exemption | proto/zlib, buildifier goyacc |
 | F9 | `config_feature_flag` native rule (loads stub androidsdk BUILD) | grpc //:gpr, protobuf |
+| F34 | bazelrc relative `import` escaping the project root | rules_scala scala3 example |
 
 ## Documented / deferred (8 — deeper)
 
@@ -74,6 +75,7 @@ bazel-examples/rules examples build**.
 | google/benchmark | rules_cc (real-world) | ✅ C++ lib+cc_test build+pass; python tools F30 (pip) |
 | bazelbuild/buildtools | rules_go (real-world) | ✅ 781 actions (F20 fixed); hits F12 (go shared-action) |
 | kotlin-standalone | rules_kotlin (JVM) | ✅ kt_jvm_library compiles (F25–F28); kt_jvm_binary F29 (=F21) |
+| rules_scala/examples/scala3 | rules_scala (Scala/JVM) | ⏸ F34 fixed (.bazelrc); deferred at F17 (local_path_override `../..`) |
 
 ## Build + test + query validation (2026-06-17 05:05)
 
