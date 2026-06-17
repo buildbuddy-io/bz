@@ -4,7 +4,8 @@ _Last updated: 2026-06-17 00:00 UTC_
 
 ## Now
 
-- re2 ✅ core + Python bindings build. Moving to next repo: **protobuf**.
+- protobuf ⏸ deferred at F9 (Android `config_feature_flag`) after fixing F6/F7/F8.
+  Moving to next repo: **googletest** (clean C++, depends on abseil+re2).
 
 ## Done
 
@@ -13,8 +14,10 @@ _Last updated: 2026-06-17 00:00 UTC_
 - **re2: core lib + pybind extension + py_library/py_test build** after F4.
   Only `//app` (emscripten WASM) unbuildable — needs emcc + bare cc_binary (F5).
 
-## Bugs fixed (committed): F1 exec_groups, F2 define_values, F3 .lds-in-deps, F4 cc_helper.
-## Open: F5 bare native cc rules unimplemented (documented).
+## Bugs fixed (committed): F1 exec_groups, F2 define_values, F3 .lds-in-deps,
+##   F4 cc_helper, F6 root-repo override patches, F7 repository_ctx.getenv,
+##   F8 bare relative Label().
+## Open/deferred: F5 bare native cc rules, F9 android config_feature_flag (documented).
 
 ## Environment
 

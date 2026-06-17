@@ -11,6 +11,20 @@ Format per finding:
 
 ---
 
+## F9: `config_feature_flag` native rule not defined (Android)
+- **Repo:** protobuf (`//:protoc`).
+- **Symptom:** `Variable 'config_feature_flag' not found` while evaluating
+  `rules_android++android_sdk_repository_extension+androidsdk//:BUILD.bazel`.
+- **Root cause:** protobuf's module graph pulls in rules_android, whose generated
+  `androidsdk` repo BUILD.bazel uses the Android native rule `config_feature_flag`,
+  which bz does not define. bz appears to evaluate this repo's BUILD even for a pure
+  C++ `protoc` build (toolchain enumeration), so the gap blocks protoc.
+- **Impact / decision:** Android-specific + deep. protobuf is a huge multi-language
+  repo (cc/java/python/kotlin/ruby/rust/android); its full graph surfaces many
+  peripheral-ecosystem gaps (F6, F7, F8 already fixed; F9 = android). Documented and
+  deferred — pivoting to cleaner repos for breadth; revisit protobuf/android later.
+- **Status:** documented / open (deferred)
+
 ## F8: `Label()` rejects bare relative labels
 - **Repo:** protobuf (`//:protoc`; transitively evaluates rules_kotlin bzlmod setup).
 - **Symptom:** `Error parsing target pattern 'capabilities_2.3.bzl', expected an
