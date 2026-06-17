@@ -96,11 +96,17 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
 - **Verified:** with dep-coercion the proto-standalone build succeeds (284 actions) —
   so the genrule-output resolution is the only blocker; the fix just needs a reliable
   source-vs-output discriminator.
-- **Proper fix (deep):** defer the source-vs-dep decision for `allow_files` labels to
-  a phase where the package's full source + target listings are known (Bazel resolves
-  this at loading with the whole package), rather than per-attr at coerce time. Or fix
-  bz's coerce-time package listing to reliably include on-disk sources so
-  `coerce_existing_path` works as its name implies.
+- **Why coerce_existing_path is unreliable (definitive):** for bazel-compat cells bz
+  builds the package listing with a **`Shallow`/lazy strategy** — it starts EMPTY
+  (`dice_calculation_delegate.rs:946`, `PackageListingStrategy::Shallow`) and only
+  accrues files as globs/refs touch them during BUILD eval. So at attr-coerce time the
+  listing is incomplete and `coerce_existing_path` can return None for an on-disk
+  source. Coerce-time source-vs-output discrimination is therefore fundamentally
+  unreliable in bz's current model.
+- **Proper fix (architectural):** either (a) defer the source-vs-dep decision for
+  `allow_files` labels to a phase where the package's full source + target listings
+  are known (Bazel resolves this at loading over the whole package), or (b) make the
+  bazel-compat listing eager/complete so `coerce_existing_path` is trustworthy.
 - **Scope:** generated headers in `hdrs` is common — affects zlib → protobuf/grpc/many
   real C++ proto repos. High value, but the fix is architectural.
 - **Status:** documented / open (deferred — needs deferred/listing-complete source
