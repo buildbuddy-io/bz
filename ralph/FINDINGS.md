@@ -130,8 +130,19 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   runfiles, test_rule) bind it while rules that don't (//executable) never declare it.
 - **Scope:** rules_kotlin: kt_jvm_library ✅ compiles (F25–F28 fixed); kt_jvm_binary
   blocked here. Also unblocks custom-rules runfiles+test_rule (→ 19/19).
-- **Status:** documented / open (deferred — the single hardest remaining fix; needs a
-  lazy outputs value + registry callback, warrants careful design + verification).
+- **Exact blocker:** `ActionsRegistry::finalize()`
+  (`app/bz_build_api/src/actions/registry.rs:421`) calls `ensure_bound()` on every
+  declared artifact, so any eagerly-declared executable MUST be bound. Two viable
+  fixes, both **core changes to action finalization** (affect all builds → need
+  review + thorough testing):
+  1. An "optional artifact" flag threaded env.rs → AnalysisRegistry → ActionsRegistry
+     so `finalize()` skips unbound optional outputs (the predeclared executable).
+  2. A lazy `ctx.outputs` value (custom StarlarkValue) that declares the executable
+     via the registry only on access (memoized).
+- **Status:** documented / open (deferred — single highest-value remaining fix.
+  Intentionally NOT attempted unsupervised: a subtly-wrong change to `finalize()`
+  could mask real unbound-output errors or break the action graph across all builds.
+  Flagged for a maintainer with the exact fix shapes above.)
 
 ## F27: `FilesToRunProvider` (no executable) rejected in `actions.run` tools
 - **Repo:** standalone rules_kotlin project (kt_jvm_library compile action).
