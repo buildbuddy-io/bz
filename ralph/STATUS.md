@@ -6,9 +6,9 @@ _Last updated: 2026-06-17 03:40 UTC_
 
 Built `bz` from source and ran the build-loop across 12 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
-rules_js (JS/TS), rules_oci, rules_proto, custom Starlark rules, and a huge
-rules_kotlin, and a huge multi-language repo. **19 `bz` bugs found, fixed, verified,
-and committed; 9 deeper ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
+rules_js (JS/TS), rules_oci, rules_proto, rules_kotlin, custom Starlark rules, and a
+huge multi-language repo. **19 `bz` bugs found, fixed, verified, and committed; 9
+deeper ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
 Maven, Go, Rust** (build + run + test); **JS/TS** largely works (~1,664 actions before
 a deferred copy-to-bin gap). Custom Starlark rule-authoring APIs: **17/19
 bazel-examples/rules examples build**.
