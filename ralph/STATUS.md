@@ -71,6 +71,14 @@ bazel-examples/rules examples build**.
 | proto-standalone | rules_proto/protobuf | ⏸ F20 (zlib header, transitive) |
 | kotlin-standalone | rules_kotlin (JVM) | ✅ kt_jvm_library compiles (F25–F28); kt_jvm_binary F29 (=F21) |
 
+## Build + test + query validation (2026-06-17 05:05)
+
+With all 21 fixes, validated **build + test + query** together (no regressions):
+abseil `//absl/strings` builds, `//absl/types:variant_test` tests **Pass 1/Fail 0**,
+`deps(//absl/strings:strings)` returns 35 deps; rust `//:greeter_test` and re2
+`//:search_test` both **Pass 1/Fail 0**. `bz test` (F31) and `bz query` (F32) work
+across cc/python/rust/java/go.
+
 ## Regression sweep (2026-06-17 03:50)
 
 With all 19 fixes in one binary, re-ran a cross-ecosystem sweep — **all pass, no
