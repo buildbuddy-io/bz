@@ -1,19 +1,19 @@
 # Status
 
-_Last updated: 2026-06-17 05:00 UTC_
+_Last updated: 2026-06-17 06:50 UTC_
 
 ## Summary
 
 Built `bz` from source and ran the build-loop across 12 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
 rules_js (JS/TS), rules_oci, rules_proto, rules_kotlin, custom Starlark rules, and a
-huge multi-language repo. **21 `bz` bugs found, fixed, verified, and committed; 9
+huge multi-language repo. **22 `bz` bugs found, fixed, verified, and committed; 8
 deeper ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
 Maven, Go, Rust** (build + run + test — `bz test` now works after F31 across cc/python/
 rust); **JS/TS** largely works (~1,664 actions before a deferred copy-to-bin gap). Custom Starlark rule-authoring APIs: **17/19
 bazel-examples/rules examples build**.
 
-## Bugs fixed & committed (21)
+## Bugs fixed & committed (22)
 
 | ID | Fix | Surfaced by |
 | --- | --- | --- |
@@ -38,8 +38,9 @@ bazel-examples/rules examples build**.
 | F28 | `java_common_internal.check_java_toolchain_is_declared_on_rule` | rules_kotlin |
 | F31 | test runfiles tree missing from test action inputs (`bz test`) | abseil cc_test execution |
 | F32 | bundled `bazel_tools//third_party/def_parser` (`bz query`) | abseil cc query |
+| F20 | generated sources in allow_files attrs + file-dep provider exemption | proto/zlib, buildifier goyacc |
 
-## Documented / deferred (9 — deeper)
+## Documented / deferred (8 — deeper)
 
 | ID | Issue | Why deferred |
 | --- | --- | --- |
@@ -49,7 +50,6 @@ bazel-examples/rules examples build**.
 | F12 | go `//...` shared-action conflict (narrow) | config-transition output-path dedup; specific targets work |
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
 | F17 | `local_path_override` outside project root | bz path model is project-rooted; setup-specific |
-| F20 | generated sources in srcs/hdrs treated as missing (zlib, buildifier goyacc) | BROAD (codegen everywhere); allow_files provider exemption; architectural |
 | F21 | `ctx.outputs.executable` (executable/test rules; kt_jvm_binary — F29) | needs lazy predeclared-output value; single hardest remaining fix |
 | F24 | copy-to-bin double-bind in js_binary runfiles | aspect_bazel_lib copy dedup; JS/TS ~1,664 actions |
 
@@ -68,9 +68,9 @@ bazel-examples/rules examples build**.
 | rules_rust (standalone) | rules_rust | ✅ binary+library+test build, run, pass |
 | bazel-examples/frontend | rules_js (JS/TS) | ⏳ ~1,664 actions build (F18/F19 fixed); F24 copy-to-bin gap |
 | bazel-examples/rules | custom Starlark rules | ✅ 17/19 examples build (only runfiles/test_rule fail — F21) |
-| proto-standalone | rules_proto/protobuf | ⏸ F20 (zlib header, transitive) |
+| proto-standalone | rules_proto/protobuf | ✅ proto_library builds (F20 fixed) |
 | google/benchmark | rules_cc (real-world) | ✅ C++ lib+cc_test build+pass; python tools F30 (pip) |
-| bazelbuild/buildtools | rules_go (real-world) | ⏸ F20 (goyacc-generated Go source in srcs) |
+| bazelbuild/buildtools | rules_go (real-world) | ✅ 781 actions (F20 fixed); hits F12 (go shared-action) |
 | kotlin-standalone | rules_kotlin (JVM) | ✅ kt_jvm_library compiles (F25–F28); kt_jvm_binary F29 (=F21) |
 
 ## Build + test + query validation (2026-06-17 05:05)

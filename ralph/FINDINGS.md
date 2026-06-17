@@ -124,12 +124,15 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   correct for the common case (generated headers in `hdrs` already worked under
   dep-coercion in the F20 experiment); the only regression was `.lds`-in-cc-`deps`,
   which the provider exemption would fix properly.
-- **Status:** ATTEMPTING clean fix — (1) always dep-coerce in bazel-compat
-  (`label.rs`, removes the F14 source-first that mis-treats generated files); (2) give
-  the `allow_files` union's dep no required providers (`attrs_global.rs`), exempting
-  file deps from the provider check (Bazel's allow_files semantics). This should fix
-  F20 (generated sources) AND preserve F3 (`.lds`). Verifying exhaustively before
-  committing (full regression sweep + proto + buildifier + abseil `.lds` + `bz test`).
+- **Status:** ✅ FIXED & verified — (1) always dep-coerce in bazel-compat (`label.rs`,
+  removes the F14 source-first that mis-treated generated files); (2) the `allow_files`
+  union's dep has no required providers (`attrs_global.rs`), exempting file deps from
+  the provider check (Bazel's allow_files semantics). Supersedes F3/F14's coercion
+  approach. Verified exhaustively: proto-standalone builds, buildifier 135→781 actions
+  (now hits the separate F12), abseil `.lds` (F3) still builds, FULL regression sweep
+  green (abseil //…, re2, googletest, cpp-tutorial, rust, custom-rules, java //…),
+  `bz test` Pass, `bz query` works. **Highest-impact fix — unblocks codegen everywhere
+  (proto/grpc/buildifier/generated headers+sources).**
 
 ## F28: `java_common_internal.check_java_toolchain_is_declared_on_rule` missing
 - **Repo:** standalone rules_kotlin project (kt_jvm_library, via java_common).
