@@ -1,19 +1,19 @@
 # Status
 
-_Last updated: 2026-06-17 06:50 UTC_
+_Last updated: 2026-06-17 07:05 UTC_
 
 ## Summary
 
 Built `bz` from source and ran the build-loop across 12 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
 rules_js (JS/TS), rules_oci, rules_proto, rules_kotlin, custom Starlark rules, and a
-huge multi-language repo. **22 `bz` bugs found, fixed, verified, and committed; 8
+huge multi-language repo. **23 `bz` bugs found, fixed, verified, and committed; 8
 deeper ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
 Maven, Go, Rust** (build + run + test — `bz test` now works after F31 across cc/python/
 rust); **JS/TS** largely works (~1,664 actions before a deferred copy-to-bin gap). Custom Starlark rule-authoring APIs: **17/19
 bazel-examples/rules examples build**.
 
-## Bugs fixed & committed (22)
+## Bugs fixed & committed (23)
 
 | ID | Fix | Surfaced by |
 | --- | --- | --- |
@@ -39,13 +39,14 @@ bazel-examples/rules examples build**.
 | F31 | test runfiles tree missing from test action inputs (`bz test`) | abseil cc_test execution |
 | F32 | bundled `bazel_tools//third_party/def_parser` (`bz query`) | abseil cc query |
 | F20 | generated sources in allow_files attrs + file-dep provider exemption | proto/zlib, buildifier goyacc |
+| F9 | `config_feature_flag` native rule (loads stub androidsdk BUILD) | grpc //:gpr, protobuf |
 
 ## Documented / deferred (8 — deeper)
 
 | ID | Issue | Why deferred |
 | --- | --- | --- |
 | F5 | bare native cc rules unimplemented | autoload to rules_cc; modern repos load explicitly |
-| F9 | android `config_feature_flag` undefined | android ecosystem; protobuf graph only |
+| F33 | `local_config_platform` not injected as well-known repo | core bzlmod repo-mapping; blocks grpc / aspect_bazel_lib |
 | F10 | `linkstatic=0` drops cc_library deps | deep cc dynamic-linking internals |
 | F12 | go `//...` shared-action conflict (narrow) | config-transition output-path dedup; specific targets work |
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
@@ -59,7 +60,8 @@ bazel-examples/rules examples build**.
 | --- | --- | --- |
 | abseil-cpp | rules_cc | ✅ `//...` full build |
 | re2 | rules_cc + pybind | ✅ core lib + Python bindings (only emscripten app blocked) |
-| protobuf | multi-language | ⏸ F6/F7/F8 fixed; deferred at F9 (android) |
+| protobuf | multi-language | ⏸ F6/F7/F8/F9 fixed; deferred at rules_kotlin module-ext |
+| grpc | rules_cc + protobuf + aspect_bazel_lib | ⏸ F9 fixed; deferred at F33 (local_config_platform) |
 | googletest | rules_cc | ✅ all but 1 `linkstatic=0` target (F10) |
 | bazel-examples/java-tutorial | rules_java | ✅ full build (remotejdk) |
 | bazel-examples/go-tutorial | rules_go | ✅ single + multi-package build+run (specific targets); `//...` hits F12 |

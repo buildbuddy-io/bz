@@ -479,19 +479,49 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   deferred. Workaround: `linkstatic = 1` on the affected target.
 - **Status:** documented / open (deferred)
 
-## F9: `config_feature_flag` native rule not defined (Android)
-- **Repo:** protobuf (`//:protoc`).
+## F33: `local_config_platform` not a known cell alias (bzlmod well-known repo)
+- **Repo:** grpc (`//:gpr`), surfaced after F9 fixed.
+- **Symptom:** `unknown cell alias: 'local_config_platform'. In cell
+  'aspect_bazel_lib++toolchains+bsd_tar_toolchains', known aliases are: ...host_platform,
+  platforms...` while loading `@local_config_platform//:constraints.bzl` from a generated
+  aspect_bazel_lib toolchains BUILD.
+- **Root cause:** `local_config_platform` is one of Bazel's *built-in always-visible*
+  repos (like `bazel_tools`) — present in every repo's mapping under both WORKSPACE and
+  bzlmod. bz only generates/injects `host_platform` (from the `platforms` module's
+  extension), not `local_config_platform`, so cells that reference `@local_config_platform`
+  (very common via aspect_bazel_lib toolchains) fail to resolve the alias.
+- **Fix shape (deferred — core bzlmod resolution):** Generate a `local_config_platform`
+  well-known repo and inject it into every cell's repo mapping the way `bazel_tools` is
+  (`bzlmod.rs` ~L3085/3105 add aliases; `cells.rs` CellAliasResolver). Its content is
+  nearly identical to the existing `host_platform` generator
+  (`generated_repos.rs::write_host_platform_repo` → `constraints.bzl` with
+  `HOST_CONSTRAINTS`), but it ALSO needs a `:host` `platform()` target
+  (`@local_config_platform//:host`) that `host_platform` does not currently emit. Could
+  reuse the host_platform generator + add a `platform(name="host", constraint_values=[...])`
+  to its BUILD, then alias `local_config_platform`→that cell universally. Risk: broad blast
+  radius (touches every cell's mapping) + host_platform cell may not exist when no module
+  imports it. Architectural — not attempted unsupervised.
+- **Status:** documented / open (deferred — blocks grpc and any aspect_bazel_lib repo)
+
+## F9: `config_feature_flag` native rule not defined (Android) — ✅ FIXED
+- **Repo:** protobuf (`//:protoc`), grpc (`//:gpr`).
 - **Symptom:** `Variable 'config_feature_flag' not found` while evaluating
   `rules_android++android_sdk_repository_extension+androidsdk//:BUILD.bazel`.
-- **Root cause:** protobuf's module graph pulls in rules_android, whose generated
-  `androidsdk` repo BUILD.bazel uses the Android native rule `config_feature_flag`,
-  which bz does not define. bz appears to evaluate this repo's BUILD even for a pure
-  C++ `protoc` build (toolchain enumeration), so the gap blocks protoc.
-- **Impact / decision:** Android-specific + deep. protobuf is a huge multi-language
-  repo (cc/java/python/kotlin/ruby/rust/android); its full graph surfaces many
-  peripheral-ecosystem gaps (F6, F7, F8 already fixed; F9 = android). Documented and
-  deferred — pivoting to cleaner repos for breadth; revisit protobuf/android later.
-- **Status:** documented / open (deferred)
+- **Root cause:** Module graphs that pull in rules_android materialize a stub `androidsdk`
+  repo whose BUILD.bazel declares `config_feature_flag(...)` (an Android native rule bz did
+  not define). bz evaluates this repo's BUILD even for pure C++ targets during toolchain
+  resolution, so the missing symbol blocked the *load*, not just Android targets.
+- **Fix:** Implemented `config_feature_flag` as a bazel-compat native rule
+  (name registered in `bazel/native.rs`; decl in `decls/core_rules.bzl`; impl
+  `config_feature_flag_impl` in `configurations/rules.bzl` returning `DefaultInfo`, validates
+  default∈allowed; wired through `native_rules.bzl` + `bazel/prelude.bzl`). bz does not model
+  feature-flag propagation, so the flag analyzes to a plain target and any `config_setting`
+  referencing it via `flag_values` stays inert unless set — same philosophy as `define_values`
+  (F2). This unblocks loading BUILD files that merely *declare* feature flags.
+- **Verification:** grpc `//:gpr` and protobuf both get past F9 (grpc → F33 below;
+  protobuf → rules_kotlin module-extension issue). Regression sweep clean: abseil 163
+  actions, re2 196, googletest 19 — config_setting unaffected.
+- **Status:** ✅ fixed & verified (committed)
 
 ## F8: `Label()` rejects bare relative labels
 - **Repo:** protobuf (`//:protoc`; transitively evaluates rules_kotlin bzlmod setup).
