@@ -49,7 +49,7 @@ bazel-examples/rules examples build**.
 | ID | Issue | Why deferred |
 | --- | --- | --- |
 | F5 | bare native cc rules unimplemented | autoload to rules_cc; modern repos load explicitly |
-| F36 | `hasattr`/`dir` report unset provider fields as present | provider-instance storage; blocks protobuf & grpc (rules_kotlin ext) |
+| F36 | `hasattr`/`dir` report unset provider fields as present | needs unset-sentinel (cheap fix broke rules_cc, reverted); blocks protobuf/grpc/cel-cpp |
 | F10 | `linkstatic=0` drops cc_library deps | deep cc dynamic-linking internals |
 | F12 | go `//...` shared-action conflict (narrow) | config-transition output-path dedup; specific targets work |
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
@@ -66,6 +66,7 @@ bazel-examples/rules examples build**.
 | protobuf | multi-language | ⏸ F6/F7/F8/F9 fixed; deferred at F36 (rules_kotlin ext) |
 | grpc | rules_cc + protobuf + aspect_bazel_lib | ⏸ F9/F33 fixed; deferred at F36 (rules_kotlin ext) |
 | tcmalloc | rules_cc (real-world, aspect_bazel_lib) | ✅ `//tcmalloc:tcmalloc` builds (232 actions) after F33/F35 |
+| cel-cpp | rules_cc + protobuf (real-world) | ⏸ loads; deferred at F36 (rules_kotlin ext via protobuf) |
 | googletest | rules_cc | ✅ all but 1 `linkstatic=0` target (F10) |
 | bazel-examples/java-tutorial | rules_java | ✅ full build (remotejdk) |
 | bazel-examples/go-tutorial | rules_go | ✅ single + multi-package build+run (specific targets); `//...` hits F12 |
