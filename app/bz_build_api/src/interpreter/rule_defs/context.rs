@@ -277,7 +277,23 @@ impl<'v> AnalysisToolchains<'v> {
     }
 
     fn keys_match(requested: &str, declared: &str) -> bool {
-        requested == declared
+        if requested == declared {
+            return true;
+        }
+        // A toolchain type referenced by an apparent repo alias (e.g.
+        // `bazel_lib//lib:coreutils_toolchain_type`) should match the same type
+        // declared under its canonical repo
+        // (`aspect_bazel_lib+//lib:coreutils_toolchain_type`). When exact matching
+        // fails, fall back to comparing the repo-relative `//package:name` parts, but
+        // only when both sides carry an explicit (non-empty) repo prefix — so a
+        // root-cell `//pkg:name` is never conflated with an external repo's
+        // same-named target.
+        match (requested.split_once("//"), declared.split_once("//")) {
+            (Some((req_repo, req_rel)), Some((decl_repo, decl_rel))) => {
+                !req_repo.is_empty() && !decl_repo.is_empty() && req_rel == decl_rel
+            }
+            _ => false,
+        }
     }
 
     fn declared_key_for(&self, key: &str) -> Option<&str> {

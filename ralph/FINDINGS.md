@@ -98,13 +98,16 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   while the declared toolchain is canonicalized (via `bazel_canonical_label_key`) to
   `aspect_bazel_lib+//...`. (The build cache shows both `bazel_lib++...` and
   `aspect_bazel_lib++...` repos.) Apparent ≠ canonical → no match.
-- **Fix:** Not implemented — `key_from_value`/`keys_match` are static and lack the
-  cell alias resolver needed to map apparent→canonical repo names. Threading that
-  context through toolchain-key resolution is a deeper change. Documented; deferred.
+- **Fix:** Make `keys_match` fall back (after exact match fails) to comparing the
+  repo-relative `//package:name` parts when both keys carry an explicit non-empty
+  repo prefix. This matches an apparent alias (`bazel_lib//lib:x`) against the
+  canonical declaration (`aspect_bazel_lib+//lib:x`) without threading the cell
+  resolver, and without conflating a root-cell `//pkg:name` with an external repo's
+  same-named target. Low regression risk (only adds matches when exact fails).
 - **Scope:** The JS/TS ecosystem otherwise **largely works** (1,632 actions: TS
-  compile, SWC, bundling). This blocks targets that gather runfiles through
+  compile, SWC, bundling). This blocked targets that gather runfiles through
   copy_to_bin's coreutils toolchain.
-- **Status:** documented / open (deferred)
+- **Status:** fixing
 
 ## F18: string attr (NODEP_LABEL) rejects a `Label` value
 - **Repo:** bazel-examples/frontend (rules_js; aspect_bazel_lib `ape` toolchain regn).
