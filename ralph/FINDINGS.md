@@ -87,6 +87,19 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   protoc → protobuf → zlib. Consistent with protobuf-as-root being deferred (F9).
 - **Status:** documented / open (deferred — deep transitive materialization).
 
+## F25: bundled `bazel_tools` missing `tools/java` (java_stub_template)
+- **Repo:** standalone rules_kotlin project (`kt_jvm_binary`).
+- **Symptom:** `package 'bazel_tools//tools/java' has no build file` when building a
+  `kt_jvm_binary` (needs `@bazel_tools//tools/java:java_stub_template.txt`).
+- **Root cause:** bz's bundled `bazel_tools` cell (`cells/bazel_tools/`) has
+  `tools/jdk` but not `tools/java`. In upstream Bazel,
+  `@bazel_tools//tools/java:java_stub_template.txt` is a filegroup forwarding to
+  `@rules_java//java/bazel/rules:java_stub_template.txt` (the stub moved to
+  rules_java). rules_kotlin's kt_jvm_binary references the bazel_tools path.
+- **Fix:** Add `cells/bazel_tools/tools/java/BUILD.bazel` with the forwarding
+  filegroup, mirroring upstream. (Bundled cell → rebuild required.)
+- **Status:** fixing
+
 ## F24: copy-to-bin double-bind in js_binary runfiles
 - **Repo:** bazel-examples/frontend (rules_js js_binary → aspect_bazel_lib copy_to_bin).
 - **Symptom:** `Attempted to bind an artifact which was already bound` at
