@@ -290,6 +290,7 @@ pub(crate) fn register_bazel_native(builder: &mut GlobalsBuilder) {
             "cc_test",
             "cc_toolchain",
             "cc_toolchain_suite",
+            "config_feature_flag",
             "config_setting",
             "constraint_setting",
             "constraint_value",

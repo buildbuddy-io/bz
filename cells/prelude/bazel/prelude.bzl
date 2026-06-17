@@ -29,6 +29,7 @@ _bazel_native_rule_backings = {
     "cc_test": _rules["cc_test"],
     "cc_toolchain": _rules["cc_toolchain"],
     "cc_toolchain_suite": _rules["cc_toolchain_suite"],
+    "config_feature_flag": _rules["config_feature_flag"],
     "config_setting": _rules["config_setting"],
     "constraint_setting": _rules["constraint_setting"],
     "constraint_value": _rules["constraint_value"],

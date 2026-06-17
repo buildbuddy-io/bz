@@ -238,6 +238,28 @@ config_setting = prelude_rule(
     ),
 )
 
+config_feature_flag = prelude_rule(
+    name = "config_feature_flag",
+    docs = """
+        `config_feature_flag()` declares a user-defined flag whose value can be set per
+        target via transitions and read in `config_setting(flag_values = ...)`.
+
+        bz does not model feature-flag propagation, so the flag analyzes to a plain target
+        and any `config_setting` referencing it is simply inactive unless the flag is set
+        (matching how `define_values` are handled). This is enough to load BUILD files that
+        declare feature flags (e.g. the stub `androidsdk` repo) so non-Android builds proceed.
+    """,
+    examples = None,
+    further = None,
+    attrs = (
+        # @unsorted-dict-items
+        {
+            "allowed_values": attrs.list(attrs.string(), default = []),
+            "default_value": attrs.string(default = ""),
+        }
+    ),
+)
+
 configuration_alias = prelude_rule(
     name = "configuration_alias",
     docs = """
@@ -1626,6 +1648,7 @@ core_args = struct(
 core_rules = struct(
     alias = alias,
     command_alias = command_alias,
+    config_feature_flag = config_feature_flag,
     config_setting = config_setting,
     configuration_alias = configuration_alias,
     configured_alias = configured_alias,

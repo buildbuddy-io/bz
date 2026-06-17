@@ -54,6 +54,19 @@ def config_setting_impl(ctx):
         providers.append(conditional_modifier_info)
     return providers
 
+def config_feature_flag_impl(ctx):
+    # bz does not model feature-flag propagation. The flag analyzes to a plain target so
+    # that BUILD files declaring `config_feature_flag` load and any `config_setting` that
+    # references it via `flag_values` resolves the label (the condition stays inactive
+    # unless the flag is actually set, like `define_values`). Validate the default is in
+    # the allowed set when both are given, matching Bazel.
+    if ctx.attrs.allowed_values and ctx.attrs.default_value not in ctx.attrs.allowed_values:
+        fail("default_value '{}' must be one of allowed_values {}".format(
+            ctx.attrs.default_value,
+            ctx.attrs.allowed_values,
+        ))
+    return [DefaultInfo()]
+
 def constraint_setting_impl(ctx):
     return [
         DefaultInfo(),
@@ -255,6 +268,7 @@ extra_attributes = {
 }
 
 implemented_rules = {
+    "config_feature_flag": config_feature_flag_impl,
     "config_setting": config_setting_impl,
     "configuration_alias": configuration_alias_impl,
     "constraint": constraint_impl,

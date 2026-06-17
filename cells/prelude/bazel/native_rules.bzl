@@ -68,6 +68,7 @@ _declared_rules = {
     "cc_test": cxx_rules.cc_test,
     "cc_toolchain": cxx_rules.cc_toolchain,
     "cc_toolchain_suite": cxx_rules.cc_toolchain_suite,
+    "config_feature_flag": core_rules.config_feature_flag,
     "config_setting": core_rules.config_setting,
     "constraint_setting": core_rules.constraint_setting,
     "constraint_value": core_rules.constraint_value,
