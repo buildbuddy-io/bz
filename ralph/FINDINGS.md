@@ -11,6 +11,28 @@ Format per finding:
 
 ---
 
+## F10: `linkstatic = 0` drops direct cc_library deps from the link
+- **Repo:** googletest (`//:gtest_samples`, a cc_test with `linkstatic = 0`)
+- **Symptom:** link fails with `undefined reference to 'Factorial(int)'`,
+  `'IsPrime(int)'`, `'MyString::Set(...)'`, `'Counter::Increment()'` — all symbols
+  from `gtest_sample_lib` (sample1/2/4.cc).
+- **Diagnostic:** the generated link params (`gtest_samples-0.params`) contain
+  `-llibgtest_Umain` and `-llibgtest` (gtest/gtest_main linked dynamically) but **no
+  reference at all to `gtest_sample_lib`** — and no `CppLink libgtest_sample_lib.so`
+  action runs. The direct dep is silently dropped.
+- **Correlation:** `gtest`/`gtest_main` have `deps`; the dropped `gtest_sample_lib`
+  has **no `deps`** (only srcs/hdrs). Under `linkstatic = 0` (dynamic mode), bz/
+  rules_cc builds & links a `.so` for libraries with deps but omits a deps-less
+  cc_library entirely (neither a dynamic `.so` nor its static pic archive lands on
+  the link line).
+- **Scope:** googletest otherwise builds **fully** (core gtest/gmock libs + all
+  normal `linkstatic`-default tests incl. sample9/sample10, gmock_all_test). Only
+  this one `linkstatic = 0` target fails.
+- **Fix:** Not implemented — lives in bz's cc dynamic-linking / LibraryToLink
+  construction (one of the most complex compat areas). Documented with diagnostic;
+  deferred. Workaround: `linkstatic = 1` on the affected target.
+- **Status:** documented / open (deferred)
+
 ## F9: `config_feature_flag` native rule not defined (Android)
 - **Repo:** protobuf (`//:protoc`).
 - **Symptom:** `Variable 'config_feature_flag' not found` while evaluating
