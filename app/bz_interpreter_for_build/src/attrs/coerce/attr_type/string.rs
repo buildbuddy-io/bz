@@ -8,6 +8,8 @@
  * above-listed licenses.
  */
 
+use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use bz_node::attrs::attr_type::string::StringAttrType;
 use bz_node::attrs::attr_type::string::StringLiteral;
 use bz_node::attrs::coerced_attr::CoercedAttr;
@@ -26,9 +28,23 @@ impl AttrTypeCoerce for StringAttrType {
         ctx: &dyn AttrCoercionContext,
         value: Value,
     ) -> bz_error::Result<CoercedAttr> {
-        Ok(CoercedAttr::String(StringLiteral(
-            ctx.intern_str(value.unpack_str_err()?),
-        )))
+        // Bazel models label-shaped-but-no-dependency attributes (NODEP_LABEL, e.g.
+        // the `toolchain` rule's `toolchain` attr) as strings, and accepts a `Label`
+        // object there in addition to a string. Mirror that: if the value is a Label,
+        // store its canonical string form (which round-trips for bz's own resolution).
+        let label_string;
+        let s = if let Some(s) = value.unpack_str() {
+            s
+        } else if let Some(label) = StarlarkProvidersLabel::from_value(value) {
+            label_string = label.label().to_string();
+            &label_string
+        } else if let Some(label) = StarlarkTargetLabel::from_value(value) {
+            label_string = label.label().to_string();
+            &label_string
+        } else {
+            value.unpack_str_err()?
+        };
+        Ok(CoercedAttr::String(StringLiteral(ctx.intern_str(s))))
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {
