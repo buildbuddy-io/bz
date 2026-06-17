@@ -4259,6 +4259,24 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
         Ok(BazelCcInternal)
     }
 
+    /// Merges the given `CcInfo`s into one. bz models cc rules natively and bridges
+    /// to a thin Bazel `CcInfo`, so (like `java_common.merge`) this returns an empty
+    /// `CcInfo`; the real compilation/linking information flows through bz's native
+    /// cc rule handling. This lets non-cc rules that call `cc_common.merge_cc_infos`
+    /// (e.g. rules_go's stdlib analysis) proceed.
+    fn merge_cc_infos<'v>(
+        #[starlark(require = named, default = NoneType)] cc_infos: Value<'v>,
+        #[starlark(require = named, default = NoneType)] direct_cc_infos: Value<'v>,
+    ) -> starlark::Result<CcInfo<'v>> {
+        let _ = (cc_infos, direct_cc_infos);
+        Ok(CcInfo {
+            compilation_context: ValueOfUnchecked::<FrozenValue>::new(Value::new_none()),
+            linking_context: ValueOfUnchecked::<FrozenValue>::new(Value::new_none()),
+            debug_context: ValueOfUnchecked::<FrozenValue>::new(Value::new_none()),
+            cc_native_library_info: ValueOfUnchecked::<FrozenValue>::new(Value::new_none()),
+        })
+    }
+
     fn configure_features<'v>(
         #[starlark(require = named)] ctx: Value<'v>,
         #[starlark(require = named)] cc_toolchain: Value<'v>,
