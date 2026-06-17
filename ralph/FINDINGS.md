@@ -87,6 +87,30 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   protoc → protobuf → zlib. Consistent with protobuf-as-root being deferred (F9).
 - **Status:** documented / open (deferred — deep transitive materialization).
 
+## F27: `FilesToRunProvider` (no executable) rejected in `actions.run` tools
+- **Repo:** standalone rules_kotlin project (kt_jvm_library compile action).
+- **Symptom:** `expected hidden action input/tool to be a command-line value,
+  sequence, or depset, got 'struct'` — `tools = [kotlinbuilder.files_to_run,
+  kotlin_home.files_to_run]`.
+- **Root cause:** bz's hidden-input/tool handling (`add_bazel_hidden_value` in
+  `cmd_args/typ.rs`) extracted only the **executable** from a FilesToRunProvider
+  struct. `kotlin_home` is a filegroup with no executable, so the check returned
+  None and the struct fell through to the error. Its files live in the struct's
+  `runfiles`, which was ignored.
+- **Fix:** Detect a FilesToRunProvider via its executable/runfiles fields and add
+  both the executable (if any) and the files from its runfiles.
+- **Status:** fixing
+
+## F26: `ctx.actions.run` rejects `input_manifests`
+- **Repo:** standalone rules_kotlin project (kt_jvm_binary, after F25).
+- **Symptom:** `Found 'input_manifests' extra named parameter(s) for call to run`.
+- **Root cause:** bz's `ctx.actions.run` (`app/bz_action_impl/src/context/run.rs`)
+  didn't accept Bazel's deprecated `input_manifests` param (runfiles manifests for the
+  action's tools). Same class as F13 (`unused_inputs_list`).
+- **Fix:** Accept `input_manifests` and ignore it — bz tracks tool runfiles
+  automatically.
+- **Status:** ✅ fixed & verified — Kotlin build progresses past it to F27.
+
 ## F25: bundled `bazel_tools` missing `tools/java` (java_stub_template)
 - **Repo:** standalone rules_kotlin project (`kt_jvm_binary`).
 - **Symptom:** `package 'bazel_tools//tools/java' has no build file` when building a
@@ -97,8 +121,11 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   `@rules_java//java/bazel/rules:java_stub_template.txt` (the stub moved to
   rules_java). rules_kotlin's kt_jvm_binary references the bazel_tools path.
 - **Fix:** Add `cells/bazel_tools/tools/java/BUILD.bazel` with the forwarding
-  filegroup, mirroring upstream. (Bundled cell → rebuild required.)
-- **Status:** fixing
+  filegroup, mirroring upstream. (Bundled cell → rebuild required.) Note: globs don't
+  cross package boundaries, so the new package also needs a `pkg_sources` filegroup
+  registered in `bazel_tools_sources`.
+- **Status:** ✅ fixed & verified — Kotlin build progresses past the missing package to
+  compilation, then F26 (`input_manifests`).
 
 ## F24: copy-to-bin double-bind in js_binary runfiles
 - **Repo:** bazel-examples/frontend (rules_js js_binary → aspect_bazel_lib copy_to_bin).
