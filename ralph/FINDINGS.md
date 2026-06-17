@@ -170,7 +170,9 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
 - **Also:** bz's CLI rejects `--@repo//flag=value` build-setting syntax
   (`unexpected argument`), so the flag can't be set manually as a workaround either.
 - **Scope:** pip dep RESOLUTION works; the multi-version config-flag plumbing is the
-  gap. Moderately deep (config default propagation). Documented; deferred.
+  gap. Moderately deep (config default propagation). **Broad impact:** blocks ANY repo
+  with pip deps — confirmed on the synthetic pip-standalone test AND google/benchmark
+  (`//tools:gbench` → scipy). Worth prioritizing for real-world Python repos.
 - **Status:** documented / open (deferred).
 
 ## F29: kt_jvm_binary blocked on `ctx.outputs.executable` (= F21)

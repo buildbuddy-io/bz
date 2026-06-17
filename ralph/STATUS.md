@@ -69,6 +69,7 @@ bazel-examples/rules examples build**.
 | bazel-examples/frontend | rules_js (JS/TS) | ⏳ ~1,664 actions build (F18/F19 fixed); F24 copy-to-bin gap |
 | bazel-examples/rules | custom Starlark rules | ✅ 17/19 examples build (only runfiles/test_rule fail — F21) |
 | proto-standalone | rules_proto/protobuf | ⏸ F20 (zlib header, transitive) |
+| google/benchmark | rules_cc (real-world) | ✅ C++ lib+cc_test build+pass; python tools F30 (pip) |
 | kotlin-standalone | rules_kotlin (JVM) | ✅ kt_jvm_library compiles (F25–F28); kt_jvm_binary F29 (=F21) |
 
 ## Build + test + query validation (2026-06-17 05:05)
