@@ -1,19 +1,19 @@
 # Status
 
-_Last updated: 2026-06-17 03:15 UTC_
+_Last updated: 2026-06-17 03:40 UTC_
 
 ## Summary
 
 Built `bz` from source and ran the build-loop across 12 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
 rules_js (JS/TS), rules_oci, rules_proto, custom Starlark rules, and a huge
-multi-language repo. **15 `bz` bugs found, fixed, verified, and committed; 10 deeper
-ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
+rules_kotlin, and a huge multi-language repo. **19 `bz` bugs found, fixed, verified,
+and committed; 9 deeper ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
 Maven, Go, Rust** (build + run + test); **JS/TS** largely works (~1,664 actions before
 a deferred copy-to-bin gap). Custom Starlark rule-authoring APIs: **17/19
 bazel-examples/rules examples build**.
 
-## Bugs fixed & committed (15)
+## Bugs fixed & committed (19)
 
 | ID | Fix | Surfaced by |
 | --- | --- | --- |
@@ -32,6 +32,10 @@ bazel-examples/rules examples build**.
 | F19 | toolchain key apparent↔canonical repo alias | frontend (rules_js) |
 | F22 | `ctx.rule.files`/`file`/`executable` for aspects | rules aspect example |
 | F23 | `File` artifacts comparable (`sorted([files])`) | rules custom-rule examples |
+| F25 | bundled `bazel_tools//tools/java` (java_stub_template) | rules_kotlin |
+| F26 | `ctx.actions.run` `input_manifests` | rules_kotlin |
+| F27 | `FilesToRunProvider` (no exe) in `actions.run` tools | rules_kotlin |
+| F28 | `java_common_internal.check_java_toolchain_is_declared_on_rule` | rules_kotlin |
 
 ## Documented / deferred (9 — deeper)
 
@@ -44,7 +48,7 @@ bazel-examples/rules examples build**.
 | F16 | rules_oci/tar `layer_mtree` output not found | deep rules_oci/tar container-image path |
 | F17 | `local_path_override` outside project root | bz path model is project-rooted; setup-specific |
 | F20 | zlib header path in proto/protobuf transitive build | deep transitive-dep materialization |
-| F21 | `ctx.outputs.executable` for executable/test rules | needs lazy predeclared-output binding |
+| F21 | `ctx.outputs.executable` (executable/test rules; kt_jvm_binary — F29) | needs lazy predeclared-output value; single hardest remaining fix |
 | F24 | copy-to-bin double-bind in js_binary runfiles | aspect_bazel_lib copy dedup; JS/TS ~1,664 actions |
 
 ## Repos tested
@@ -63,6 +67,7 @@ bazel-examples/rules examples build**.
 | bazel-examples/frontend | rules_js (JS/TS) | ⏳ ~1,664 actions build (F18/F19 fixed); F24 copy-to-bin gap |
 | bazel-examples/rules | custom Starlark rules | ✅ 17/19 examples build (only runfiles/test_rule fail — F21) |
 | proto-standalone | rules_proto/protobuf | ⏸ F20 (zlib header, transitive) |
+| kotlin-standalone | rules_kotlin (JVM) | ✅ kt_jvm_library compiles (F25–F28); kt_jvm_binary F29 (=F21) |
 
 ## Environment
 

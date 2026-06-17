@@ -95,7 +95,25 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   internal method, which bz's `JavaCommonInternal`
   (`.../provider/builtin/bazel/java_info.rs`) didn't implement.
 - **Fix:** Add it as a no-op (bz resolves java toolchains itself).
-- **Status:** fixing
+- **Status:** ✅ fixed & verified — Kotlin build progresses past it; kt_jvm_library
+  compiles. kt_jvm_binary then hits F29 (= F21, `ctx.outputs.executable`).
+
+## F29: kt_jvm_binary blocked on `ctx.outputs.executable` (= F21)
+- **Repo:** standalone rules_kotlin (`kt_jvm_binary`, impl.bzl:120
+  `output = ctx.outputs.executable`).
+- **Same root cause as F21.** kt_jvm_binary *writes* `ctx.outputs.executable`, so it
+  needs the predeclared executable. Confirmed the eager-declare approach can't be used
+  unconditionally: `bazel_test_info`/run handling calls `get_bound_artifact()` on the
+  DefaultInfo executable, and the registry validates **all** declared artifacts — so a
+  predeclared-but-unproduced executable (the `//executable` `DefaultInfo(executable=
+  <other>)` case) errors "Artifact must be bound by now". The fix is a **lazy**
+  `ctx.outputs.executable`: a custom `ctx.outputs` value that declares the executable
+  via the registry only when accessed (memoized), so rules that write it (kt_jvm_binary,
+  runfiles, test_rule) bind it while rules that don't (//executable) never declare it.
+- **Scope:** rules_kotlin: kt_jvm_library ✅ compiles (F25–F28 fixed); kt_jvm_binary
+  blocked here. Also unblocks custom-rules runfiles+test_rule (→ 19/19).
+- **Status:** documented / open (deferred — the single hardest remaining fix; needs a
+  lazy outputs value + registry callback, warrants careful design + verification).
 
 ## F27: `FilesToRunProvider` (no executable) rejected in `actions.run` tools
 - **Repo:** standalone rules_kotlin project (kt_jvm_library compile action).
