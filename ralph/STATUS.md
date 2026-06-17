@@ -4,8 +4,20 @@ _Last updated: 2026-06-17 00:00 UTC_
 
 ## Now
 
-- protobuf ⏸ deferred at F9 (Android `config_feature_flag`) after fixing F6/F7/F8.
-  Moving to next repo: **googletest** (clean C++, depends on abseil+re2).
+- Broad ecosystem sweep done. rules_java ✅ works; rules_go ⛔ blocked on F11
+  (cc_common.merge_cc_infos). Assessing whether F11 (unblocks all of Go) is
+  tractable to implement next.
+
+## Repos tested
+
+| Repo | Ecosystem | Result |
+| --- | --- | --- |
+| abseil-cpp | rules_cc | ✅ full build (F1,F2,F3 fixed) |
+| re2 | rules_cc + pybind | ✅ core+python (F4 fixed); only emscripten app blocked |
+| protobuf | multi-lang | ⏸ F6/F7/F8 fixed; deferred at F9 (android) |
+| googletest | rules_cc | ✅ all but 1 linkstatic=0 target (F10) |
+| bazel-examples java | rules_java | ✅ full build |
+| bazel-examples go | rules_go | ⛔ F11 (cc_common.merge_cc_infos) |
 
 ## Done
 

@@ -11,6 +11,26 @@ Format per finding:
 
 ---
 
+## F11: `cc_common.merge_cc_infos` missing — blocks rules_go
+- **Repo:** bazel-examples/go-tutorial/stage1 (`//:hello`, a go_binary).
+- **Symptom:** `Object of type 'namespace' has no attribute 'merge_cc_infos'` at
+  rules_go `context.bzl:350`: `cc_common.merge_cc_infos(cc_infos = cc_infos)` —
+  during analysis of `rules_go+//:stdlib` (hit by EVERY Go target).
+- **Root cause:** bz's `cc_common` namespace
+  (`bazel_cc_common_module` in `.../bazel/cc_info.rs`) implements the low-level
+  toolchain/feature helpers but NOT the high-level CcInfo API: `merge_cc_infos`,
+  `create_compilation_context`, `create_linking_context`, `compile`, `link`. bz
+  models cc rules in buck2 style (`cells/prelude/cxx/`) and delegates Bazel cc rules
+  to native impls, so it never needed these — but rules_go calls `merge_cc_infos`
+  directly, outside the cc-rule delegation path.
+- **Impact:** Blocks the entire rules_go ecosystem (stdlib analysis fails before any
+  Go target builds). For pure-Go (no cgo) the merged list is empty, so an
+  empty/single-aware `merge_cc_infos` would likely unblock it; a fully correct merge
+  needs compilation/linking-context merge machinery bz doesn't currently have.
+- **Fix:** Not implemented (substantial — requires building out bz's Bazel cc_common
+  CcInfo API surface). Documented for upstream.
+- **Status:** documented / open
+
 ## F10: `linkstatic = 0` drops direct cc_library deps from the link
 - **Repo:** googletest (`//:gtest_samples`, a cc_test with `linkstatic = 0`)
 - **Symptom:** link fails with `undefined reference to 'Factorial(int)'`,
