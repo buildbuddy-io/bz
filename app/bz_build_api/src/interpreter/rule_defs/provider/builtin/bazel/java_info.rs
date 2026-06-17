@@ -1159,6 +1159,15 @@ impl<'v> StarlarkValue<'v> for JavaCommonInternal {
 
 #[starlark_module]
 fn java_common_internal_methods(builder: &mut MethodsBuilder) {
+    /// Bazel deprecation check that the java toolchain is declared on the rule. bz
+    /// resolves java toolchains itself, so this is a no-op.
+    fn check_java_toolchain_is_declared_on_rule<'v>(
+        #[starlark(this)] _this: &JavaCommonInternal,
+        #[starlark(require = pos)] _actions: Value<'v>,
+    ) -> starlark::Result<NoneType> {
+        Ok(NoneType)
+    }
+
     fn check_provider_instances<'v>(
         #[starlark(this)] _this: &JavaCommonInternal,
         #[starlark(require = pos)] providers: Value<'v>,
