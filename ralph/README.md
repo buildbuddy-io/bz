@@ -37,20 +37,23 @@ For each target repository:
 
 ## Results (see STATUS.md for the live table)
 
-**11 `bz` bugs fixed, verified & committed; 6 documented/deferred. 9 repos/projects
-across 7 rule ecosystems.** C++, Python, Java, Maven, Go, and Rust all validated
-end-to-end (build + run + test where applicable).
+**14 `bz` bugs fixed, verified & committed; 9 documented/deferred. 12 repos/projects
+across 8+ rule ecosystems + custom Starlark rules (17/19 examples).** C++, Python,
+Java, Maven, Go, and Rust all validated end-to-end (build + run + test where
+applicable); JS/TS largely works (1,632 actions).
 
 Fixed: F1 `ctx.exec_groups`, F2 `config_setting define_values`, F3 `.lds` in cc
 deps, F4 `py_internal.cc_helper`, F6 root-module override patches, F7
 `repository_ctx.getenv`, F8 bare relative `Label()`, F11 `cc_common.merge_cc_infos`,
 F13 `actions.run unused_inputs_list`, F14 (F3 regression guard), F15
-`download(block=False)`.
+`download(block=False)`, F18 NODEP_LABEL string attr accepts `Label`, F22
+`ctx.rule.files` for aspects, F23 `File` comparable (`sorted([files])`).
 
 Deferred (deep bz internals): F5 bare native cc rules, F9 android
 `config_feature_flag`, F10 `linkstatic=0` link, F12 go `//...` shared-action
 (narrow — specific targets work), F16 rules_oci `layer_mtree`, F17
-`local_path_override` outside project root.
+`local_path_override` outside project root, F19 toolchain-key repo-alias, F20 zlib
+transitive header, F21 `ctx.outputs.executable` (needs lazy output).
 
 Each fix follows: pull → `bz build` → root-cause in bz source → fix → rebuild →
 re-verify past the error → commit. Most fixes mirror bz's existing Bazel-compat
