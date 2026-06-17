@@ -184,12 +184,26 @@ where
 }
 
 pub fn bzlmod_cell_aliases_for_cell(cell_name: &str) -> Vec<(String, String)> {
-    BZLMOD_CELL_ALIASES
+    let mut aliases = BZLMOD_CELL_ALIASES
         .lock()
         .expect("bzlmod cell alias map poisoned")
         .get(cell_name)
         .cloned()
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // `local_config_platform` is one of Bazel's built-in always-visible repos. Under
+    // bzlmod its `constraints.bzl` (HOST_CONSTRAINTS) is identical to the generated
+    // `host_platform` repo, but bz never materializes it, so cells that reference
+    // `@local_config_platform` (commonly via aspect_bazel_lib toolchains) fail to resolve
+    // the alias. Wherever a cell already sees `host_platform`, expose
+    // `local_config_platform` as an alias to the same destination cell so the legacy name
+    // resolves to the equivalent generated repo.
+    if !aliases.iter().any(|(alias, _)| alias == "local_config_platform")
+        && let Some((_, dest)) = aliases.iter().find(|(alias, _)| alias == "host_platform")
+    {
+        let dest = dest.clone();
+        aliases.push(("local_config_platform".to_owned(), dest));
+    }
+    aliases
 }
 
 pub fn bzlmod_all_cell_aliases() -> Vec<(String, Vec<(String, String)>)> {
