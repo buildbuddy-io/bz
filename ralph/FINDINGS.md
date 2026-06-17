@@ -509,24 +509,49 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   files (hundreds of `.txt` test vectors) are entirely missing from the runfiles tree/manifest.
   ssl_test's manifest, by contrast, has the binary + shared libs (6 entries) — runfiles for
   deps/`.so` work; only `data` source files are dropped.
-- **Root cause (located, not yet fixed):** `bz test` builds the runfiles manifest in
-  `bz_test/src/orchestrator.rs::bazel_test_runfiles_inputs` from `BazelTestInfo.runfiles`, which
-  is set in `bz_analysis/src/analysis/env.rs::bazel_test_info` from the test's
-  `DefaultInfo.default_runfiles_raw()`. So the cc_test's **default_runfiles already lack the
-  `data` files** — the drop is upstream, in how the rules_cc `cc_test` `ctx.runfiles(files =
-  ctx.files.data, ...)` flows through bz's runfiles collection/merge for source-file `data`
-  (deps' `.so` runfiles survive; plain source `data` does not). `data` is declared
-  `attr.label_list(allow_files = True)` in bz's bazel-compat rules, so coercion isn't obviously
-  the gap — more likely bz's `ctx.runfiles`/runfiles-merge or `default_runfiles` collection
-  excludes source-file entries.
+- **Root cause (PRECISELY located via diagnostics):** a **source file target's runfiles are
+  empty** in bz. `DefaultInfo::for_file_target` / `FrozenDefaultInfo::for_file_target`
+  (`bz_build_api/.../provider/builtin/default_info.rs`, ~L981 and ~L1081) put the artifact in
+  `files` but set `data_runfiles`/`default_runfiles` to **empty**. In Bazel a source file
+  target's runfiles include the file itself. rules_cc's `cc_test` builds its runfiles by
+  **merging the `default_runfiles` of its `srcs`/`data`/`deps`** (collect_default-style), so the
+  empty source-`data` runfiles contribute nothing → the data files never reach the runfiles
+  tree. Confirmed with minimal custom-rule repros: `ctx.files.data` = `[fixture.txt]` ✓;
+  `ctx.runfiles(files=ctx.files.data).files` = `[fixture.txt]` ✓ (explicit works); but
+  `ctx.runfiles(collect_data=True)` = `[]` and a source dep's `DefaultInfo.default_runfiles` =
+  `[]` ✗ (the gap).
 - **Impact:** broad — any test that reads fixtures / golden files / test vectors via `data`
   (an enormous fraction of real-world test suites) will run but fail to open its data.
-- **Why deferred:** core runfiles/test machinery; pinpointing the exact drop requires tracing
-  the rules_cc cc_test → `ctx.runfiles` → `default_runfiles` → materialization path and a fix
-  there risks the (working) executable+`.so` runfiles. Not attempted unsupervised. Next step:
-  minimal cc_test (or rules_shell sh_test) with one `data` file + a repro that checks
-  `default_runfiles`, then find where source-file runfiles entries are dropped.
-- **Status:** documented / open (deferred — blocks tests with `data` fixtures)
+- **ATTEMPTED & REVERTED (2026-06-17):** made `for_file_target` (both variants) put the artifact
+  into `data_runfiles`/`default_runfiles`. Result: crypto_test runfiles manifest went **1 → 853
+  entries and now includes the `.txt` data**; `collect_data` repro fixed; full regression sweep
+  green (abseil/re2 build, abseil/rust/ssl_test pass). **But** (a) it over-collected — cc_test
+  also merges `srcs` runfiles, so all `.cc` srcs leaked into the runfiles tree (every source file
+  in every build now self-runfiles — broadest possible blast radius, not clearly Bazel-accurate
+  for `srcs`), and (b) crypto_test **still failed** because of F39 below (runfiles prefix). Reverted
+  to protect the base.
+- **Correct fix shape (deferred — needs supervision):** make the `data` attribute contribute its
+  files to runfiles **scoped to `data`** (not all source files), and pair with F39. Either give
+  source files self-runfiles ONLY where Bazel does and ensure cc_test's `srcs` merge excludes
+  them, or add `data` files to the rule's runfiles at the DefaultInfo auto-collection layer. Must
+  verify no `srcs` over-collection and no runfiles symlink conflicts in large repos.
+- **Status:** documented / open (deferred — blocks tests with `data` fixtures; coupled with F39)
+
+## F39: test runfiles use `_main/` prefix but tests resolve by module name (no `_repo_mapping`)
+- **Repo:** boringssl (`//:crypto_test`) — surfaced while working F38.
+- **Symptom:** with data in the runfiles tree (during the F38 attempt), the test still failed:
+  it opens `crypto_test.runfiles/boringssl/crypto/.../*.txt` but the manifest stages entries under
+  `_main/crypto/...` (e.g. `_main/crypto/blake2/blake2b256_tests.txt crypto/blake2/...`).
+- **Root cause:** under bzlmod the main repo's runfiles dir is the canonical `_main`, but the test's
+  C++ runfiles library calls `Rlocation("boringssl/...")` using the **module's apparent name**
+  (`module(name = "boringssl")`). Bazel bridges this with a `_repo_mapping` runfiles file (apparent
+  → canonical). bz's `bazel_test_runfiles_inputs` (`bz_test/src/orchestrator.rs`) writes the
+  manifest with the `_main` workspace prefix (from `executable_runfiles_path`) and emits **no
+  `_repo_mapping`**, so module-name rlocation lookups don't resolve.
+- **Fix shape (deferred):** emit a `<test>.runfiles/_repo_mapping` file mapping apparent repo names
+  (incl. the root module name) to canonical names, OR prefix the main-repo runfiles with the
+  module name. Core runfiles/test machinery — defer with F38.
+- **Status:** documented / open (deferred — blocks tests that resolve runfiles by module name)
 
 ## F37: `bazel_tools//tools/cpp/runfiles` missing from bundled cell — ✅ FIXED
 - **Repo:** boringssl (`//:ssl_test`, `//:crypto_test`).
