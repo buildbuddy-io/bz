@@ -1,19 +1,19 @@
 # Status
 
-_Last updated: 2026-06-17 04:50 UTC_
+_Last updated: 2026-06-17 05:00 UTC_
 
 ## Summary
 
 Built `bz` from source and ran the build-loop across 12 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
 rules_js (JS/TS), rules_oci, rules_proto, rules_kotlin, custom Starlark rules, and a
-huge multi-language repo. **20 `bz` bugs found, fixed, verified, and committed; 9
+huge multi-language repo. **21 `bz` bugs found, fixed, verified, and committed; 9
 deeper ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
 Maven, Go, Rust** (build + run + test — `bz test` now works after F31 across cc/python/
 rust); **JS/TS** largely works (~1,664 actions before a deferred copy-to-bin gap). Custom Starlark rule-authoring APIs: **17/19
 bazel-examples/rules examples build**.
 
-## Bugs fixed & committed (20)
+## Bugs fixed & committed (21)
 
 | ID | Fix | Surfaced by |
 | --- | --- | --- |
@@ -37,6 +37,7 @@ bazel-examples/rules examples build**.
 | F27 | `FilesToRunProvider` (no exe) in `actions.run` tools | rules_kotlin |
 | F28 | `java_common_internal.check_java_toolchain_is_declared_on_rule` | rules_kotlin |
 | F31 | test runfiles tree missing from test action inputs (`bz test`) | abseil cc_test execution |
+| F32 | bundled `bazel_tools//third_party/def_parser` (`bz query`) | abseil cc query |
 
 ## Documented / deferred (9 — deeper)
 
