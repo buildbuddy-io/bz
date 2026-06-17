@@ -1,13 +1,13 @@
 # Status
 
-_Last updated: 2026-06-17 10:05 UTC_
+_Last updated: 2026-06-17 10:25 UTC_
 
 ## Summary
 
 Built `bz` from source and ran the build-loop across 12 repos/projects spanning
 rules_cc, rules_python/pybind, rules_java, rules_jvm_external, rules_go, rules_rust,
 rules_js (JS/TS), rules_oci, rules_proto, rules_kotlin, custom Starlark rules, and a
-huge multi-language repo. **27 `bz` bugs found, fixed, verified, and committed; 10
+huge multi-language repo. **27 `bz` bugs found, fixed, verified, and committed; 11
 deeper ones documented and deferred.** Ecosystems validated end-to-end: **C++, Python, Java,
 Maven, Go, Rust** (build + run + test — `bz test` now works after F31 across cc/python/
 rust); **JS/TS** largely works (~1,664 actions before a deferred copy-to-bin gap). Custom Starlark rule-authoring APIs: **17/19
@@ -45,7 +45,7 @@ bazel-examples/rules examples build**.
 | F35 | `rule()` accepts deprecated `incompatible_use_toolchain_transition` | tcmalloc |
 | F37 | bundled `bazel_tools//tools/cpp/runfiles` (C++ runfiles lib) | boringssl ssl_test |
 
-## Documented / deferred (10 — deeper)
+## Documented / deferred (11 — deeper)
 
 | ID | Issue | Why deferred |
 | --- | --- | --- |
@@ -59,6 +59,7 @@ bazel-examples/rules examples build**.
 | F39 | test runfiles use `_main/` prefix, no `_repo_mapping` | tests resolving runfiles by module name |
 | F21 | `ctx.outputs.executable` (executable/test rules; kt_jvm_binary — F29) | needs lazy predeclared-output value; single hardest remaining fix |
 | F24 | copy-to-bin double-bind in js_binary runfiles | aspect_bazel_lib copy dedup; JS/TS ~1,664 actions |
+| F30 | rules_python pip per-version config-flag not propagated | blocks ANY pip dep; rules_python multi-version machinery |
 
 ## Repos tested
 
@@ -82,6 +83,7 @@ bazel-examples/rules examples build**.
 | proto-standalone | rules_proto/protobuf | ✅ proto_library builds (F20 fixed) |
 | google/benchmark | rules_cc (real-world) | ✅ C++ lib+cc_test build+pass; python tools F30 (pip) |
 | bazelbuild/buildtools | rules_go (real-world) | ✅ 781 actions (F20 fixed); hits F12 (go shared-action) |
+| pip-standalone | rules_python + pip | ⏸ py_binary blocked at F30 (pip per-version config select) |
 | kotlin-standalone | rules_kotlin (JVM) | ✅ kt_jvm_library compiles (F25–F28); kt_jvm_binary F29 (=F21) |
 | rules_scala/examples/scala3 | rules_scala (Scala/JVM) | ⏸ F34 fixed (.bazelrc); deferred at F17 (local_path_override `../..`) |
 
