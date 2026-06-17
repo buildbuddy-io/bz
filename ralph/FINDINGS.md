@@ -11,6 +11,23 @@ Format per finding:
 
 ---
 
+## F12: Bazel shared-action conflict for go_library deps (multi-package Go)
+- **Repo:** bazel-examples/go-tutorial/stage2 & stage3 (`//:print_fortune` go_binary
+  with `deps = ["//fortune"]`, a go_library).
+- **Symptom:** `Internal error (stage: bazel_shared_action_conflict): Conflicting
+  Bazel shared actions for output set 'buck-out/bin/cfg/fortune/fortune.a
+  buck-out/bin/cfg/fortune/fortune.x'`.
+- **Analysis:** go_binary applies a configuration transition to its deps; `//fortune`
+  is compiled (rules_go `compilepkg`) into `buck-out/bin/cfg/fortune/fortune.a`. bz's
+  Bazel-shared-action dedup sees two actions targeting the same output paths with
+  non-equivalent keys (the `cfg` output dir collapses distinct configurations to one
+  path, or the lib is analyzed in two near-identical configs). Single-package Go
+  (stage1) has no dep transition and works fine.
+- **Scope:** Blocks multi-package Go (any go_binary/go_test with go_library deps).
+  Single-package Go works (F11 fixed). Deep — config-transition output-path mapping
+  + shared-action equivalence. Documented; deferred.
+- **Status:** documented / open (deferred)
+
 ## F11: `cc_common.merge_cc_infos` missing — blocks rules_go
 - **Repo:** bazel-examples/go-tutorial/stage1 (`//:hello`, a go_binary).
 - **Symptom:** `Object of type 'namespace' has no attribute 'merge_cc_infos'` at
@@ -27,9 +44,12 @@ Format per finding:
   Go target builds). For pure-Go (no cgo) the merged list is empty, so an
   empty/single-aware `merge_cc_infos` would likely unblock it; a fully correct merge
   needs compilation/linking-context merge machinery bz doesn't currently have.
-- **Fix:** Not implemented (substantial — requires building out bz's Bazel cc_common
-  CcInfo API surface). Documented for upstream.
-- **Status:** documented / open
+- **Fix:** Add `merge_cc_infos` to `bazel_cc_common_module` returning an **empty
+  CcInfo** — the same stub strategy bz already uses for `java_common.merge` (the real
+  cc info flows through bz's native cc rule delegation). Low-risk; unblocks rules_go
+  analysis for the pure-Go (no cgo) case.
+- **Status:** ✅ fixed & verified — go-tutorial/stage1 `//:hello` builds AND runs
+  (`Hello, Bazel! 💚`). Multi-package Go now reaches F12.
 
 ## F10: `linkstatic = 0` drops direct cc_library deps from the link
 - **Repo:** googletest (`//:gtest_samples`, a cc_test with `linkstatic = 0`)
@@ -77,7 +97,7 @@ Format per finding:
   relative) but not a bare relative name (no `@`, no `//`, no `:`). Bazel resolves
   `Label("foo.bzl")` as a target in the calling file's package, like `:foo.bzl`.
 - **Fix:** Add a bare-relative branch: treat `Label("foo")` as `<current_package>:foo`.
-- **Status:** fixing
+- **Status:** ✅ fixed & verified (committed)
 
 ## F7: `repository_ctx.getenv` missing (only on module_ctx)
 - **Repo:** protobuf (`//:protoc`; transitively evaluates rules_android's
@@ -92,7 +112,7 @@ Format per finding:
 - **Fix:** Add `getenv(name, default=None)` to `repository_context_methods`,
   mirroring the module_ctx version (reads + records the env var via
   `record_repository_env_var` so the repo refetches on change).
-- **Status:** fixing
+- **Status:** ✅ fixed & verified (committed)
 
 ## F6: override patch label by root module's own repo_name rejected
 - **Repo:** protobuf (`bz build //:protoc`, fails during MODULE.bazel eval)
@@ -106,7 +126,7 @@ Format per finding:
 - **Fix:** Thread the root module's apparent repo names (module `name` +
   `repo_name`) into `module_include_to_path` and accept `@<name>//` / `@@<name>//`
   as root-module labels. Applied to single_version_override + archive_override.
-- **Status:** fixing
+- **Status:** ✅ fixed & verified (committed)
 
 ## F5: bare native cc rules (no `@rules_cc` load) are unimplemented
 - **Repo:** re2 (`//app:_re2.js`, a bare `cc_binary` with no load statement)
@@ -140,7 +160,7 @@ Format per finding:
   extensions + versioned `.so.N`). Other cc_helper methods (find_cpp_toolchain,
   is_stamping_enabled, get_static_mode_params...) used by py_binary/py_executable
   are not yet implemented — add if a later target needs them.
-- **Status:** fixing
+- **Status:** ✅ fixed & verified (committed)
 
 ---
 
@@ -159,7 +179,7 @@ Format per finding:
 - **Fix:** In bazel-compat cells, for same-cell references (not `//`/`@`), try
   `source` coercion first (succeeds only for a real source file in the package
   listing) and fall back to `dep`. Matches Bazel's allow_files exemption.
-- **Status:** fixing
+- **Status:** ✅ fixed & verified (committed)
 
 ---
 
@@ -173,7 +193,7 @@ Format per finding:
   command-line build settings. bz doesn't model `--define`, so these conditions are
   inert (never match unless set) — correct default. Prelude is bundled into the bz
   binary (`//:prelude_sources`), so a rebuild is required.
-- **Status:** fixing
+- **Status:** ✅ fixed & verified (committed)
 
 ---
 

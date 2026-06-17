@@ -1,53 +1,57 @@
 # Status
 
-_Last updated: 2026-06-17 00:00 UTC_
+_Last updated: 2026-06-17 00:40 UTC_
 
-## Now
+## Summary
 
-- Broad ecosystem sweep done. rules_java ✅ works; rules_go ⛔ blocked on F11
-  (cc_common.merge_cc_infos). Assessing whether F11 (unblocks all of Go) is
-  tractable to implement next.
+Built `bz` from source and ran the build-loop across 6 open-source repos spanning
+rules_cc, rules_python/pybind, rules_java, rules_go, and a huge multi-language repo.
+**8 `bz` bugs found, fixed, verified, and committed; 4 deeper ones documented and
+deferred.**
+
+## Bugs fixed & committed (8)
+
+| ID | Fix | Surfaced by |
+| --- | --- | --- |
+| F1 | `ctx.exec_groups` on `AnalysisContext` | abseil cc_test |
+| F2 | `config_setting` `define_values` attr | abseil perfcounters |
+| F3 | source files (`.lds`) in cc `deps` | abseil flag_benchmark |
+| F4 | `py_internal.cc_helper` | re2 pybind |
+| F6 | root module self-ref in override patch labels | protobuf |
+| F7 | `repository_ctx.getenv` | protobuf (rules_android) |
+| F8 | bare relative `Label("foo.bzl")` | protobuf (rules_kotlin) |
+| F11 | `cc_common.merge_cc_infos` | go-tutorial |
+
+## Documented / deferred (4 — deeper)
+
+| ID | Issue | Why deferred |
+| --- | --- | --- |
+| F5 | bare native cc rules unimplemented | autoload to rules_cc; modern repos load explicitly |
+| F9 | android `config_feature_flag` undefined | android ecosystem; protobuf graph only |
+| F10 | `linkstatic=0` drops cc_library deps | deep cc dynamic-linking internals |
+| F12 | go multi-package shared-action conflict | config-transition output-path dedup |
 
 ## Repos tested
 
 | Repo | Ecosystem | Result |
 | --- | --- | --- |
-| abseil-cpp | rules_cc | ✅ full build (F1,F2,F3 fixed) |
-| re2 | rules_cc + pybind | ✅ core+python (F4 fixed); only emscripten app blocked |
-| protobuf | multi-lang | ⏸ F6/F7/F8 fixed; deferred at F9 (android) |
-| googletest | rules_cc | ✅ all but 1 linkstatic=0 target (F10) |
-| bazel-examples java | rules_java | ✅ full build |
-| bazel-examples go | rules_go | ⛔ F11 (cc_common.merge_cc_infos) |
-
-## Done
-
-- Built `bz` binary (`bazel build //app/bz:bz`), wrapped at `~/bin/bz`.
-- **abseil-cpp: `bz build //...` fully succeeds** after fixing F1, F2, F3.
-- **re2: core lib + pybind extension + py_library/py_test build** after F4.
-  Only `//app` (emscripten WASM) unbuildable — needs emcc + bare cc_binary (F5).
-
-## Bugs fixed (committed): F1 exec_groups, F2 define_values, F3 .lds-in-deps,
-##   F4 cc_helper, F6 root-repo override patches, F7 repository_ctx.getenv,
-##   F8 bare relative Label().
-## Open/deferred: F5 bare native cc rules, F9 android config_feature_flag (documented).
+| abseil-cpp | rules_cc | ✅ `//...` full build |
+| re2 | rules_cc + pybind | ✅ core lib + Python bindings (only emscripten app blocked) |
+| protobuf | multi-language | ⏸ F6/F7/F8 fixed; deferred at F9 (android) |
+| googletest | rules_cc | ✅ all but 1 `linkstatic=0` target (F10) |
+| bazel-examples/java-tutorial | rules_java | ✅ full build (remotejdk) |
+| bazel-examples/go-tutorial | rules_go | ✅ single-package builds+runs (F11); multi-pkg F12 |
 
 ## Environment
 
-- VM: Linux x86_64, 8 cores, 31 GiB RAM, 159 GiB free disk.
-- Tools present: bazel + bazelisk (`/usr/local/bin`), gcc/cc, go, python3.
-- `bz` binary: not yet built. Will live at `bazel-bin/app/bz/bz`.
+- VM: Linux x86_64, 8 cores, 31 GiB RAM, ~159 GiB free disk.
+- `bz` binary built via `bazel build //app/bz:bz`; wrapper at `~/bin/bz`.
+- Tools: bazel/bazelisk, gcc/cc, go, python3. No system JDK (use
+  `--java_runtime_version=remotejdk_21` for Java).
+- Cloned repos under `~/work/`.
 
-## Progress log
+## Next candidates
 
-- 2026-06-16 23:20 — Set up `ralph/` docs. Kicked off initial `bz` build.
-- 2026-06-16 23:25 — `bz` built. Smoke-tested abseil-cpp: libs build, cc_test → F1.
-- 2026-06-16 23:40 — F1 fix (exec_groups) implemented, verified, committed.
-- 2026-06-16 23:45 — F2 (config_setting define_values) fixed, verified, committed.
-- 2026-06-16 23:50 — F3 (source files in cc deps / .lds) root-caused in
-  BazelLabelAttrType coercion; fix implemented, rebuilding to verify.
-
-## Bugs fixed so far
-
-1. **F1** exec_groups on AnalysisContext — committed.
-2. **F2** config_setting define_values — committed.
-3. **F3** source files in cc deps fail CcInfo check — pending verify.
+- Deferred fixes worth revisiting: F12 (unblocks multi-package Go), F10
+  (linkstatic=0), F5 (bare cc rules).
+- More repos: grpc, envoy, a rules_rust project, java-maven (rules_jvm_external).
