@@ -498,6 +498,23 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   deferred. Workaround: `linkstatic = 1` on the affected target.
 - **Status:** documented / open (deferred)
 
+## F37: `bazel_tools//tools/cpp/runfiles` missing from bundled cell — ✅ FIXED
+- **Repo:** boringssl (`//:ssl_test`, `//:crypto_test`).
+- **Symptom:** `package 'bazel_tools//tools/cpp/runfiles' has no build file; expected one of
+  BUILD.bazel, BUILD` during analysis of a test that depends on
+  `@bazel_tools//tools/cpp/runfiles:runfiles` (the C++ runfiles library).
+- **Root cause:** bz embeds a `cells/bazel_tools/` tree into the binary, but the
+  `tools/cpp/runfiles` package was absent. (Same class as F25 `tools/java` and F32
+  `def_parser`.)
+- **Fix:** added `cells/bazel_tools/tools/cpp/runfiles/{BUILD.bazel,runfiles.h}` as the modern
+  deprecated forwarder to `@rules_cc//cc/runfiles` (matches Bazel 9.x; bz compat version
+  9.1.0) — a `cc_library` shim + a `pkg_sources` filegroup, registered into
+  `tools/cpp:pkg_sources` (globs don't cross package boundaries).
+- **Verification:** boringssl `//:ssl_test` builds (447 actions) and passes (471 tests, Pass 1/
+  Fail 0); `//:crypto_internal` compiles (369 actions, incl. x86 asm). Regression-clean:
+  abseil/tcmalloc/re2 build, abseil + rust tests pass.
+- **Status:** ✅ fixed & verified (committed)
+
 ## F36: `hasattr()`/`dir()` on a provider instance report unset fields as present
 - **Repo:** protobuf (`//:protobuf_lite`) and grpc (`//:gpr`) — both via the rules_kotlin
   `kotlin_repositories` module extension.
