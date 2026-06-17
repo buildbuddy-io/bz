@@ -3120,7 +3120,7 @@ fn bazel_cc_register_solib_symlink<'v>(
                 output_artifact,
                 BazelShareableActionIdentity::new(
                     action_key,
-                    vec![format!("artifact:{library_path}")],
+                    vec![BazelShareableActionIdentity::path_input(library_path)],
                     vec![output_identity],
                 ),
             )?;

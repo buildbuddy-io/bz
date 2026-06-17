@@ -8,6 +8,10 @@
  * above-listed licenses.
  */
 
+use std::collections::hash_map::DefaultHasher;
+use std::fmt;
+use std::fmt::Write;
+use std::hash::Hasher;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -752,6 +756,28 @@ fn bazel_worker_action_key<'v>(
     }
 }
 
+struct BazelDebugFingerprintWriter<'a> {
+    hasher: &'a mut DefaultHasher,
+}
+
+impl Write for BazelDebugFingerprintWriter<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.hasher.write(s.as_bytes());
+        Ok(())
+    }
+}
+
+fn bazel_debug_fingerprint(args: fmt::Arguments<'_>) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    let mut writer = BazelDebugFingerprintWriter {
+        hasher: &mut hasher,
+    };
+    writer
+        .write_fmt(args)
+        .expect("writing to a hash sink should not fail");
+    hasher.finish()
+}
+
 fn bazel_run_action_key<'v>(
     command_line_digest: Option<&ExpandedCommandLineDigest>,
     exe: &StarlarkCmdArgs<'v>,
@@ -769,9 +795,10 @@ fn bazel_run_action_key<'v>(
     let command_line_key = command_line_digest
         .map(|digest| format!("fingerprint:{digest:?}"))
         .unwrap_or_else(|| {
-            format!(
-                "debug:{exe:?}:{args:?}:{env:?}:{bazel_string_args:?}:{bazel_cc_command_line:?}"
-            )
+            let fingerprint = bazel_debug_fingerprint(format_args!(
+                "{exe:?}:{args:?}:{env:?}:{bazel_string_args:?}:{bazel_cc_command_line:?}"
+            ));
+            format!("debug-fingerprint:{fingerprint:016x}")
         });
     format!(
         "SpawnAction:mnemonic={}:command_line={}:use_default_shell_env={}:local_only={}:supports_path_mapping={}:has_string_args={}:has_cc_command_line={}:worker={}:remote_worker={}",

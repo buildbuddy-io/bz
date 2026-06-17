@@ -12,6 +12,7 @@ use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::hash::Hasher;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -34,6 +35,7 @@ use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use bz_hash::BuckIndexSet;
 use bz_interpreter::testing::Buck2TestHeapName;
+use bz_util::strong_hasher::Blake3StrongHasher;
 use bz_util::thin_box::ThinBoxSlice;
 use derivative::Derivative;
 use dupe::Dupe;
@@ -106,34 +108,97 @@ pub struct AnalysisRegistry<'v> {
     bazel_predeclared_outputs: SmallMap<String, DeclaredArtifact<'v>>,
     bazel_shareable_outputs: SmallMap<String, DeclaredArtifact<'v>>,
     bazel_shareable_output_keys: SmallMap<OutputArtifact<'v>, String>,
-    bazel_shareable_action_identities: SmallMap<String, BazelShareableActionIdentity>,
+    #[trace(unsafe_ignore)]
+    bazel_shareable_action_identities: SmallMap<String, Arc<BazelShareableActionIdentity>>,
     bazel_pending_solib_symlink_actions: Vec<BazelPendingSolibSymlinkAction<'v>>,
     pub short_path_assertions: HashMap<PromiseArtifactId, ForwardRelativePathBuf>,
     pub content_based_path_assertions: HashSet<PromiseArtifactId>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Trace, Allocative)]
+#[derive(Clone, Debug, Eq, PartialEq, Allocative)]
+pub enum BazelShareableArtifactIdentity {
+    ArtifactGroup(ArtifactGroup),
+    Path(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Allocative)]
 pub struct BazelShareableActionIdentity {
     action_key: String,
-    mandatory_inputs: Vec<String>,
-    outputs: Vec<String>,
+    mandatory_inputs_count: usize,
+    #[allocative(skip)]
+    mandatory_inputs_digest: blake3::Hash,
+    outputs_count: usize,
+    #[allocative(skip)]
+    outputs_digest: blake3::Hash,
 }
 
 impl BazelShareableActionIdentity {
     pub fn new(
         action_key: impl Into<String>,
-        mandatory_inputs: Vec<String>,
-        outputs: Vec<String>,
+        mandatory_inputs: impl IntoIterator<Item = BazelShareableArtifactIdentity>,
+        outputs: impl IntoIterator<Item = String>,
     ) -> Self {
+        let (mandatory_inputs_count, mandatory_inputs_digest) =
+            Self::digest_artifact_identities(mandatory_inputs);
+        let (outputs_count, outputs_digest) = Self::digest_strings(outputs);
         Self {
             action_key: action_key.into(),
-            mandatory_inputs,
-            outputs,
+            mandatory_inputs_count,
+            mandatory_inputs_digest,
+            outputs_count,
+            outputs_digest,
         }
+    }
+
+    pub fn path_input(path: impl Into<String>) -> BazelShareableArtifactIdentity {
+        BazelShareableArtifactIdentity::Path(path.into())
     }
 
     fn conflict_message(&self) -> String {
         format!("{self:?}")
+    }
+
+    fn digest_artifact_identities(
+        inputs: impl IntoIterator<Item = BazelShareableArtifactIdentity>,
+    ) -> (usize, blake3::Hash) {
+        let mut hasher = Blake3StrongHasher::new();
+        let mut count = 0;
+        for input in inputs {
+            count += 1;
+            match input {
+                BazelShareableArtifactIdentity::ArtifactGroup(input) => match input {
+                    ArtifactGroup::Artifact(artifact) => {
+                        Self::write_digest_str(&mut hasher, "artifact");
+                        let path = artifact.get_path().with_full_path(|path| path.to_string());
+                        Self::write_digest_str(&mut hasher, &path);
+                    }
+                    ArtifactGroup::TransitiveSetProjection(_) | ArtifactGroup::Promise(_) => {
+                        Self::write_digest_str(&mut hasher, "artifact_group");
+                        Self::write_digest_str(&mut hasher, &format!("{input:?}"));
+                    }
+                },
+                BazelShareableArtifactIdentity::Path(path) => {
+                    Self::write_digest_str(&mut hasher, "path");
+                    Self::write_digest_str(&mut hasher, &path);
+                }
+            }
+        }
+        (count, hasher.finalize())
+    }
+
+    fn digest_strings(values: impl IntoIterator<Item = String>) -> (usize, blake3::Hash) {
+        let mut hasher = Blake3StrongHasher::new();
+        let mut count = 0;
+        for value in values {
+            count += 1;
+            Self::write_digest_str(&mut hasher, &value);
+        }
+        (count, hasher.finalize())
+    }
+
+    fn write_digest_str(hasher: &mut Blake3StrongHasher, value: &str) {
+        hasher.write(&(value.len() as u64).to_le_bytes());
+        hasher.write(value.as_bytes());
     }
 }
 
@@ -456,21 +521,17 @@ impl<'v> AnalysisRegistry<'v> {
             .collect()
     }
 
-    pub fn bazel_shareable_artifact_group_identity(&self, input: &ArtifactGroup) -> String {
-        match input {
-            ArtifactGroup::Artifact(artifact) => {
-                artifact.get_path().with_full_path(|path| path.to_string())
-            }
-            ArtifactGroup::TransitiveSetProjection(_) | ArtifactGroup::Promise(_) => {
-                format!("{input:?}")
-            }
-        }
+    pub fn bazel_shareable_artifact_group_identity(
+        &self,
+        input: &ArtifactGroup,
+    ) -> BazelShareableArtifactIdentity {
+        BazelShareableArtifactIdentity::ArtifactGroup(input.dupe())
     }
 
     pub fn bazel_shareable_artifact_group_identities<'a>(
         &self,
         inputs: impl IntoIterator<Item = &'a ArtifactGroup>,
-    ) -> Vec<String> {
+    ) -> Vec<BazelShareableArtifactIdentity> {
         inputs
             .into_iter()
             .map(|input| self.bazel_shareable_artifact_group_identity(input))
@@ -516,7 +577,7 @@ impl<'v> AnalysisRegistry<'v> {
         let mut has_new_key = false;
         for key in &keys {
             match self.bazel_shareable_action_identities.get(key) {
-                Some(previous) if previous == &identity => {
+                Some(previous) if previous.as_ref() == &identity => {
                     existing.get_or_insert_with(|| (key.to_owned(), previous.clone()));
                 }
                 Some(previous) => {
@@ -546,6 +607,7 @@ impl<'v> AnalysisRegistry<'v> {
             return Ok(false);
         }
 
+        let identity = Arc::new(identity);
         for key in keys {
             self.bazel_shareable_action_identities
                 .insert(key, identity.clone());
