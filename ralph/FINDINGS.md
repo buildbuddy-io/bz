@@ -498,6 +498,36 @@ test_rule (F21), aspect (F22). Good breadth of Starlark rule-authoring API suppo
   deferred. Workaround: `linkstatic = 1` on the affected target.
 - **Status:** documented / open (deferred)
 
+## F38: `data` files absent from cc_test runfiles (tests with fixtures can't find data)
+- **Repo:** boringssl (`//:crypto_test`).
+- **Symptom:** crypto_test builds (78 actions) and runs but 32/32 shards fail: every test that
+  reads a data fixture prints `Could not open '.../crypto_test.runfiles/boringssl/crypto/
+  cipher/test/cipher_tests.txt'` (and the wycheproof `third_party/.../*.txt` vectors). Tests
+  with no data pass (ssl_test: 471 tests Pass 1/Fail 0 — it has no `data`).
+- **Evidence:** the materialized `crypto_test.runfiles/MANIFEST` has exactly **one** line
+  (`_main/crypto_test crypto_test`) — i.e. only the executable. The `data = crypto_test_data`
+  files (hundreds of `.txt` test vectors) are entirely missing from the runfiles tree/manifest.
+  ssl_test's manifest, by contrast, has the binary + shared libs (6 entries) — runfiles for
+  deps/`.so` work; only `data` source files are dropped.
+- **Root cause (located, not yet fixed):** `bz test` builds the runfiles manifest in
+  `bz_test/src/orchestrator.rs::bazel_test_runfiles_inputs` from `BazelTestInfo.runfiles`, which
+  is set in `bz_analysis/src/analysis/env.rs::bazel_test_info` from the test's
+  `DefaultInfo.default_runfiles_raw()`. So the cc_test's **default_runfiles already lack the
+  `data` files** — the drop is upstream, in how the rules_cc `cc_test` `ctx.runfiles(files =
+  ctx.files.data, ...)` flows through bz's runfiles collection/merge for source-file `data`
+  (deps' `.so` runfiles survive; plain source `data` does not). `data` is declared
+  `attr.label_list(allow_files = True)` in bz's bazel-compat rules, so coercion isn't obviously
+  the gap — more likely bz's `ctx.runfiles`/runfiles-merge or `default_runfiles` collection
+  excludes source-file entries.
+- **Impact:** broad — any test that reads fixtures / golden files / test vectors via `data`
+  (an enormous fraction of real-world test suites) will run but fail to open its data.
+- **Why deferred:** core runfiles/test machinery; pinpointing the exact drop requires tracing
+  the rules_cc cc_test → `ctx.runfiles` → `default_runfiles` → materialization path and a fix
+  there risks the (working) executable+`.so` runfiles. Not attempted unsupervised. Next step:
+  minimal cc_test (or rules_shell sh_test) with one `data` file + a repro that checks
+  `default_runfiles`, then find where source-file runfiles entries are dropped.
+- **Status:** documented / open (deferred — blocks tests with `data` fixtures)
+
 ## F37: `bazel_tools//tools/cpp/runfiles` missing from bundled cell — ✅ FIXED
 - **Repo:** boringssl (`//:ssl_test`, `//:crypto_test`).
 - **Symptom:** `package 'bazel_tools//tools/cpp/runfiles' has no build file; expected one of
