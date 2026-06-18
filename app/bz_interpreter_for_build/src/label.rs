@@ -218,6 +218,24 @@ fn parse_providers_label<'v>(
             },
         };
         format!("{}{}", package, s)
+    } else if is_bare_relative_label(s) {
+        // A bare relative label such as `Label("foo.bzl")`: no repo (`@`), no
+        // package root (`//`), and no target separator (`:`). Bazel resolves these
+        // as a target in the calling file's current package, i.e. equivalent to
+        // `Label(":foo.bzl")`.
+        let package = match label_context.package {
+            Some(package) => package,
+            None => match build_context {
+                Some(c) => c.require_package()?,
+                None => {
+                    return Err(
+                        bz_error::Error::from(LabelCreatorError::ExpectedProvider(s.to_owned()))
+                            .into(),
+                    );
+                }
+            },
+        };
+        format!("{}:{}", package, s)
     } else if let Some(canonical_label) =
         parse_bazel_canonical_providers_label(s, label_context.root_cell)?
     {
@@ -278,6 +296,13 @@ fn parse_providers_label<'v>(
     };
     record_bazel_repository_repo_mapping(eval, &label_context, apparent_repo.as_deref());
     Ok(StarlarkProvidersLabel::new(target))
+}
+
+/// Whether `s` is a bare relative label like `Label("foo.bzl")`: no repo (`@`),
+/// no package root (`//`), and no target separator (`:`). Such labels resolve to
+/// a target in the current package, the same as `Label(":foo.bzl")`.
+fn is_bare_relative_label(s: &str) -> bool {
+    !s.is_empty() && !s.starts_with('@') && !s.contains("//") && !s.contains(':')
 }
 
 fn bazel_apparent_repo_from_label(value: &str) -> Option<String> {
