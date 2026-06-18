@@ -1581,7 +1581,12 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             bool,
         >,
         #[starlark(require = named, default = false)] eager_materialization_enabled: bool,
+        // Bazel input-pruning hint: a file the action writes listing inputs it did
+        // not use. bz does not perform input pruning, so this is accepted and
+        // ignored (the action still runs and produces its real outputs).
+        #[starlark(require = named, default = NoneType)] unused_inputs_list: Value<'v>,
     ) -> starlark::Result<NoneType> {
+        let _ = unused_inputs_list;
         let arguments = arguments.into_option();
         if let Some(executable) = executable {
             let execution_info = bazel_execution_info_entries(execution_requirements)?;
