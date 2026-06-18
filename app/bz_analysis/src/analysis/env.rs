@@ -2326,6 +2326,8 @@ async fn run_analysis_with_env_underlying(
                     list_res,
                     eval.heap(),
                     predeclared_outputs,
+                    node.is_bazel_executable_rule(),
+                    node.is_bazel_test_rule(),
                 )?
             } else {
                 ProviderCollection::try_from_value(list_res)?

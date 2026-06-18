@@ -350,6 +350,8 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
         value: Value<'v>,
         heap: Heap<'v>,
         default_outputs: Vec<Value<'v>>,
+        is_bazel_executable_rule: bool,
+        is_bazel_test_rule: bool,
     ) -> bz_error::Result<ProviderCollection<'v>> {
         let mut providers = Self::try_from_bazel_value_impl(value)?;
         if !providers.contains_key(DefaultInfoCallable::provider_id()) {
@@ -358,8 +360,52 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
                 heap.alloc(DefaultInfo::with_default_outputs(heap, default_outputs)),
             );
         }
+        Self::project_bazel_default_info(
+            &mut providers,
+            heap,
+            is_bazel_executable_rule,
+            is_bazel_test_rule,
+        )?;
 
         Ok(ProviderCollection::<'v> { providers })
+    }
+
+    fn project_bazel_default_info(
+        providers: &mut SmallMap<Arc<ProviderId>, Value<'v>>,
+        heap: Heap<'v>,
+        is_bazel_executable_rule: bool,
+        is_bazel_test_rule: bool,
+    ) -> bz_error::Result<()> {
+        let Some(default_info_value) = providers.get(DefaultInfoCallable::provider_id()).copied()
+        else {
+            return Ok(());
+        };
+
+        let projected_default_info =
+            if let Some(default_info) = default_info_value.downcast_ref::<DefaultInfo<'v>>() {
+                default_info.bazel_configured_target_projection(
+                    heap,
+                    is_bazel_executable_rule,
+                    is_bazel_test_rule,
+                )?
+            } else if let Some(default_info) = default_info_value
+                .unpack_frozen()
+                .and_then(|value| value.downcast_ref::<FrozenDefaultInfo>())
+            {
+                default_info.bazel_configured_target_projection(
+                    heap,
+                    is_bazel_executable_rule,
+                    is_bazel_test_rule,
+                )?
+            } else {
+                return Err(internal_error!("DefaultInfo provider had unexpected value").into());
+            };
+
+        providers.insert(
+            DefaultInfoCallable::provider_id().dupe(),
+            heap.alloc(projected_default_info),
+        );
+        Ok(())
     }
 
     /// Takes a value returned from a Bazel Starlark aspect implementation and builds a provider
