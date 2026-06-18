@@ -18,6 +18,7 @@ use bz_artifact::artifact::artifact_type::ArtifactErrors;
 use bz_artifact::artifact::artifact_type::DeclaredArtifact;
 use bz_artifact::artifact::artifact_type::OutputArtifact;
 use bz_build_api::actions::impls::expanded_command_line::ExpandedCommandLineDigest;
+use bz_build_api::analysis::bazel_action_key::BazelActionOwnerKey;
 use bz_build_api::analysis::registry::BazelShareableActionIdentity;
 use bz_build_api::artifact_groups::ArtifactGroup;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
@@ -993,7 +994,7 @@ fn register_bazel_run_action<'v>(
     resource_set: NoneOr<StarlarkCallable<'v>>,
     local_only: bool,
     supports_bazel_path_mapping: bool,
-    uses_default_exec_group_owner: bool,
+    shareable_action_owner_key: Option<BazelActionOwnerKey>,
     bazel_string_args: Option<Box<[String]>>,
     bazel_cc_command_line: Option<ValueTyped<'v, BazelCcCompileCommandLine<'v>>>,
     precomputed_local_action_cache_command_line_digest: Option<ExpandedCommandLineDigest>,
@@ -1061,12 +1062,11 @@ fn register_bazel_run_action<'v>(
     } else {
         (Vec::new(), Vec::new())
     };
-    let shareable_action_owner_key =
-        if uses_default_exec_group_owner && bazel_cc_command_line.is_none() {
-            this.bazel_default_exec_group_action_owner_key()?
-        } else {
-            None
-        };
+    let shareable_action_owner_key = if bazel_cc_command_line.is_none() {
+        shareable_action_owner_key
+    } else {
+        None
+    };
     let shareable_action_key = if bazel_cc_command_line.is_some() {
         None
     } else {
@@ -1200,10 +1200,6 @@ fn supports_bazel_path_mapping(execution_info: &[(String, String)]) -> bool {
             && bazel_execution_info_contains(execution_info, "no-remote"))
 }
 
-fn uses_bazel_default_exec_group_owner(toolchain: Value<'_>, exec_group: Value<'_>) -> bool {
-    toolchain.is_none() && exec_group.is_none()
-}
-
 pub(crate) fn register_bazel_cc_compile_action<'v>(
     action: BazelCcCompileAction<'v>,
     eval: &mut Evaluator<'v, '_, '_>,
@@ -1248,7 +1244,7 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
         NoneOr::None,
         false,
         false,
-        true,
+        None,
         None,
         Some(action.command_line),
         precomputed_local_action_cache_command_line_digest,
@@ -1318,7 +1314,10 @@ pub(crate) fn register_bazel_java_run_action<'v>(
         NoneOr::None,
         false,
         false,
-        true,
+        action
+            .actions
+            .as_ref()
+            .bazel_default_exec_group_action_owner_key()?,
         None,
         None,
         None,
@@ -1355,9 +1354,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneType> {
         let execution_info = bazel_execution_info_entries(execution_requirements)?;
         let supports_bazel_path_mapping = supports_bazel_path_mapping(&execution_info);
-        let uses_default_exec_group_owner =
-            uses_bazel_default_exec_group_owner(toolchain, exec_group);
-        let _unused = (progress_message, toolchain, exec_group);
+        let shareable_action_owner_key = this.bazel_run_action_owner_key(toolchain, exec_group)?;
+        let _unused = progress_message;
         let heap = eval.heap();
         let exe = StarlarkCmdArgs::from_values([heap.alloc_str("/bin/bash").to_value()])?;
         let mut shell_args = Vec::with_capacity(arguments.items.len() + 3);
@@ -1386,7 +1384,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             resource_set,
             local_only,
             supports_bazel_path_mapping,
-            uses_default_exec_group_owner,
+            shareable_action_owner_key,
             None,
             None,
             None,
@@ -1588,9 +1586,9 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         if let Some(executable) = executable {
             let execution_info = bazel_execution_info_entries(execution_requirements)?;
             let supports_bazel_path_mapping = supports_bazel_path_mapping(&execution_info);
-            let uses_default_exec_group_owner =
-                uses_bazel_default_exec_group_owner(toolchain, exec_group);
-            let _unused = (progress_message, toolchain, exec_group);
+            let shareable_action_owner_key =
+                this.bazel_run_action_owner_key(toolchain, exec_group)?;
+            let _unused = progress_message;
             if let Ok(worker_run) = ValueOf::<&WorkerRunInfo>::unpack_value_err(executable) {
                 let worker = worker_run.typed.worker();
                 let remote_worker = worker_run.typed.remote_worker();
@@ -1620,7 +1618,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                     resource_set,
                     local_only,
                     supports_bazel_path_mapping,
-                    uses_default_exec_group_owner,
+                    shareable_action_owner_key,
                     None,
                     None,
                     None,
@@ -1661,7 +1659,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                 resource_set,
                 local_only,
                 supports_bazel_path_mapping,
-                uses_default_exec_group_owner,
+                shareable_action_owner_key,
                 None,
                 None,
                 None,

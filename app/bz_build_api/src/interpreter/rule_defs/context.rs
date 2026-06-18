@@ -146,6 +146,8 @@ pub fn init_declare_output_has_content_based_path_default(
 /// Controlled by `[buck2] action_has_content_based_path_default` buckconfig.
 pub static ACTION_HAS_CONTENT_BASED_PATH_DEFAULT: OnceLock<bool> = OnceLock::new();
 
+const BAZEL_DEFAULT_EXEC_GROUP_NAME: &str = "default-exec-group";
+
 pub fn init_action_has_content_based_path_default(value: Option<bool>) -> bz_error::Result<()> {
     let value = value.unwrap_or(false);
     ACTION_HAS_CONTENT_BASED_PATH_DEFAULT
@@ -157,6 +159,23 @@ pub fn init_action_has_content_based_path_default(value: Option<bool>) -> bz_err
             )
         })?;
     Ok(())
+}
+
+fn bazel_exec_group_exec_property_entry(
+    exec_group: &str,
+    key: &str,
+    value: &str,
+) -> Option<(String, String)> {
+    match key.split_once('.') {
+        Some((group, property)) if group == exec_group => {
+            Some((property.to_owned(), value.to_owned()))
+        }
+        Some((_exec_group, _property)) => None,
+        None if exec_group == BAZEL_DEFAULT_EXEC_GROUP_NAME => {
+            Some((key.to_owned(), value.to_owned()))
+        }
+        None => None,
+    }
 }
 
 /// Functions to allow users to interact with the Actions registry.
@@ -382,15 +401,55 @@ impl<'v> AnalysisActions<'v> {
     pub fn bazel_default_exec_group_action_owner_key(
         &self,
     ) -> bz_error::Result<Option<BazelActionOwnerKey>> {
-        let Some(exec_properties) = self.bazel_default_exec_group_exec_properties()? else {
+        self.bazel_action_owner_key_for_exec_group(BAZEL_DEFAULT_EXEC_GROUP_NAME)
+    }
+
+    pub fn bazel_run_action_owner_key(
+        &self,
+        toolchain: Value<'_>,
+        exec_group: Value<'_>,
+    ) -> bz_error::Result<Option<BazelActionOwnerKey>> {
+        let exec_group = self.bazel_run_action_exec_group(toolchain, exec_group);
+        self.bazel_action_owner_key_for_exec_group(&exec_group)
+    }
+
+    fn bazel_action_owner_key_for_exec_group(
+        &self,
+        exec_group: &str,
+    ) -> bz_error::Result<Option<BazelActionOwnerKey>> {
+        let Some(exec_properties) = self.bazel_exec_group_exec_properties(exec_group)? else {
             return Ok(None);
         };
         let state = self.state()?;
         BazelActionOwnerKey::new(state.execution_platform(), exec_properties)
     }
 
-    fn bazel_default_exec_group_exec_properties(
+    fn bazel_run_action_exec_group(&self, toolchain: Value<'_>, exec_group: Value<'_>) -> String {
+        if let Some(exec_group) = exec_group.unpack_str() {
+            return exec_group.to_owned();
+        }
+        if !exec_group.is_none() {
+            return BAZEL_DEFAULT_EXEC_GROUP_NAME.to_owned();
+        }
+
+        if !toolchain.is_none() {
+            let key = AnalysisToolchains::key_from_value(toolchain);
+            if self
+                .bazel_toolchains()
+                .as_ref()
+                .declared_key_for(&key)
+                .is_some()
+            {
+                return key;
+            }
+        }
+
+        BAZEL_DEFAULT_EXEC_GROUP_NAME.to_owned()
+    }
+
+    fn bazel_exec_group_exec_properties(
         &self,
+        exec_group: &str,
     ) -> bz_error::Result<Option<Vec<(String, String)>>> {
         let Some(attrs) = self.attributes.borrow().as_ref().copied() else {
             return Ok(Some(Vec::new()));
@@ -412,12 +471,8 @@ impl<'v> AnalysisActions<'v> {
             let Some(value) = value.unpack_str() else {
                 return Ok(None);
             };
-            match key.split_once('.') {
-                Some(("default-exec-group", property)) => {
-                    default_exec_properties.push((property.to_owned(), value.to_owned()));
-                }
-                Some((_exec_group, _property)) => {}
-                None => default_exec_properties.push((key.to_owned(), value.to_owned())),
+            if let Some(entry) = bazel_exec_group_exec_property_entry(exec_group, key, value) {
+                default_exec_properties.push(entry);
             }
         }
         Ok(Some(default_exec_properties))
@@ -4389,6 +4444,8 @@ pub(crate) fn init_analysis_context_ty() {
 #[cfg(test)]
 mod tests {
     use super::AnalysisToolchains;
+    use super::BAZEL_DEFAULT_EXEC_GROUP_NAME;
+    use super::bazel_exec_group_exec_property_entry;
 
     #[test]
     fn analysis_toolchains_preserve_repository_identity() {
@@ -4404,6 +4461,46 @@ mod tests {
         );
         assert_eq!(
             toolchains.declared_key_for("repo_b//pkg:toolchain_type"),
+            None
+        );
+    }
+
+    #[test]
+    fn bazel_exec_group_exec_properties_include_unprefixed_only_for_default() {
+        assert_eq!(
+            bazel_exec_group_exec_property_entry(
+                BAZEL_DEFAULT_EXEC_GROUP_NAME,
+                "requires-darwin",
+                "1"
+            ),
+            Some(("requires-darwin".to_owned(), "1".to_owned()))
+        );
+        assert_eq!(
+            bazel_exec_group_exec_property_entry(
+                "bazel_lib//lib:coreutils_toolchain_type",
+                "requires-darwin",
+                "1"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn bazel_exec_group_exec_properties_select_matching_group_prefix() {
+        assert_eq!(
+            bazel_exec_group_exec_property_entry(
+                "bazel_lib//lib:coreutils_toolchain_type",
+                "bazel_lib//lib:coreutils_toolchain_type.requires-darwin",
+                "1",
+            ),
+            Some(("requires-darwin".to_owned(), "1".to_owned()))
+        );
+        assert_eq!(
+            bazel_exec_group_exec_property_entry(
+                BAZEL_DEFAULT_EXEC_GROUP_NAME,
+                "bazel_lib//lib:coreutils_toolchain_type.requires-darwin",
+                "1",
+            ),
             None
         );
     }
