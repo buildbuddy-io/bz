@@ -4505,7 +4505,8 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        repository_ctx_reject_nonblocking_download(block, "repository_ctx.download")?;
+        // bz downloads synchronously, then returns a pending-download token that
+        // resolves immediately when Bazel callers pass `block = False`.
         let auth_headers = module_ctx_download_auth_headers_from_entries(&auth)?;
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
