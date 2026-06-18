@@ -334,12 +334,21 @@ impl ExecutionPlatformConstraints {
             Arc::new([])
         };
 
-        Ok(Self::new_constraints(
+        let exec_deps: Arc<[TargetLabel]> = if node.is_bazel_rule() {
+            // Bazel does not select an execution platform by recursively
+            // configuring cfg = "exec" attributes. Those deps are configured
+            // after platform resolution with the selected exec config.
+            Arc::from([])
+        } else {
             gathered_deps
                 .exec_deps
                 .iter()
                 .map(|c| c.0.target().unconfigured().dupe())
-                .collect(),
+                .collect()
+        };
+
+        Ok(Self::new_constraints(
+            exec_deps,
             gathered_deps
                 .toolchain_deps
                 .iter()
