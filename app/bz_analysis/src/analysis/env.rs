@@ -31,6 +31,8 @@ use bz_build_api::interpreter::rule_defs::context::analysis_actions_to_bazel_ctx
 use bz_build_api::interpreter::rule_defs::context::bazel_expand_run_environment;
 use bz_build_api::interpreter::rule_defs::context::bazel_expand_target_run_args;
 use bz_build_api::interpreter::rule_defs::context::bazel_runfiles_prefix;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::file_target_info::new_bazel_file_target_info;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::file_target_info::new_frozen_bazel_file_target_info;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::FrozenBazelOutputFileInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::output_file_info::new_bazel_output_file_info;
 use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::template_variable_info::FrozenTemplateVariableInfo;
@@ -90,6 +92,7 @@ use bz_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
 use bz_interpreter::types::rule::FrozenBazelAspectInfo;
 use bz_interpreter::types::rule::bazel_aspect_hidden_attr_name;
 use bz_interpreter::types::rule::is_bazel_aspect_hidden_attr;
+use bz_node::attrs::attr_type::bazel::label::ConfiguredBazelLabelDep;
 use bz_node::attrs::attr_type::dep::DepAttrTransition;
 use bz_node::attrs::attr_type::dep::DepAttrType;
 use bz_node::attrs::attr_type::split_transition_dep::ConfiguredSplitTransitionDep;
@@ -366,7 +369,9 @@ pub(crate) fn new_bazel_input_file_analysis_result(
     let source = SourceArtifact::new(SourcePath::new(label.unconfigured().pkg().dupe(), path));
     let source = heap.alloc(StarlarkArtifact::new_source(source.into(), false));
     let default_info = FrozenDefaultInfo::for_file_target(&heap, source);
-    let providers = FrozenProviderCollection::new_default_info(&heap, default_info);
+    let file_target_info = new_frozen_bazel_file_target_info(&heap);
+    let providers =
+        FrozenProviderCollection::new_bazel_file_target(&heap, default_info, file_target_info);
     let recorded_values = RecordedAnalysisValues::new_provider_collection(
         DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(label.dupe())),
         heap,
@@ -464,8 +469,12 @@ async fn run_bazel_output_file_analysis_underlying(
             let default_info = eval
                 .heap()
                 .alloc(DefaultInfo::for_file_target(eval.heap(), output));
-            let providers =
-                ProviderCollection::try_from_value(eval.heap().alloc(AllocList([default_info])))?;
+            let file_target_info = eval
+                .heap()
+                .alloc(new_bazel_file_target_info(eval.heap()));
+            let providers = ProviderCollection::try_from_value(
+                eval.heap().alloc(AllocList([default_info, file_target_info])),
+            )?;
             Ok(ValueTypedComplex::new_err(eval.heap().alloc(providers))
                 .internal_error("Just allocated provider collection")?)
         })?;
@@ -810,8 +819,10 @@ fn bazel_source_target_dependency<'v>(
     let default_info = ctx
         .heap()
         .alloc(DefaultInfo::for_file_target(ctx.heap(), source));
-    let providers =
-        ProviderCollection::try_from_value(ctx.heap().alloc(AllocList([default_info])))?;
+    let file_target_info = ctx.heap().alloc(new_bazel_file_target_info(ctx.heap()));
+    let providers = ProviderCollection::try_from_value(
+        ctx.heap().alloc(AllocList([default_info, file_target_info])),
+    )?;
     Ok(ctx
         .heap()
         .alloc(Dependency::new_with_runtime_provider_collection(
@@ -1118,6 +1129,7 @@ fn find_direct_dep_node<'a>(
 fn configured_attr_dep_label(attr: &ConfiguredAttr) -> Option<&ConfiguredProvidersLabel> {
     match attr {
         ConfiguredAttr::Dep(dep) => Some(&dep.label),
+        ConfiguredAttr::BazelLabel(dep) => dep.first_label(),
         ConfiguredAttr::ExplicitConfiguredDep(dep) => Some(&dep.label),
         ConfiguredAttr::TransitionDep(dep) => Some(&dep.dep),
         ConfiguredAttr::OneOf(box attr, _) => configured_attr_dep_label(attr),
@@ -1131,6 +1143,12 @@ fn collect_configured_attr_dep_labels(
 ) {
     match attr {
         ConfiguredAttr::Dep(dep) => labels.push(dep.label.dupe()),
+        ConfiguredAttr::BazelLabel(dep) => match &dep.dep {
+            ConfiguredBazelLabelDep::Dep(dep) => labels.push(dep.label.dupe()),
+            ConfiguredBazelLabelDep::SplitTransition(dep) => {
+                labels.extend(dep.deps.values().cloned());
+            }
+        },
         ConfiguredAttr::ExplicitConfiguredDep(dep) => labels.push(dep.label.dupe()),
         ConfiguredAttr::TransitionDep(dep) => labels.push(dep.dep.dupe()),
         ConfiguredAttr::SplitTransitionDep(dep) => {

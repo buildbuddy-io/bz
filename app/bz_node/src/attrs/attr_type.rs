@@ -22,6 +22,7 @@ use pagable::Pagable;
 
 use crate::attrs::attr_type::any::AnyAttrType;
 use crate::attrs::attr_type::arg::ArgAttrType;
+use crate::attrs::attr_type::bazel::label::BazelAllowedFileTypes;
 use crate::attrs::attr_type::bazel::label::BazelLabelAttrType;
 use crate::attrs::attr_type::bool::BoolAttrType;
 use crate::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
@@ -347,10 +348,18 @@ impl AttrType {
         }))
     }
 
-    pub fn bazel_label(dep: AttrType, source: AttrType) -> Self {
+    pub fn bazel_label(
+        dep: AttrType,
+        source: AttrType,
+        allowed_files: BazelAllowedFileTypes,
+    ) -> Self {
         let may_have_queries = dep.0.may_have_queries || source.0.may_have_queries;
         Self(Arc::new(AttrTypeInner2 {
-            inner: AttrTypeInner::BazelLabel(BazelLabelAttrType::new(dep, source)),
+            inner: AttrTypeInner::BazelLabel(BazelLabelAttrType::new(
+                dep,
+                source,
+                allowed_files,
+            )),
             may_have_queries,
         }))
     }

@@ -24,6 +24,7 @@ use bz_interpreter_for_build::attrs::coerce::ctx::BuildAttrCoercionContext;
 use bz_interpreter_for_build::interpreter::testing::Tester;
 use bz_interpreter_for_build::interpreter::testing::cells;
 use bz_node::attrs::attr_type::AttrType;
+use bz_node::attrs::attr_type::bazel::label::BazelAllowedFileTypes;
 use bz_node::attrs::coerced_attr::CoercedAttr;
 use bz_node::attrs::coercion_context::AttrCoercionContext;
 use bz_node::attrs::configurable::AttrIsConfigurable;
@@ -373,6 +374,7 @@ fn bazel_label_uses_package_relative_file_labels() -> bz_error::Result<()> {
         let label_or_source = AttrType::bazel_label(
             AttrType::dep(ProviderIdSet::EMPTY, PluginKindSet::EMPTY),
             AttrType::source(false),
+            BazelAllowedFileTypes::Any,
         );
 
         let value = label_or_source.coerce(

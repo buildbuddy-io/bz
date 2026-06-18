@@ -4,6 +4,7 @@ load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 load(":aspect_rule_attrs.bzl", "go_proto_like", "proto_like")
 load(":aspect_toolchains.bzl", "consumer", "leaf", "missing_toolchain_consumer", "required_leaf")
+load(":allow_files_check.bzl", "allow_files_consumer", "plain_rule")
 load(":ctx_var.bzl", "ctx_var_mutator", "ctx_var_reader")
 load(":filegroup_check.bzl", "filegroup_executable_check")
 
@@ -140,4 +141,21 @@ filegroup_executable_check(
     name = "multiple_filegroup_executable_check",
     dep = ":multiple_filegroup",
     should_have_executable = False,
+)
+
+allow_files_consumer(
+    name = "allow_txt_file_with_required_provider",
+    srcs = ["allow_files.txt"],
+)
+
+plain_rule(name = "plain_rule_without_required_provider")
+
+allow_files_consumer(
+    name = "reject_rule_without_required_provider",
+    srcs = [":plain_rule_without_required_provider"],
+)
+
+allow_files_consumer(
+    name = "reject_wrong_file_extension",
+    srcs = ["allow_files.md"],
 )

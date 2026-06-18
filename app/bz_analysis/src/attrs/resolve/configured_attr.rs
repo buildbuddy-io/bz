@@ -13,6 +13,7 @@ use bz_artifact::artifact::source_artifact::SourceArtifact;
 use bz_build_api::actions::query::CONFIGURED_ATTR_TO_VALUE;
 use bz_build_api::actions::query::PackageLabelOption;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::file_target_info::FrozenBazelFileTargetInfo;
 use bz_core::package::PackageLabel;
 use bz_core::package::package_relative_path::PackageRelativePath;
 use bz_core::package::source_path::SourcePath;
@@ -23,6 +24,8 @@ use bz_interpreter::types::opaque_metadata::OpaqueMetadata;
 use bz_interpreter::types::target_label::StarlarkTargetLabel;
 use bz_node::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
 use bz_node::attrs::attr_type::configured_dep::ExplicitConfiguredDepAttrType;
+use bz_node::attrs::attr_type::bazel::label::ConfiguredBazelLabel;
+use bz_node::attrs::attr_type::bazel::label::ConfiguredBazelLabelDep;
 use bz_node::attrs::attr_type::dep::DepAttrType;
 use bz_node::attrs::attr_type::source::SourceAttrType;
 use bz_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
@@ -57,6 +60,10 @@ use crate::attrs::resolve::ctx::AttrResolutionContext;
 enum ConfiguredAttrError {
     #[error("Source path `{0}` cannot be used in attributes referenced in transition")]
     SourceFileToStarlarkValue(ArcS<PackageRelativePath>),
+    #[error(
+        "Bazel file target `{0}` is not allowed by this attr's allowed file extensions"
+    )]
+    BazelFileTypeNotAllowed(ConfiguredProvidersLabel),
 }
 
 pub trait ConfiguredAttrExt {
@@ -164,6 +171,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
                 Ok(ctx.heap().alloc(StarlarkTargetLabel::new(d.dupe())))
             }
             ConfiguredAttr::Dep(d) => DepAttrType::resolve_single(ctx, d),
+            ConfiguredAttr::BazelLabel(d) => resolve_bazel_label_single(ctx, d),
             ConfiguredAttr::SourceLabel(s) => SourceAttrType::resolve_single_label(ctx, s),
             ConfiguredAttr::Label(label) => {
                 let label = StarlarkConfiguredProvidersLabel::new(label.dupe());
@@ -195,6 +203,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
                         d.as_ref(),
                     )?)))
             }
+            ConfiguredAttr::BazelLabel(d) => resolve_bazel_label_for_bazel_attr(ctx, d),
             ConfiguredAttr::SourceLabel(s) => {
                 DepAttrType::resolve_single_impl(ctx, s, &ProviderIdSet::EMPTY, false)
             }
@@ -229,6 +238,7 @@ fn resolve_bazel_list_items<'v>(
         ConfiguredAttr::SplitTransitionDep(d) => {
             SplitTransitionDepAttrType::resolve_values(ctx, d.as_ref())
         }
+        ConfiguredAttr::BazelLabel(d) => resolve_bazel_label_list_items(ctx, d),
         ConfiguredAttr::SourceLabel(s) => Ok(vec![DepAttrType::resolve_single_impl(
             ctx,
             s,
@@ -237,6 +247,101 @@ fn resolve_bazel_list_items<'v>(
         )?]),
         ConfiguredAttr::OneOf(box l, _) => resolve_bazel_list_items(l, pkg, ctx),
         _ => attr.resolve(pkg, ctx),
+    }
+}
+
+fn resolve_bazel_label_impl<'v>(
+    ctx: &mut dyn AttrResolutionContext<'v>,
+    label: &ConfiguredProvidersLabel,
+    required_providers: &ProviderIdSet,
+    is_exec_dep: bool,
+    bazel_label: &ConfiguredBazelLabel,
+) -> bz_error::Result<Value<'v>> {
+    let provider_collection = ctx.get_dep(label)?;
+    let is_file_target = provider_collection
+        .as_ref()
+        .builtin_provider::<FrozenBazelFileTargetInfo>()
+        .is_some();
+    if is_file_target {
+        let target_name = label.target().unconfigured().name().as_str();
+        if !bazel_label.allowed_files.allows_target_name(target_name) {
+            return Err(ConfiguredAttrError::BazelFileTypeNotAllowed(label.dupe()).into());
+        }
+    } else {
+        DepAttrType::check_providers(required_providers, provider_collection.as_ref(), label)?;
+    }
+
+    let execution_platform_resolution = if is_exec_dep {
+        Some(ctx.execution_platform_resolution())
+    } else {
+        None
+    };
+    Ok(DepAttrType::alloc_dependency(
+        ctx.starlark_module(),
+        label,
+        provider_collection,
+        execution_platform_resolution,
+    ))
+}
+
+fn resolve_bazel_label_single<'v>(
+    ctx: &mut dyn AttrResolutionContext<'v>,
+    label: &ConfiguredBazelLabel,
+) -> bz_error::Result<Value<'v>> {
+    match &label.dep {
+        ConfiguredBazelLabelDep::Dep(dep) => resolve_bazel_label_impl(
+            ctx,
+            &dep.label,
+            &dep.attr_type.required_providers,
+            ConfiguredBazelLabel::is_exec_dep(dep),
+            label,
+        ),
+        ConfiguredBazelLabelDep::SplitTransition(dep) => {
+            let mut res = SmallMap::with_capacity(dep.deps.len());
+            for (transition, target) in &dep.deps {
+                res.insert_hashed(
+                    ctx.heap().alloc(transition).get_hashed()?,
+                    resolve_bazel_label_impl(
+                        ctx,
+                        target,
+                        &dep.required_providers,
+                        false,
+                        label,
+                    )?,
+                );
+            }
+            Ok(ctx.heap().alloc(Dict::new(res)))
+        }
+    }
+}
+
+fn resolve_bazel_label_list_items<'v>(
+    ctx: &mut dyn AttrResolutionContext<'v>,
+    label: &ConfiguredBazelLabel,
+) -> bz_error::Result<Vec<Value<'v>>> {
+    match &label.dep {
+        ConfiguredBazelLabelDep::Dep(_) => Ok(vec![resolve_bazel_label_single(ctx, label)?]),
+        ConfiguredBazelLabelDep::SplitTransition(dep) => dep
+            .deps
+            .values()
+            .map(|target| {
+                resolve_bazel_label_impl(ctx, target, &dep.required_providers, false, label)
+            })
+            .collect(),
+    }
+}
+
+fn resolve_bazel_label_for_bazel_attr<'v>(
+    ctx: &mut dyn AttrResolutionContext<'v>,
+    label: &ConfiguredBazelLabel,
+) -> bz_error::Result<Value<'v>> {
+    match &label.dep {
+        ConfiguredBazelLabelDep::Dep(_) => resolve_bazel_label_single(ctx, label),
+        ConfiguredBazelLabelDep::SplitTransition(_) => {
+            Ok(ctx.heap().alloc(AllocList(resolve_bazel_label_list_items(
+                ctx, label,
+            )?)))
+        }
     }
 }
 
@@ -298,6 +403,7 @@ fn configured_attr_to_value<'v>(
         }
         ConfiguredAttr::PluginDep(d, _) => heap.alloc(StarlarkTargetLabel::new(d.dupe())),
         ConfiguredAttr::Dep(d) => configured_providers_label_to_value(&d.label, pkg, heap),
+        ConfiguredAttr::BazelLabel(d) => configured_bazel_label_to_value(d, pkg, heap)?,
         ConfiguredAttr::SourceLabel(s) => configured_providers_label_to_value(s, pkg, heap),
         ConfiguredAttr::Label(l) => configured_providers_label_to_value(l, pkg, heap),
         ConfiguredAttr::Arg(arg) => heap.alloc(arg.to_string()),
@@ -322,6 +428,28 @@ fn configured_attr_to_value<'v>(
         },
         ConfiguredAttr::Metadata(data) => heap.alloc(data.to_value()),
         ConfiguredAttr::TargetModifiers(data) => heap.alloc(data.to_value()),
+    })
+}
+
+fn configured_bazel_label_to_value<'v>(
+    label: &ConfiguredBazelLabel,
+    pkg: PackageLabelOption,
+    heap: Heap<'v>,
+) -> bz_error::Result<Value<'v>> {
+    Ok(match &label.dep {
+        ConfiguredBazelLabelDep::Dep(dep) => {
+            configured_providers_label_to_value(&dep.label, pkg, heap)
+        }
+        ConfiguredBazelLabelDep::SplitTransition(dep) => {
+            let mut map = SmallMap::with_capacity(dep.deps.len());
+            for (transition, target) in &dep.deps {
+                map.insert_hashed(
+                    heap.alloc(transition).get_hashed()?,
+                    configured_providers_label_to_value(target, pkg, heap),
+                );
+            }
+            heap.alloc(Dict::new(map))
+        }
     })
 }
 

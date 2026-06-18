@@ -97,3 +97,28 @@ async def test_bazel_filegroup_singleton_executable(buck: Buck) -> None:
 @buck_test()
 async def test_bazel_filegroup_multiple_files_has_no_executable(buck: Buck) -> None:
     await buck.build("//:multiple_filegroup_executable_check")
+
+
+@buck_test()
+async def test_bazel_allow_files_bypasses_required_providers_for_file_targets(
+    buck: Buck,
+) -> None:
+    await buck.build("//:allow_txt_file_with_required_provider")
+
+
+@buck_test()
+async def test_bazel_allow_files_preserves_provider_checks_for_rule_targets(
+    buck: Buck,
+) -> None:
+    await expect_failure(
+        buck.build("//:reject_rule_without_required_provider"),
+        stderr_regex="requires a dep that provides",
+    )
+
+
+@buck_test()
+async def test_bazel_allow_files_enforces_extension_allowlist(buck: Buck) -> None:
+    await expect_failure(
+        buck.build("//:reject_wrong_file_extension"),
+        stderr_regex="not allowed by this attr's allowed file extensions",
+    )

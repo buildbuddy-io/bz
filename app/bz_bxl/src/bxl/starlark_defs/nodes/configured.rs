@@ -40,6 +40,7 @@ use bz_fs::paths::abs_path::AbsPath;
 use bz_hash::StdBuckHashMap;
 use bz_hash::StdBuckHashSet;
 use bz_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
+use bz_node::attrs::attr_type::bazel::label::ConfiguredBazelLabelDep;
 use bz_node::attrs::attr_type::arg::StringWithMacros;
 use bz_node::attrs::attr_type::dict::DictLiteral;
 use bz_node::attrs::attr_type::list::ListLiteral;
@@ -158,6 +159,27 @@ fn attr_with_stripped_cfg(attr: &ConfiguredAttr) -> bz_error::Result<CoercedAttr
         ConfiguredAttr::ConfigurationDep(dep) => CoercedAttr::ConfigurationDep(dep.dupe()),
         ConfiguredAttr::PluginDep(dep, _) => CoercedAttr::PluginDep(dep.clone()),
         ConfiguredAttr::Dep(dep) => CoercedAttr::Dep(dep.label.unconfigured()),
+        ConfiguredAttr::BazelLabel(dep) => match &dep.dep {
+            ConfiguredBazelLabelDep::Dep(dep) => CoercedAttr::Dep(dep.label.unconfigured()),
+            ConfiguredBazelLabelDep::SplitTransition(dep) => {
+                let deps: StdBuckHashSet<_> =
+                    dep.deps.values().map(|l| l.unconfigured()).collect();
+                if deps.len() != 1 {
+                    return Err(bz_error::internal_error!(
+                        "ConfiguredBazelLabel split transition should have exactly one dep, but found {}",
+                        deps.len()
+                    ));
+                }
+                CoercedAttr::Dep(
+                    deps.iter()
+                        .next()
+                        .ok_or_else(|| {
+                            bz_error::internal_error!("deps is empty after checking length")
+                        })?
+                        .dupe(),
+                )
+            }
+        },
         ConfiguredAttr::SourceLabel(dep) => CoercedAttr::SourceLabel(dep.unconfigured()),
         ConfiguredAttr::Label(label) => CoercedAttr::Label(label.unconfigured()),
         ConfiguredAttr::Arg(arg) => {

@@ -559,6 +559,7 @@ impl CoercedAttr {
             CoercedAttrWithType::Dep(dep, t) => {
                 DepAttr::<ProvidersLabel>::traverse(dep, t, traversal)
             }
+            CoercedAttrWithType::BazelLabel(dep, t) => t.traverse(dep, traversal),
             CoercedAttrWithType::SourceLabel(s, _t) => traversal.dep(s),
             CoercedAttrWithType::Label(label, _t) => traversal.label(label),
             CoercedAttrWithType::Arg(arg, _t) => arg.traverse(traversal, pkg),
@@ -884,6 +885,7 @@ impl CoercedAttr {
                 ConfiguredAttr::PluginDep(dep.dupe(), t.kind().dupe())
             }
             CoercedAttrWithType::Dep(dep, t) => t.configure(dep, ctx)?,
+            CoercedAttrWithType::BazelLabel(dep, t) => t.configure(dep, ctx)?,
             CoercedAttrWithType::SourceLabel(source, _) => {
                 ConfiguredAttr::SourceLabel(source.configure_pair(ctx.cfg().cfg_pair().dupe()))
             }

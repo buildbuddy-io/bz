@@ -69,6 +69,7 @@ use crate::interpreter::rule_defs::provider::DefaultInfoCallable;
 use crate::interpreter::rule_defs::provider::FrozenBuiltinProviderLike;
 use crate::interpreter::rule_defs::provider::FrozenDefaultInfo;
 use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
+use crate::interpreter::rule_defs::provider::builtin::bazel::file_target_info::FrozenBazelFileTargetInfo;
 use crate::interpreter::rule_defs::provider::builtin::bazel::output_group_info::OutputGroupInfoCallable;
 use crate::interpreter::rule_defs::provider::builtin::bazel::output_group_info::merge_output_group_info_values;
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
@@ -552,6 +553,26 @@ impl FrozenProviderCollection {
                 DefaultInfoCallable::provider_id().dupe(),
                 default_info.to_frozen_value(),
             )]),
+        }))
+        .unwrap()
+    }
+
+    pub fn new_bazel_file_target(
+        heap: &FrozenHeap,
+        default_info: FrozenValueTyped<'static, FrozenDefaultInfo>,
+        file_target_info: FrozenValueTyped<'static, FrozenBazelFileTargetInfo>,
+    ) -> FrozenValueTyped<'static, FrozenProviderCollection> {
+        FrozenValueTyped::new_err(heap.alloc(FrozenProviderCollection {
+            providers: SmallMap::from_iter([
+                (
+                    DefaultInfoCallable::provider_id().dupe(),
+                    default_info.to_frozen_value(),
+                ),
+                (
+                    FrozenBazelFileTargetInfo::builtin_provider_id().dupe(),
+                    file_target_info.to_frozen_value(),
+                ),
+            ]),
         }))
         .unwrap()
     }

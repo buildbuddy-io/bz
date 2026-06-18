@@ -31,6 +31,7 @@ use super::attr_type::arg::ConfiguredStringWithMacros;
 use crate::attrs::attr_type::AttrType;
 use crate::attrs::attr_type::AttrTypeInner;
 use crate::attrs::attr_type::attr_config::source_file_display;
+use crate::attrs::attr_type::bazel::label::ConfiguredBazelLabel;
 use crate::attrs::attr_type::bool::BoolLiteral;
 use crate::attrs::attr_type::configured_dep::ConfiguredExplicitConfiguredDep;
 use crate::attrs::attr_type::dep::DepAttr;
@@ -90,6 +91,7 @@ pub enum ConfiguredAttr {
     // label
     PluginDep(TargetLabel, PluginKind),
     Dep(Box<DepAttr<ConfiguredProvidersLabel>>),
+    BazelLabel(Box<ConfiguredBazelLabel>),
     SourceLabel(ConfiguredProvidersLabel),
     // NOTE: unlike deps, labels are not traversed, as they are typically used in lieu of deps in
     // cases that would cause cycles.
@@ -142,6 +144,7 @@ impl AttrDisplayWithContext for ConfiguredAttr {
             ConfiguredAttr::ConfigurationDep(e) => write!(f, "\"{e}\""),
             ConfiguredAttr::PluginDep(e, _) => write!(f, "\"{e}\""),
             ConfiguredAttr::Dep(e) => write!(f, "\"{e}\""),
+            ConfiguredAttr::BazelLabel(e) => write!(f, "\"{e}\""),
             ConfiguredAttr::SourceLabel(e) => write!(f, "\"{e}\""),
             ConfiguredAttr::Label(e) => write!(f, "\"{e}\""),
             ConfiguredAttr::Arg(e) => write!(f, "\"{e}\""),
@@ -199,6 +202,7 @@ impl ConfiguredAttr {
             ConfiguredAttr::ConfigurationDep(dep) => traversal.configuration_dep(dep),
             ConfiguredAttr::PluginDep(dep, kind) => traversal.plugin_dep(dep, kind),
             ConfiguredAttr::Dep(dep) => dep.traverse(traversal),
+            ConfiguredAttr::BazelLabel(dep) => dep.traverse(traversal),
             ConfiguredAttr::SourceLabel(dep) => traversal.dep(dep),
             ConfiguredAttr::Label(label) => traversal.label(label),
             ConfiguredAttr::Arg(arg) => arg.string_with_macros.traverse(traversal, pkg),

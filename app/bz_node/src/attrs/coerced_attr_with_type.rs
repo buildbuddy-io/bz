@@ -18,6 +18,7 @@ use crate::attrs::attr_type::AttrType;
 use crate::attrs::attr_type::AttrTypeInner;
 use crate::attrs::attr_type::arg::ArgAttrType;
 use crate::attrs::attr_type::arg::StringWithMacros;
+use crate::attrs::attr_type::bazel::label::BazelLabelAttrType;
 use crate::attrs::attr_type::bool::BoolAttrType;
 use crate::attrs::attr_type::bool::BoolLiteral;
 use crate::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
@@ -107,6 +108,7 @@ pub enum CoercedAttrWithType<'a, 't> {
     ConfigurationDep(&'a ProvidersLabel, ConfigurationDepAttrType),
     PluginDep(&'a TargetLabel, &'t PluginDepAttrType),
     Dep(&'a ProvidersLabel, &'t DepAttrType),
+    BazelLabel(&'a ProvidersLabel, &'t BazelLabelAttrType),
     SourceLabel(&'a ProvidersLabel, SourceAttrType),
     Label(&'a ProvidersLabel, LabelAttrType),
     Arg(&'a StringWithMacros<ProvidersLabel>, ArgAttrType),
@@ -134,11 +136,15 @@ impl<'a, 't> CoercedAttrWithType<'a, 't> {
             (attr, AttrTypeInner::Option(t)) => Ok(CoercedAttrWithType::Some(attr, t)),
 
             (a, AttrTypeInner::Any(_)) => Self::pack_any(a),
+            (CoercedAttr::SourceFile(_), AttrTypeInner::BazelLabel(t)) => {
+                Self::pack(attr, &t.source)
+            }
             (
-                a @ (CoercedAttr::SourceFile(_) | CoercedAttr::SourceLabel(_)),
+                CoercedAttr::Dep(label)
+                | CoercedAttr::SourceLabel(label)
+                | CoercedAttr::SplitTransitionDep(label),
                 AttrTypeInner::BazelLabel(t),
-            ) => Self::pack(a, &t.source),
-            (a, AttrTypeInner::BazelLabel(t)) => Self::pack(a, &t.dep),
+            ) => Ok(CoercedAttrWithType::BazelLabel(label, t)),
 
             (CoercedAttr::Bool(b), AttrTypeInner::Bool(t)) => Ok(CoercedAttrWithType::Bool(*b, *t)),
             (CoercedAttr::Int(i), AttrTypeInner::Int(t)) => Ok(CoercedAttrWithType::Int(*i, *t)),

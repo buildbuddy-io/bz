@@ -28,6 +28,7 @@ use bz_node::attrs::attr::Attribute;
 use bz_node::attrs::attr::AttributeAllowedValues;
 use bz_node::attrs::attr_type::AttrType;
 use bz_node::attrs::attr_type::any::AnyAttrType;
+use bz_node::attrs::attr_type::bazel::label::BazelAllowedFileTypes;
 use bz_node::attrs::coercion_context::AttrCoercionContext;
 use bz_node::attrs::configurable::AttrIsConfigurable;
 use bz_node::attrs::display::AttrDisplayWithContextExt;
@@ -83,6 +84,10 @@ enum AttrError {
     InvalidProviderValue(String),
     #[error("providers argument cannot mix provider values with provider lists")]
     InvalidProviderListShape,
+    #[error("`{0}` must be a bool or a list of file extensions, got `{1}`")]
+    InvalidBazelAllowFilesValue(&'static str, String),
+    #[error("`{0}` extension entries must be strings, got `{1}`")]
+    InvalidBazelAllowFilesExtension(&'static str, String),
 }
 
 pub(crate) trait AttributeExt {
@@ -285,8 +290,56 @@ fn bazel_label_list_default<'v>(
     Ok(Some(eval.heap().alloc(AllocList::EMPTY)))
 }
 
-fn bazel_label_allows_files(allow_files: Option<Value>, allow_single_file: Option<Value>) -> bool {
-    allow_files.is_some_and(|v| v.to_bool()) || allow_single_file.is_some_and(|v| v.to_bool())
+fn bazel_allowed_file_types_from_value(
+    param: &'static str,
+    value: Option<Value>,
+) -> bz_error::Result<BazelAllowedFileTypes> {
+    let Some(value) = value else {
+        return Ok(BazelAllowedFileTypes::None);
+    };
+    if let Some(value) = value.unpack_bool() {
+        return Ok(if value {
+            BazelAllowedFileTypes::Any
+        } else {
+            BazelAllowedFileTypes::None
+        });
+    }
+
+    let values: Vec<Value> = if let Some(list) = ListRef::from_value(value) {
+        list.iter().collect()
+    } else if let Some(tuple) = TupleRef::from_value(value) {
+        tuple.iter().collect()
+    } else {
+        return Err(AttrError::InvalidBazelAllowFilesValue(param, value.to_repr()).into());
+    };
+
+    let mut extensions = values
+        .into_iter()
+        .map(|value| {
+            value
+                .unpack_str()
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    AttrError::InvalidBazelAllowFilesExtension(param, value.to_repr()).into()
+                })
+        })
+        .collect::<bz_error::Result<Vec<_>>>()?;
+    extensions.sort();
+    extensions.dedup();
+    Ok(if extensions.is_empty() {
+        BazelAllowedFileTypes::None
+    } else {
+        BazelAllowedFileTypes::Extensions(extensions.into_boxed_slice())
+    })
+}
+
+fn bazel_allowed_file_types(
+    allow_files: Option<Value>,
+    allow_single_file: Option<Value>,
+) -> bz_error::Result<BazelAllowedFileTypes> {
+    Ok(bazel_allowed_file_types_from_value("allow_files", allow_files)?.combine(
+        bazel_allowed_file_types_from_value("allow_single_file", allow_single_file)?,
+    ))
 }
 
 fn bazel_dep_attr_type<'v>(
@@ -327,8 +380,9 @@ fn bazel_label_attr_type<'v>(
         cfg,
         eval,
     )?;
-    let inner = if bazel_label_allows_files(allow_files, allow_single_file) {
-        AttrType::bazel_label(dep, AttrType::source(true))
+    let allowed_files = bazel_allowed_file_types(allow_files, allow_single_file)?;
+    let inner = if allowed_files.allows_files() {
+        AttrType::bazel_label(dep, AttrType::source(true), allowed_files)
     } else {
         dep
     };

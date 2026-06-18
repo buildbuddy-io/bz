@@ -3,6 +3,7 @@ pub mod analysis_test_result_info;
 pub mod cc_info;
 pub mod coverage_info;
 pub mod declared_toolchain_info;
+pub mod file_target_info;
 pub mod java_info;
 pub mod output_file_info;
 pub mod output_group_info;
