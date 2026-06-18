@@ -73,7 +73,14 @@ impl TypedContext for RemoteExecutionError {
 }
 
 pub fn is_re_auth_or_permission_error(error: &RemoteExecutionError) -> bool {
-    if matches!(error.code, TCode::PERMISSION_DENIED | TCode::UNAUTHENTICATED) {
+    if is_re_worker_setup_permission_error(error) {
+        return false;
+    }
+
+    if matches!(
+        error.code,
+        TCode::PERMISSION_DENIED | TCode::UNAUTHENTICATED
+    ) {
         return true;
     }
 
@@ -83,6 +90,13 @@ pub fn is_re_auth_or_permission_error(error: &RemoteExecutionError) -> bool {
         || message.contains("unauthenticated")
         || message.contains("missing api key")
         || message.contains("invalid api key")
+}
+
+pub fn is_re_worker_setup_permission_error(error: &RemoteExecutionError) -> bool {
+    let message = error.message.to_ascii_lowercase();
+    message.contains("permission denied")
+        && message.contains("create oci bundle")
+        && message.contains("cgroup")
 }
 
 pub(crate) fn re_error(
