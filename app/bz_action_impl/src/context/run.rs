@@ -1585,8 +1585,11 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         // not use. bz does not perform input pruning, so this is accepted and
         // ignored (the action still runs and produces its real outputs).
         #[starlark(require = named, default = NoneType)] unused_inputs_list: Value<'v>,
+        // Deprecated Bazel param: runfiles manifests for the action's tools. bz
+        // tracks tool runfiles automatically, so this is accepted and ignored.
+        #[starlark(require = named, default = NoneType)] input_manifests: Value<'v>,
     ) -> starlark::Result<NoneType> {
-        let _ = unused_inputs_list;
+        let _ = (unused_inputs_list, input_manifests);
         let arguments = arguments.into_option();
         if let Some(executable) = executable {
             let execution_info = bazel_execution_info_entries(execution_requirements)?;
