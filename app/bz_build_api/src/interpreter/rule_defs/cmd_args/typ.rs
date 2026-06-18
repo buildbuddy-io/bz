@@ -97,7 +97,9 @@ use crate::interpreter::rule_defs::cmd_args::traits::SimpleCommandLineArtifactVi
 use crate::interpreter::rule_defs::cmd_args::traits::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use crate::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
+use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
 use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_executable;
+use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_runfiles;
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 struct BazelDirectoryExpander;
@@ -900,8 +902,21 @@ impl<'v> StarlarkCmdArgs<'v> {
             return Ok(());
         }
 
-        if let Some(executable) = bazel_files_to_run_executable(value) {
-            self.add_bazel_hidden_value(executable, heap)?;
+        // A FilesToRunProvider (e.g. `target.files_to_run`) may be passed in `tools`.
+        // Add its executable (if any) and the files from its runfiles so the tool's
+        // inputs reach the action. Filegroup-style targets have no executable but
+        // still carry their files via runfiles.
+        let files_to_run_executable = bazel_files_to_run_executable(value);
+        let files_to_run_runfiles = bazel_files_to_run_runfiles(value);
+        if files_to_run_executable.is_some() || files_to_run_runfiles.is_some() {
+            if let Some(executable) = files_to_run_executable {
+                self.add_bazel_hidden_value(executable, heap)?;
+            }
+            if let Some(runfiles_value) = files_to_run_runfiles
+                && let Some(runfiles) = BazelRunfiles::from_value(runfiles_value)
+            {
+                self.add_bazel_hidden_value(runfiles.files_value(), heap)?;
+            }
             return Ok(());
         }
 
