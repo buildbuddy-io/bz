@@ -1168,10 +1168,17 @@ impl LostRemoteInputOwnerIndex {
         {
             Self::extend_unique(&mut entries, path_entries);
         }
-        if let Some(path_entries) = self.by_path.get(lost.path.as_ref()) {
-            Self::extend_unique(&mut entries, path_entries);
+        // Bazel resolves a lost input by asking the action's InputMetadataProvider for
+        // the concrete ActionInput at the missing exec path. For bz Bazel input mappings,
+        // `lost.path` may be the mapped exec path while `owner`/`producer_path_hint` identify
+        // the real producing artifact. Prefer those explicit locators; only fall back to raw
+        // path matching when they did not identify a producer.
+        if entries.is_empty() {
+            if let Some(path_entries) = self.by_path.get(lost.path.as_ref()) {
+                Self::extend_unique(&mut entries, path_entries);
+            }
+            self.extend_directory_entries_for_path(&mut entries, lost.path.as_ref());
         }
-        self.extend_directory_entries_for_path(&mut entries, lost.path.as_ref());
         entries
     }
 

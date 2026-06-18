@@ -474,6 +474,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 artifact_fs: artifact_fs.clone(),
                 project_fs: self.project_root.clone(),
                 materializer: self.materializer.dupe(),
+                known_missing_remote_cas: self.known_missing_remote_cas.dupe(),
                 incremental_db_state: self.incremental_db_state.dupe(),
                 re_client: self.get_prepared_re_client(*re_use_case),
                 re_action_key: re_action_key.clone(),

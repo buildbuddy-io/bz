@@ -27,6 +27,7 @@ use bz_execute::execute::action_digest::ActionDigest;
 use bz_execute::execute::blobs::ActionBlobs;
 use bz_execute::execute::kind::CommandExecutionKind;
 use bz_execute::execute::kind::RemoteCommandExecutionDetails;
+use bz_execute::execute::known_missing::KnownMissingRemoteCasTracker;
 use bz_execute::execute::manager::CommandExecutionManager;
 use bz_execute::execute::manager::CommandExecutionManagerExt;
 use bz_execute::execute::output::CommandStdStreams;
@@ -89,6 +90,7 @@ pub struct ReExecutor {
     pub artifact_fs: ArtifactFs,
     pub project_fs: ProjectRoot,
     pub materializer: Arc<dyn Materializer>,
+    pub known_missing_remote_cas: Arc<KnownMissingRemoteCasTracker>,
     pub incremental_db_state: Arc<IncrementalDbState>,
     pub re_client: ManagedRemoteExecutionClient,
     pub re_action_key: Option<String>,
@@ -553,8 +555,12 @@ impl PreparedCommandExecutor for ReExecutor {
                 Some(response.execute_response.status.message.clone())
             };
             let cached_result = response.execute_response.cached_result;
-            let verify_remote_outputs =
-                cached_result || request.force_remote_execution_cache_bypass();
+            // Bazel validates stale cache hits by attempting output downloads and then forces
+            // re-execution on cache-not-found, but it trusts a fresh Execute response and injects
+            // metadata for outputs that remote download mode does not request. Do the same here:
+            // full presence checks on fresh execution results can fail against eventually
+            // consistent CAS/TTL APIs even when requested output downloads would succeed later.
+            let verify_remote_outputs = cached_result;
 
             let download = download_action_results(
                 request,
@@ -581,13 +587,21 @@ impl PreparedCommandExecutor for ReExecutor {
                 self.materialize_failed_outputs,
                 additional_message,
                 &self.output_trees_download_config,
-                None,
+                Some(self.known_missing_remote_cas.as_ref()),
             )
             .boxed()
             .await;
 
             match download {
-                DownloadResult::Result(res) => break res,
+                DownloadResult::Result(res) => {
+                    if res.was_success() {
+                        // Bazel refreshes known-missing CAS knowledge after a successful Execute
+                        // response because the executor is expected to have uploaded outputs.
+                        self.known_missing_remote_cas
+                            .remove_artifact_values(res.outputs.values());
+                    }
+                    break res;
+                }
                 DownloadResult::CacheMiss {
                     manager: retry_manager,
                     ..
