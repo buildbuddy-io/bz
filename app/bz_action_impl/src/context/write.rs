@@ -16,7 +16,6 @@ use bz_artifact::artifact::artifact_type::Artifact;
 use bz_artifact::artifact::artifact_type::OutputArtifact;
 use bz_build_api::actions::impls::json::JsonUnpack;
 use bz_build_api::actions::impls::workspace_status::WorkspaceStatusKind;
-use bz_build_api::analysis::registry::BazelShareableActionIdentity;
 use bz_build_api::artifact_groups::ArtifactGroup;
 use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use bz_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
@@ -393,20 +392,12 @@ fn transform_build_info_file<'v>(
         eval.heap(),
     )?;
     let output_artifact = declared.as_output();
-    if state.should_register_bazel_shareable_action(&output_artifact, |state| {
-        Ok(BazelShareableActionIdentity::new(
-            format!("{kind:?}:{substitutions:?}"),
-            vec![state.bazel_shareable_artifact_group_identity(&template_artifact)],
-            vec![state.bazel_shareable_output_identity(&output_artifact)],
-        ))
-    })? {
-        state.register_action(
-            buck_indexset![output_artifact],
-            UnregisteredTemplateExpansionAction::new(template_artifact, substitutions, false),
-            None,
-            None,
-        )?;
-    }
+    state.register_action(
+        buck_indexset![output_artifact],
+        UnregisteredTemplateExpansionAction::new(template_artifact, substitutions, false),
+        None,
+        None,
+    )?;
 
     Ok(eval.heap().alloc_typed(StarlarkDeclaredArtifact::new(
         eval.call_stack_top_location(),
@@ -647,8 +638,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
                     &mut self,
                     _gen: &dyn Fn(
                         &dyn CommandLineContext,
-                    )
-                        -> bz_error::Result<Option<RelativePathBuf>>,
+                    ) -> bz_error::Result<Option<RelativePathBuf>>,
                 ) -> bz_error::Result<()> {
                     Ok(())
                 }

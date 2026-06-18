@@ -8,10 +8,8 @@
  * above-listed licenses.
  */
 
-use std::collections::hash_map::DefaultHasher;
-use std::fmt;
-use std::fmt::Write;
-use std::hash::Hasher;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -49,6 +47,7 @@ use bz_build_api::interpreter::rule_defs::provider::builtin::worker_info::Worker
 use bz_build_api::interpreter::rule_defs::provider::builtin::worker_run_info::WorkerRunInfo;
 use bz_build_api::interpreter::rule_defs::provider::dependency::Dependency;
 use bz_core::category::CategoryRef;
+use bz_core::configuration::data::BazelBuildSettingValue;
 use bz_core::deferred::base_deferred_key::BaseDeferredKey;
 use bz_core::execution_types::executor_config::ReGangWorker;
 use bz_core::execution_types::executor_config::RemoteExecutorDependency;
@@ -99,6 +98,7 @@ use crate::actions::impls::run::dep_files::RunActionDepFiles;
 use crate::actions::impls::run::new_executor_preference;
 use crate::actions::impls::run::precompute_bazel_local_action_cache_command_line_digest_for_cc_compile_command_line;
 use crate::actions::impls::run::precompute_bazel_local_action_cache_command_line_digest_for_cmd_args;
+use crate::actions::impls::run::precompute_bazel_spawn_action_key_for_bazel_run_action;
 
 #[derive(Debug, bz_error::Error)]
 #[buck2(tag = Input)]
@@ -585,6 +585,11 @@ impl<'v> CommandLineArtifactVisitor<'v> for BazelRunOutputFilteringArtifactVisit
     fn skip_hidden(&self) -> bool {
         self.inner.skip_hidden()
     }
+
+    fn expand_transitive_set_inputs_for_bazel_shared_action(&self) -> bool {
+        self.inner
+            .expand_transitive_set_inputs_for_bazel_shared_action()
+    }
 }
 
 fn bazel_visit_run_action_command_line_artifacts<'v>(
@@ -595,6 +600,36 @@ fn bazel_visit_run_action_command_line_artifacts<'v>(
     let mut artifact_visitor =
         BazelRunOutputFilteringArtifactVisitor::new(outputs, artifact_visitor);
     command_line.visit_artifacts(&mut artifact_visitor)
+}
+
+struct BazelShareableActionInputVisitor<'v> {
+    inputs: BuckIndexSet<ArtifactGroup>,
+    _marker: std::marker::PhantomData<&'v ()>,
+}
+
+impl<'v> BazelShareableActionInputVisitor<'v> {
+    fn new() -> Self {
+        Self {
+            inputs: BuckIndexSet::default(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'v> CommandLineArtifactVisitor<'v> for BazelShareableActionInputVisitor<'v> {
+    fn visit_input(&mut self, input: ArtifactGroup, _tags: Vec<&ArtifactTag>) {
+        self.inputs.insert(input);
+    }
+
+    fn visit_declared_output(&mut self, _artifact: OutputArtifact<'v>, _tags: Vec<&ArtifactTag>) {}
+
+    fn visit_frozen_output(&mut self, artifact: Artifact, _tags: Vec<&ArtifactTag>) {
+        self.inputs.insert(ArtifactGroup::Artifact(artifact));
+    }
+
+    fn expand_transitive_set_inputs_for_bazel_shared_action(&self) -> bool {
+        true
+    }
 }
 
 fn bazel_visit_runfiles_artifacts<'v>(
@@ -633,8 +668,9 @@ fn bazel_visit_tool_runfiles_artifacts<'v>(
     let tools = ListRef::from_value(tool_runfiles)
         .ok_or_else(|| bz_error::internal_error!("Bazel tool runfiles should be a list"))?;
     for tool in tools.iter() {
-        let tool = StructRef::from_value(tool)
-            .ok_or_else(|| bz_error::internal_error!("Bazel tool runfiles entry should be a struct"))?;
+        let tool = StructRef::from_value(tool).ok_or_else(|| {
+            bz_error::internal_error!("Bazel tool runfiles entry should be a struct")
+        })?;
         let mut executable = None;
         let mut runfiles = None;
         for (name, value) in tool.iter() {
@@ -700,7 +736,7 @@ fn bazel_run_mandatory_inputs<'v>(
     bazel_executable_runfiles: Option<Value<'v>>,
     bazel_tool_runfiles: Option<Value<'v>>,
 ) -> starlark::Result<BuckIndexSet<ArtifactGroup>> {
-    let mut artifact_visitor = SimpleCommandLineArtifactVisitor::new();
+    let mut artifact_visitor = BazelShareableActionInputVisitor::new();
     bazel_visit_run_action_command_line_artifacts(outputs, exe, &mut artifact_visitor)?;
     bazel_visit_run_action_command_line_artifacts(outputs, args, &mut artifact_visitor)?;
     bazel_visit_run_action_command_line_artifacts(outputs, bazel_inputs, &mut artifact_visitor)?;
@@ -730,87 +766,86 @@ fn bazel_run_mandatory_inputs<'v>(
     Ok(artifact_visitor.inputs)
 }
 
-fn bazel_worker_action_key<'v>(
-    worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
-) -> String {
-    let Some(worker) = worker else {
-        return "none".to_owned();
+const BAZEL_ACTION_ENV: &str = "//command_line_option:action_env";
+const BAZEL_HOST_ACTION_ENV: &str = "//command_line_option:host_action_env";
+const BAZEL_STRICT_ACTION_ENV: &str = "//command_line_option:incompatible_strict_action_env";
+
+fn bazel_owner_action_env_values(owner: &BaseDeferredKey, key: &str) -> Vec<String> {
+    let Some(label) = owner.configured_label() else {
+        return Vec::new();
     };
-    match worker.unpack() {
-        Either::Left(worker) => format!(
-            "concurrency={:?}:streaming={}:local_protocol={}:remote_protocol={}:sandboxing={}",
-            worker.concurrency(),
-            worker.streaming(),
-            worker.supports_bazel_local_persistent_worker_protocol(),
-            worker.supports_bazel_remote_persistent_worker_protocol(),
-            worker.requires_bazel_worker_sandboxing(),
-        ),
-        Either::Right(worker) => format!(
-            "concurrency={:?}:streaming={}:local_protocol={}:remote_protocol={}:sandboxing={}",
-            worker.concurrency(),
-            worker.streaming(),
-            worker.supports_bazel_local_persistent_worker_protocol(),
-            worker.supports_bazel_remote_persistent_worker_protocol(),
-            worker.requires_bazel_worker_sandboxing(),
-        ),
+    let Ok(data) = label.cfg().data() else {
+        return Vec::new();
+    };
+    match data.build_settings.get(key) {
+        Some(BazelBuildSettingValue::String(value)) => vec![value.clone()],
+        Some(BazelBuildSettingValue::StringList(values)) => values.clone(),
+        _ => Vec::new(),
     }
 }
 
-struct BazelDebugFingerprintWriter<'a> {
-    hasher: &'a mut DefaultHasher,
-}
-
-impl Write for BazelDebugFingerprintWriter<'_> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.hasher.write(s.as_bytes());
-        Ok(())
+fn bazel_owner_action_env_bool(owner: &BaseDeferredKey, key: &str, default: bool) -> bool {
+    let Some(label) = owner.configured_label() else {
+        return default;
+    };
+    let Ok(data) = label.cfg().data() else {
+        return default;
+    };
+    match data.build_settings.get(key) {
+        Some(BazelBuildSettingValue::Bool(value)) => *value,
+        Some(BazelBuildSettingValue::String(value)) => {
+            matches!(value.as_str(), "true" | "True" | "1")
+        }
+        _ => default,
     }
 }
 
-fn bazel_debug_fingerprint(args: fmt::Arguments<'_>) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    let mut writer = BazelDebugFingerprintWriter {
-        hasher: &mut hasher,
-    };
-    writer
-        .write_fmt(args)
-        .expect("writing to a hash sink should not fail");
-    hasher.finish()
+fn bazel_owner_uses_exec_configuration(owner: &BaseDeferredKey) -> bool {
+    owner
+        .configured_label()
+        .and_then(|label| label.cfg().label().ok().map(str::to_owned))
+        .is_some_and(|label| label.starts_with("bazeltr-"))
 }
 
-fn bazel_run_action_key<'v>(
-    command_line_digest: Option<&ExpandedCommandLineDigest>,
-    exe: &StarlarkCmdArgs<'v>,
-    args: &StarlarkCmdArgs<'v>,
-    env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
-    worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
-    remote_worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
-    category: StringValue<'v>,
-    use_default_shell_env: bool,
-    local_only: bool,
-    supports_bazel_path_mapping: bool,
-    bazel_string_args: Option<&[String]>,
-    bazel_cc_command_line: Option<ValueTyped<'v, BazelCcCompileCommandLine<'v>>>,
-) -> String {
-    let command_line_key = command_line_digest
-        .map(|digest| format!("fingerprint:{digest:?}"))
-        .unwrap_or_else(|| {
-            let fingerprint = bazel_debug_fingerprint(format_args!(
-                "{exe:?}:{args:?}:{env:?}:{bazel_string_args:?}:{bazel_cc_command_line:?}"
-            ));
-            format!("debug-fingerprint:{fingerprint:016x}")
-        });
-    format!(
-        "SpawnAction:mnemonic={}:command_line={}:use_default_shell_env={}:local_only={}:supports_path_mapping={}:has_string_args={}:has_cc_command_line={}:worker={}:remote_worker={}",
-        category.as_str(),
-        command_line_key,
-        use_default_shell_env,
-        local_only,
-        supports_bazel_path_mapping,
-        bazel_string_args.is_some(),
-        bazel_cc_command_line.is_some(),
-        bazel_worker_action_key(worker),
-        bazel_worker_action_key(remote_worker),
+fn bazel_default_action_environment_for_owner(
+    owner: &BaseDeferredKey,
+) -> (Vec<(String, String)>, Vec<String>) {
+    let strict_action_env = bazel_owner_action_env_bool(owner, BAZEL_STRICT_ACTION_ENV, true);
+    let mut fixed_env = BTreeMap::new();
+    let mut inherited_env = BTreeSet::new();
+    if strict_action_env {
+        if cfg!(windows) {
+            fixed_env.insert("PATH".to_owned(), "c:/msys64/usr/bin".to_owned());
+        } else {
+            fixed_env.insert(
+                "PATH".to_owned(),
+                "/bin:/usr/bin:/sbin:/usr/sbin".to_owned(),
+            );
+        }
+    }
+    fixed_env.insert("LC_CTYPE".to_owned(), "C.UTF-8".to_owned());
+
+    let key = if bazel_owner_uses_exec_configuration(owner) {
+        BAZEL_HOST_ACTION_ENV
+    } else {
+        BAZEL_ACTION_ENV
+    };
+    for entry in bazel_owner_action_env_values(owner, key) {
+        if let Some(name) = entry.strip_prefix('=') {
+            fixed_env.remove(name);
+            inherited_env.remove(name);
+        } else if let Some((name, value)) = entry.split_once('=') {
+            fixed_env.insert(name.to_owned(), value.to_owned());
+            inherited_env.remove(name);
+        } else {
+            fixed_env.remove(entry.as_str());
+            inherited_env.insert(entry);
+        }
+    }
+
+    (
+        fixed_env.into_iter().collect(),
+        inherited_env.into_iter().collect(),
     )
 }
 
@@ -953,10 +988,12 @@ fn register_bazel_run_action<'v>(
     worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
     remote_worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
     mnemonic: Option<StringValue<'v>>,
+    execution_info: Vec<(String, String)>,
     use_default_shell_env: bool,
     resource_set: NoneOr<StarlarkCallable<'v>>,
     local_only: bool,
     supports_bazel_path_mapping: bool,
+    uses_default_exec_group_owner: bool,
     bazel_string_args: Option<Box<[String]>>,
     bazel_cc_command_line: Option<ValueTyped<'v, BazelCcCompileCommandLine<'v>>>,
     precomputed_local_action_cache_command_line_digest: Option<ExpandedCommandLineDigest>,
@@ -1018,25 +1055,44 @@ fn register_bazel_run_action<'v>(
     let category = mnemonic.unwrap_or_else(|| eval.heap().alloc_str("BazelRun"));
     let effective_supports_bazel_path_mapping = supports_bazel_path_mapping && !local_only;
     let bazel_tool_runfiles = bazel_tool_runfiles(this, tools, eval)?;
-    {
+    let (default_shell_env, inherited_env) = if use_default_shell_env {
+        let state = this.state()?;
+        bazel_default_action_environment_for_owner(state.analysis_value_storage.self_key.owner())
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let shareable_action_owner_key =
+        if uses_default_exec_group_owner && bazel_cc_command_line.is_none() {
+            this.bazel_default_exec_group_action_owner_key()?
+        } else {
+            None
+        };
+    let shareable_action_key = if bazel_cc_command_line.is_some() {
+        None
+    } else {
+        static_env_entries
+            .as_deref()
+            .and_then(|static_env_entries| {
+                let owner_key = shareable_action_owner_key.as_ref()?;
+                precompute_bazel_spawn_action_key_for_bazel_run_action(
+                    &exe,
+                    &args,
+                    static_env_entries,
+                    &default_shell_env,
+                    &inherited_env,
+                    &outputs,
+                    category.as_str(),
+                    &execution_info,
+                    effective_supports_bazel_path_mapping,
+                    this.digest_config,
+                    bazel_string_args.as_deref(),
+                    owner_key,
+                )
+            })
+    };
+    if let Some(shareable_action_key) = &shareable_action_key {
         let mut state = this.state()?;
         if !state.should_register_bazel_shareable_action_for_outputs(&outputs, |state| {
-            let command_line_digest = precomputed_local_action_cache_command_line_digest
-                .clone()
-                .or_else(|| {
-                    if bazel_string_args.is_some() || bazel_cc_command_line.is_some() {
-                        return None;
-                    }
-                    static_env_entries.as_deref().and_then(|static_env_entries| {
-                        precompute_bazel_local_action_cache_command_line_digest_for_cmd_args(
-                            &exe,
-                            &args,
-                            static_env_entries,
-                            &outputs,
-                            this.digest_config,
-                        )
-                    })
-                });
             let mandatory_inputs = bazel_run_mandatory_inputs(
                 &outputs,
                 &exe,
@@ -1048,22 +1104,10 @@ fn register_bazel_run_action<'v>(
                 bazel_executable_runfiles,
                 bazel_tool_runfiles,
             )?;
-            Ok(BazelShareableActionIdentity::new(
-                bazel_run_action_key(
-                    command_line_digest.as_ref(),
-                    &exe,
-                    &args,
-                    env,
-                    worker,
-                    remote_worker,
-                    category,
-                    use_default_shell_env,
-                    local_only,
-                    effective_supports_bazel_path_mapping,
-                    bazel_string_args.as_deref(),
-                    bazel_cc_command_line,
-                ),
-                state.bazel_shareable_artifact_group_identities(mandatory_inputs.iter()),
+            Ok(BazelShareableActionIdentity::spawn(
+                category.as_str(),
+                shareable_action_key.clone(),
+                state.bazel_shareable_artifact_group_identities(mandatory_inputs.iter())?,
                 state.bazel_shareable_output_identities(&outputs),
             ))
         })? {
@@ -1110,6 +1154,9 @@ fn register_bazel_run_action<'v>(
         bazel_use_default_shell_env: Some(use_default_shell_env),
         supports_bazel_path_mapping: effective_supports_bazel_path_mapping,
         bazel_string_args,
+        bazel_shared_action_key: shareable_action_key
+            .as_ref()
+            .map(|action_key| action_key.as_str().to_owned()),
         precomputed_local_action_cache_command_line_digest,
     };
 
@@ -1118,14 +1165,43 @@ fn register_bazel_run_action<'v>(
     Ok(NoneType)
 }
 
-fn supports_bazel_path_mapping(execution_requirements: Value<'_>) -> starlark::Result<bool> {
+fn bazel_execution_info_entries(
+    execution_requirements: Value<'_>,
+) -> starlark::Result<Vec<(String, String)>> {
     let Some(requirements) = DictRef::from_value(execution_requirements) else {
-        return Ok(false);
+        return Ok(Vec::new());
     };
-    Ok(requirements.get_str("supports-path-mapping").is_some()
-        && requirements.get_str("local").is_none()
-        && !(requirements.get_str("no-sandbox").is_some()
-            && requirements.get_str("no-remote").is_some()))
+    let mut entries = Vec::with_capacity(requirements.len());
+    for (key, value) in requirements.iter() {
+        let Some(key) = key.unpack_str() else {
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
+                "execution_requirements keys must be strings, got `{}`",
+                key.get_type()
+            )
+            .into());
+        };
+        entries.push((key.to_owned(), value.unpack_str().unwrap_or("").to_owned()));
+    }
+    entries.sort();
+    Ok(entries)
+}
+
+fn bazel_execution_info_contains(execution_info: &[(String, String)], key: &str) -> bool {
+    execution_info
+        .binary_search_by(|(entry, _)| entry.as_str().cmp(key))
+        .is_ok()
+}
+
+fn supports_bazel_path_mapping(execution_info: &[(String, String)]) -> bool {
+    bazel_execution_info_contains(execution_info, "supports-path-mapping")
+        && !bazel_execution_info_contains(execution_info, "local")
+        && !(bazel_execution_info_contains(execution_info, "no-sandbox")
+            && bazel_execution_info_contains(execution_info, "no-remote"))
+}
+
+fn uses_bazel_default_exec_group_owner(toolchain: Value<'_>, exec_group: Value<'_>) -> bool {
+    toolchain.is_none() && exec_group.is_none()
 }
 
 pub(crate) fn register_bazel_cc_compile_action<'v>(
@@ -1167,10 +1243,12 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
         None,
         None,
         Some(action.mnemonic),
+        Vec::new(),
         true,
         NoneOr::None,
         false,
         false,
+        true,
         None,
         Some(action.command_line),
         precomputed_local_action_cache_command_line_digest,
@@ -1235,10 +1313,12 @@ pub(crate) fn register_bazel_java_run_action<'v>(
         worker,
         remote_worker,
         Some(action.mnemonic),
+        Vec::new(),
         true,
         NoneOr::None,
         false,
         false,
+        true,
         None,
         None,
         None,
@@ -1273,7 +1353,10 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] local_only: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let supports_bazel_path_mapping = supports_bazel_path_mapping(execution_requirements)?;
+        let execution_info = bazel_execution_info_entries(execution_requirements)?;
+        let supports_bazel_path_mapping = supports_bazel_path_mapping(&execution_info);
+        let uses_default_exec_group_owner =
+            uses_bazel_default_exec_group_owner(toolchain, exec_group);
         let _unused = (progress_message, toolchain, exec_group);
         let heap = eval.heap();
         let exe = StarlarkCmdArgs::from_values([heap.alloc_str("/bin/bash").to_value()])?;
@@ -1298,10 +1381,12 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             None,
             None,
             mnemonic,
+            execution_info,
             use_default_shell_env,
             resource_set,
             local_only,
             supports_bazel_path_mapping,
+            uses_default_exec_group_owner,
             None,
             None,
             None,
@@ -1501,7 +1586,10 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneType> {
         let arguments = arguments.into_option();
         if let Some(executable) = executable {
-            let supports_bazel_path_mapping = supports_bazel_path_mapping(execution_requirements)?;
+            let execution_info = bazel_execution_info_entries(execution_requirements)?;
+            let supports_bazel_path_mapping = supports_bazel_path_mapping(&execution_info);
+            let uses_default_exec_group_owner =
+                uses_bazel_default_exec_group_owner(toolchain, exec_group);
             let _unused = (progress_message, toolchain, exec_group);
             if let Ok(worker_run) = ValueOf::<&WorkerRunInfo>::unpack_value_err(executable) {
                 let worker = worker_run.typed.worker();
@@ -1527,10 +1615,12 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                     worker,
                     remote_worker,
                     mnemonic,
+                    execution_info.clone(),
                     use_default_shell_env,
                     resource_set,
                     local_only,
                     supports_bazel_path_mapping,
+                    uses_default_exec_group_owner,
                     None,
                     None,
                     None,
@@ -1566,10 +1656,12 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                 None,
                 None,
                 mnemonic,
+                execution_info,
                 use_default_shell_env,
                 resource_set,
                 local_only,
                 supports_bazel_path_mapping,
+                uses_default_exec_group_owner,
                 None,
                 None,
                 None,
@@ -1915,6 +2007,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             bazel_use_default_shell_env: None,
             supports_bazel_path_mapping: false,
             bazel_string_args: None,
+            bazel_shared_action_key: None,
             precomputed_local_action_cache_command_line_digest: None,
         };
 

@@ -12,13 +12,13 @@ use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
-use std::hash::Hasher;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use allocative::Allocative;
 use bz_artifact::actions::key::ActionIndex;
 use bz_artifact::actions::key::ActionKey;
+use bz_artifact::artifact::artifact_type::Artifact;
 use bz_artifact::artifact::artifact_type::DeclaredArtifact;
 use bz_artifact::artifact::artifact_type::OutputArtifact;
 use bz_artifact::artifact::build_artifact::BuildArtifact;
@@ -35,7 +35,6 @@ use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use bz_hash::BuckIndexSet;
 use bz_interpreter::testing::Buck2TestHeapName;
-use bz_util::strong_hasher::Blake3StrongHasher;
 use bz_util::thin_box::ThinBoxSlice;
 use derivative::Derivative;
 use dupe::Dupe;
@@ -77,6 +76,7 @@ use crate::actions::registry::RecordedActions;
 use crate::analysis::anon_promises_dyn::AnonPromisesDyn;
 use crate::analysis::anon_targets_registry::ANON_TARGET_REGISTRY_NEW;
 use crate::analysis::anon_targets_registry::AnonTargetsRegistryDyn;
+use crate::analysis::bazel_action_key::BazelActionKey;
 use crate::analysis::extra_v::AnalysisExtraValue;
 use crate::analysis::extra_v::FrozenAnalysisExtraValue;
 use crate::artifact_groups::ArtifactGroup;
@@ -90,6 +90,8 @@ use crate::dynamic::storage::DynamicLambdaParamsStorage;
 use crate::dynamic::storage::FrozenDynamicLambdaParamsStorage;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_declared_output_artifact_path;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValueRef;
@@ -116,89 +118,170 @@ pub struct AnalysisRegistry<'v> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Allocative)]
-pub enum BazelShareableArtifactIdentity {
-    ArtifactGroup(ArtifactGroup),
-    Path(String),
+pub struct BazelArtifactOwnerlessKey {
+    root: String,
+    exec_path: String,
+}
+
+impl BazelArtifactOwnerlessKey {
+    pub fn source_or_bazel_exec_path(path: impl Into<String>) -> Self {
+        Self {
+            root: String::new(),
+            exec_path: path.into(),
+        }
+    }
+
+    pub fn from_artifact(artifact: &Artifact) -> Self {
+        Self::source_or_bazel_exec_path(bazel_artifact_path(artifact.get_path()))
+    }
+
+    pub fn from_output_artifact(output: &OutputArtifact<'_>) -> Self {
+        Self::source_or_bazel_exec_path(bazel_artifact_path(output.get_path()))
+    }
+
+    fn storage_key(&self) -> String {
+        format!("{}\0{}", self.root, self.exec_path)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Allocative)]
+enum BazelShareableActionClass {
+    Spawn,
+    Symlink,
+    SolibSymlink,
+    UnresolvedSymlink,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Allocative)]
 pub struct BazelShareableActionIdentity {
+    action_class: BazelShareableActionClass,
+    mnemonic: String,
     action_key: String,
-    mandatory_inputs_count: usize,
-    #[allocative(skip)]
-    mandatory_inputs_digest: blake3::Hash,
-    outputs_count: usize,
-    #[allocative(skip)]
-    outputs_digest: blake3::Hash,
+    is_shareable: bool,
+    mandatory_inputs: Vec<BazelArtifactOwnerlessKey>,
+    outputs: Vec<BazelArtifactOwnerlessKey>,
 }
 
 impl BazelShareableActionIdentity {
-    pub fn new(
-        action_key: impl Into<String>,
-        mandatory_inputs: impl IntoIterator<Item = BazelShareableArtifactIdentity>,
-        outputs: impl IntoIterator<Item = String>,
+    fn shareable(
+        action_class: BazelShareableActionClass,
+        mnemonic: impl Into<String>,
+        action_key: BazelActionKey,
+        mandatory_inputs: impl IntoIterator<Item = BazelArtifactOwnerlessKey>,
+        outputs: impl IntoIterator<Item = BazelArtifactOwnerlessKey>,
     ) -> Self {
-        let (mandatory_inputs_count, mandatory_inputs_digest) =
-            Self::digest_artifact_identities(mandatory_inputs);
-        let (outputs_count, outputs_digest) = Self::digest_strings(outputs);
         Self {
-            action_key: action_key.into(),
-            mandatory_inputs_count,
-            mandatory_inputs_digest,
-            outputs_count,
-            outputs_digest,
+            action_class,
+            mnemonic: mnemonic.into(),
+            action_key: action_key.into_string(),
+            is_shareable: true,
+            mandatory_inputs: mandatory_inputs.into_iter().collect(),
+            outputs: outputs.into_iter().collect(),
         }
     }
 
-    pub fn path_input(path: impl Into<String>) -> BazelShareableArtifactIdentity {
-        BazelShareableArtifactIdentity::Path(path.into())
+    pub fn spawn(
+        mnemonic: impl Into<String>,
+        action_key: BazelActionKey,
+        mandatory_inputs: impl IntoIterator<Item = BazelArtifactOwnerlessKey>,
+        outputs: impl IntoIterator<Item = BazelArtifactOwnerlessKey>,
+    ) -> Self {
+        Self::shareable(
+            BazelShareableActionClass::Spawn,
+            mnemonic,
+            action_key,
+            mandatory_inputs,
+            outputs,
+        )
+    }
+
+    pub fn symlink(
+        executable: bool,
+        action_key: BazelActionKey,
+        mandatory_inputs: impl IntoIterator<Item = BazelArtifactOwnerlessKey>,
+        outputs: impl IntoIterator<Item = BazelArtifactOwnerlessKey>,
+    ) -> Self {
+        Self::shareable(
+            BazelShareableActionClass::Symlink,
+            if executable {
+                "ExecutableSymlink"
+            } else {
+                "Symlink"
+            },
+            action_key,
+            mandatory_inputs,
+            outputs,
+        )
+    }
+
+    pub fn solib_symlink(
+        action_key: BazelActionKey,
+        mandatory_inputs: impl IntoIterator<Item = BazelArtifactOwnerlessKey>,
+        outputs: impl IntoIterator<Item = BazelArtifactOwnerlessKey>,
+    ) -> Self {
+        Self::shareable(
+            BazelShareableActionClass::SolibSymlink,
+            "SolibSymlink",
+            action_key,
+            mandatory_inputs,
+            outputs,
+        )
+    }
+
+    pub fn unresolved_symlink(
+        action_key: BazelActionKey,
+        outputs: impl IntoIterator<Item = BazelArtifactOwnerlessKey>,
+    ) -> Self {
+        Self::shareable(
+            BazelShareableActionClass::UnresolvedSymlink,
+            "UnresolvedSymlink",
+            action_key,
+            Vec::new(),
+            outputs,
+        )
+    }
+
+    pub fn source_or_bazel_exec_path_input(path: impl Into<String>) -> BazelArtifactOwnerlessKey {
+        BazelArtifactOwnerlessKey::source_or_bazel_exec_path(path)
+    }
+
+    pub fn artifact_group_input(
+        input: &ArtifactGroup,
+    ) -> bz_error::Result<BazelArtifactOwnerlessKey> {
+        match input {
+            ArtifactGroup::Artifact(artifact) => {
+                Ok(BazelArtifactOwnerlessKey::from_artifact(artifact))
+            }
+            ArtifactGroup::TransitiveSetProjection(_) => Err(internal_error!(
+                "Bazel shared-action identity requires expanded transitive-set inputs"
+            )
+            .into()),
+            ArtifactGroup::Promise(promise) => match promise.promise_artifact.get() {
+                Some(artifact) => Ok(BazelArtifactOwnerlessKey::from_artifact(artifact)),
+                None => Err(internal_error!(
+                    "Bazel shared-action identity requires resolved promise inputs"
+                )
+                .into()),
+            },
+        }
+    }
+
+    fn can_be_shared_with(&self, other: &Self) -> bool {
+        if self.action_class != other.action_class
+            || self.mnemonic != other.mnemonic
+            || self.action_key != other.action_key
+        {
+            return false;
+        }
+        if self.is_shareable && other.is_shareable {
+            return self.mandatory_inputs == other.mandatory_inputs
+                && self.outputs == other.outputs;
+        }
+        false
     }
 
     fn conflict_message(&self) -> String {
         format!("{self:?}")
-    }
-
-    fn digest_artifact_identities(
-        inputs: impl IntoIterator<Item = BazelShareableArtifactIdentity>,
-    ) -> (usize, blake3::Hash) {
-        let mut hasher = Blake3StrongHasher::new();
-        let mut count = 0;
-        for input in inputs {
-            count += 1;
-            match input {
-                BazelShareableArtifactIdentity::ArtifactGroup(input) => match input {
-                    ArtifactGroup::Artifact(artifact) => {
-                        Self::write_digest_str(&mut hasher, "artifact");
-                        let path = artifact.get_path().with_full_path(|path| path.to_string());
-                        Self::write_digest_str(&mut hasher, &path);
-                    }
-                    ArtifactGroup::TransitiveSetProjection(_) | ArtifactGroup::Promise(_) => {
-                        Self::write_digest_str(&mut hasher, "artifact_group");
-                        Self::write_digest_str(&mut hasher, &format!("{input:?}"));
-                    }
-                },
-                BazelShareableArtifactIdentity::Path(path) => {
-                    Self::write_digest_str(&mut hasher, "path");
-                    Self::write_digest_str(&mut hasher, &path);
-                }
-            }
-        }
-        (count, hasher.finalize())
-    }
-
-    fn digest_strings(values: impl IntoIterator<Item = String>) -> (usize, blake3::Hash) {
-        let mut hasher = Blake3StrongHasher::new();
-        let mut count = 0;
-        for value in values {
-            count += 1;
-            Self::write_digest_str(&mut hasher, &value);
-        }
-        (count, hasher.finalize())
-    }
-
-    fn write_digest_str(hasher: &mut Blake3StrongHasher, value: &str) {
-        hasher.write(&(value.len() as u64).to_le_bytes());
-        hasher.write(value.as_bytes());
     }
 }
 
@@ -453,13 +536,24 @@ impl<'v> AnalysisRegistry<'v> {
         heap: Heap<'v>,
     ) -> bz_error::Result<DeclaredArtifact<'v>> {
         let path = ForwardRelativePath::new(filename)?;
-        let key = Self::bazel_shareable_output_path_key(
-            path.as_str(),
-            bazel_owner.as_ref(),
-            bazel_output_root,
-            bazel_output_path_kind,
-        );
-        if let Some(artifact) = self.bazel_shareable_outputs.get(&key) {
+        let default_bazel_owner = if bazel_owner.is_none() {
+            self.analysis_value_storage
+                .self_key
+                .owner()
+                .configured_label()
+        } else {
+            None
+        };
+        let declaration_key = BazelArtifactOwnerlessKey::source_or_bazel_exec_path(
+            bazel_declared_output_artifact_path(
+                path,
+                bazel_owner.as_ref().or(default_bazel_owner.as_ref()),
+                bazel_output_root,
+                bazel_output_path_kind,
+            ),
+        )
+        .storage_key();
+        if let Some(artifact) = self.bazel_shareable_outputs.get(&declaration_key) {
             if artifact.output_type() == output_type {
                 return Ok(artifact.dupe());
             }
@@ -475,26 +569,14 @@ impl<'v> AnalysisRegistry<'v> {
             bazel_output_path_kind,
             heap,
         )?;
+        let output_artifact = artifact.as_output();
+        let action_key =
+            BazelArtifactOwnerlessKey::from_output_artifact(&output_artifact).storage_key();
         self.bazel_shareable_outputs
-            .insert(key.clone(), artifact.dupe());
+            .insert(declaration_key, artifact.dupe());
         self.bazel_shareable_output_keys
-            .insert(artifact.as_output(), key);
+            .insert(output_artifact, action_key);
         Ok(artifact)
-    }
-
-    fn bazel_shareable_output_path_key(
-        path: &str,
-        bazel_owner: Option<&ConfiguredTargetLabel>,
-        bazel_output_root: BazelOutputRoot,
-        bazel_output_path_kind: BazelOutputPathKind,
-    ) -> String {
-        format!(
-            "{}:{}",
-            bazel_owner
-                .map(|owner| owner.to_string())
-                .unwrap_or_else(|| "<no-bazel-owner>".to_owned()),
-            Self::bazel_predeclared_output_key(path, bazel_output_root, bazel_output_path_kind)
-        )
     }
 
     fn bazel_shareable_output_key_for_artifact(&self, output: &OutputArtifact<'v>) -> Option<&str> {
@@ -503,18 +585,17 @@ impl<'v> AnalysisRegistry<'v> {
             .map(String::as_str)
     }
 
-    pub fn bazel_shareable_output_identity(&self, output: &OutputArtifact<'v>) -> String {
-        let path = self
-            .bazel_shareable_output_key_for_artifact(output)
-            .map(str::to_owned)
-            .unwrap_or_else(|| output.get_path().with_full_path(|path| path.to_string()));
-        format!("{path}:{:?}", output.output_type())
+    pub fn bazel_shareable_output_identity(
+        &self,
+        output: &OutputArtifact<'v>,
+    ) -> BazelArtifactOwnerlessKey {
+        BazelArtifactOwnerlessKey::from_output_artifact(output)
     }
 
     pub fn bazel_shareable_output_identities(
         &self,
         outputs: &BuckIndexSet<OutputArtifact<'v>>,
-    ) -> Vec<String> {
+    ) -> Vec<BazelArtifactOwnerlessKey> {
         outputs
             .iter()
             .map(|output| self.bazel_shareable_output_identity(output))
@@ -524,14 +605,14 @@ impl<'v> AnalysisRegistry<'v> {
     pub fn bazel_shareable_artifact_group_identity(
         &self,
         input: &ArtifactGroup,
-    ) -> BazelShareableArtifactIdentity {
-        BazelShareableArtifactIdentity::ArtifactGroup(input.dupe())
+    ) -> bz_error::Result<BazelArtifactOwnerlessKey> {
+        BazelShareableActionIdentity::artifact_group_input(input)
     }
 
     pub fn bazel_shareable_artifact_group_identities<'a>(
         &self,
         inputs: impl IntoIterator<Item = &'a ArtifactGroup>,
-    ) -> Vec<BazelShareableArtifactIdentity> {
+    ) -> bz_error::Result<Vec<BazelArtifactOwnerlessKey>> {
         inputs
             .into_iter()
             .map(|input| self.bazel_shareable_artifact_group_identity(input))
@@ -577,7 +658,7 @@ impl<'v> AnalysisRegistry<'v> {
         let mut has_new_key = false;
         for key in &keys {
             match self.bazel_shareable_action_identities.get(key) {
-                Some(previous) if previous.as_ref() == &identity => {
+                Some(previous) if previous.can_be_shared_with(&identity) => {
                     existing.get_or_insert_with(|| (key.to_owned(), previous.clone()));
                 }
                 Some(previous) => {

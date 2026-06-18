@@ -340,6 +340,10 @@ fn bazel_package_exec_path(owner: &BaseDeferredKey) -> String {
     let Some(label) = owner.configured_label() else {
         return String::new();
     };
+    bazel_label_package_exec_path(&label)
+}
+
+fn bazel_label_package_exec_path(label: &ConfiguredTargetLabel) -> String {
     let package = label.pkg();
     let cell = package.cell_name();
     let package_path = package.cell_relative_path();
@@ -410,6 +414,40 @@ fn bazel_visible_build_artifact_short_path(path: &ArtifactPath<'_>) -> String {
         push_bazel_path_component(&mut result, component.as_str());
     }
     result
+}
+
+fn bazel_visible_declared_output_short_path(path: &ForwardRelativePath) -> String {
+    let mut result = String::new();
+    for component in path
+        .iter()
+        .filter(|component| !bazel_hidden_path_component(component.as_str()))
+    {
+        push_bazel_path_component(&mut result, component.as_str());
+    }
+    result
+}
+
+pub fn bazel_declared_output_artifact_path(
+    path: &ForwardRelativePath,
+    owner: Option<&ConfiguredTargetLabel>,
+    output_root: BazelOutputRoot,
+    output_path_kind: BazelOutputPathKind,
+) -> String {
+    let short_path = bazel_visible_declared_output_short_path(path);
+    let mut exec_path = output_root.exec_root().to_owned();
+    if let Some(owner) = owner {
+        push_bazel_path_component(&mut exec_path, &bazel_configuration_exec_path(owner));
+    }
+    if output_path_kind == BazelOutputPathKind::PackageRelative {
+        if let Some(owner) = owner {
+            let package_exec_path = bazel_label_package_exec_path(owner);
+            if !bazel_path_has_package_prefix(&short_path, &package_exec_path) {
+                push_bazel_path_component(&mut exec_path, &package_exec_path);
+            }
+        }
+    }
+    push_bazel_path_component(&mut exec_path, &short_path);
+    exec_path
 }
 
 fn bazel_build_artifact_path(path: ArtifactPath<'_>) -> String {

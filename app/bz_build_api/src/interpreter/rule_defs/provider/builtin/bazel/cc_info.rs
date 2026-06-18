@@ -63,10 +63,12 @@ use starlark_map::StarlarkHasher;
 
 use crate as bz_build_api;
 use crate::actions::impls::solib_symlink::UnregisteredSolibSymlinkAction;
+use crate::analysis::bazel_action_key::bazel_solib_symlink_action_key;
 use crate::analysis::registry::BazelShareableActionIdentity;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLikeUnpack;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::bazel::depset::BazelDepset;
 use crate::interpreter::rule_defs::bazel::depset::bazel_depset_to_list;
@@ -3093,7 +3095,10 @@ fn bazel_cc_register_solib_symlink<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
     let library_like = bazel_cc_input_artifact_like(&library);
-    let library_path = bazel_cc_library_root_relative_path(library_like, eval.heap())?;
+    let library_exec_path = library_like
+        .with_bazel_path(&|path| eval.heap().alloc_str(path))?
+        .as_str()
+        .to_owned();
     let associated_artifacts = library_like
         .get_associated_artifacts()
         .cloned()
@@ -3111,16 +3116,21 @@ fn bazel_cc_register_solib_symlink<'v>(
         eval.heap(),
     )?;
     let output_artifact = artifact.as_output();
-    let action_key = format!("SolibSymlink:{library_path}");
+    let symlink_exec_path = bazel_artifact_path(output_artifact.get_path());
+    let action_key = bazel_solib_symlink_action_key(&symlink_exec_path, &library_exec_path);
     match &library {
         ValueAsInputArtifactLikeUnpack::DeclaredArtifact(declared) => {
             let output_identity = state.bazel_shareable_output_identity(&output_artifact);
             state.register_bazel_solib_symlink_action(
                 declared.declared_artifact(),
                 output_artifact,
-                BazelShareableActionIdentity::new(
+                BazelShareableActionIdentity::solib_symlink(
                     action_key,
-                    vec![BazelShareableActionIdentity::path_input(library_path)],
+                    vec![
+                        BazelShareableActionIdentity::source_or_bazel_exec_path_input(
+                            library_exec_path,
+                        ),
+                    ],
                     vec![output_identity],
                 ),
             )?;
@@ -3128,9 +3138,9 @@ fn bazel_cc_register_solib_symlink<'v>(
         _ => {
             let artifact_group = library_like.get_artifact_group()?;
             if state.should_register_bazel_shareable_action(&output_artifact, |state| {
-                Ok(BazelShareableActionIdentity::new(
+                Ok(BazelShareableActionIdentity::solib_symlink(
                     action_key,
-                    vec![state.bazel_shareable_artifact_group_identity(&artifact_group)],
+                    vec![state.bazel_shareable_artifact_group_identity(&artifact_group)?],
                     vec![state.bazel_shareable_output_identity(&output_artifact)],
                 ))
             })? {

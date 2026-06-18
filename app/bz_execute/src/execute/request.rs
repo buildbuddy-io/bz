@@ -528,6 +528,8 @@ pub struct CommandExecutionRequest {
     /// Bazel-compatible shared action identity. Bazel coalesces equivalent shared actions by
     /// ownerless primary output, not by every input path.
     bazel_shared_action_primary_output: Option<ProjectRelativePathBuf>,
+    /// Bazel action key for comparing actions with the same ownerless output set.
+    bazel_shared_action_key: Option<String>,
     local_action_cache_key: Option<LocalActionCacheKey>,
     /// Whether RE execution should bypass remote action-result cache lookup.
     force_remote_execution_cache_bypass: bool,
@@ -577,6 +579,7 @@ impl CommandExecutionRequest {
             outputs_for_error_handler: Vec::new(),
             run_action_key: None,
             bazel_shared_action_primary_output: None,
+            bazel_shared_action_key: None,
             local_action_cache_key: None,
             force_remote_execution_cache_bypass: false,
             force_remote_input_reupload: false,
@@ -866,6 +869,15 @@ impl CommandExecutionRequest {
 
     pub fn bazel_shared_action_primary_output(&self) -> Option<&ProjectRelativePath> {
         self.bazel_shared_action_primary_output.as_deref()
+    }
+
+    pub fn with_bazel_shared_action_key(mut self, key: Option<String>) -> Self {
+        self.bazel_shared_action_key = key;
+        self
+    }
+
+    pub fn bazel_shared_action_key(&self) -> Option<&str> {
+        self.bazel_shared_action_key.as_deref()
     }
 
     pub fn with_local_action_cache_key(

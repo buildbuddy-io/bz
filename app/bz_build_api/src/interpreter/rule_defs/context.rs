@@ -91,6 +91,7 @@ use starlark::values::type_repr::StarlarkTypeRepr;
 use crate::actions::impls::workspace_status::UnregisteredWorkspaceStatusAction;
 use crate::actions::impls::workspace_status::WorkspaceStatusKind;
 use crate::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
+use crate::analysis::bazel_action_key::BazelActionOwnerKey;
 use crate::analysis::registry::AnalysisRegistry;
 use crate::deferred::calculation::GET_PROMISED_ARTIFACT;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
@@ -376,6 +377,50 @@ impl<'v> AnalysisActions<'v> {
         RefMut::filter_map(state, |x| x.as_mut())
             .ok()
             .ok_or_else(|| internal_error!("state to be present during execution"))
+    }
+
+    pub fn bazel_default_exec_group_action_owner_key(
+        &self,
+    ) -> bz_error::Result<Option<BazelActionOwnerKey>> {
+        let Some(exec_properties) = self.bazel_default_exec_group_exec_properties()? else {
+            return Ok(None);
+        };
+        let state = self.state()?;
+        BazelActionOwnerKey::new(state.execution_platform(), exec_properties)
+    }
+
+    fn bazel_default_exec_group_exec_properties(
+        &self,
+    ) -> bz_error::Result<Option<Vec<(String, String)>>> {
+        let Some(attrs) = self.attributes.borrow().as_ref().copied() else {
+            return Ok(Some(Vec::new()));
+        };
+        let Some(exec_properties) = struct_field(attrs, "exec_properties") else {
+            return Ok(Some(Vec::new()));
+        };
+        if exec_properties.is_none() {
+            return Ok(Some(Vec::new()));
+        }
+        let Some(exec_properties) = DictRef::from_value(exec_properties) else {
+            return Ok(None);
+        };
+        let mut default_exec_properties = Vec::new();
+        for (key, value) in exec_properties.iter() {
+            let Some(key) = key.unpack_str() else {
+                return Ok(None);
+            };
+            let Some(value) = value.unpack_str() else {
+                return Ok(None);
+            };
+            match key.split_once('.') {
+                Some(("default-exec-group", property)) => {
+                    default_exec_properties.push((property.to_owned(), value.to_owned()));
+                }
+                Some((_exec_group, _property)) => {}
+                None => default_exec_properties.push((key.to_owned(), value.to_owned())),
+            }
+        }
+        Ok(Some(default_exec_properties))
     }
 
     pub async fn run_promises<'a, 'e: 'a>(
@@ -1077,6 +1122,71 @@ impl<'v> StarlarkValue<'v> for BazelCoverageInstrumentedFunction {
 
 fn bazel_coverage_instrumented_function<'v>(heap: Heap<'v>) -> Value<'v> {
     heap.alloc(BazelCoverageInstrumentedFunction)
+}
+
+fn bazel_configured_label_has_constraint(
+    label: Option<ConfiguredTargetLabel>,
+    constraint_value: &ConstraintValueInfo<'_>,
+) -> bz_error::Result<bool> {
+    let Some(label) = label else {
+        return Ok(false);
+    };
+    let cfg = label.cfg();
+    if !cfg.is_bound() {
+        return Ok(false);
+    }
+    let (constraint_key, expected_constraint_value) = constraint_value.to_constraint_key_value();
+    Ok(cfg
+        .get_constraint_value(&constraint_key)?
+        .is_some_and(|actual_constraint_value| {
+            actual_constraint_value == &expected_constraint_value
+        }))
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelTargetPlatformHasConstraintFunction {
+    label: Option<ConfiguredTargetLabel>,
+}
+
+impl fmt::Display for BazelTargetPlatformHasConstraintFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<ctx.target_platform_has_constraint>")
+    }
+}
+
+starlark::starlark_simple_value!(BazelTargetPlatformHasConstraintFunction);
+
+#[starlark_value(type = "function")]
+impl<'v> StarlarkValue<'v> for BazelTargetPlatformHasConstraintFunction {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        args.no_named_args()?;
+        let positions = args.positions(eval.heap())?.collect::<Vec<_>>();
+        let [constraint_value] = positions.as_slice() else {
+            return Err(bz_error::bz_error!(
+                bz_error::ErrorTag::Input,
+                "ctx.target_platform_has_constraint() expects exactly one positional argument"
+            )
+            .into());
+        };
+        let constraint_value =
+            ValueOf::<&ConstraintValueInfo>::unpack_value_err(*constraint_value)?;
+        Ok(Value::new_bool(bazel_configured_label_has_constraint(
+            self.label.dupe(),
+            constraint_value.typed,
+        )?))
+    }
+}
+
+fn bazel_target_platform_has_constraint_function<'v>(
+    heap: Heap<'v>,
+    label: Option<ConfiguredTargetLabel>,
+) -> Value<'v> {
+    heap.alloc(BazelTargetPlatformHasConstraintFunction { label })
 }
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
@@ -2255,6 +2365,7 @@ pub fn analysis_actions_to_bazel_ctx_with_overrides<'v>(
 ) -> Value<'v> {
     let this = actions.as_ref();
     let empty_struct = heap.alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new()));
+    let target_platform_label = label.map(|label| label.label().target().dupe());
     let label_value = label
         .map(|label| label.to_value())
         .unwrap_or_else(Value::new_none);
@@ -2300,6 +2411,10 @@ pub fn analysis_actions_to_bazel_ctx_with_overrides<'v>(
             ])),
         ),
         ("rule_class", heap.alloc_str(&rule_kind).to_value()),
+        (
+            "target_platform_has_constraint",
+            bazel_target_platform_has_constraint_function(heap, target_platform_label),
+        ),
         ("tokenize", bazel_tokenize_function(heap)),
         ("toolchains", this.bazel_toolchains().to_value()),
         ("version_file", Value::new_none()),
@@ -3684,12 +3799,8 @@ where
             )));
         };
         if value != variable {
-            value = expand_bazel_template_with_locations(
-                &value,
-                location_expander,
-                lookup,
-                depth + 1,
-            )?;
+            value =
+                expand_bazel_template_with_locations(&value, location_expander, lookup, depth + 1)?;
         }
         result.push_str(&value);
     }
@@ -4002,20 +4113,11 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         this: RefAnalysisContext<'v>,
         #[starlark(require = pos)] constraint_value: ValueOf<'v, &'v ConstraintValueInfo<'v>>,
     ) -> starlark::Result<bool> {
-        let Some(label) = this.0.label else {
-            return Ok(false);
-        };
-        let cfg = label.label().target().cfg();
-        if !cfg.is_bound() {
-            return Ok(false);
-        }
-        let (constraint_key, expected_constraint_value) =
-            constraint_value.typed.to_constraint_key_value();
-        Ok(cfg
-            .get_constraint_value(&constraint_key)?
-            .is_some_and(|actual_constraint_value| {
-                actual_constraint_value == &expected_constraint_value
-            }))
+        let label = this.0.label.map(|label| label.label().target().dupe());
+        Ok(bazel_configured_label_has_constraint(
+            label,
+            constraint_value.typed,
+        )?)
     }
 
     /// Returns a Bazel runfiles object.

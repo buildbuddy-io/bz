@@ -24,6 +24,7 @@ use crate::artifact_groups::promise::PromiseArtifactId;
 pub mod anon_promises_dyn;
 // TODO(@wendyy) move into `bz_interpreter_for_build`
 pub mod anon_targets_registry;
+pub mod bazel_action_key;
 pub mod calculation;
 pub mod extra_v;
 pub mod registry;

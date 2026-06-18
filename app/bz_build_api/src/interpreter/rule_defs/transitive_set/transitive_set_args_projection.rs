@@ -256,6 +256,19 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for TransitiveSetArgsProjectio
         let set = TransitiveSet::from_value(self.transitive_set.get().to_value())
             .ok_or_else(|| internal_error!("Invalid transitive_set"))?;
 
+        if visitor.expand_transitive_set_inputs_for_bazel_shared_action() {
+            for node in set.iter(self.ordering).values() {
+                let projection = node
+                    .projections
+                    .get(self.projection)
+                    .ok_or_else(|| internal_error!("Invalid projection id"))?;
+
+                TransitiveSetArgsProjection::as_command_line(*projection)?
+                    .visit_artifacts(visitor)?;
+            }
+            return Ok(());
+        }
+
         visitor.visit_input(
             ArtifactGroup::TransitiveSetProjection(Arc::new(TransitiveSetProjectionWrapper::new(
                 TransitiveSetProjectionKey {

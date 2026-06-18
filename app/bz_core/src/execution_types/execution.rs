@@ -97,6 +97,13 @@ impl ExecutionPlatform {
         }
     }
 
+    pub fn target_label(&self) -> Option<&TargetLabel> {
+        match &*self.0 {
+            ExecutionPlatformData::Platform { target, .. } => Some(target),
+            ExecutionPlatformData::LegacyExecutionPlatform { .. } => None,
+        }
+    }
+
     pub fn executor_config(&self) -> &Arc<CommandExecutorConfig> {
         match &*self.0 {
             ExecutionPlatformData::Platform {

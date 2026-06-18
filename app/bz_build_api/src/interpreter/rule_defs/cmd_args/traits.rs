@@ -38,6 +38,7 @@ use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvide
 use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use bz_interpreter::types::project_root::StarlarkProjectRoot;
 use bz_interpreter::types::target_label::StarlarkTargetLabel;
+use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::typing::Ty;
 use starlark::values::string::StarlarkStr;
@@ -85,6 +86,10 @@ pub trait CommandLineArtifactVisitor<'v> {
     }
 
     fn skip_hidden(&self) -> bool {
+        false
+    }
+
+    fn expand_transitive_set_inputs_for_bazel_shared_action(&self) -> bool {
         false
     }
 }
@@ -575,6 +580,25 @@ pub trait CommandLineContext {
         .with_buck_error_context(|| format!("Error resolving output artifact: {artifact}"))
     }
 
+    fn resolve_declared_artifact(
+        &self,
+        artifact: &DeclaredArtifact,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
+        if artifact.is_bound() {
+            return self.resolve_artifact(
+                &artifact.dupe().ensure_bound()?.into_artifact(),
+                artifact_path_mapping,
+            );
+        }
+
+        self.resolve_project_path(artifact.get_path().resolve(
+            self.fs().fs(),
+            Some(&ContentBasedPathHash::for_output_artifact()),
+        )?)
+        .with_buck_error_context(|| format!("Error resolving output artifact: {artifact}"))
+    }
+
     fn resolve_cell_path(&self, path: CellPathRef) -> bz_error::Result<CommandLineLocation<'_>> {
         self.resolve_project_path(self.fs().fs().resolve_cell_path(path)?)
             .with_buck_error_context(|| format!("Error resolving cell path: {path}"))
@@ -611,6 +635,12 @@ pub trait CommandLineBuilder {
     fn push_location(&mut self, location: CommandLineLocation<'_>) {
         self.push_arg(location.into_string());
     }
+
+    fn is_bazel_action_key_fingerprint(&self) -> bool {
+        false
+    }
+
+    fn push_bazel_param_file_info(&mut self, _arg_format: &str, _format: ParamFileFormat) {}
 }
 
 pub fn add_artifact_to_command_line_expanding_directories(

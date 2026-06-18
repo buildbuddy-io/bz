@@ -20,6 +20,7 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use bz_artifact::artifact::artifact_type::Artifact;
 use bz_artifact::artifact::artifact_type::BaseArtifactKind;
+use bz_artifact::artifact::artifact_type::DeclaredArtifact;
 use bz_artifact::artifact::artifact_type::OutputArtifact;
 use bz_artifact::artifact::build_artifact::BuildArtifact;
 use bz_build_api::actions::Action;
@@ -34,6 +35,10 @@ use bz_build_api::actions::execute::error::ExecuteError;
 use bz_build_api::actions::impls::expanded_command_line::ExpandedCommandLine;
 use bz_build_api::actions::impls::expanded_command_line::ExpandedCommandLineDigest;
 use bz_build_api::actions::impls::expanded_command_line::ExpandedCommandLineFingerprinter;
+use bz_build_api::analysis::bazel_action_key::BazelActionKey;
+use bz_build_api::analysis::bazel_action_key::BazelActionOwnerKey;
+use bz_build_api::analysis::bazel_action_key::BazelFingerprint;
+use bz_build_api::analysis::bazel_action_key::bazel_spawn_action_key;
 use bz_build_api::artifact_groups::ArtifactGroup;
 use bz_build_api::artifact_groups::ArtifactGroupValues;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
@@ -312,6 +317,7 @@ pub(crate) struct UnregisteredRunAction {
     pub(crate) bazel_use_default_shell_env: Option<bool>,
     pub(crate) supports_bazel_path_mapping: bool,
     pub(crate) bazel_string_args: Option<Box<[String]>>,
+    pub(crate) bazel_shared_action_key: Option<String>,
     #[pagable(discard = "None")]
     pub(crate) precomputed_local_action_cache_command_line_digest:
         Option<ExpandedCommandLineDigest>,
@@ -1257,6 +1263,43 @@ impl CommandLineBuilder for LocalActionCacheCommandLineFingerprinter<'_> {
     }
 }
 
+struct BazelActionKeyCommandLineFingerprinter<'a> {
+    inner: &'a mut BazelFingerprint,
+    bazel_paths: bool,
+    bazel_path_mapping: bool,
+}
+
+impl CommandLineBuilder for BazelActionKeyCommandLineFingerprinter<'_> {
+    fn push_arg(&mut self, s: String) {
+        let s = if self.bazel_paths {
+            bazel_normalize_and_map_buck_owned_exec_paths(&s, self.bazel_path_mapping)
+        } else {
+            s
+        };
+        self.inner.add_string(&s);
+    }
+
+    fn is_bazel_action_key_fingerprint(&self) -> bool {
+        true
+    }
+
+    fn push_bazel_param_file_info(&mut self, arg_format: &str, format: ParamFileFormat) {
+        self.inner
+            .add_uuid(0x106c_1389_88d7_4cc1, 0x8f05_f8a6_1fd8_f7b1)
+            .add_string(arg_format)
+            .add_string(bazel_parameter_file_type(format));
+    }
+}
+
+fn bazel_parameter_file_type(format: ParamFileFormat) -> &'static str {
+    match format {
+        ParamFileFormat::Shell => "SHELL_QUOTED",
+        ParamFileFormat::Multiline | ParamFileFormat::FlagPerLine => "UNQUOTED",
+        ParamFileFormat::GccQuoted => "GCC_QUOTED",
+        ParamFileFormat::Windows => "WINDOWS",
+    }
+}
+
 fn fingerprint_param_files(
     command_line_digest: &mut ExpandedCommandLineFingerprinter,
     param_files: &[RunActionParamFile],
@@ -1447,6 +1490,17 @@ impl CommandLineContext for BazelLocalActionCachePrecomputeContext {
         self.resolve_artifact(artifact, &EmptyArtifactPathMapper)
     }
 
+    fn resolve_declared_artifact(
+        &self,
+        artifact: &DeclaredArtifact,
+        _artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> bz_error::Result<CommandLineLocation<'_>> {
+        Ok(CommandLineLocation::from_relative_path(
+            RelativePathBuf::from(bazel_artifact_path(artifact.get_path())),
+            PathSeparatorKind::system_default(),
+        ))
+    }
+
     fn resolve_cell_path(&self, _path: CellPathRef) -> bz_error::Result<CommandLineLocation<'_>> {
         Err(internal_error!(
             "cell paths are not supported in Bazel local action cache precompute"
@@ -1491,6 +1545,24 @@ pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cmd_ar
     outputs: &BuckIndexSet<OutputArtifact<'v>>,
     digest_config: DigestConfig,
 ) -> Option<ExpandedCommandLineDigest> {
+    precompute_bazel_local_action_cache_command_line_digest_for_bazel_run_action(
+        exe,
+        args,
+        env,
+        outputs,
+        digest_config,
+        None,
+    )
+}
+
+pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_bazel_run_action<'v>(
+    exe: &StarlarkCmdArgs<'v>,
+    args: &StarlarkCmdArgs<'v>,
+    env: &[(&'v str, &'v str)],
+    outputs: &BuckIndexSet<OutputArtifact<'v>>,
+    digest_config: DigestConfig,
+    bazel_string_args: Option<&[String]>,
+) -> Option<ExpandedCommandLineDigest> {
     let base_output = outputs.iter().next()?;
     let base_bazel_exec_path =
         bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(base_output.get_path()));
@@ -1499,13 +1571,17 @@ pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cmd_ar
     let mut command_line_digest = ExpandedCommandLineFingerprinter::new();
 
     {
-        let mut command_line_builder = LocalActionCacheCommandLineFingerprinter {
-            inner: &mut command_line_digest,
-            bazel_paths: true,
-            bazel_path_mapping: false,
-        };
-        exe.add_to_command_line(&mut command_line_builder, &mut ctx, &artifact_path_mapping)
-            .ok()?;
+        if let Some(args) = bazel_string_args {
+            push_string_args_for_local_action_cache(&mut command_line_digest, args, true, false);
+        } else {
+            let mut command_line_builder = LocalActionCacheCommandLineFingerprinter {
+                inner: &mut command_line_digest,
+                bazel_paths: true,
+                bazel_path_mapping: false,
+            };
+            exe.add_to_command_line(&mut command_line_builder, &mut ctx, &artifact_path_mapping)
+                .ok()?;
+        }
     }
     command_line_digest.push_count();
 
@@ -1536,6 +1612,103 @@ pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cmd_ar
     }
     command_line_digest.push_count();
     Some(command_line_digest.finalize())
+}
+
+const BAZEL_SPAWN_ACTION_GUID: &str = "ebd6fce3-093e-45ee-adb6-bf513b602f0d";
+const BAZEL_STRIPPING_PATH_MAPPER_GUID: &str = "8eb2ad5a-85d4-435b-858f-5c192e91997d";
+const BAZEL_EMPTY_NESTED_SET_DIGEST: i32 = 104_395_303;
+
+pub(crate) fn precompute_bazel_spawn_action_key_for_bazel_run_action<'v>(
+    exe: &StarlarkCmdArgs<'v>,
+    args: &StarlarkCmdArgs<'v>,
+    explicit_env: &[(&'v str, &'v str)],
+    default_shell_env: &[(String, String)],
+    inherited_env: &[String],
+    outputs: &BuckIndexSet<OutputArtifact<'v>>,
+    mnemonic: &str,
+    execution_info: &[(String, String)],
+    supports_bazel_path_mapping: bool,
+    digest_config: DigestConfig,
+    bazel_string_args: Option<&[String]>,
+    owner_key: &BazelActionOwnerKey,
+) -> Option<BazelActionKey> {
+    let base_output = outputs.iter().next()?;
+    let base_bazel_exec_path =
+        bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(base_output.get_path()));
+    let mut ctx = BazelLocalActionCachePrecomputeContext::new(base_bazel_exec_path, digest_config);
+    let artifact_path_mapping = EmptyArtifactPathMapper;
+    let mut fingerprint = BazelFingerprint::new();
+
+    fingerprint.add_string(BAZEL_SPAWN_ACTION_GUID);
+    {
+        let mut command_line_builder = BazelActionKeyCommandLineFingerprinter {
+            inner: &mut fingerprint,
+            bazel_paths: true,
+            bazel_path_mapping: supports_bazel_path_mapping,
+        };
+        exe.add_to_command_line(&mut command_line_builder, &mut ctx, &artifact_path_mapping)
+            .ok()?;
+    }
+    {
+        if let Some(args) = bazel_string_args {
+            for arg in args {
+                fingerprint.add_string(&bazel_normalize_and_map_buck_owned_exec_paths(
+                    arg,
+                    supports_bazel_path_mapping,
+                ));
+            }
+        } else {
+            let mut command_line_builder = BazelActionKeyCommandLineFingerprinter {
+                inner: &mut fingerprint,
+                bazel_paths: true,
+                bazel_path_mapping: supports_bazel_path_mapping,
+            };
+            args.add_to_command_line(&mut command_line_builder, &mut ctx, &artifact_path_mapping)
+                .ok()?;
+        }
+    }
+
+    fingerprint.add_string(mnemonic);
+
+    let mut fixed_env = default_shell_env
+        .iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect::<SortedVectorMap<_, _>>();
+    fixed_env.extend(
+        explicit_env
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned())),
+    );
+    bazel_normalize_command_env(&mut fixed_env, supports_bazel_path_mapping);
+    fingerprint.add_string_map(
+        fixed_env
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str())),
+    );
+    let inherited_env = inherited_env
+        .iter()
+        .filter(|entry| {
+            !explicit_env
+                .iter()
+                .any(|(explicit_key, _)| *explicit_key == entry.as_str())
+        })
+        .collect::<Vec<_>>();
+    fingerprint.add_int(inherited_env.len() as i32);
+    for entry in inherited_env {
+        fingerprint.add_string(entry);
+    }
+    fingerprint.add_string_map(
+        execution_info
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str())),
+    );
+
+    if supports_bazel_path_mapping {
+        fingerprint.add_string(BAZEL_STRIPPING_PATH_MAPPER_GUID);
+        fingerprint.add_int(BAZEL_EMPTY_NESTED_SET_DIGEST);
+    }
+
+    Some(bazel_spawn_action_key(fingerprint, owner_key))
 }
 
 fn bazel_path_mapping_enabled_value(bazel_paths: bool, supports_bazel_path_mapping: bool) -> bool {
@@ -4575,6 +4748,7 @@ impl RunAction {
                 remote_worker,
                 local_action_cache_key,
                 bazel_shared_action_primary_output,
+                bazel_shared_action_key: self.inner.bazel_shared_action_key.clone(),
                 pending_action_metadata_writes,
             },
             expanded_command_line_digest_for_dep_files,
@@ -5226,6 +5400,7 @@ pub(crate) struct UnpreparedRunAction {
     remote_worker: Option<RemoteWorkerSpec>,
     local_action_cache_key: Option<LocalActionCacheKey>,
     bazel_shared_action_primary_output: Option<ProjectRelativePathBuf>,
+    bazel_shared_action_key: Option<String>,
     pending_action_metadata_writes: Vec<PendingActionMetadataWrite>,
 }
 
@@ -5273,6 +5448,7 @@ impl UnpreparedRunAction {
             remote_worker,
             local_action_cache_key,
             bazel_shared_action_primary_output,
+            bazel_shared_action_key,
             pending_action_metadata_writes: _,
         } = self;
         let paths = CommandExecutionPaths::new(inputs, outputs, fs, digest_config, interner)?;
@@ -5284,6 +5460,7 @@ impl UnpreparedRunAction {
             remote_worker,
             local_action_cache_key,
             bazel_shared_action_primary_output,
+            bazel_shared_action_key,
         })
     }
 }
@@ -5297,6 +5474,7 @@ pub(crate) struct PreparedRunAction {
     remote_worker: Option<RemoteWorkerSpec>,
     local_action_cache_key: Option<LocalActionCacheKey>,
     bazel_shared_action_primary_output: Option<ProjectRelativePathBuf>,
+    bazel_shared_action_key: Option<String>,
 }
 
 impl PreparedRunAction {
@@ -5309,6 +5487,7 @@ impl PreparedRunAction {
             remote_worker,
             local_action_cache_key,
             bazel_shared_action_primary_output,
+            bazel_shared_action_key,
         } = self;
 
         for (k, v) in extra_env {
@@ -5319,6 +5498,7 @@ impl PreparedRunAction {
             .with_worker(worker)
             .with_remote_worker(remote_worker)
             .with_bazel_shared_action_primary_output(bazel_shared_action_primary_output)
+            .with_bazel_shared_action_key(bazel_shared_action_key)
             .with_local_action_cache_key(local_action_cache_key)
     }
 }

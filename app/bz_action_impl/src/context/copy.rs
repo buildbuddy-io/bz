@@ -8,11 +8,14 @@
  * above-listed licenses.
  */
 
+use bz_build_api::analysis::bazel_action_key::bazel_symlink_action_key;
+use bz_build_api::analysis::bazel_action_key::bazel_unresolved_symlink_action_key;
+use bz_build_api::analysis::registry::BazelShareableActionIdentity;
 use bz_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use bz_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use bz_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
 use bz_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
-use bz_build_api::analysis::registry::BazelShareableActionIdentity;
 use bz_build_api::interpreter::rule_defs::context::AnalysisActions;
 use bz_execute::execute::request::OutputType;
 use bz_hash::buck_indexset;
@@ -56,6 +59,7 @@ fn copy_file_impl<'v>(
     copy: CopyMode,
     output_type: OutputType,
     has_content_based_path: Option<bool>,
+    bazel_symlink_is_executable: Option<bool>,
 ) -> bz_error::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
     let src = src.0;
 
@@ -64,18 +68,34 @@ fn copy_file_impl<'v>(
     let mut this = this.state()?;
     let (declaration, output_artifact) =
         this.get_or_declare_output(eval, dest, output_type, has_content_based_path)?;
-    if !this.should_register_bazel_shareable_action(&output_artifact, |state| {
-        Ok(BazelShareableActionIdentity::new(
-            format!("{output_type:?}:{copy:?}"),
-            vec![state.bazel_shareable_artifact_group_identity(&artifact)],
-            vec![state.bazel_shareable_output_identity(&output_artifact)],
-        ))
-    })? {
-        return Ok(declaration.into_declared_artifact(
-            associated_artifacts
-                .duped()
-                .unwrap_or_else(AssociatedArtifacts::new),
-        ));
+    if let CopyMode::Symlink {
+        use_exec_root_for_source,
+    } = &copy
+    {
+        let use_exec_root_for_source = *use_exec_root_for_source;
+        let symlink_is_executable = bazel_symlink_is_executable.unwrap_or(false);
+        if !this.should_register_bazel_shareable_action(&output_artifact, |state| {
+            let input_path = if use_exec_root_for_source {
+                let input = src.get_bound_artifact()?;
+                input
+                    .is_source()
+                    .then(|| bazel_artifact_path(input.get_path()))
+            } else {
+                None
+            };
+            Ok(BazelShareableActionIdentity::symlink(
+                symlink_is_executable,
+                bazel_symlink_action_key(input_path.as_deref()),
+                vec![state.bazel_shareable_artifact_group_identity(&artifact)?],
+                vec![state.bazel_shareable_output_identity(&output_artifact)],
+            ))
+        })? {
+            return Ok(declaration.into_declared_artifact(
+                associated_artifacts
+                    .duped()
+                    .unwrap_or_else(AssociatedArtifacts::new),
+            ));
+        }
     }
 
     this.register_action(
@@ -117,6 +137,7 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             },
             OutputType::FileOrDirectory,
             has_content_based_path.into_option(),
+            None,
         )?)
     }
 
@@ -142,6 +163,7 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             },
             OutputType::FileOrDirectory,
             has_content_based_path.into_option(),
+            None,
         )?)
     }
 
@@ -193,16 +215,18 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
                 .into());
             }
 
+            let owner_key = this.bazel_default_exec_group_action_owner_key()?;
             let mut this = this.state()?;
             let (declaration, output_artifact) =
                 this.get_or_declare_output(eval, output, OutputType::Symlink, None)?;
-            if !this.should_register_bazel_shareable_action(&output_artifact, |state| {
-                Ok(BazelShareableActionIdentity::new(
-                    format!("{:?}:{:?}:{}", OutputType::Symlink, target_type, target_path),
-                    Vec::new(),
-                    vec![state.bazel_shareable_output_identity(&output_artifact)],
-                ))
-            })? {
+            if let Some(owner_key) = owner_key
+                && !this.should_register_bazel_shareable_action(&output_artifact, |state| {
+                    Ok(BazelShareableActionIdentity::unresolved_symlink(
+                        bazel_unresolved_symlink_action_key(target_path, target_type, &owner_key),
+                        vec![state.bazel_shareable_output_identity(&output_artifact)],
+                    ))
+                })?
+            {
                 return Ok(declaration.into_declared_artifact(AssociatedArtifacts::new()));
             }
             this.register_action(
@@ -235,6 +259,7 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             },
             OutputType::FileOrDirectory,
             None,
+            Some(is_executable),
         )?)
     }
 
@@ -257,6 +282,7 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             },
             OutputType::Directory,
             has_content_based_path.into_option(),
+            None,
         )?)
     }
 

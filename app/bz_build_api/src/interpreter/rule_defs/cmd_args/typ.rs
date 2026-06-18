@@ -285,6 +285,35 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
                 }) {
                     let (param_file, arg_format) = param_file;
                     options.param_file = None;
+                    if cli.is_bazel_action_key_fingerprint() {
+                        let expand_directories = options.expand_directories;
+                        options.wrap_builder(
+                            cli,
+                            context,
+                            |cli, context| {
+                                for item in self.0.items() {
+                                    let item = item.as_command_line_arg();
+                                    if expand_directories {
+                                        item.add_to_command_line_expanding_directories(
+                                            cli,
+                                            context,
+                                            artifact_path_mapping,
+                                        )?;
+                                    } else {
+                                        item.add_to_command_line(
+                                            cli,
+                                            context,
+                                            artifact_path_mapping,
+                                        )?;
+                                    }
+                                }
+                                Ok(())
+                            },
+                            artifact_path_mapping,
+                        )?;
+                        cli.push_bazel_param_file_info(arg_format.as_str(), param_file.format);
+                        return Ok(());
+                    }
                     let mut rendered = Vec::new();
                     let expand_directories = options.expand_directories;
                     options.wrap_builder(

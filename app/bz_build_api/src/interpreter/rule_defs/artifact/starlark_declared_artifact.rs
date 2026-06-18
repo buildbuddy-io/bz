@@ -285,15 +285,12 @@ impl<'v> CommandLineArgLike<'v> for StarlarkDeclaredArtifact<'v> {
 
     fn add_to_command_line(
         &self,
-        _cli: &mut dyn CommandLineBuilder,
-        _ctx: &mut dyn CommandLineContext,
-        _artifact_path_mapping: &dyn ArtifactPathMapper,
+        cli: &mut dyn CommandLineBuilder,
+        ctx: &mut dyn CommandLineContext,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> bz_error::Result<()> {
-        // TODO: proper error message
-        Err(bz_error!(
-            bz_error::ErrorTag::Tier0,
-            "proper error here; we should not be adding mutable starlark objects to clis"
-        ))
+        cli.push_location(ctx.resolve_declared_artifact(&self.artifact, artifact_path_mapping)?);
+        Ok(())
     }
 
     fn visit_artifacts(

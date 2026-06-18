@@ -15,6 +15,7 @@ use std::fmt::Formatter;
 
 use allocative::Allocative;
 use bz_artifact::artifact::artifact_type::Artifact;
+use bz_artifact::artifact::artifact_type::DeclaredArtifact;
 use bz_core::content_hash::ContentBasedPathHash;
 use bz_core::fs::project_rel_path::ProjectRelativePath;
 use bz_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -733,6 +734,17 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
                 artifact: &Artifact,
             ) -> bz_error::Result<CommandLineLocation<'_>> {
                 let resolved = self.ctx.resolve_output_artifact(artifact)?;
+                self.apply_path_options(resolved)
+            }
+
+            fn resolve_declared_artifact(
+                &self,
+                artifact: &DeclaredArtifact,
+                artifact_path_mapping: &dyn ArtifactPathMapper,
+            ) -> bz_error::Result<CommandLineLocation<'_>> {
+                let resolved = self
+                    .ctx
+                    .resolve_declared_artifact(artifact, artifact_path_mapping)?;
                 self.apply_path_options(resolved)
             }
 
