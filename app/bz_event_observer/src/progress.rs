@@ -164,6 +164,12 @@ struct TrackedActionSpan {
     running_remote: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ActionProgressCounts {
+    enqueued: u64,
+    completed: u64,
+}
+
 #[derive(Default)]
 struct TrackedLoadSpan {}
 
@@ -183,6 +189,7 @@ pub struct BuildProgressStateTracker {
     action_keys_started: StdBuckHashSet<bz_data::ActionKey>,
     action_keys_finished: StdBuckHashSet<bz_data::ActionKey>,
     action_exec_time_keys: StdBuckHashSet<bz_data::ActionKey>,
+    action_progress_counts: Option<ActionProgressCounts>,
     validations: SpanMap<TrackedValidationSpan>,
     remote_cache_checks: StdBuckHashMap<SpanId, ()>,
 }
@@ -238,6 +245,16 @@ impl BuildProgressStateTracker {
                     self.validations.min_started = states.started as u64;
                     self.validations.min_finished = states.finished as u64;
                 }
+            }
+            UnpackedBuckEvent::Instant(
+                _,
+                _,
+                instant_event::Data::ActionExecutionProgress(progress),
+            ) => {
+                self.action_progress_counts = Some(ActionProgressCounts {
+                    enqueued: progress.enqueued,
+                    completed: progress.completed,
+                });
             }
             UnpackedBuckEvent::SpanEnd(
                 BuckEvent {
@@ -489,7 +506,10 @@ impl BuildProgressStateTracker {
 
     pub fn phase_stats(&self) -> BuildProgressPhaseStats {
         let mut actions = self.actions.get_stats();
-        if !self.action_keys_started.is_empty() || !self.action_keys_finished.is_empty() {
+        if let Some(action_progress) = self.action_progress_counts {
+            actions.started = action_progress.enqueued;
+            actions.finished = action_progress.completed;
+        } else if !self.action_keys_started.is_empty() || !self.action_keys_finished.is_empty() {
             actions.finished = self.action_keys_finished.len() as u64;
             actions.started = std::cmp::max(
                 self.action_keys_started.len() as u64,
@@ -511,7 +531,38 @@ impl BuildProgressStateTracker {
 
 #[cfg(test)]
 mod tests {
+    use std::time::UNIX_EPOCH;
+
+    use bz_events::BuckEvent;
+    use bz_wrapper_common::invocation_id::TraceId;
+
     use super::*;
+
+    fn instant_event(data: impl Into<instant_event::Data>) -> BuckEvent {
+        BuckEvent::new(
+            UNIX_EPOCH,
+            TraceId::new(),
+            None,
+            None,
+            bz_data::InstantEvent {
+                data: Some(data.into()),
+            }
+            .into(),
+        )
+    }
+
+    fn action_execution_start_event(span_id: SpanId) -> BuckEvent {
+        BuckEvent::new(
+            UNIX_EPOCH,
+            TraceId::new(),
+            Some(span_id),
+            None,
+            bz_data::SpanStartEvent {
+                data: Some(bz_data::ActionExecutionStart::default().into()),
+            }
+            .into(),
+        )
+    }
 
     #[test]
     fn test_span_map() -> bz_error::Result<()> {
@@ -618,6 +669,67 @@ mod tests {
                 started: 8,
                 finished: 4,
                 running: 0
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn action_spans_are_legacy_action_progress_fallback() -> bz_error::Result<()> {
+        let mut tracker = BuildProgressStateTracker::new();
+
+        tracker.handle_event(&action_execution_start_event(SpanId::from_u64(1).unwrap()))?;
+
+        assert_eq!(
+            tracker.phase_stats().actions,
+            BuildProgressPhaseStatsItem {
+                started: 1,
+                finished: 0,
+                running: 0,
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn action_execution_progress_event_controls_action_denominator() -> bz_error::Result<()> {
+        let mut tracker = BuildProgressStateTracker::new();
+
+        tracker.handle_event(&instant_event(bz_data::ActionExecutionProgress {
+            enqueued: 10,
+            completed: 4,
+        }))?;
+
+        assert_eq!(
+            tracker.phase_stats().actions,
+            BuildProgressPhaseStatsItem {
+                started: 10,
+                finished: 4,
+                running: 0,
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn action_spans_do_not_change_denominator_after_progress_event() -> bz_error::Result<()> {
+        let mut tracker = BuildProgressStateTracker::new();
+
+        tracker.handle_event(&instant_event(bz_data::ActionExecutionProgress {
+            enqueued: 10,
+            completed: 4,
+        }))?;
+        tracker.handle_event(&action_execution_start_event(SpanId::from_u64(1).unwrap()))?;
+
+        assert_eq!(
+            tracker.phase_stats().actions,
+            BuildProgressPhaseStatsItem {
+                started: 10,
+                finished: 4,
+                running: 0,
             }
         );
 

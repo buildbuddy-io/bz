@@ -264,6 +264,8 @@ message InstantEvent {
     // Stacktrace from the fail_no_stacktrace() call.
     StarlarkFailNoStacktrace starlark_fail_no_stacktrace = 25;
 
+    ActionExecutionProgress action_execution_progress = 26;
+
     // Snapshot of current debug adapter state. Only sent when a debugger is
     // attached.
     DebugAdapterSnapshot debug_adapter_snapshot = 27;
@@ -437,6 +439,11 @@ message DebugAdapterSnapshot {
 
 message DiceStateSnapshot {
   map<string, DiceKeyState> key_states = 1;
+}
+
+message ActionExecutionProgress {
+  uint64 enqueued = 1;
+  uint64 completed = 2;
 }
 
 message DiceKeyState {
