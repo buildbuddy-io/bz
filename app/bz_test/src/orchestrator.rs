@@ -2352,6 +2352,17 @@ impl<'a> Execute2RequestExpander<'a> {
             worker_exe.visit_artifacts(&mut artifact_visitor)?;
         }
 
+        // A Bazel test's full runfiles tree must be present as action inputs, not just
+        // the command-line artifacts: data files referenced only via runfiles would
+        // otherwise be missing ("Bazel test runfiles artifact was not present in
+        // action inputs").
+        if let Some(bazel_info) = test_info.bazel_info() {
+            bazel_info.for_each_runfiles_entry(&mut |_runfiles_path, artifact| {
+                artifact_visitor.visit_input(ArtifactGroup::Artifact(artifact), Vec::new());
+                Ok(())
+            })?;
+        }
+
         Ok(artifact_visitor.inputs)
     }
 
