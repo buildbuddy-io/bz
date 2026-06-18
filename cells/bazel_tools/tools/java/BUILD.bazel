@@ -1,0 +1,17 @@
+package(default_visibility = ["//visibility:public"])
+
+# The java_stub_template is no longer versioned with Bazel; it is tied to the
+# @rules_java version. This forwarding target mirrors @bazel_tools//tools/java in
+# upstream Bazel so rules that reference it (e.g. rules_kotlin's kt_jvm_binary) can
+# resolve the stub template from rules_java.
+filegroup(
+    name = "java_stub_template.txt",
+    srcs = ["@rules_java//java/bazel/rules:java_stub_template.txt"],
+)
+
+# Bundled into the bz binary via //cells/bazel_tools:bazel_tools_sources, which lists
+# each sub-package's pkg_sources explicitly (globs don't cross package boundaries).
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]),
+)
