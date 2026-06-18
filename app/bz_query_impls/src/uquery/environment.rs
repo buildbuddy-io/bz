@@ -95,10 +95,7 @@ pub(crate) trait UqueryDelegate: Send + Sync {
     // Get all enclosing packages needed to compute owner function.
     // This always includes the immediate enclosing package of the path but can also include
     // all parent packages if the package matches `project.package_boundary_exceptions` buckconfig.
-    async fn get_enclosing_packages(
-        &self,
-        path: &CellPath,
-    ) -> bz_error::Result<Vec<PackageLabel>>;
+    async fn get_enclosing_packages(&self, path: &CellPath) -> bz_error::Result<Vec<PackageLabel>>;
 
     fn linear_dice_computations(&self) -> &LinearRecomputeDiceComputations<'_>;
 
@@ -266,18 +263,11 @@ impl QueryEnvironment for UqueryEnvironment<'_> {
         .await
     }
 
-    async fn allbuildfiles(
-        &self,
-        universe: &TargetSet<Self::Target>,
-    ) -> bz_error::Result<FileSet> {
+    async fn allbuildfiles(&self, universe: &TargetSet<Self::Target>) -> bz_error::Result<FileSet> {
         return allbuildfiles(universe, self.delegate).await;
     }
 
-    async fn rbuildfiles(
-        &self,
-        universe: &FileSet,
-        argset: &FileSet,
-    ) -> bz_error::Result<FileSet> {
+    async fn rbuildfiles(&self, universe: &FileSet, argset: &FileSet) -> bz_error::Result<FileSet> {
         return rbuildfiles(universe, argset, self.delegate).await;
     }
 

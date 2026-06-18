@@ -159,10 +159,7 @@ fn get_cell_path<'v>(
     let is_test = generated_prefix == "test";
     // Get cell name and validate it exists
     let Some(cell_name) = iter.next() else {
-        return Err(bz_error!(
-            bz_error::ErrorTag::Input,
-            "Invalid cell name"
-        ));
+        return Err(bz_error!(bz_error::ErrorTag::Input, "Invalid cell name"));
     };
 
     let cell_name = CellName::unchecked_new(cell_name.as_str())?;
@@ -259,10 +256,7 @@ fn get_cell_path<'v>(
         };
         Ok(buck_out_path_data)
     } else {
-        Err(bz_error!(
-            bz_error::ErrorTag::Input,
-            "Invalid target name"
-        ))
+        Err(bz_error!(bz_error::ErrorTag::Input, "Invalid target name"))
     }
 }
 
@@ -281,10 +275,7 @@ fn get_target_name<'v>(
                         target_name_with_underscores = target_name_with_underscores.join(next);
                     }
                     None => {
-                        return Err(bz_error!(
-                            bz_error::ErrorTag::Input,
-                            "Invalid target name"
-                        ));
+                        return Err(bz_error!(bz_error::ErrorTag::Input, "Invalid target name"));
                     }
                 }
             }
@@ -294,10 +285,7 @@ fn get_target_name<'v>(
                 &target_name_with_underscores[2..(target_name_with_underscores.len() - 2)];
             Ok(target_name.replace(EQ_SIGN_SUBST, "="))
         }
-        None => Err(bz_error!(
-            bz_error::ErrorTag::Input,
-            "Invalid target name"
-        )),
+        None => Err(bz_error!(bz_error::ErrorTag::Input, "Invalid target name")),
     }
 }
 

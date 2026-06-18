@@ -22,6 +22,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use bz_error::BuckErrorContext;
 use bz_error::internal_error;
 use bz_fs::fs_util;
@@ -31,7 +32,6 @@ use bz_resource_control::ActionFreezeEventReceiver;
 use bz_resource_control::OrphanProcessInfo;
 use bz_resource_control::action_scene::ActionCgroupResult;
 use bz_resource_control::path::CgroupPathBuf;
-use bytes::Bytes;
 use futures::future::Future;
 use futures::future::FutureExt;
 use futures::future::select;
@@ -770,10 +770,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl StatusDecoder for Decoder {
-            async fn decode_status(
-                self,
-                _status: ExitStatus,
-            ) -> bz_error::Result<DecodedStatus> {
+            async fn decode_status(self, _status: ExitStatus) -> bz_error::Result<DecodedStatus> {
                 panic!("Should not be called in this test since we timeout")
             }
 

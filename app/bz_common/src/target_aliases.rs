@@ -70,9 +70,7 @@ impl TargetAliasResolver for BuckConfigTargetAliasResolver {
             Err(
                 e @ AliasResolutionError::AliasChainBroken(..)
                 | e @ AliasResolutionError::AliasCycle(..),
-            ) => {
-                Err(bz_error::Error::from(e).context(format!("Error resolving alias `{name}`")))
-            }
+            ) => Err(bz_error::Error::from(e).context(format!("Error resolving alias `{name}`"))),
         }
     }
 }
@@ -133,8 +131,7 @@ impl BuckConfigTargetAliasResolver {
 
 #[async_trait]
 pub trait HasTargetAliasResolver {
-    async fn target_alias_resolver(&mut self)
-    -> bz_error::Result<BuckConfigTargetAliasResolver>;
+    async fn target_alias_resolver(&mut self) -> bz_error::Result<BuckConfigTargetAliasResolver>;
 }
 
 #[derive(Debug, Display, Hash, PartialEq, Eq, Clone, Allocative, Pagable)]
@@ -169,9 +166,7 @@ impl Key for TargetAliasResolverKey {
 
 #[async_trait]
 impl HasTargetAliasResolver for DiceComputations<'_> {
-    async fn target_alias_resolver(
-        &mut self,
-    ) -> bz_error::Result<BuckConfigTargetAliasResolver> {
+    async fn target_alias_resolver(&mut self) -> bz_error::Result<BuckConfigTargetAliasResolver> {
         Ok(self.compute(&TargetAliasResolverKey()).await??)
     }
 }

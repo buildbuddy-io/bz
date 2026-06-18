@@ -79,10 +79,7 @@ mod tests {
             }
         }
 
-        fn add_to_state(
-            self,
-            state: &mut bz_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>,
-        ) {
+        fn add_to_state(self, state: &mut bz_hash::BuckHashMap<DeferredHolderKey, DeferredHolder>) {
             let (key, holder) = self.build();
             state.insert(key, holder);
         }

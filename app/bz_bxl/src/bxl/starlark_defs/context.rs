@@ -475,9 +475,7 @@ impl<'v> BxlContext<'v> {
     }
 
     /// Take the state for dynamic action or anon target
-    pub(crate) fn take_state_dynamic_or_anon_impl(
-        &self,
-    ) -> bz_error::Result<AnalysisRegistry<'v>> {
+    pub(crate) fn take_state_dynamic_or_anon_impl(&self) -> bz_error::Result<AnalysisRegistry<'v>> {
         let state = self.state.as_ref();
         state.state()?.assert_no_promises()?;
 

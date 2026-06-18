@@ -494,9 +494,7 @@ fn spawn_background_cleaner(path: &AbsNormPathBuf) -> bz_error::Result<()> {
     }
 }
 
-fn collect_paths_to_clean(
-    buck_out_path: &AbsNormPathBuf,
-) -> bz_error::Result<Vec<AbsNormPathBuf>> {
+fn collect_paths_to_clean(buck_out_path: &AbsNormPathBuf) -> bz_error::Result<Vec<AbsNormPathBuf>> {
     if !buck_out_path.exists() {
         return Ok(vec![]);
     }

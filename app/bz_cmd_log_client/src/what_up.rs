@@ -179,10 +179,7 @@ impl WhatUpCommand {
 struct WhatupClock(Arc<Mutex<EventTimestamp>>);
 
 impl Clock for WhatupClock {
-    fn event_timestamp_for_tick(
-        &mut self,
-        _tick: bz_client_ctx::ticker::Tick,
-    ) -> EventTimestamp {
+    fn event_timestamp_for_tick(&mut self, _tick: bz_client_ctx::ticker::Tick) -> EventTimestamp {
         // We always report the most recently seen event as the current timestamp. That way, when we
         // finish rendering superconsole, the timestamp we report here will correspond to something
         // that makes sense at that time

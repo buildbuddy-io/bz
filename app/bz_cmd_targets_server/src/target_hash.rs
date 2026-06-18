@@ -204,10 +204,7 @@ pub(crate) trait TargetHashingTargetNode: QueryTarget {
     // Target Nodes based on type of hashing specified.
     async fn get_target_nodes(
         dice: &mut DiceComputations,
-        loaded_targets: Vec<(
-            PackageLabelWithModifiers,
-            bz_error::Result<Vec<TargetNode>>,
-        )>,
+        loaded_targets: Vec<(PackageLabelWithModifiers, bz_error::Result<Vec<TargetNode>>)>,
         global_cfg_options: &GlobalCfgOptions,
     ) -> bz_error::Result<TargetSet<Self>>;
 }
@@ -220,10 +217,7 @@ impl TargetHashingTargetNode for ConfiguredTargetNode {
 
     async fn get_target_nodes(
         dice: &mut DiceComputations,
-        loaded_targets: Vec<(
-            PackageLabelWithModifiers,
-            bz_error::Result<Vec<TargetNode>>,
-        )>,
+        loaded_targets: Vec<(PackageLabelWithModifiers, bz_error::Result<Vec<TargetNode>>)>,
         global_cfg_options: &GlobalCfgOptions,
     ) -> bz_error::Result<TargetSet<Self>> {
         let result =
@@ -241,10 +235,7 @@ impl TargetHashingTargetNode for TargetNode {
 
     async fn get_target_nodes(
         _dice: &mut DiceComputations,
-        loaded_targets: Vec<(
-            PackageLabelWithModifiers,
-            bz_error::Result<Vec<TargetNode>>,
-        )>,
+        loaded_targets: Vec<(PackageLabelWithModifiers, bz_error::Result<Vec<TargetNode>>)>,
         _global_cfg_options: &GlobalCfgOptions,
     ) -> bz_error::Result<TargetSet<Self>> {
         let mut target_set = TargetSet::new();
@@ -435,10 +426,7 @@ impl TargetHashes {
     pub(crate) async fn compute<T: TargetHashingTargetNode, L: AsyncNodeLookup<T>>(
         mut dice: DiceTransaction,
         lookup: L,
-        targets: Vec<(
-            PackageLabelWithModifiers,
-            bz_error::Result<Vec<TargetNode>>,
-        )>,
+        targets: Vec<(PackageLabelWithModifiers, bz_error::Result<Vec<TargetNode>>)>,
         global_cfg_options: &GlobalCfgOptions,
         file_hash_mode: TargetHashesFileMode,
         use_fast_hash: bool,

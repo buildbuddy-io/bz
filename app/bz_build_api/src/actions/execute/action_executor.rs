@@ -1393,7 +1393,8 @@ mod tests {
 
         let with_declared =
             ActionOutputs::new_with_remote_cache_cas_info(outputs.clone(), Some(declared));
-        let with_transient = ActionOutputs::new_with_remote_cache_cas_info(outputs, Some(transient));
+        let with_transient =
+            ActionOutputs::new_with_remote_cache_cas_info(outputs, Some(transient));
 
         assert_eq!(with_declared, with_transient);
     }

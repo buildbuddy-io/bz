@@ -371,15 +371,11 @@ impl CommandExecutionReport {
             .await;
 
         let status = match &self.status {
-            CommandExecutionStatus::Success { .. } => {
-                bz_data::command_execution::Success {}.into()
-            }
+            CommandExecutionStatus::Success { .. } => bz_data::command_execution::Success {}.into(),
             CommandExecutionStatus::Cancelled { .. } => {
                 bz_data::command_execution::Cancelled {}.into()
             }
-            CommandExecutionStatus::Failure { .. } => {
-                bz_data::command_execution::Failure {}.into()
-            }
+            CommandExecutionStatus::Failure { .. } => bz_data::command_execution::Failure {}.into(),
             CommandExecutionStatus::WorkerFailure { .. } => {
                 bz_data::command_execution::WorkerFailure {}.into()
             }
@@ -597,11 +593,9 @@ mod tests {
             status: Some(bz_data::command_execution::Status::Success(
                 bz_data::command_execution::Success {},
             )),
-            inline_environment_metadata: Some(
-                bz_data::InlineCommandExecutionEnvironmentMetadata {
-                    sandcastle_instance_id: Some(123),
-                },
-            ),
+            inline_environment_metadata: Some(bz_data::InlineCommandExecutionEnvironmentMetadata {
+                sandcastle_instance_id: Some(123),
+            }),
         }
     }
 

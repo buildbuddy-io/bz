@@ -111,12 +111,12 @@ mod tests {
 
     fn event(span_id: u64) -> CommandProgress {
         CommandProgress {
-            progress: Some(bz_cli_proto::command_progress::Progress::Event(
-                Box::new(BuckEvent {
+            progress: Some(bz_cli_proto::command_progress::Progress::Event(Box::new(
+                BuckEvent {
                     span_id,
                     ..Default::default()
-                }),
-            )),
+                },
+            ))),
         }
     }
 

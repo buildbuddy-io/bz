@@ -9,9 +9,9 @@
  */
 
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::convert::Infallible;
 use std::fmt::Display;
-use std::cmp::Ordering;
 use std::hash::Hash;
 use std::hash::Hasher;
 

@@ -222,9 +222,7 @@ fn convert_perf_counts(
     })
 }
 
-fn convert_perf_count(
-    perf_count: &TSubsysPerfCount,
-) -> bz_error::Result<Option<MiniperfCounter>> {
+fn convert_perf_count(perf_count: &TSubsysPerfCount) -> bz_error::Result<Option<MiniperfCounter>> {
     if perf_count.time_running == 0 {
         return Ok(None);
     }

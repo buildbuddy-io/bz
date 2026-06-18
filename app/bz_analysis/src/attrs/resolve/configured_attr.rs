@@ -22,10 +22,10 @@ use bz_interpreter::types::configured_providers_label::StarlarkConfiguredProvide
 use bz_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use bz_interpreter::types::opaque_metadata::OpaqueMetadata;
 use bz_interpreter::types::target_label::StarlarkTargetLabel;
-use bz_node::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
-use bz_node::attrs::attr_type::configured_dep::ExplicitConfiguredDepAttrType;
 use bz_node::attrs::attr_type::bazel::label::ConfiguredBazelLabel;
 use bz_node::attrs::attr_type::bazel::label::ConfiguredBazelLabelDep;
+use bz_node::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
+use bz_node::attrs::attr_type::configured_dep::ExplicitConfiguredDepAttrType;
 use bz_node::attrs::attr_type::dep::DepAttrType;
 use bz_node::attrs::attr_type::source::SourceAttrType;
 use bz_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
@@ -60,9 +60,7 @@ use crate::attrs::resolve::ctx::AttrResolutionContext;
 enum ConfiguredAttrError {
     #[error("Source path `{0}` cannot be used in attributes referenced in transition")]
     SourceFileToStarlarkValue(ArcS<PackageRelativePath>),
-    #[error(
-        "Bazel file target `{0}` is not allowed by this attr's allowed file extensions"
-    )]
+    #[error("Bazel file target `{0}` is not allowed by this attr's allowed file extensions")]
     BazelFileTypeNotAllowed(ConfiguredProvidersLabel),
 }
 
@@ -85,11 +83,7 @@ pub trait ConfiguredAttrExt {
         ctx: &mut dyn AttrResolutionContext<'v>,
     ) -> bz_error::Result<Value<'v>>;
 
-    fn to_value<'v>(
-        &self,
-        pkg: PackageLabelOption,
-        heap: Heap<'v>,
-    ) -> bz_error::Result<Value<'v>>;
+    fn to_value<'v>(&self, pkg: PackageLabelOption, heap: Heap<'v>) -> bz_error::Result<Value<'v>>;
 }
 
 impl ConfiguredAttrExt for ConfiguredAttr {
@@ -220,11 +214,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
     }
 
     /// Converts the configured attr to a starlark value without fully resolving
-    fn to_value<'v>(
-        &self,
-        pkg: PackageLabelOption,
-        heap: Heap<'v>,
-    ) -> bz_error::Result<Value<'v>> {
+    fn to_value<'v>(&self, pkg: PackageLabelOption, heap: Heap<'v>) -> bz_error::Result<Value<'v>> {
         configured_attr_to_value(self, pkg, heap)
     }
 }
@@ -301,13 +291,7 @@ fn resolve_bazel_label_single<'v>(
             for (transition, target) in &dep.deps {
                 res.insert_hashed(
                     ctx.heap().alloc(transition).get_hashed()?,
-                    resolve_bazel_label_impl(
-                        ctx,
-                        target,
-                        &dep.required_providers,
-                        false,
-                        label,
-                    )?,
+                    resolve_bazel_label_impl(ctx, target, &dep.required_providers, false, label)?,
                 );
             }
             Ok(ctx.heap().alloc(Dict::new(res)))
@@ -337,11 +321,9 @@ fn resolve_bazel_label_for_bazel_attr<'v>(
 ) -> bz_error::Result<Value<'v>> {
     match &label.dep {
         ConfiguredBazelLabelDep::Dep(_) => resolve_bazel_label_single(ctx, label),
-        ConfiguredBazelLabelDep::SplitTransition(_) => {
-            Ok(ctx.heap().alloc(AllocList(resolve_bazel_label_list_items(
-                ctx, label,
-            )?)))
-        }
+        ConfiguredBazelLabelDep::SplitTransition(_) => Ok(ctx
+            .heap()
+            .alloc(AllocList(resolve_bazel_label_list_items(ctx, label)?))),
     }
 }
 

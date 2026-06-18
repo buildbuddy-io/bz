@@ -184,9 +184,7 @@ pub(crate) fn register_set_cfg_constructor(globals: &mut GlobalsBuilder) {
                 CellRelativePath::empty(),
             )
         {
-            return Err(
-                bz_error::Error::from(RegisterCfgConstructorError::NotPackageRoot).into(),
-            );
+            return Err(bz_error::Error::from(RegisterCfgConstructorError::NotPackageRoot).into());
         }
         let package_file_extra: &PackageFileExtra = PackageFileExtra::get_or_init(eval)?;
         if package_file_extra.cfg_constructor.get().is_some() {

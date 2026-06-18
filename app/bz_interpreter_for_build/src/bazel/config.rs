@@ -209,9 +209,8 @@ impl<'v> StarlarkValue<'v> for BazelConfigProviderCallable {
                 }
             }
         }
-        let value = value.ok_or_else(|| {
-            bz_error::Error::from(BazelConfigError::FeatureFlagInfoMissingValue)
-        })?;
+        let value = value
+            .ok_or_else(|| bz_error::Error::from(BazelConfigError::FeatureFlagInfoMissingValue))?;
         if value.unpack_str().is_none() {
             return Err(
                 bz_error::Error::from(BazelConfigError::FeatureFlagInfoValueNotString(

@@ -14,9 +14,9 @@
 #![feature(exit_status_error)]
 #![feature(used_with_arg)]
 
+pub mod artifact_upload;
 pub mod build_info;
 pub mod dice;
-pub mod artifact_upload;
 pub mod materializer;
 pub mod rage;
 pub mod source_control;

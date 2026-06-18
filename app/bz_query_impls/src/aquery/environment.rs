@@ -103,10 +103,7 @@ impl QueryEnvironment for AqueryEnvironment<'_> {
         .into())
     }
 
-    async fn eval_literals(
-        &self,
-        literals: &[&str],
-    ) -> bz_error::Result<TargetSet<Self::Target>> {
+    async fn eval_literals(&self, literals: &[&str]) -> bz_error::Result<TargetSet<Self::Target>> {
         self.literals
             .eval_literals(literals, &mut self.delegate.ctx())
             .await

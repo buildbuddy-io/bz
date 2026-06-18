@@ -81,9 +81,7 @@ impl TargetPlatformDetector {
                                 cell_resolver,
                                 cell_alias_resolver,
                             )? {
-                                bz_core::pattern::pattern::ParsedPattern::Recursive(root) => {
-                                    root
-                                }
+                                bz_core::pattern::pattern::ParsedPattern::Recursive(root) => root,
                                 _ => {
                                     return Err(
                                         DetectorSpecParseError::TargetKindRequiresRecursivePattern(

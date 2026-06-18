@@ -9,9 +9,9 @@ use crate::attrs::attr_type::AttrTypeInner;
 use crate::attrs::attr_type::dep::DepAttr;
 use crate::attrs::attr_type::dep::DepAttrTransition;
 use crate::attrs::attr_type::split_transition_dep::ConfiguredSplitTransitionDep;
+use crate::attrs::configuration_context::AttrConfigurationContext;
 use crate::attrs::configured_attr::ConfiguredAttr;
 use crate::attrs::configured_traversal::ConfiguredAttrTraversal;
-use crate::attrs::configuration_context::AttrConfigurationContext;
 use crate::attrs::display::AttrDisplayWithContextExt;
 use crate::attrs::traversal::CoercedAttrTraversal;
 
@@ -51,9 +51,9 @@ impl BazelAllowedFileTypes {
         match self {
             Self::None => false,
             Self::Any => true,
-            Self::Extensions(extensions) => {
-                extensions.iter().any(|extension| target_name.ends_with(extension))
-            }
+            Self::Extensions(extensions) => extensions
+                .iter()
+                .any(|extension| target_name.ends_with(extension)),
         }
     }
 }

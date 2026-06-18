@@ -250,11 +250,7 @@ impl<'p> LegacyConfigFileParser<'p> {
         Ok(())
     }
 
-    fn start_file(
-        &mut self,
-        path: &ConfigPath,
-        source: Option<Location>,
-    ) -> bz_error::Result<()> {
+    fn start_file(&mut self, path: &ConfigPath, source: Option<Location>) -> bz_error::Result<()> {
         let source_file = Arc::new(ConfigFileLocation {
             path: path.to_string(),
             include_source: source,

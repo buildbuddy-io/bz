@@ -77,9 +77,7 @@ impl StarlarkProfileDataAndStats {
         })
     }
 
-    pub fn downcast(
-        profile_data: &dyn StarlarkProfileDataAndStatsDyn,
-    ) -> bz_error::Result<&Self> {
+    pub fn downcast(profile_data: &dyn StarlarkProfileDataAndStatsDyn) -> bz_error::Result<&Self> {
         profile_data.as_any().downcast_ref::<Self>().ok_or_else(|| {
             internal_error!("There's only one implementation of StarlarkProfileDataAndStatsDyn")
         })

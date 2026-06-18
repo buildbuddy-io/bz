@@ -130,8 +130,8 @@ use bz_execute_impl::executors::local::EnvironmentBuilder;
 use bz_execute_impl::executors::local::apply_local_execution_environment;
 use bz_execute_impl::executors::local::create_output_dirs;
 use bz_execute_impl::executors::local::materialize_inputs;
-use bz_execute_impl::executors::local::prepare_bazel_input_mappings;
 use bz_execute_impl::executors::local::prep_scratch_path;
+use bz_execute_impl::executors::local::prepare_bazel_input_mappings;
 use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use bz_hash::BuckDefaultHasher;
@@ -2182,14 +2182,16 @@ fn bazel_test_runfiles_inputs(
             return Ok(());
         }
 
-        inputs.push(CommandExecutionInput::BazelInputMapping(BazelInputMapping {
-            source_path,
-            source_requires_materialization: artifact.requires_materialization(artifact_fs),
-            remote_cache_cas_info,
-            owner: artifact.input_owner(),
-            path: alias,
-            value: value.dupe(),
-        }));
+        inputs.push(CommandExecutionInput::BazelInputMapping(
+            BazelInputMapping {
+                source_path,
+                source_requires_materialization: artifact.requires_materialization(artifact_fs),
+                remote_cache_cas_info,
+                owner: artifact.input_owner(),
+                path: alias,
+                value: value.dupe(),
+            },
+        ));
         Ok(())
     })?;
 

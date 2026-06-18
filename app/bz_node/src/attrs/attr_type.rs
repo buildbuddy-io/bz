@@ -355,11 +355,7 @@ impl AttrType {
     ) -> Self {
         let may_have_queries = dep.0.may_have_queries || source.0.may_have_queries;
         Self(Arc::new(AttrTypeInner2 {
-            inner: AttrTypeInner::BazelLabel(BazelLabelAttrType::new(
-                dep,
-                source,
-                allowed_files,
-            )),
+            inner: AttrTypeInner::BazelLabel(BazelLabelAttrType::new(dep, source, allowed_files)),
             may_have_queries,
         }))
     }

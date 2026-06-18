@@ -164,9 +164,7 @@ impl BuckSubcommand for ReplayCommand {
             if let Err(e) = &res {
                 let msg = "request finished without returning a CommandResult";
                 if e.to_string().contains(msg) {
-                    bz_client_ctx::eprintln!(
-                        "Warning: Incomplete log. Replay may be inaccurate."
-                    )?;
+                    bz_client_ctx::eprintln!("Warning: Incomplete log. Replay may be inaccurate.")?;
                 };
             };
 

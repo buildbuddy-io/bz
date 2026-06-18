@@ -62,8 +62,7 @@ fn process_buckconfig_data(dict: &mut BTreeMap<String, String>, event: &bz_data:
     use bz_data::config_file::Data::ProjectRelativePath;
 
     if let Some(bz_data::buck_event::Data::Instant(end)) = event.data.as_ref() {
-        if let Some(bz_data::instant_event::Data::BuckconfigInputValues(input)) =
-            end.data.as_ref()
+        if let Some(bz_data::instant_event::Data::BuckconfigInputValues(input)) = end.data.as_ref()
         {
             input
                 .components

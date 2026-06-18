@@ -44,28 +44,26 @@ fn get_action_execution_data(
     event: &bz_data::BuckEvent,
 ) -> Option<(ActionKey, ActionExecutionData)> {
     event.data.as_ref().and_then(|data| match data {
-        bz_data::buck_event::Data::SpanEnd(end) => {
-            end.data.as_ref().and_then(|data| match data {
-                bz_data::span_end_event::Data::ActionExecution(data) => {
-                    data.key.as_ref().map(|key: &ActionKey| {
-                        (
-                            key.clone(),
-                            ActionExecutionData {
-                                name: data.name.clone(),
-                                action_digest: get_action_digest(&data.commands),
-                                output_tiny_digests: data
-                                    .outputs
-                                    .iter()
-                                    .fold(String::new(), |acc, action_output| {
-                                        acc + " " + &action_output.tiny_digest
-                                    }),
-                            },
-                        )
-                    })
-                }
-                _ => None,
-            })
-        }
+        bz_data::buck_event::Data::SpanEnd(end) => end.data.as_ref().and_then(|data| match data {
+            bz_data::span_end_event::Data::ActionExecution(data) => {
+                data.key.as_ref().map(|key: &ActionKey| {
+                    (
+                        key.clone(),
+                        ActionExecutionData {
+                            name: data.name.clone(),
+                            action_digest: get_action_digest(&data.commands),
+                            output_tiny_digests: data
+                                .outputs
+                                .iter()
+                                .fold(String::new(), |acc, action_output| {
+                                    acc + " " + &action_output.tiny_digest
+                                }),
+                        },
+                    )
+                })
+            }
+            _ => None,
+        }),
         _ => None,
     })
 }

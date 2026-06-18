@@ -199,9 +199,7 @@ fn aquery_methods(builder: &mut MethodsBuilder) {
             .via_dice(eval, |dice| {
                 dice.via(|dice| {
                     async {
-                        let filter = filter
-                            .into_option()
-                            .try_map(bz_query_parser::parse_expr)?;
+                        let filter = filter.into_option().try_map(bz_query_parser::parse_expr)?;
 
                         let universe = unpack_action_nodes(this, dice, universe).await?;
 

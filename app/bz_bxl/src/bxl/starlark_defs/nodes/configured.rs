@@ -40,8 +40,8 @@ use bz_fs::paths::abs_path::AbsPath;
 use bz_hash::StdBuckHashMap;
 use bz_hash::StdBuckHashSet;
 use bz_interpreter::types::target_label::StarlarkConfiguredTargetLabel;
-use bz_node::attrs::attr_type::bazel::label::ConfiguredBazelLabelDep;
 use bz_node::attrs::attr_type::arg::StringWithMacros;
+use bz_node::attrs::attr_type::bazel::label::ConfiguredBazelLabelDep;
 use bz_node::attrs::attr_type::dict::DictLiteral;
 use bz_node::attrs::attr_type::list::ListLiteral;
 use bz_node::attrs::attr_type::query::QueryAttr;
@@ -162,8 +162,7 @@ fn attr_with_stripped_cfg(attr: &ConfiguredAttr) -> bz_error::Result<CoercedAttr
         ConfiguredAttr::BazelLabel(dep) => match &dep.dep {
             ConfiguredBazelLabelDep::Dep(dep) => CoercedAttr::Dep(dep.label.unconfigured()),
             ConfiguredBazelLabelDep::SplitTransition(dep) => {
-                let deps: StdBuckHashSet<_> =
-                    dep.deps.values().map(|l| l.unconfigured()).collect();
+                let deps: StdBuckHashSet<_> = dep.deps.values().map(|l| l.unconfigured()).collect();
                 if deps.len() != 1 {
                     return Err(bz_error::internal_error!(
                         "ConfiguredBazelLabel split transition should have exactly one dep, but found {}",

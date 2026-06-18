@@ -29,8 +29,7 @@ pub trait FileOps: Send + Sync {
     ) -> bz_error::Result<Option<String>>;
 
     /// Return the list of file outputs, sorted.
-    async fn read_dir(&self, path: CellPathRef<'async_trait>)
-    -> bz_error::Result<ReadDirOutput>;
+    async fn read_dir(&self, path: CellPathRef<'async_trait>) -> bz_error::Result<ReadDirOutput>;
 
     async fn is_ignored(
         &self,
@@ -59,10 +58,7 @@ impl FileOps for DiceFileOps<'_, '_> {
         DiceFileComputations::read_file_if_exists(&mut self.0.get(), path).await
     }
 
-    async fn read_dir(
-        &self,
-        path: CellPathRef<'async_trait>,
-    ) -> bz_error::Result<ReadDirOutput> {
+    async fn read_dir(&self, path: CellPathRef<'async_trait>) -> bz_error::Result<ReadDirOutput> {
         DiceFileComputations::read_dir(&mut self.0.get(), path).await
     }
 

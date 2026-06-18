@@ -147,9 +147,7 @@ pub(crate) fn frozen_aspect_implementation(aspect: FrozenValue) -> Option<Frozen
     Some(aspect.implementation)
 }
 
-pub(crate) fn frozen_aspect_info(
-    aspect: FrozenValue,
-) -> bz_error::Result<FrozenBazelAspectInfo> {
+pub(crate) fn frozen_aspect_info(aspect: FrozenValue) -> bz_error::Result<FrozenBazelAspectInfo> {
     let aspect = aspect
         .downcast_ref::<FrozenStarlarkAspect>()
         .ok_or_else(|| {

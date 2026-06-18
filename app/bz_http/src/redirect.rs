@@ -10,8 +10,8 @@
 
 use std::future::Future;
 
-use bz_error::BuckErrorContext;
 use bytes::Bytes;
+use bz_error::BuckErrorContext;
 use http::HeaderMap;
 use http::Method;
 use http::Uri;

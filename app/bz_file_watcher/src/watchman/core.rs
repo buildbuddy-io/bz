@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bz_certs::validate::validate_certs;
-use bz_common::artifact_upload::Bucket;
 use bz_common::artifact_upload::ArtifactUploadClient;
+use bz_common::artifact_upload::Bucket;
 use bz_common::artifact_upload::Ttl;
 use bz_core::bz_env;
 use bz_error::BuckErrorContext;

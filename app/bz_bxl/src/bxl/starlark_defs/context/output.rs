@@ -221,10 +221,7 @@ impl OutputStreamState {
         })
     }
 
-    fn populate_ensured_artifacts(
-        &self,
-        ensured: EnsuredArtifactOrGroup,
-    ) -> bz_error::Result<()> {
+    fn populate_ensured_artifacts(&self, ensured: EnsuredArtifactOrGroup) -> bz_error::Result<()> {
         self.inner
             .lock()
             .unwrap()

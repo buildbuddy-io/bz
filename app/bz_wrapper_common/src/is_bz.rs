@@ -82,9 +82,6 @@ mod tests {
         assert!(!is_bz_exe(&current_exe, WhoIsAsking::BuckWrapper));
 
         assert!(!is_bz_exe(Path::new(other_path), WhoIsAsking::Bz));
-        assert!(!is_bz_exe(
-            Path::new(other_path),
-            WhoIsAsking::BuckWrapper
-        ));
+        assert!(!is_bz_exe(Path::new(other_path), WhoIsAsking::BuckWrapper));
     }
 }

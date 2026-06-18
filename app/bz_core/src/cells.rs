@@ -114,8 +114,8 @@ use crate::cells::cell_root_path::CellRootPathBuf;
 use crate::cells::external::BZLMOD_EXTERNAL_CELL_KIND;
 use crate::cells::external::BZLMOD_GENERATED_EXTERNAL_CELL_KIND;
 use crate::cells::external::ExternalCellOrigin;
-use crate::cells::external::bzlmod_cell_name;
 use crate::cells::external::bzlmod_canonical_repo_name_for_cell;
+use crate::cells::external::bzlmod_cell_name;
 use crate::cells::external::external_cell_origin_for_cell;
 use crate::cells::external::external_cell_source_path;
 use crate::cells::external::is_bzlmod_cell_name;
@@ -244,9 +244,10 @@ static DYNAMIC_EXTERNAL_CELL_INSTANCES: once_cell::sync::Lazy<
 fn dynamic_external_cell_instance(cell: CellName) -> Option<&'static CellInstance> {
     let origin = external_cell_origin_for_cell(cell.as_str())?;
     let (kind, canonical_repo_name) = match &origin {
-        ExternalCellOrigin::Bzlmod(setup) => {
-            (BZLMOD_EXTERNAL_CELL_KIND, setup.canonical_repo_name.to_string())
-        }
+        ExternalCellOrigin::Bzlmod(setup) => (
+            BZLMOD_EXTERNAL_CELL_KIND,
+            setup.canonical_repo_name.to_string(),
+        ),
         ExternalCellOrigin::BzlmodGenerated(setup) => (
             BZLMOD_GENERATED_EXTERNAL_CELL_KIND,
             setup.canonical_repo_name.to_string(),

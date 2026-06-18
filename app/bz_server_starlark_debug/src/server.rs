@@ -572,10 +572,7 @@ impl DebugServer for ServerState {
         Err(StarlarkDebuggerError::Unimplemented.into())
     }
 
-    fn continue_(
-        &mut self,
-        x: ContinueArguments,
-    ) -> bz_error::Result<dap::ContinueResponseBody> {
+    fn continue_(&mut self, x: ContinueArguments) -> bz_error::Result<dap::ContinueResponseBody> {
         let hook = self.find_hook_by_pseudo_thread(x.thread_id)?;
         hook.adapter
             .continue_()
@@ -692,10 +689,7 @@ impl ServerState {
     }
 
     // The main run loop for the ServerState.
-    async fn run(
-        &mut self,
-        recv: mpsc::UnboundedReceiver<ServerMessage>,
-    ) -> bz_error::Result<()> {
+    async fn run(&mut self, recv: mpsc::UnboundedReceiver<ServerMessage>) -> bz_error::Result<()> {
         let mut recv = UnboundedReceiverStream::new(recv);
 
         self.to_client
@@ -778,10 +772,7 @@ impl ServerState {
             } => {
                 let resp = self.new_hook(handle, description)?;
                 response_channel.send(resp).map_err(|_| {
-                    bz_error::bz_error!(
-                        bz_error::ErrorTag::StarlarkServer,
-                        "channel closed"
-                    )
+                    bz_error::bz_error!(bz_error::ErrorTag::StarlarkServer, "channel closed")
                 })?;
             }
             ServerMessage::NewHandle { id, events } => self.new_handle(id, events),

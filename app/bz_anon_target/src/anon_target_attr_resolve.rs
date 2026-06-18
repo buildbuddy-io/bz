@@ -195,10 +195,7 @@ pub(crate) struct AnonTargetDependents {
 }
 
 pub(crate) trait AnonTargetAttrTraversal {
-    fn promise_artifact(
-        &mut self,
-        promise_artifact: &PromiseArtifactAttr,
-    ) -> bz_error::Result<()>;
+    fn promise_artifact(&mut self, promise_artifact: &PromiseArtifactAttr) -> bz_error::Result<()>;
 }
 
 impl AnonTargetDependents {

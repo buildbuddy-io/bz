@@ -219,9 +219,7 @@ impl FetchTransition for DiceComputations<'_> {
                     .env()
                     // This is a hashmap lookup, so we are not caching the result in DICE.
                     .get_any_visibility(name)
-                    .map_err(|_| {
-                        bz_error::Error::from(FetchTransitionError::NotFound(id.clone()))
-                    })?
+                    .map_err(|_| bz_error::Error::from(FetchTransitionError::NotFound(id.clone())))?
                     .0;
 
                 Ok(TransitionData::MagicObject(transition.downcast_starlark()?))

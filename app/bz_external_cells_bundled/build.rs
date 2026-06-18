@@ -30,8 +30,11 @@ fn imp() -> io::Result<()> {
         .parent()
         .unwrap();
     let prelude_path = source_tree_path(repo_root, "cells/prelude", "prelude.bzl")?;
-    let bazel_tools_path =
-        source_tree_path(repo_root, "cells/bazel_tools", "tools/cpp/toolchain_utils.bzl")?;
+    let bazel_tools_path = source_tree_path(
+        repo_root,
+        "cells/bazel_tools",
+        "tools/cpp/toolchain_utils.bzl",
+    )?;
 
     // Self-check.
     assert!(prelude_path.join("prelude.bzl").exists());

@@ -59,10 +59,7 @@ impl ConfigPath {
         }
     }
 
-    pub(crate) fn join_to_parent_normalized(
-        &self,
-        rel: &RelativePath,
-    ) -> bz_error::Result<Self> {
+    pub(crate) fn join_to_parent_normalized(&self, rel: &RelativePath) -> bz_error::Result<Self> {
         match self {
             ConfigPath::Project(path) => Ok(path
                 .parent()

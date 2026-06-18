@@ -65,10 +65,9 @@ where
                 }),
                 orphans,
             ),
-            CommandEvent::Exit(GatherOutputStatus::Cancelled, orphans) => (
-                Data::Cancel(bz_forkserver_proto::CancelEvent {}),
-                orphans,
-            ),
+            CommandEvent::Exit(GatherOutputStatus::Cancelled, orphans) => {
+                (Data::Cancel(bz_forkserver_proto::CancelEvent {}), orphans)
+            }
             CommandEvent::Exit(GatherOutputStatus::SpawnFailed(reason), orphans) => (
                 Data::SpawnFailed(bz_forkserver_proto::SpawnFailedEvent { reason }),
                 orphans,

@@ -530,10 +530,7 @@ pub async fn invalidate_changed_file_state(
 
 fn no_watchfs_file_change_events(
     changed_read_dirs: &[ReadDirForNoWatchFsKey],
-    changed_read_dirs_to_value: &[(
-        ReadDirForNoWatchFsKey,
-        bz_error::Result<Arc<[RawDirEntry]>>,
-    )],
+    changed_read_dirs_to_value: &[(ReadDirForNoWatchFsKey, bz_error::Result<Arc<[RawDirEntry]>>)],
     changed_path_metadata_for_no_watchfs: &[PathMetadataForNoWatchFsKey],
     changed_path_metadata_for_no_watchfs_to_value: &[(
         PathMetadataForNoWatchFsKey,
@@ -547,18 +544,10 @@ fn no_watchfs_file_change_events(
     let mut events = Vec::with_capacity(total.min(MAX_NO_WATCHFS_FILE_CHANGE_RECORDS));
 
     for key in changed_read_dirs {
-        push_no_watchfs_file_change_event(
-            &mut events,
-            &key.0,
-            bz_data::FileWatcherKind::Directory,
-        );
+        push_no_watchfs_file_change_event(&mut events, &key.0, bz_data::FileWatcherKind::Directory);
     }
     for (key, _) in changed_read_dirs_to_value {
-        push_no_watchfs_file_change_event(
-            &mut events,
-            &key.0,
-            bz_data::FileWatcherKind::Directory,
-        );
+        push_no_watchfs_file_change_event(&mut events, &key.0, bz_data::FileWatcherKind::Directory);
     }
     for key in changed_path_metadata_for_no_watchfs {
         push_no_watchfs_file_change_event(&mut events, &key.0, bz_data::FileWatcherKind::File);
@@ -601,9 +590,7 @@ fn no_watchfs_file_watcher_kind(
 ) -> bz_data::FileWatcherKind {
     match value {
         Ok(Some(RawPathMetadataForNoWatchFs::Directory)) => bz_data::FileWatcherKind::Directory,
-        Ok(Some(RawPathMetadataForNoWatchFs::Symlink { .. })) => {
-            bz_data::FileWatcherKind::Symlink
-        }
+        Ok(Some(RawPathMetadataForNoWatchFs::Symlink { .. })) => bz_data::FileWatcherKind::Symlink,
         Ok(Some(RawPathMetadataForNoWatchFs::File(_))) | Ok(None) | Err(_) => {
             bz_data::FileWatcherKind::File
         }
@@ -666,10 +653,7 @@ enum DirtyPathMetadataForNoWatchFs {
 }
 
 enum DirtyReadDirForNoWatchFs {
-    WithValue(
-        ReadDirForNoWatchFsKey,
-        bz_error::Result<Arc<[RawDirEntry]>>,
-    ),
+    WithValue(ReadDirForNoWatchFsKey, bz_error::Result<Arc<[RawDirEntry]>>),
     WithoutValue(ReadDirForNoWatchFsKey),
     Unchanged,
 }

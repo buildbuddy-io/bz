@@ -180,15 +180,15 @@ impl BuckSubcommand for WhatUploadedCommand {
             let mut total_digests_uploaded = 0;
             let mut total_bytes_uploaded = 0;
             let mut state = StdBuckHashMap::default();
-            let mut stats_by_extension: StdBuckHashMap<String, ReUploadMetrics> = StdBuckHashMap::default();
+            let mut stats_by_extension: StdBuckHashMap<String, ReUploadMetrics> =
+                StdBuckHashMap::default();
             while let Some(event) = events.try_next().await? {
                 match event {
                     // Insert parent span information so we can refer back to it later.
                     StreamValue::Event(event) => {
                         if let Some(bz_data::buck_event::Data::SpanStart(start)) = &event.data
-                            && let Some(bz_data::span_start_event::Data::ActionExecution(
-                                action,
-                            )) = &start.data
+                            && let Some(bz_data::span_start_event::Data::ActionExecution(action)) =
+                                &start.data
                         {
                             state.insert(event.span_id, action.clone());
                         }
@@ -203,9 +203,8 @@ impl BuckSubcommand for WhatUploadedCommand {
                             };
                             if aggregate_by_extension {
                                 for (extension, metrics) in &upload.inner.stats_by_extension {
-                                    let entry = stats_by_extension
-                                        .entry(extension.to_owned())
-                                        .or_default();
+                                    let entry =
+                                        stats_by_extension.entry(extension.to_owned()).or_default();
                                     entry.bytes_uploaded += metrics.bytes_uploaded;
                                     entry.digests_uploaded += metrics.digests_uploaded;
                                 }

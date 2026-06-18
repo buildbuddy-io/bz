@@ -1094,9 +1094,8 @@ mod tests {
 
     #[test]
     fn test_mixed_cache_breakout_is_grey() {
-        let line = style_progress_header_line(
-            " [18 / 18]  Executed  18 cached (7 local, 11 remote)",
-        );
+        let line =
+            style_progress_header_line(" [18 / 18]  Executed  18 cached (7 local, 11 remote)");
         let output = line.fmt_for_test().to_string();
 
         assert!(

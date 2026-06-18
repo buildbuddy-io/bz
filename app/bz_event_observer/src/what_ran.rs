@@ -239,9 +239,7 @@ impl CommandReproducer {
             Self::CacheHit(cache) => {
                 let cache_type = cache.cache_type;
                 match bz_data::CacheHitType::try_from(cache_type) {
-                    Ok(bz_data::CacheHitType::RemoteDepFileCache) => {
-                        "re_dep_file_cache".to_owned()
-                    }
+                    Ok(bz_data::CacheHitType::RemoteDepFileCache) => "re_dep_file_cache".to_owned(),
                     _ => "cache".to_owned(),
                 }
             }
@@ -258,8 +256,7 @@ impl CommandReproducer {
         options: &WhatRanOptions,
     ) -> Option<Self> {
         if let bz_data::buck_event::Data::SpanStart(span) = data
-            && let Some(bz_data::span_start_event::Data::ExecutorStage(executor_stage)) =
-                &span.data
+            && let Some(bz_data::span_start_event::Data::ExecutorStage(executor_stage)) = &span.data
         {
             match &executor_stage.stage {
                 Some(bz_data::executor_stage_start::Stage::CacheQuery(cache_hit))

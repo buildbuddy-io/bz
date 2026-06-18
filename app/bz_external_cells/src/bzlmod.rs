@@ -110,9 +110,6 @@ use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use bz_http::HttpClient;
 use bz_http::HttpClientBuilder;
 use bz_interpreter_for_build::bazel::repository::BazelRepositoryRuleCacheInfo;
-use bz_interpreter_for_build::bazel::repository::repository_recorded_dir_tree_value;
-use bz_interpreter_for_build::bazel::repository::repository_recorded_dirents_value;
-use bz_interpreter_for_build::bazel::repository::repository_recorded_file_value;
 use bz_interpreter_for_build::bazel::repository::BazelRepositoryRuleProgress;
 use bz_interpreter_for_build::bazel::repository::bzlmod_module_extension_bazel_bzl_transitive_digest;
 use bz_interpreter_for_build::bazel::repository::bzlmod_module_extension_bazel_usages_digest;
@@ -122,6 +119,9 @@ use bz_interpreter_for_build::bazel::repository::bzlmod_repository_rule_invocati
 use bz_interpreter_for_build::bazel::repository::bzlmod_repository_rule_invocation_to_setup;
 use bz_interpreter_for_build::bazel::repository::evaluate_bzlmod_module_extension_repo;
 use bz_interpreter_for_build::bazel::repository::evaluate_bzlmod_repository_rule_with_recorded_inputs;
+use bz_interpreter_for_build::bazel::repository::repository_recorded_dir_tree_value;
+use bz_interpreter_for_build::bazel::repository::repository_recorded_dirents_value;
+use bz_interpreter_for_build::bazel::repository::repository_recorded_file_value;
 use bz_interpreter_for_build::interpreter::build_context::BazelModuleExtensionEvaluationResult;
 use bz_interpreter_for_build::interpreter::build_context::BazelRepositoryRecordedInput;
 use bz_interpreter_for_build::interpreter::build_context::BazelRepositoryRuleInvocation;
@@ -1089,9 +1089,9 @@ toolchain(
         let stale_tmp_other = project_root
             .path()
             .resolve(ProjectRelativePath::new("cells/repo.tmp.999")?);
-        let stamp = project_root
-            .path()
-            .resolve(ProjectRelativePath::new("cells/repo.materialization_stamp")?);
+        let stamp = project_root.path().resolve(ProjectRelativePath::new(
+            "cells/repo.materialization_stamp",
+        )?);
         let sibling = project_root
             .path()
             .resolve(ProjectRelativePath::new("cells/repo2")?);
@@ -1120,8 +1120,7 @@ toolchain(
             .path()
             .resolve(&bzlmod_generated_dest_tmp_path(&dest_rel));
         fs_util::create_dir_all(&dest)?;
-        fs_util::write(dest.join(ForwardRelativePath::new("old")?), "old")
-            .categorize_internal()?;
+        fs_util::write(dest.join(ForwardRelativePath::new("old")?), "old").categorize_internal()?;
         fs_util::create_dir_all(&staged)?;
         fs_util::write(staged.join(ForwardRelativePath::new("new")?), "new")
             .categorize_internal()?;
@@ -1143,8 +1142,8 @@ toolchain(
 
     #[test]
     #[cfg(unix)]
-    fn replant_generated_repo_symlinks_rewrites_links_across_subdirectories()
-    -> bz_error::Result<()> {
+    fn replant_generated_repo_symlinks_rewrites_links_across_subdirectories() -> bz_error::Result<()>
+    {
         let project_root = ProjectRootTemp::new()?;
         let repo = project_root.path().resolve(ProjectRelativePath::new(
             "buck-out/v2/external_cells/bzlmod_generated/repo",
@@ -1173,10 +1172,7 @@ toolchain(
                 PathBuf::from("../../tools/tool"),
                 fs_util::read_link(link).categorize_internal()?
             );
-            assert_eq!(
-                "tool",
-                fs_util::read_to_string(link).categorize_internal()?
-            );
+            assert_eq!("tool", fs_util::read_to_string(link).categorize_internal()?);
         }
         Ok(())
     }
@@ -1500,8 +1496,8 @@ toolchain(
     }
 
     #[tokio::test]
-    async fn upload_fingerprint_walk_matches_directly_constructed_directory()
-    -> bz_error::Result<()> {
+    async fn upload_fingerprint_walk_matches_directly_constructed_directory() -> bz_error::Result<()>
+    {
         use bz_common::file_ops::metadata::FileMetadata;
         use bz_directory::directory::fingerprinted_directory::FingerprintedDirectory;
         use bz_execute::digest_config::DigestConfig;
@@ -1514,8 +1510,11 @@ toolchain(
         fs_util::create_dir_all(entry_abs.join(ForwardRelativePath::new("sub")?))?;
         fs_util::write(entry_abs.join(ForwardRelativePath::new("a.txt")?), b"hello")
             .categorize_internal()?;
-        fs_util::write(entry_abs.join(ForwardRelativePath::new("sub/b.txt")?), b"world")
-            .categorize_internal()?;
+        fs_util::write(
+            entry_abs.join(ForwardRelativePath::new("sub/b.txt")?),
+            b"world",
+        )
+        .categorize_internal()?;
 
         let digest_config = DigestConfig::testing_default();
 
@@ -1657,11 +1656,7 @@ fn apply_patch(
 /// Sibling staging directory for a generated repo, on the same volume as
 /// `dest` so the final publish is a single atomic rename.
 fn bzlmod_generated_dest_tmp_path(dest: &ProjectRelativePath) -> ProjectRelativePathBuf {
-    ProjectRelativePathBuf::unchecked_new(format!(
-        "{}.tmp.{}",
-        dest.as_str(),
-        std::process::id()
-    ))
+    ProjectRelativePathBuf::unchecked_new(format!("{}.tmp.{}", dest.as_str(), std::process::id()))
 }
 
 /// Removes stale `<dest>.tmp.*` staging siblings left behind by crashed
@@ -1854,8 +1849,7 @@ where
                 })
             })
             .collect();
-        let mut slots: Vec<Option<bz_error::Result<T>>> =
-            items.iter().map(|_| None).collect();
+        let mut slots: Vec<Option<bz_error::Result<T>>> = items.iter().map(|_| None).collect();
         for handle in handles {
             match handle.join() {
                 Ok(chunk) => {
@@ -2532,13 +2526,19 @@ fn bzlmod_generated_repo_symlink_targets_exist(path: &AbsNormPath) -> bz_error::
             })?;
             let entry_path = entry.path();
             let file_type = entry.file_type().with_buck_error_context(|| {
-                format!("Error statting cached repo entry `{}`", entry_path.display())
+                format!(
+                    "Error statting cached repo entry `{}`",
+                    entry_path.display()
+                )
             })?;
             if file_type.is_dir() {
                 subdirs.push(entry_path);
             } else if file_type.is_symlink() {
                 let target = fs::read_link(&entry_path).with_buck_error_context(|| {
-                    format!("Error reading cached repo symlink `{}`", entry_path.display())
+                    format!(
+                        "Error reading cached repo symlink `{}`",
+                        entry_path.display()
+                    )
                 })?;
                 let target_path = if target.is_absolute() {
                     target
@@ -4989,14 +4989,21 @@ fn remote_asset_oldest_content_accepted(
 /// Remote Asset server is not trusted: it asserts the digest corresponds to
 /// the requested checksum.sri qualifier, but only a local hash proves it.
 struct RemoteAssetChecksumVerifier {
-    hashers: Vec<(&'static str, Box<dyn sha1::digest::DynDigest + Send>, String)>,
+    hashers: Vec<(
+        &'static str,
+        Box<dyn sha1::digest::DynDigest + Send>,
+        String,
+    )>,
 }
 
 impl RemoteAssetChecksumVerifier {
     fn new(checksum: &Checksum) -> Self {
         use sha1::Digest as _;
-        let mut hashers: Vec<(&'static str, Box<dyn sha1::digest::DynDigest + Send>, String)> =
-            Vec::new();
+        let mut hashers: Vec<(
+            &'static str,
+            Box<dyn sha1::digest::DynDigest + Send>,
+            String,
+        )> = Vec::new();
         if let Some(expected) = checksum.sha1() {
             hashers.push(("sha1", Box::new(sha1::Sha1::new()), expected.to_owned()));
         }
@@ -5800,9 +5807,7 @@ async fn materialize_generated_with_repo_contents_cache(
                     .await?
                 {
                     BzlmodGeneratedRepoPromotion::Missing => {
-                        return Err(
-                            BzlmodError::MissingExtractedDirectory(path.to_string()).into()
-                        );
+                        return Err(BzlmodError::MissingExtractedDirectory(path.to_string()).into());
                     }
                     BzlmodGeneratedRepoPromotion::KeptInPlace => {}
                     BzlmodGeneratedRepoPromotion::Promoted { entry_name } => {

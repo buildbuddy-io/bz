@@ -469,11 +469,10 @@ async fn run_bazel_output_file_analysis_underlying(
             let default_info = eval
                 .heap()
                 .alloc(DefaultInfo::for_file_target(eval.heap(), output));
-            let file_target_info = eval
-                .heap()
-                .alloc(new_bazel_file_target_info(eval.heap()));
+            let file_target_info = eval.heap().alloc(new_bazel_file_target_info(eval.heap()));
             let providers = ProviderCollection::try_from_value(
-                eval.heap().alloc(AllocList([default_info, file_target_info])),
+                eval.heap()
+                    .alloc(AllocList([default_info, file_target_info])),
             )?;
             Ok(ValueTypedComplex::new_err(eval.heap().alloc(providers))
                 .internal_error("Just allocated provider collection")?)
@@ -821,7 +820,8 @@ fn bazel_source_target_dependency<'v>(
         .alloc(DefaultInfo::for_file_target(ctx.heap(), source));
     let file_target_info = ctx.heap().alloc(new_bazel_file_target_info(ctx.heap()));
     let providers = ProviderCollection::try_from_value(
-        ctx.heap().alloc(AllocList([default_info, file_target_info])),
+        ctx.heap()
+            .alloc(AllocList([default_info, file_target_info])),
     )?;
     Ok(ctx
         .heap()

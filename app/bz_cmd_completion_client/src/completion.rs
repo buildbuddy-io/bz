@@ -163,10 +163,7 @@ fn print_completion_script(
     }
 }
 
-fn option_completions(
-    shell: clap_complete::Shell,
-    cmd: &mut Command,
-) -> bz_error::Result<String> {
+fn option_completions(shell: clap_complete::Shell, cmd: &mut Command) -> bz_error::Result<String> {
     let mut v = Vec::new();
     // FIXME: it appears that this might silently swallow errors; would require a PR to fix
     generate(shell, cmd, cmd.get_name().to_owned(), &mut v);

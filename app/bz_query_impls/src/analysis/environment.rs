@@ -196,10 +196,7 @@ pub(crate) fn init_query_functions() {
 impl QueryEnvironment for ConfiguredGraphQueryEnvironment<'_> {
     type Target = ConfiguredGraphNodeRef;
 
-    async fn get_node(
-        &self,
-        node_ref: &ConfiguredGraphNodeRef,
-    ) -> bz_error::Result<Self::Target> {
+    async fn get_node(&self, node_ref: &ConfiguredGraphNodeRef) -> bz_error::Result<Self::Target> {
         Ok(node_ref.dupe())
     }
 
@@ -213,10 +210,7 @@ impl QueryEnvironment for ConfiguredGraphQueryEnvironment<'_> {
         .into())
     }
 
-    async fn eval_literals(
-        &self,
-        literal: &[&str],
-    ) -> bz_error::Result<TargetSet<Self::Target>> {
+    async fn eval_literals(&self, literal: &[&str]) -> bz_error::Result<TargetSet<Self::Target>> {
         let mut result = TargetSet::new();
         for lit in literal {
             result.insert(ConfiguredGraphNodeRef::new(

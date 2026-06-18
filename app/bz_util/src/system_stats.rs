@@ -75,7 +75,8 @@ pub fn system_memory_stats() -> u64 {
 }
 
 pub fn system_memory_stats_detailed() -> SystemMemoryStats {
-    if let Ok(Some(bytes)) = bz_env::env::bz_env!("BUCK2_TEST_FAKE_SYSTEM_TOTAL_MEMORY", type=u64, applicability=testing)
+    if let Ok(Some(bytes)) =
+        bz_env::env::bz_env!("BUCK2_TEST_FAKE_SYSTEM_TOTAL_MEMORY", type=u64, applicability=testing)
     {
         let available = bz_env::env::bz_env!("BUCK2_TEST_FAKE_SYSTEM_AVAILABLE_MEMORY", type=u64, applicability=testing)
             .ok()
@@ -129,9 +130,7 @@ impl Default for SystemDiskIoStatsCollector {
 impl SystemDiskIoStatsCollector {
     pub fn new() -> Self {
         Self {
-            disks: sysinfo::Disks::new_with_refreshed_list_specifics(
-                disk_io_refresh_kind(),
-            ),
+            disks: sysinfo::Disks::new_with_refreshed_list_specifics(disk_io_refresh_kind()),
             last_refresh: None,
             last_operations: None,
         }
@@ -379,10 +378,7 @@ fn collect_macos_disk_io_operations(disks: &sysinfo::Disks) -> Option<SystemDisk
             allocator: CfAllocatorRef,
             options: u32,
         ) -> CfTypeRef;
-        fn IOObjectConformsTo(
-            object: IoObjectT,
-            class_name: *const libc::c_char,
-        ) -> libc::c_uchar;
+        fn IOObjectConformsTo(object: IoObjectT, class_name: *const libc::c_char) -> libc::c_uchar;
     }
 
     struct CfString {
@@ -477,9 +473,7 @@ fn collect_macos_disk_io_operations(disks: &sysinfo::Disks) -> Option<SystemDisk
         }
         let stat = unsafe { stat.assume_init() };
         let mounted_from = unsafe { CStr::from_ptr(stat.f_mntfromname.as_ptr()) }.to_bytes();
-        let bsd_name = mounted_from
-            .strip_prefix(b"/dev/")
-            .unwrap_or(mounted_from);
+        let bsd_name = mounted_from.strip_prefix(b"/dev/").unwrap_or(mounted_from);
         CString::new(bsd_name).ok()
     }
 
@@ -519,8 +513,7 @@ fn collect_macos_disk_io_operations(disks: &sysinfo::Disks) -> Option<SystemDisk
         }
 
         let mut iterator = 0;
-        if unsafe { IOServiceGetMatchingServices(0, matching, &mut iterator) }
-            != libc::KERN_SUCCESS
+        if unsafe { IOServiceGetMatchingServices(0, matching, &mut iterator) } != libc::KERN_SUCCESS
         {
             return None;
         }
@@ -555,9 +548,8 @@ fn collect_macos_disk_io_operations(disks: &sysinfo::Disks) -> Option<SystemDisk
                     continue;
                 };
 
-                if unsafe {
-                    IOObjectConformsTo(current, IO_BLOCK_STORAGE_DRIVER.as_ptr().cast())
-                } == 0
+                if unsafe { IOObjectConformsTo(current, IO_BLOCK_STORAGE_DRIVER.as_ptr().cast()) }
+                    == 0
                 {
                     continue;
                 }

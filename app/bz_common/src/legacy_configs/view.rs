@@ -30,10 +30,7 @@ pub trait LegacyBuckConfigView: Debug {
         LegacyBuckConfig::parse_value(key, self.get(key)?.as_deref())
     }
 
-    fn parse_list<T: FromStr>(
-        &mut self,
-        key: BuckconfigKeyRef,
-    ) -> bz_error::Result<Option<Vec<T>>>
+    fn parse_list<T: FromStr>(&mut self, key: BuckconfigKeyRef) -> bz_error::Result<Option<Vec<T>>>
     where
         bz_error::Error: From<<T as FromStr>::Err>,
     {

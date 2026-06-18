@@ -222,22 +222,14 @@ impl<'v> StarlarkPromise<'v> {
 
     /// Resolve a promise. Errors if the promise was produced by `.map` or the promise has
     /// already been resolved.
-    pub fn resolve(
-        &self,
-        x: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> bz_error::Result<()> {
+    pub fn resolve(&self, x: Value<'v>, eval: &mut Evaluator<'v, '_, '_>) -> bz_error::Result<()> {
         if matches!(&*self.value.borrow(), PromiseValue::Map(..)) {
             return Err(PromiseError::CantResolveMap.into());
         }
         self.resolve_rec(x, eval)
     }
 
-    fn resolve_rec(
-        &self,
-        x: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> bz_error::Result<()> {
+    fn resolve_rec(&self, x: Value<'v>, eval: &mut Evaluator<'v, '_, '_>) -> bz_error::Result<()> {
         if matches!(&*self.value.borrow(), PromiseValue::Resolved(_)) {
             return Err(PromiseError::CantResolveTwice.into());
         }
@@ -391,10 +383,7 @@ mod tests {
                 if x.unpack_str() == Some("ok") {
                     Ok(())
                 } else {
-                    Err(bz_error!(
-                        bz_error::ErrorTag::Tier0,
-                        "VALIDATE_FAILED"
-                    ))
+                    Err(bz_error!(bz_error::ErrorTag::Tier0, "VALIDATE_FAILED"))
                 }
             })?;
             Ok(NoneType)

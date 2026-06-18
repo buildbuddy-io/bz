@@ -441,8 +441,11 @@ impl StreamingCommand for TestCommand {
             console.print_error(&format!("{} BUILDS FAILED", statuses.build_errors))?;
         }
 
-        let printed_bes_results_url =
-            has_bes_results_url(&self.common_opts.event_log_opts, ctx.buildbuddy_bes(), ctx.dev());
+        let printed_bes_results_url = has_bes_results_url(
+            &self.common_opts.event_log_opts,
+            ctx.buildbuddy_bes(),
+            ctx.dev(),
+        );
         print_build_id_after_superconsole(
             &console,
             ctx,

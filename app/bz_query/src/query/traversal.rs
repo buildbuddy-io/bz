@@ -386,9 +386,7 @@ mod tests {
         fn get(&self, label: &Ref) -> bz_error::Result<Node> {
             self.0
                 .get(label)
-                .ok_or_else(|| {
-                    bz_error::bz_error!(bz_error::ErrorTag::Tier0, "missing node")
-                })
+                .ok_or_else(|| bz_error::bz_error!(bz_error::ErrorTag::Tier0, "missing node"))
                 .map(|v| v.dupe())
         }
     }

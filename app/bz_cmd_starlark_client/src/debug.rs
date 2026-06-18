@@ -85,10 +85,8 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
                 match m {
                     Ok(dap_json) => Some(DapRequest { dap_json }),
                     Err(e) => {
-                        let _ignored = bz_client_ctx::eprintln!(
-                            "Could not read message from stdin: `{}`",
-                            e
-                        );
+                        let _ignored =
+                            bz_client_ctx::eprintln!("Could not read message from stdin: `{}`", e);
                         // TODO(cjhopman): the client just hangs at this point. We should probably error out (or
                         // distinguish between FramedRead errors and errors of us converting to a Request).
                         None
@@ -216,12 +214,8 @@ impl StreamingCommand for StarlarkDebugAttachCommand {
                 Ok(())
             }
 
-            async fn handle_error(
-                &mut self,
-                error: &bz_error::Error,
-            ) -> bz_error::Result<()> {
-                Ok(self
-                    .write_console(&format!("bz starlark-attach debugserver error: {error}"))?)
+            async fn handle_error(&mut self, error: &bz_error::Error) -> bz_error::Result<()> {
+                Ok(self.write_console(&format!("bz starlark-attach debugserver error: {error}"))?)
             }
         }
 

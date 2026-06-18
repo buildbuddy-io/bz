@@ -101,9 +101,7 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         let output_stream = this
             .context_type
             .unpack_root()
-            .map_err(|_| {
-                bz_error::Error::from(BxlContextError::Unsupported("output".to_owned()))
-            })?
+            .map_err(|_| bz_error::Error::from(BxlContextError::Unsupported("output".to_owned())))?
             .output_stream;
         Ok(output_stream)
     }
@@ -115,9 +113,10 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
         this: &'v BxlContext<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<String> {
-        let _root_type = this.context_type.unpack_root().map_err(|_| {
-            bz_error::Error::from(BxlContextError::Unsupported("root".to_owned()))
-        })?;
+        let _root_type = this
+            .context_type
+            .unpack_root()
+            .map_err(|_| bz_error::Error::from(BxlContextError::Unsupported("root".to_owned())))?;
         Ok(this.via_dice(eval, |ctx| {
             bz_error::Ok(
                 ctx.global_data()
@@ -134,9 +133,10 @@ pub(crate) fn bxl_context_methods(builder: &mut MethodsBuilder) {
     ///
     /// This function is not available on the `bxl_ctx` when called from `dynamic_output`.
     fn cell_root<'v>(this: &'v BxlContext<'v>) -> starlark::Result<String> {
-        let _root_type = this.context_type.unpack_root().map_err(|_| {
-            bz_error::Error::from(BxlContextError::Unsupported("root".to_owned()))
-        })?;
+        let _root_type = this
+            .context_type
+            .unpack_root()
+            .map_err(|_| bz_error::Error::from(BxlContextError::Unsupported("root".to_owned())))?;
         Ok(this.cell_root_abs().to_owned().to_string())
     }
 

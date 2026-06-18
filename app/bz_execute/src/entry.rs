@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
+use std::fs::Metadata;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::fs::Metadata;
 use std::time::Duration;
 use std::time::Instant;
 

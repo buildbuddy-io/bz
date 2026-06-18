@@ -87,10 +87,7 @@ async fn get_channel_uds_no_symlink(connect_to: &Path) -> bz_error::Result<Chann
 }
 
 #[cfg(windows)]
-pub async fn get_channel_uds(
-    _unix_filename: &Path,
-    _chg_dir: bool,
-) -> bz_error::Result<Channel> {
+pub async fn get_channel_uds(_unix_filename: &Path, _chg_dir: bool) -> bz_error::Result<Channel> {
     Err(bz_error::bz_error!(
         bz_error::ErrorTag::WindowsUnsupported,
         "Unix domain sockets are not supported on Windows",
@@ -174,12 +171,7 @@ mod tests {
             Duration::from_millis(1),
             Duration::from_millis(1),
             Duration::from_millis(1),
-            || async {
-                Err(bz_error::bz_error!(
-                    bz_error::ErrorTag::Input,
-                    "test"
-                ))
-            },
+            || async { Err(bz_error::bz_error!(bz_error::ErrorTag::Input, "test")) },
         );
         let result: Result<(), RetryError<bz_error::Error>> = future.await;
         assert!(result.is_err());

@@ -146,9 +146,7 @@ impl DocsCacheManager {
     }
 }
 
-async fn get_builtin_globals_docs(
-    dice_ctx: &mut DiceTransaction,
-) -> bz_error::Result<DocModule> {
+async fn get_builtin_globals_docs(dice_ctx: &mut DiceTransaction) -> bz_error::Result<DocModule> {
     Ok(dice_ctx
         .get_global_interpreter_state()
         .await?
@@ -378,10 +376,7 @@ impl<'a> BuckLspContext<'a> {
         }
     }
 
-    async fn starlark_import_path(
-        &self,
-        path: &Path,
-    ) -> bz_error::Result<OwnedStarlarkModulePath> {
+    async fn starlark_import_path(&self, path: &Path) -> bz_error::Result<OwnedStarlarkModulePath> {
         // The "absolute" path from LSP urls doesn't work here, they have to be relative
         // to get a ProjectRelativePath. We already guaranteed that things start with a '/'
         // (rooted from `starlark:`, see LspUrl), so just drop it.

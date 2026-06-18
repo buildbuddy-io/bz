@@ -618,8 +618,7 @@ fn bzlmod_progress_event(event: &BuckEvent) -> Option<&str> {
     let bz_data::buck_event::Data::Instant(instant) = event.data() else {
         return None;
     };
-    let Some(bz_data::instant_event::Data::BzlmodProgress(progress)) = instant.data.as_ref()
-    else {
+    let Some(bz_data::instant_event::Data::BzlmodProgress(progress)) = instant.data.as_ref() else {
         return None;
     };
     Some(progress.progress.as_str())

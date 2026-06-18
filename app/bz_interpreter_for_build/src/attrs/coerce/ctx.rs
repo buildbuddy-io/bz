@@ -13,6 +13,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::sync::Arc;
 
+use bumpalo::Bump;
 use bz_common::package_listing::listing::PackageListing;
 use bz_core::cells::CellAliasResolver;
 use bz_core::cells::CellResolver;
@@ -49,7 +50,6 @@ use bz_query_parser::Expr;
 use bz_query_parser::spanned::Spanned;
 use bz_util::arc_str::ArcSlice;
 use bz_util::arc_str::ArcStr;
-use bumpalo::Bump;
 use dupe::Dupe;
 use dupe::IterDupedExt;
 use hashbrown::HashTable;
@@ -195,10 +195,7 @@ impl BuildAttrCoercionContext {
         )
     }
 
-    pub fn parse_pattern<P: PatternType>(
-        &self,
-        value: &str,
-    ) -> bz_error::Result<ParsedPattern<P>> {
+    pub fn parse_pattern<P: PatternType>(&self, value: &str) -> bz_error::Result<ParsedPattern<P>> {
         let target_parsing_rel = match self.enclosing_package.as_ref().map(|x| x.0.as_cell_path()) {
             Some(package) => {
                 if self
@@ -382,10 +379,7 @@ impl BuildAttrCoercionContext {
         )))
     }
 
-    fn coerce_bazel_compat_label(
-        &self,
-        value: &str,
-    ) -> bz_error::Result<Option<ProvidersLabel>> {
+    fn coerce_bazel_compat_label(&self, value: &str) -> bz_error::Result<Option<ProvidersLabel>> {
         if !self.is_bazel_compat_cell() {
             return Ok(None);
         }

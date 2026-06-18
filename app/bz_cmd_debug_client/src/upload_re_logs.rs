@@ -13,8 +13,8 @@ use bz_client_ctx::client_ctx::ClientCommandContext;
 use bz_client_ctx::common::BuckArgMatches;
 use bz_client_ctx::exit_result::ExitResult;
 use bz_client_ctx::upload_re_logs::upload_re_logs;
-use bz_common::artifact_upload::Bucket;
 use bz_common::artifact_upload::ArtifactUploadClient;
+use bz_common::artifact_upload::Bucket;
 
 #[derive(Debug, clap::Parser)]
 #[clap(about = "upload RE logs")]

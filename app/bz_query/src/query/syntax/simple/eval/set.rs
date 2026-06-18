@@ -197,11 +197,7 @@ impl<T: QueryTarget> TargetSet<T> {
         })
     }
 
-    pub fn attrregexfilter(
-        &self,
-        attribute: &str,
-        value: &str,
-    ) -> bz_error::Result<TargetSet<T>> {
+    pub fn attrregexfilter(&self, attribute: &str, value: &str) -> bz_error::Result<TargetSet<T>> {
         let regex = Regex::new(value)?;
         let filter = move |s: &'_ str| -> bz_error::Result<bool> { Ok(regex.is_match(s)?) };
         self.attrfilter(attribute, &filter)

@@ -11,10 +11,7 @@
 use std::time::Duration;
 
 #[allow(unused_variables)]
-pub async fn try_terminate_process_gracefully(
-    pid: i32,
-    timeout: Duration,
-) -> bz_error::Result<()> {
+pub async fn try_terminate_process_gracefully(pid: i32, timeout: Duration) -> bz_error::Result<()> {
     #[cfg(unix)]
     {
         unix::try_terminate_process_gracefully(pid, timeout).await
@@ -77,14 +74,12 @@ mod unix {
             Ok(_) => ControlFlow::Continue(()),
             // There is no such process, our desired outcome.
             Err(nix::errno::Errno::ESRCH) => ControlFlow::Break(StoppedWaiting::Success),
-            Err(e) => {
-                ControlFlow::Break(StoppedWaiting::UnexpectedError(bz_error::bz_error!(
-                    bz_error::ErrorTag::Tier0,
-                    "Unexpected error while waiting for process `{}` to terminate (`{}`)",
-                    pid,
-                    e
-                )))
-            }
+            Err(e) => ControlFlow::Break(StoppedWaiting::UnexpectedError(bz_error::bz_error!(
+                bz_error::ErrorTag::Tier0,
+                "Unexpected error while waiting for process `{}` to terminate (`{}`)",
+                pid,
+                e
+            ))),
         }
     }
 

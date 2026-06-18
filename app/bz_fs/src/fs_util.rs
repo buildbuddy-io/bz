@@ -987,9 +987,7 @@ pub fn open_file<P: AsRef<AbsPath>>(path: P) -> Result<FileReadGuard, IoError> {
     })
 }
 
-pub fn open_file_if_exists<P: AsRef<AbsPath>>(
-    path: P,
-) -> bz_error::Result<Option<FileReadGuard>> {
+pub fn open_file_if_exists<P: AsRef<AbsPath>>(path: P) -> bz_error::Result<Option<FileReadGuard>> {
     let guard = IoCounterKey::Read.guard();
     let Some(file) =
         with_retries(|| if_exists(File::open(path.as_ref().as_maybe_relativized())))
@@ -1090,10 +1088,7 @@ pub mod uncategorized {
         super::rename(from, to).uncategorized()
     }
 
-    pub fn write<P: AsRef<AbsPath>, C: AsRef<[u8]>>(
-        path: P,
-        contents: C,
-    ) -> bz_error::Result<()> {
+    pub fn write<P: AsRef<AbsPath>, C: AsRef<[u8]>>(path: P, contents: C) -> bz_error::Result<()> {
         super::write(path, contents).uncategorized()
     }
 

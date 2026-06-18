@@ -258,10 +258,7 @@ impl FileOps for TestFileOps {
         }))
     }
 
-    async fn read_dir(
-        &self,
-        path: CellPathRef<'async_trait>,
-    ) -> bz_error::Result<ReadDirOutput> {
+    async fn read_dir(&self, path: CellPathRef<'async_trait>) -> bz_error::Result<ReadDirOutput> {
         let included = self
             .entries
             .get(&path.to_owned())

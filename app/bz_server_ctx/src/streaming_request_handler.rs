@@ -70,9 +70,7 @@ impl<T: TryFrom<StreamingRequest, Error = bz_error::Error>> StreamingRequestHand
     }
 }
 
-impl<T: TryFrom<StreamingRequest, Error = bz_error::Error>> Stream
-    for StreamingRequestHandler<T>
-{
+impl<T: TryFrom<StreamingRequest, Error = bz_error::Error>> Stream for StreamingRequestHandler<T> {
     type Item = bz_error::Result<T>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

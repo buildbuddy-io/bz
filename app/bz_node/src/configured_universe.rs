@@ -48,8 +48,7 @@ pub static UNIVERSE_FROM_LITERALS: LateBinding<
         &'c ProjectRelativePath,
         &'c [String],
         GlobalCfgOptions,
-    )
-        -> Pin<Box<dyn Future<Output = bz_error::Result<CqueryUniverse>> + Send + 'c>>,
+    ) -> Pin<Box<dyn Future<Output = bz_error::Result<CqueryUniverse>> + Send + 'c>>,
 > = LateBinding::new("UNIVERSE_FROM_LITERALS");
 
 #[derive(Debug)]
@@ -127,9 +126,7 @@ impl CqueryUniverse {
             .flat_map(|map| map.values().flat_map(|set| set.iter().map(|node| node.0)))
     }
 
-    pub fn build(
-        universe: &TargetSet<ConfiguredTargetNode>,
-    ) -> bz_error::Result<CqueryUniverse> {
+    pub fn build(universe: &TargetSet<ConfiguredTargetNode>) -> bz_error::Result<CqueryUniverse> {
         span(bz_data::CqueryUniverseBuildStart {}, || {
             let r = SelfRef::try_new(universe.clone(), |universe| {
                 CqueryUniverseInner::build_inner(universe)

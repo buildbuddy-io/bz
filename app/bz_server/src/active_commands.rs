@@ -41,9 +41,7 @@ pub fn active_commands() -> MutexGuard<'static, StdBuckHashMap<TraceId, ActiveCo
 }
 
 /// Broadcasts an instant event, returns whether any subscribers were connected.
-pub fn broadcast_instant_event<E: Into<bz_data::instant_event::Data> + Clone>(
-    event: &E,
-) -> bool {
+pub fn broadcast_instant_event<E: Into<bz_data::instant_event::Data> + Clone>(event: &E) -> bool {
     let mut has_subscribers = false;
 
     for cmd in ACTIVE_COMMANDS.lock().values() {
@@ -255,10 +253,9 @@ impl ActiveCommand {
 
             // Notify other commands that they are concurrent with ours.
             for cmd in commands.values() {
-                cmd.dispatcher
-                    .instant_event(bz_data::ConcurrentCommands {
-                        trace_ids: vec![trace_id.to_string()],
-                    });
+                cmd.dispatcher.instant_event(bz_data::ConcurrentCommands {
+                    trace_ids: vec![trace_id.to_string()],
+                });
             }
         }
 

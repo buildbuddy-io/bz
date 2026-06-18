@@ -105,10 +105,7 @@ impl StatusCommand {
                                 )
                                 .await?,
                         )?;
-                        bz_client_ctx::println!(
-                            "{}",
-                            serde_json::to_string_pretty(&json_status)?
-                        )?;
+                        bz_client_ctx::println!("{}", serde_json::to_string_pretty(&json_status)?)?;
                     }
                 }
             }

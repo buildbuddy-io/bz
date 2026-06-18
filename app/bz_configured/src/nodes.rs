@@ -420,10 +420,7 @@ pub(crate) enum CheckVisibility {
 }
 
 impl CheckVisibility {
-    fn for_bazel_attr(
-        target_node: TargetNodeRef<'_>,
-        attr_name: &str,
-    ) -> bz_error::Result<Self> {
+    fn for_bazel_attr(target_node: TargetNodeRef<'_>, attr_name: &str) -> bz_error::Result<Self> {
         Ok(
             match target_node.bazel_implicit_attr_visibility_package(attr_name)? {
                 Some(package) => CheckVisibility::OrPackages(vec![package]),
@@ -715,9 +712,7 @@ async fn target_node_visibility_matches_bazel_package_groups_for_package(
     bazel_package_groups_allow_package(ctx, group_labels, package).await
 }
 
-fn bazel_package_group_visibility_labels(
-    dep: &TargetNode,
-) -> bz_error::Result<Vec<TargetLabel>> {
+fn bazel_package_group_visibility_labels(dep: &TargetNode) -> bz_error::Result<Vec<TargetLabel>> {
     let mut labels = Vec::new();
     if let VisibilityPatternList::List(patterns) = &dep.visibility()?.0 {
         for pattern in patterns {
@@ -1838,7 +1833,10 @@ async fn toolchain_constraints_match(
     }
 
     let target_compatible_with = target_node
-        .attr_or_none(TARGET_COMPATIBLE_WITH_ATTRIBUTE.name, AttrInspectOptions::All)
+        .attr_or_none(
+            TARGET_COMPATIBLE_WITH_ATTRIBUTE.name,
+            AttrInspectOptions::All,
+        )
         .map(|attr| attr_target_labels(&attr.value))
         .unwrap_or_default();
     if !platform_contains_constraint_values(ctx, target_cfg, &target_compatible_with).await? {
@@ -2184,10 +2182,8 @@ pub async fn resolve_bazel_declared_toolchain_deps(
             }
             continue;
         };
-        let configured = toolchain_impl.configure_with_exec(
-            target_cfg.dupe(),
-            execution_platform_cfg.cfg().dupe(),
-        );
+        let configured = toolchain_impl
+            .configure_with_exec(target_cfg.dupe(), execution_platform_cfg.cfg().dupe());
         let provider_label =
             ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
         let mut requested_labels = vec![declared];

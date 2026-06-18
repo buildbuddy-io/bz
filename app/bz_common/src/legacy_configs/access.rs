@@ -124,10 +124,7 @@ impl LegacyBuckConfig {
         value.map(|s| Self::parse_impl(key, s)).transpose()
     }
 
-    pub fn parse_list<T: FromStr>(
-        &self,
-        key: BuckconfigKeyRef,
-    ) -> bz_error::Result<Option<Vec<T>>>
+    pub fn parse_list<T: FromStr>(&self, key: BuckconfigKeyRef) -> bz_error::Result<Option<Vec<T>>>
     where
         bz_error::Error: From<<T as FromStr>::Err>,
     {

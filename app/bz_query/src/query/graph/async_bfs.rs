@@ -252,10 +252,7 @@ mod tests {
     impl AsyncNodeLookup<TestNode> for TestGraph {
         async fn get(&self, label: &TestNodeKey) -> bz_error::Result<TestNode> {
             if self.errors.contains(&label.0) {
-                return Err(bz_error::bz_error!(
-                    bz_error::ErrorTag::Input,
-                    "my error"
-                ));
+                return Err(bz_error::bz_error!(bz_error::ErrorTag::Input, "my error"));
             }
             Ok(TestNode(*label))
         }

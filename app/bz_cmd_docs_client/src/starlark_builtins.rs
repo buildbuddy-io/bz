@@ -55,9 +55,9 @@ impl StreamingCommand for StarlarkBuiltinsCommand {
             .with_flushing()
             .new_generic(
                 client_context,
-                bz_cli_proto::new_generic::NewGenericRequest::Docs(
-                    DocsRequest::StarlarkBuiltins(DocsStarlarkBuiltinsRequest { path: p }),
-                ),
+                bz_cli_proto::new_generic::NewGenericRequest::Docs(DocsRequest::StarlarkBuiltins(
+                    DocsStarlarkBuiltinsRequest { path: p },
+                )),
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),
             )

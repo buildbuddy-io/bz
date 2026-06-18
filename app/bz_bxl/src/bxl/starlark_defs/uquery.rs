@@ -126,9 +126,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
         Ok(this.ctx.via_dice(eval, |dice| {
             dice.via(|dice| {
                 async {
-                    let filter = filter
-                        .into_option()
-                        .try_map(bz_query_parser::parse_expr)?;
+                    let filter = filter.into_option().try_map(bz_query_parser::parse_expr)?;
                     let from = unpack_targets(this, dice, from).await?;
                     let to = unpack_targets(this, dice, to).await?;
                     get_uquery_env(&this.ctx)
@@ -158,9 +156,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
         Ok(this.ctx.via_dice(eval, |dice| {
             dice.via(|dice| {
                 async {
-                    let filter = filter
-                        .into_option()
-                        .try_map(bz_query_parser::parse_expr)?;
+                    let filter = filter.into_option().try_map(bz_query_parser::parse_expr)?;
 
                     let from = unpack_targets(this, dice, from).await?;
                     let to = unpack_targets(this, dice, to).await?;
@@ -274,9 +270,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
             .via_dice(eval, |dice| {
                 dice.via(|dice| {
                     async {
-                        let filter = filter
-                            .into_option()
-                            .try_map(bz_query_parser::parse_expr)?;
+                        let filter = filter.into_option().try_map(bz_query_parser::parse_expr)?;
 
                         let targets = unpack_targets(this, dice, universe).await?;
 
@@ -317,9 +311,7 @@ fn uquery_methods(builder: &mut MethodsBuilder) {
             .via_dice(eval, |dice| {
                 dice.via(|dice| {
                     async {
-                        let filter = filter
-                            .into_option()
-                            .try_map(bz_query_parser::parse_expr)?;
+                        let filter = filter.into_option().try_map(bz_query_parser::parse_expr)?;
 
                         let universe = unpack_targets(this, dice, universe).await?;
                         let targets = unpack_targets(this, dice, from).await?;

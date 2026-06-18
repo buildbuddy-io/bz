@@ -100,11 +100,7 @@ impl DebugEventsState {
         entry.started += 1;
     }
 
-    fn span_end(
-        &mut self,
-        span_end: &SpanEndEvent,
-        data: Option<&bz_data::span_end_event::Data>,
-    ) {
+    fn span_end(&mut self, span_end: &SpanEndEvent, data: Option<&bz_data::span_end_event::Data>) {
         // Right now, matching these end events to the start events depends on the field names in the protobufs
         // matching. That works but is fragile, if it breaks at some point we can do the match and explicitly
         // match them ourselves.

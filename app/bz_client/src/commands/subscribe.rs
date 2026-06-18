@@ -156,8 +156,7 @@ impl StreamingCommand for SubscribeCommand {
         } else {
             // FIXME(JakobDegen): This command should propagate some error information back from the
             // server so that we can do error handling here.
-            bz_error::bz_error!(bz_error::ErrorTag::Tier0, "Subscribe command failed")
-                .into()
+            bz_error::bz_error!(bz_error::ErrorTag::Tier0, "Subscribe command failed").into()
         }
     }
 

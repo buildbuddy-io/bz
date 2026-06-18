@@ -122,10 +122,7 @@ impl<'c> CqueryEnvironment<'c> {
 impl QueryEnvironment for CqueryEnvironment<'_> {
     type Target = ConfiguredTargetNode;
 
-    async fn get_node(
-        &self,
-        node_ref: &ConfiguredTargetLabel,
-    ) -> bz_error::Result<Self::Target> {
+    async fn get_node(&self, node_ref: &ConfiguredTargetLabel) -> bz_error::Result<Self::Target> {
         CqueryEnvironment::get_node(self, node_ref).await
     }
 
@@ -136,10 +133,7 @@ impl QueryEnvironment for CqueryEnvironment<'_> {
         CqueryEnvironment::get_node_for_default_configured_target(self, node_ref).await
     }
 
-    async fn eval_literals(
-        &self,
-        literals: &[&str],
-    ) -> bz_error::Result<TargetSet<Self::Target>> {
+    async fn eval_literals(&self, literals: &[&str]) -> bz_error::Result<TargetSet<Self::Target>> {
         self.literals
             .eval_literals(literals, &mut self.delegate.ctx())
             .await
@@ -184,18 +178,11 @@ impl QueryEnvironment for CqueryEnvironment<'_> {
         .await
     }
 
-    async fn allbuildfiles(
-        &self,
-        universe: &TargetSet<Self::Target>,
-    ) -> bz_error::Result<FileSet> {
+    async fn allbuildfiles(&self, universe: &TargetSet<Self::Target>) -> bz_error::Result<FileSet> {
         return allbuildfiles(universe, self.delegate.uquery_delegate()).await;
     }
 
-    async fn rbuildfiles(
-        &self,
-        universe: &FileSet,
-        argset: &FileSet,
-    ) -> bz_error::Result<FileSet> {
+    async fn rbuildfiles(&self, universe: &FileSet, argset: &FileSet) -> bz_error::Result<FileSet> {
         return rbuildfiles(universe, argset, self.delegate.uquery_delegate()).await;
     }
 

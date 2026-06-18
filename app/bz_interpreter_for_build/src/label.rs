@@ -210,10 +210,10 @@ fn parse_providers_label<'v>(
             None => match build_context {
                 Some(c) => c.require_package()?,
                 None => {
-                    return Err(
-                        bz_error::Error::from(LabelCreatorError::ExpectedProvider(s.to_owned()))
-                            .into(),
-                    );
+                    return Err(bz_error::Error::from(LabelCreatorError::ExpectedProvider(
+                        s.to_owned(),
+                    ))
+                    .into());
                 }
             },
         };
@@ -228,10 +228,10 @@ fn parse_providers_label<'v>(
             None => match build_context {
                 Some(c) => c.require_package()?,
                 None => {
-                    return Err(
-                        bz_error::Error::from(LabelCreatorError::ExpectedProvider(s.to_owned()))
-                            .into(),
-                    );
+                    return Err(bz_error::Error::from(LabelCreatorError::ExpectedProvider(
+                        s.to_owned(),
+                    ))
+                    .into());
                 }
             },
         };

@@ -47,9 +47,7 @@ impl<'s> BxlDiceComputations<'s> {
     pub(crate) fn via<'a, T: 'a>(
         &'a mut self,
         // The returned future as a 'a lifetime to allow people to capture things in the future with a matching lifetime to self.
-        f: impl for<'d> FnOnce(
-            &'a mut DiceComputations<'d>,
-        ) -> LocalBoxFuture<'a, bz_error::Result<T>>
+        f: impl for<'d> FnOnce(&'a mut DiceComputations<'d>) -> LocalBoxFuture<'a, bz_error::Result<T>>
         + 'a,
     ) -> bz_error::Result<T> {
         let dispatcher = self

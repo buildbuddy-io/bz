@@ -146,9 +146,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
         Ok(this.ctx.via_dice(eval, move |dice| {
             dice.via(|dice| {
                 async move {
-                    let filter = filter
-                        .into_option()
-                        .try_map(bz_query_parser::parse_expr)?;
+                    let filter = filter.into_option().try_map(bz_query_parser::parse_expr)?;
                     let from = unpack_targets(this, dice, from).await?;
                     let to = unpack_targets(this, dice, to).await?;
                     get_cquery_env(&this.ctx, &this.global_cfg_options_override)
@@ -178,9 +176,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
         Ok(this.ctx.via_dice(eval, |dice| {
             dice.via(|dice| {
                 async {
-                    let filter = filter
-                        .into_option()
-                        .try_map(bz_query_parser::parse_expr)?;
+                    let filter = filter.into_option().try_map(bz_query_parser::parse_expr)?;
 
                     let from = unpack_targets(this, dice, from).await?;
                     let to = unpack_targets(this, dice, to).await?;
@@ -361,9 +357,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
             .via_dice(eval, |dice| {
                 dice.via(|dice| {
                     async {
-                        let filter = filter
-                            .into_option()
-                            .try_map(bz_query_parser::parse_expr)?;
+                        let filter = filter.into_option().try_map(bz_query_parser::parse_expr)?;
 
                         let targets = unpack_targets(this, dice, universe).await?;
 
@@ -506,9 +500,7 @@ fn cquery_methods(builder: &mut MethodsBuilder) {
             .via_dice(eval, |dice| {
                 dice.via(|dice| {
                     async {
-                        let filter = filter
-                            .into_option()
-                            .try_map(bz_query_parser::parse_expr)?;
+                        let filter = filter.into_option().try_map(bz_query_parser::parse_expr)?;
                         let universe = unpack_targets(this, dice, universe).await?;
                         let targets = unpack_targets(this, dice, from).await?;
                         get_cquery_env(&this.ctx, &this.global_cfg_options_override)

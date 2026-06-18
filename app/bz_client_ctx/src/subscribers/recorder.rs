@@ -1212,9 +1212,7 @@ impl InvocationRecorder {
             install_device_metadata: self.install_device_metadata.drain(..).collect(),
             installer_log_url: self.installer_log_url.take(),
             peak_process_memory_bytes: self.peak_process_memory_bytes.take(),
-            event_log_manifold_ttl_s: artifact_upload_event_log_ttl()
-                .ok()
-                .map(|t| t.as_secs()),
+            event_log_manifold_ttl_s: artifact_upload_event_log_ttl().ok().map(|t| t.as_secs()),
             total_disk_space_bytes: self.system_info.total_disk_space_bytes.take(),
             peak_used_disk_space_bytes: self.peak_used_disk_space_bytes.take(),
             peak_normalized_system_load1: self.peak_normalized_system_load1.take(),
@@ -2604,7 +2602,10 @@ impl EventSubscriber for InvocationRecorder {
             tracing::info!("Recording invocation to remote event sink: {:?}", &event);
             remote_event_sink.send_now(event).await
         } else {
-            tracing::info!("Invocation record is not sent to remote event sink: {:?}", &event);
+            tracing::info!(
+                "Invocation record is not sent to remote event sink: {:?}",
+                &event
+            );
             Err(internal_error!("Remote event sink not enabled"))
         }
     }

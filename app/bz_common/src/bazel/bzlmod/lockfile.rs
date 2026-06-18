@@ -362,8 +362,8 @@ pub(super) fn bzlmod_write_back_lockfile(
 /// Render a sorted string map with gson-compatible pretty-printing at the
 /// lockfile's top-level nesting depth.
 fn bzlmod_lockfile_string_map_json(map: &BTreeMap<String, String>) -> bz_error::Result<String> {
-    let rendered = serde_json::to_string_pretty(map)
-        .buck_error_context("Error encoding lockfile contents")?;
+    let rendered =
+        serde_json::to_string_pretty(map).buck_error_context("Error encoding lockfile contents")?;
     Ok(rendered.replace('\n', "\n  "))
 }
 

@@ -279,10 +279,7 @@ impl UqueryDelegate for DiceQueryDelegate<'_, '_> {
     }
 
     // Returns all packages from immediate enclosing up to cell root that could potentially own the path.
-    async fn get_enclosing_packages(
-        &self,
-        path: &CellPath,
-    ) -> bz_error::Result<Vec<PackageLabel>> {
+    async fn get_enclosing_packages(&self, path: &CellPath) -> bz_error::Result<Vec<PackageLabel>> {
         let cell_root = CellPath::new(path.cell(), CellRelativePath::empty().to_buf());
         Ok(DicePackageListingResolver(&mut self.ctx.get())
             .get_enclosing_packages(path.as_ref(), cell_root.as_ref())

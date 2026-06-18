@@ -190,9 +190,7 @@ generated_site/build/
         assert!(set.is_match(CellRelativePath::testing_new(
             "generated_site/build/index.html"
         )));
-        assert!(!set.is_match(CellRelativePath::testing_new(
-            "generated_site/src/index.ts"
-        )));
+        assert!(!set.is_match(CellRelativePath::testing_new("generated_site/src/index.ts")));
     }
 
     #[test]

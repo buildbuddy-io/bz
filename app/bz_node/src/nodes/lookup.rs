@@ -32,10 +32,7 @@ pub struct ConfiguredTargetNodeLookup<'c, 'd>(pub &'c LinearRecomputeDiceComputa
 
 #[async_trait]
 impl AsyncNodeLookup<ConfiguredTargetNode> for ConfiguredTargetNodeLookup<'_, '_> {
-    async fn get(
-        &self,
-        label: &ConfiguredTargetLabel,
-    ) -> bz_error::Result<ConfiguredTargetNode> {
+    async fn get(&self, label: &ConfiguredTargetLabel) -> bz_error::Result<ConfiguredTargetNode> {
         self.0
             .get()
             .get_configured_target_node(label)

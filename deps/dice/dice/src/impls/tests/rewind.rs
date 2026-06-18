@@ -208,7 +208,17 @@ impl Key for RewindingConsumerKey {
     }
 }
 
-#[derive(Clone, Dupe, Debug, Display, Eq, Hash, PartialEq, Allocative, PagablePanic)]
+#[derive(
+    Clone,
+    Dupe,
+    Debug,
+    Display,
+    Eq,
+    Hash,
+    PartialEq,
+    Allocative,
+    PagablePanic
+)]
 #[display("{:?}", self)]
 #[pagable_typetag(DiceKeyDyn)]
 struct Injected(i32);

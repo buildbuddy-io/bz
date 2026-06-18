@@ -770,11 +770,7 @@ fn test_source_label_deps() -> bz_error::Result<()> {
 
 #[test]
 fn test_source_label_resolution() -> bz_error::Result<()> {
-    fn resolve_and_test(
-        content: &str,
-        test_content: &str,
-        files: &[&str],
-    ) -> bz_error::Result<()> {
+    fn resolve_and_test(content: &str, test_content: &str, files: &[&str]) -> bz_error::Result<()> {
         Module::with_temp_heap(|env| {
             let globals = GlobalsBuilder::standard()
                 .with(register_select)

@@ -281,8 +281,7 @@ mod tests {
     use crate::attrs::coerced_path::CoercedPath;
 
     #[test]
-    fn source_file_defaults_do_not_need_package_to_collect_default_deps() -> bz_error::Result<()>
-    {
+    fn source_file_defaults_do_not_need_package_to_collect_default_deps() -> bz_error::Result<()> {
         let path = PackageRelativePathBuf::unchecked_new("LICENSE".to_owned());
         let default = Arc::new(CoercedAttr::SourceFile(CoercedPath::File(
             path.as_path().to_arc(),

@@ -533,9 +533,7 @@ fn bazel_build_setting_attrs(
     ])
 }
 
-fn add_bazel_common_implicit_attrs(
-    attrs: &mut Vec<(String, Attribute)>,
-) -> bz_error::Result<()> {
+fn add_bazel_common_implicit_attrs(attrs: &mut Vec<(String, Attribute)>) -> bz_error::Result<()> {
     fn add_if_absent(
         attrs: &mut Vec<(String, Attribute)>,
         name: &str,
@@ -1696,10 +1694,9 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             (Some(r#impl), None) => (r#impl, has_bazel_rule_options),
             (None, Some(implementation)) => (implementation, true),
             _ => {
-                return Err(bz_error::Error::from(
-                    RuleError::MissingOrConflictingImplementation,
-                )
-                .into());
+                return Err(
+                    bz_error::Error::from(RuleError::MissingOrConflictingImplementation).into(),
+                );
             }
         };
         Ok(StarlarkRuleCallable::new(

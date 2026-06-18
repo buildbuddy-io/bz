@@ -9,8 +9,8 @@
  */
 
 use async_compression::tokio::bufread::ZstdEncoder;
-use bz_common::artifact_upload::Bucket;
 use bz_common::artifact_upload::ArtifactUploadClient;
+use bz_common::artifact_upload::Bucket;
 use bz_fs::async_fs_util;
 use bz_fs::error::IoResultExt;
 use bz_fs::paths::abs_norm_path::AbsNormPath;

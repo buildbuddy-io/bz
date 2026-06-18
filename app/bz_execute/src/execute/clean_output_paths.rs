@@ -150,10 +150,7 @@ pub fn cleanup_path(fs: &ProjectRoot, path: &ProjectRelativePath) -> bz_error::R
 
 static BACKGROUND_CLEAN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn background_cleanup_path(
-    fs: &ProjectRoot,
-    path: &ProjectRelativePath,
-) -> bz_error::Result<()> {
+fn background_cleanup_path(fs: &ProjectRoot, path: &ProjectRelativePath) -> bz_error::Result<()> {
     let path = fs.resolve(path);
     if fs_util::symlink_metadata_if_exists(&path)?.is_none() {
         return Ok(());

@@ -340,10 +340,7 @@ impl FileDigest {
         Ok(digest)
     }
 
-    fn from_file_disk_uncached(
-        file: &AbsPath,
-        config: FileDigestConfig,
-    ) -> bz_error::Result<Self> {
+    fn from_file_disk_uncached(file: &AbsPath, config: FileDigestConfig) -> bz_error::Result<Self> {
         let f = fs_util::open_file(file).categorize_internal()?;
         FileDigest::from_reader(f, config.as_cas_digest_config())
     }

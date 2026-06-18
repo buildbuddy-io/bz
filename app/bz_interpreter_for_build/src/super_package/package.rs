@@ -236,26 +236,22 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
             }
             PerFileTypeContext::Build(internals) => {
                 if inherit.is_some() {
-                    return Err(
-                        bz_error::Error::from(PackageFileError::PackageFileOnlyArg("inherit"))
-                            .into(),
-                    );
+                    return Err(bz_error::Error::from(PackageFileError::PackageFileOnlyArg(
+                        "inherit",
+                    ))
+                    .into());
                 }
                 if visibility.is_some() {
-                    return Err(
-                        bz_error::Error::from(PackageFileError::PackageFileOnlyArg(
-                            "visibility",
-                        ))
-                        .into(),
-                    );
+                    return Err(bz_error::Error::from(PackageFileError::PackageFileOnlyArg(
+                        "visibility",
+                    ))
+                    .into());
                 }
                 if within_view.is_some() {
-                    return Err(
-                        bz_error::Error::from(PackageFileError::PackageFileOnlyArg(
-                            "within_view",
-                        ))
-                        .into(),
-                    );
+                    return Err(bz_error::Error::from(PackageFileError::PackageFileOnlyArg(
+                        "within_view",
+                    ))
+                    .into());
                 }
 
                 if !has_bazel_build_arg {

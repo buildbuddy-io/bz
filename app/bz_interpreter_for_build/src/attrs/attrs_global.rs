@@ -316,12 +316,9 @@ fn bazel_allowed_file_types_from_value(
     let mut extensions = values
         .into_iter()
         .map(|value| {
-            value
-                .unpack_str()
-                .map(str::to_owned)
-                .ok_or_else(|| {
-                    AttrError::InvalidBazelAllowFilesExtension(param, value.to_repr()).into()
-                })
+            value.unpack_str().map(str::to_owned).ok_or_else(|| {
+                AttrError::InvalidBazelAllowFilesExtension(param, value.to_repr()).into()
+            })
         })
         .collect::<bz_error::Result<Vec<_>>>()?;
     extensions.sort();
@@ -337,9 +334,11 @@ fn bazel_allowed_file_types(
     allow_files: Option<Value>,
     allow_single_file: Option<Value>,
 ) -> bz_error::Result<BazelAllowedFileTypes> {
-    Ok(bazel_allowed_file_types_from_value("allow_files", allow_files)?.combine(
-        bazel_allowed_file_types_from_value("allow_single_file", allow_single_file)?,
-    ))
+    Ok(
+        bazel_allowed_file_types_from_value("allow_files", allow_files)?.combine(
+            bazel_allowed_file_types_from_value("allow_single_file", allow_single_file)?,
+        ),
+    )
 }
 
 fn bazel_dep_attr_type<'v>(

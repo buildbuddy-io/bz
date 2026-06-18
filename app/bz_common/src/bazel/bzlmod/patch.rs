@@ -277,12 +277,7 @@ fn parse_native_bzlmod_hunk_range(
 ) -> bz_error::Result<(usize, usize)> {
     let range = range
         .and_then(|range| range.strip_prefix(prefix))
-        .ok_or_else(|| {
-            bz_error!(
-                bz_error::ErrorTag::Input,
-                "Invalid bzlmod patch hunk range"
-            )
-        })?;
+        .ok_or_else(|| bz_error!(bz_error::ErrorTag::Input, "Invalid bzlmod patch hunk range"))?;
     let (start, len) = match range.split_once(',') {
         Some((start, len)) => (start, len.parse::<usize>()?),
         None => (range, 1),

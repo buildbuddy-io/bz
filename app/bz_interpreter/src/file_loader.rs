@@ -158,12 +158,7 @@ impl InterpreterFileLoader {
 }
 
 fn to_diagnostic(err: &bz_error::Error, id: &str) -> bz_error::Error {
-    bz_error::bz_error!(
-        bz_error::ErrorTag::Tier0,
-        "UnknownError in {}: {}",
-        id,
-        err
-    )
+    bz_error::bz_error!(bz_error::ErrorTag::Tier0, "UnknownError in {}: {}", id, err)
 }
 
 impl InterpreterFileLoader {

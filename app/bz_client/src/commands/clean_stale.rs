@@ -117,10 +117,7 @@ impl StreamingCommand for CleanStaleCommand {
                     humantime::format_duration(
                         duration
                             .to_std()
-                            .map_err(|e| from_any_with_tag(
-                                e,
-                                bz_error::ErrorTag::InvalidDuration
-                            ))
+                            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::InvalidDuration))
                             .buck_error_context("Error converting duration")?
                     ),
                 )?;

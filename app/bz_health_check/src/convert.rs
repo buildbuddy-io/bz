@@ -87,9 +87,7 @@ impl TryFrom<i32> for HealthCheckType {
             bz_health_check_proto::HealthCheckType::MemoryPressure => {
                 HealthCheckType::MemoryPressure
             }
-            bz_health_check_proto::HealthCheckType::LowDiskSpace => {
-                HealthCheckType::LowDiskSpace
-            }
+            bz_health_check_proto::HealthCheckType::LowDiskSpace => HealthCheckType::LowDiskSpace,
             bz_health_check_proto::HealthCheckType::SlowDownloadSpeed => {
                 HealthCheckType::SlowDownloadSpeed
             }
@@ -110,9 +108,7 @@ impl TryInto<i32> for HealthCheckType {
             HealthCheckType::MemoryPressure => {
                 bz_health_check_proto::HealthCheckType::MemoryPressure
             }
-            HealthCheckType::LowDiskSpace => {
-                bz_health_check_proto::HealthCheckType::LowDiskSpace
-            }
+            HealthCheckType::LowDiskSpace => bz_health_check_proto::HealthCheckType::LowDiskSpace,
             HealthCheckType::SlowDownloadSpeed => {
                 bz_health_check_proto::HealthCheckType::SlowDownloadSpeed
             }
@@ -155,14 +151,12 @@ impl TryInto<bz_health_check_proto::Message> for Message {
                 body,
                 footer,
                 compact,
-            } => bz_health_check_proto::message::Data::Rich(
-                bz_health_check_proto::RichMessage {
-                    header,
-                    body,
-                    footer,
-                    compact,
-                },
-            ),
+            } => bz_health_check_proto::message::Data::Rich(bz_health_check_proto::RichMessage {
+                header,
+                body,
+                footer,
+                compact,
+            }),
         };
         Ok(bz_health_check_proto::Message { data: Some(data) })
     }
@@ -279,9 +273,7 @@ impl TryInto<bz_health_check_proto::HealthCheckContextEvent> for HealthCheckCont
 
 impl TryFrom<bz_health_check_proto::HealthCheckContextEvent> for HealthCheckContextEvent {
     type Error = bz_error::Error;
-    fn try_from(
-        value: bz_health_check_proto::HealthCheckContextEvent,
-    ) -> bz_error::Result<Self> {
+    fn try_from(value: bz_health_check_proto::HealthCheckContextEvent) -> bz_error::Result<Self> {
         Ok( match value.data.ok_or_else(|| internal_error!("Invalid `health_check_context_event`"))? {
             bz_health_check_proto::health_check_context_event::Data::BranchedFromRevision(rev) => {
                 HealthCheckContextEvent::BranchedFromRevision(rev)
@@ -309,9 +301,7 @@ impl TryFrom<bz_health_check_proto::HealthCheckContextEvent> for HealthCheckCont
 impl TryFrom<bz_health_check_proto::HealthCheckSnapshotData> for HealthCheckSnapshotData {
     type Error = bz_error::Error;
 
-    fn try_from(
-        value: bz_health_check_proto::HealthCheckSnapshotData,
-    ) -> bz_error::Result<Self> {
+    fn try_from(value: bz_health_check_proto::HealthCheckSnapshotData) -> bz_error::Result<Self> {
         use std::time::Duration;
         use std::time::UNIX_EPOCH;
 

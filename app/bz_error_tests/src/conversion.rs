@@ -27,8 +27,7 @@ fn starlark_conversion_helper() -> starlark::Error {
     }
 
     fn fail3() -> bz_error::Result<()> {
-        fail2()
-            .map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Input).context("rust failure"))
+        fail2().map_err(|e| from_any_with_tag(e, bz_error::ErrorTag::Input).context("rust failure"))
     }
 
     #[starlark_module]

@@ -159,10 +159,7 @@ impl QueryEnvironment for Env {
         unimplemented!()
     }
 
-    async fn eval_literals(
-        &self,
-        _literal: &[&str],
-    ) -> bz_error::Result<TargetSet<Self::Target>> {
+    async fn eval_literals(&self, _literal: &[&str]) -> bz_error::Result<TargetSet<Self::Target>> {
         unimplemented!()
     }
 

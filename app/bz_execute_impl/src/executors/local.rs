@@ -81,11 +81,11 @@ use bz_execute::execute::prepared::PreparedCommand;
 use bz_execute::execute::prepared::PreparedCommandExecutor;
 use bz_execute::execute::prepared::PreparedCommandOptionalExecutor;
 use bz_execute::execute::prepared::UnpreparedCommand;
+use bz_execute::execute::request::BazelInputMapping;
 use bz_execute::execute::request::CommandExecutionInput;
 use bz_execute::execute::request::CommandExecutionOutput;
 use bz_execute::execute::request::CommandExecutionOutputRef;
 use bz_execute::execute::request::CommandExecutionRequest;
-use bz_execute::execute::request::BazelInputMapping;
 use bz_execute::execute::request::ExecutorPreference;
 use bz_execute::execute::request::NetworkAccess;
 use bz_execute::execute::request::WorkerProtocol;
@@ -3382,7 +3382,12 @@ fn resolve_bazel_worker_flag_file_path(
         .bazel_input_mappings
         .shared_inputs
         .iter()
-        .chain(materialized_inputs.bazel_input_mappings.sandbox_inputs.iter())
+        .chain(
+            materialized_inputs
+                .bazel_input_mappings
+                .sandbox_inputs
+                .iter(),
+        )
     {
         if input.path == execroot_path {
             return Ok(input.source_path.clone());
@@ -3577,7 +3582,10 @@ pub fn prepare_bazel_input_mappings(
     artifact_fs: &ArtifactFs,
     materialized_inputs: &MaterializedInputPaths,
 ) -> bz_error::Result<()> {
-    for alias in &materialized_inputs.bazel_input_mappings.external_cell_root_aliases {
+    for alias in &materialized_inputs
+        .bazel_input_mappings
+        .external_cell_root_aliases
+    {
         materialize_external_cell_root_alias(
             artifact_fs,
             alias.source_root.as_ref(),
@@ -5337,8 +5345,8 @@ mod tests {
     }
 
     #[test]
-    fn test_action_metadata_cache_outputs_treat_not_a_directory_as_missing()
-    -> bz_error::Result<()> {
+    fn test_action_metadata_cache_outputs_treat_not_a_directory_as_missing() -> bz_error::Result<()>
+    {
         let (executor, _, temp) = test_executor()?;
         let outputs = buck_indexmap! {
             test_output("parent/out") => ArtifactValue::file(DigestConfig::testing_default().empty_file()),

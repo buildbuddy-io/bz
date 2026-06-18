@@ -92,11 +92,7 @@ async fn verify_visibility(
     }
 
     if !visibility_errors.is_empty() {
-        return Err(bz_error::bz_error!(
-            bz_error::ErrorTag::Input,
-            "{}",
-            1
-        ));
+        return Err(bz_error::bz_error!(bz_error::ErrorTag::Input, "{}", 1));
     }
 
     bz_client_ctx::eprintln!("audit visibility succeeded")?;

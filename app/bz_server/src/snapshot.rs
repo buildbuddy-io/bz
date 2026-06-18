@@ -222,7 +222,12 @@ impl SnapshotCollector {
     }
 
     fn add_sink_metrics(&self, snapshot: &mut bz_data::Snapshot) {
-        if let Some(metrics) = self.daemon.remote_event_sink.as_ref().map(|sink| sink.stats()) {
+        if let Some(metrics) = self
+            .daemon
+            .remote_event_sink
+            .as_ref()
+            .map(|sink| sink.stats())
+        {
             let EventSinkStats {
                 successes,
                 failures_invalid_request,
@@ -266,9 +271,7 @@ impl SnapshotCollector {
                             network_kind: match counters.network_kind {
                                 NetworkKind::WiFi => bz_data::NetworkKind::WiFi.into(),
                                 NetworkKind::Ethernet => bz_data::NetworkKind::Ethernet.into(),
-                                NetworkKind::Unknown => {
-                                    bz_data::NetworkKind::UnknownNetKind.into()
-                                }
+                                NetworkKind::Unknown => bz_data::NetworkKind::UnknownNetKind.into(),
                             },
                         },
                     )

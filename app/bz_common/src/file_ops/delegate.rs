@@ -435,10 +435,7 @@ impl FileOpsDelegateWithIgnores {
             .await
     }
 
-    pub async fn is_ignored(
-        &self,
-        path: &CellRelativePath,
-    ) -> bz_error::Result<FileIgnoreResult> {
+    pub async fn is_ignored(&self, path: &CellRelativePath) -> bz_error::Result<FileIgnoreResult> {
         Ok(self.check_ignores(UncheckedCellRelativePath::new(path)))
     }
 }

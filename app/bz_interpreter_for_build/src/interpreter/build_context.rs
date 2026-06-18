@@ -111,10 +111,7 @@ impl PerFileTypeContext {
         self.starlark_path().file_type()
     }
 
-    pub(crate) fn require_build(
-        &self,
-        function_name: &str,
-    ) -> bz_error::Result<&ModuleInternals> {
+    pub(crate) fn require_build(&self, function_name: &str) -> bz_error::Result<&ModuleInternals> {
         match self {
             PerFileTypeContext::Build(internals) => Ok(internals),
             x => {
@@ -355,7 +352,8 @@ pub enum BazelRepositoryRecordedInput {
 /// Insertion-ordered set of recorded inputs. Repository rules record the same
 /// input (env var, file hash, repo mapping) many times, so membership checks
 /// must not scan a Vec linearly under the lock.
-pub type BazelRepositoryRecordedInputSet = starlark::collections::SmallSet<BazelRepositoryRecordedInput>;
+pub type BazelRepositoryRecordedInputSet =
+    starlark::collections::SmallSet<BazelRepositoryRecordedInput>;
 
 #[derive(Clone, Debug)]
 pub(crate) struct BazelRepositoryContextForStarlark {
@@ -402,10 +400,7 @@ pub(crate) fn init_starlark_path_from_build_context() {
 /// EvalResult at the end of interpreting
 impl ModuleInternals {
     /// Try to get this inner context from the `ctx.extra` property.
-    pub fn from_context<'a>(
-        ctx: &'a Evaluator,
-        function_name: &str,
-    ) -> bz_error::Result<&'a Self> {
+    pub fn from_context<'a>(ctx: &'a Evaluator, function_name: &str) -> bz_error::Result<&'a Self> {
         BuildContext::from_context(ctx)?
             .additional
             .require_build(function_name)

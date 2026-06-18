@@ -309,11 +309,10 @@ mod state_machine {
 
             if (*self.fail_paths.lock()).contains(&path) || *self.fail.lock() {
                 self.log.lock().push((Op::MaterializeError, path));
-                Err(bz_error::bz_error!(
-                    bz_error::ErrorTag::MaterializationError,
-                    "Injected error"
+                Err(
+                    bz_error::bz_error!(bz_error::ErrorTag::MaterializationError, "Injected error")
+                        .into(),
                 )
-                .into())
             } else {
                 if let ArtifactMaterializationMethod::Write(write) = _method.as_ref() {
                     self.actually_write(&path, write);

@@ -336,10 +336,7 @@ mod tests {
             configured.traverse(&mut info, PackageLabel::testing_new("root", ""))?;
             assert_eq!(smallset![target.dupe()], info.deps);
         } else {
-            return Err(bz_error!(
-                bz_error::ErrorTag::Input,
-                "Expected Location"
-            ));
+            return Err(bz_error!(bz_error::ErrorTag::Input, "Expected Location"));
         }
 
         Ok(())
@@ -367,10 +364,7 @@ mod tests {
             assert_eq!(smallset![label.dupe()], info.execution_deps);
             assert_eq!(smallset![], info.deps);
         } else {
-            return Err(bz_error!(
-                bz_error::ErrorTag::Input,
-                "Expected Location"
-            ));
+            return Err(bz_error!(bz_error::ErrorTag::Input, "Expected Location"));
         }
 
         Ok(())
@@ -402,10 +396,7 @@ mod tests {
             assert_eq!(smallset![], info.deps);
             assert_eq!(smallset![], info.execution_deps);
         } else {
-            return Err(bz_error!(
-                bz_error::ErrorTag::Input,
-                "Expected Location"
-            ));
+            return Err(bz_error!(bz_error::ErrorTag::Input, "Expected Location"));
         }
 
         Ok(())

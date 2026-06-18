@@ -22,8 +22,8 @@ use bz_client_ctx::thread_dump::thread_dump_command;
 use bz_client_ctx::upload_re_logs::upload_re_logs;
 use bz_common::argv::Argv;
 use bz_common::argv::SanitizedArgv;
-use bz_common::artifact_upload::Bucket;
 use bz_common::artifact_upload::ArtifactUploadClient;
+use bz_common::artifact_upload::Bucket;
 use bz_data::InstantEvent;
 use bz_data::RageResult;
 use bz_data::instant_event::Data;
@@ -54,8 +54,8 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 
-use crate::artifact_upload::file_to_artifact_store;
 use crate::artifact_upload::artifact_upload_leads;
+use crate::artifact_upload::file_to_artifact_store;
 
 #[derive(Debug, bz_error::Error)]
 #[buck2(tag = Tier0)]
@@ -524,7 +524,14 @@ async fn upload_re_logs_impl(
 ) -> bz_error::Result<String> {
     let bucket = Bucket::RAGE_DUMPS;
     let filename = format!("flat/{}-re_logs.zst", &re_session_id);
-    upload_re_logs(artifact_client, bucket, re_logs_dir, &re_session_id, &filename).await?;
+    upload_re_logs(
+        artifact_client,
+        bucket,
+        re_logs_dir,
+        &re_session_id,
+        &filename,
+    )
+    .await?;
 
     Ok(artifact_upload_leads(&bucket, filename))
 }
@@ -564,7 +571,9 @@ async fn dispatch_event_to_remote_event_sink(
 }
 
 #[allow(unused_variables)] // Conditional compilation
-fn create_remote_event_sink(ctx: &ClientCommandContext) -> bz_error::Result<Option<RemoteEventSink>> {
+fn create_remote_event_sink(
+    ctx: &ClientCommandContext,
+) -> bz_error::Result<Option<RemoteEventSink>> {
     new_remote_event_sink_if_enabled(ctx.fbinit(), RemoteEventSinkConfig::default())
 }
 
@@ -753,7 +762,12 @@ async fn upload_thread_dump(
 
     if command.status.success() {
         let artifact_filename = format!("flat/{artifact_id}_thread_dump");
-        crate::artifact_upload::buf_to_artifact_store(artifact_client, &command.stdout, artifact_filename).await
+        crate::artifact_upload::buf_to_artifact_store(
+            artifact_client,
+            &command.stdout,
+            artifact_filename,
+        )
+        .await
     } else {
         let stderr = &command.stderr;
         Ok(String::from_utf8_lossy(stderr).to_string())

@@ -102,10 +102,7 @@ impl Materializer for NoDiskMaterializer {
         ))
     }
 
-    async fn invalidate_many(
-        &self,
-        _paths: Vec<ProjectRelativePathBuf>,
-    ) -> bz_error::Result<()> {
+    async fn invalidate_many(&self, _paths: Vec<ProjectRelativePathBuf>) -> bz_error::Result<()> {
         Ok(())
     }
 
@@ -126,8 +123,7 @@ impl Materializer for NoDiskMaterializer {
     async fn get_materialized_file_paths(
         &self,
         paths: Vec<ProjectRelativePathBuf>,
-    ) -> bz_error::Result<Vec<Result<ProjectRelativePathBuf, ArtifactNotMaterializedReason>>>
-    {
+    ) -> bz_error::Result<Vec<Result<ProjectRelativePathBuf, ArtifactNotMaterializedReason>>> {
         Ok(paths.into_map(Ok))
     }
 

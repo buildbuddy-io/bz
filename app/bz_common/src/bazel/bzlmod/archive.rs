@@ -656,9 +656,8 @@ fn extract_zip_archive(
                 continue;
             }
             if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent).with_buck_error_context(|| {
-                    format!("Error creating `{}`", parent.display())
-                })?;
+                fs::create_dir_all(parent)
+                    .with_buck_error_context(|| format!("Error creating `{}`", parent.display()))?;
             }
             if is_zip_symlink(entry.unix_mode()) {
                 let mut target = String::new();
@@ -744,9 +743,8 @@ fn extract_tar_archive<R: Read>(
             };
             let destination = output.join(&relative_path);
             if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent).with_buck_error_context(|| {
-                    format!("Error creating `{}`", parent.display())
-                })?;
+                fs::create_dir_all(parent)
+                    .with_buck_error_context(|| format!("Error creating `{}`", parent.display()))?;
             }
             let entry_type = entry.header().entry_type();
             if entry_type.is_symlink() || entry_type.is_hard_link() {

@@ -63,10 +63,7 @@ impl DynamicActionsOutputArtifactBinder {
         }
     }
 
-    pub(crate) fn bind(
-        &mut self,
-        output: OutputArtifact,
-    ) -> bz_error::Result<BoundBuildArtifact> {
+    pub(crate) fn bind(&mut self, output: OutputArtifact) -> bz_error::Result<BoundBuildArtifact> {
         // We create ActionKeys that point directly to the dynamic_lambda's
         // output rather than our own. This saves the resolution of the key from
         // needing to first lookup our result just to get forwarded to the lambda's result.

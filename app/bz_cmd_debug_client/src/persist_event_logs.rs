@@ -14,10 +14,10 @@ use bz_client_ctx::client_ctx::ClientCommandContext;
 use bz_client_ctx::common::BuckArgMatches;
 use bz_client_ctx::events_ctx::EventsCtx;
 use bz_client_ctx::exit_result::ExitResult;
-use bz_common::chunk_reader::ChunkReader;
 use bz_common::artifact_upload::ArtifactChunkedUploader;
 use bz_common::artifact_upload::ArtifactUploadClient;
 use bz_common::artifact_upload::Bucket;
+use bz_common::chunk_reader::ChunkReader;
 use bz_core::soft_error;
 use bz_data::InstantEvent;
 use bz_data::PersistEventLogSubprocess;
@@ -362,7 +362,9 @@ async fn dispatch_event_to_remote_event_sink(
     };
 }
 
-fn create_remote_event_sink(ctx: &ClientCommandContext) -> bz_error::Result<Option<RemoteEventSink>> {
+fn create_remote_event_sink(
+    ctx: &ClientCommandContext,
+) -> bz_error::Result<Option<RemoteEventSink>> {
     new_remote_event_sink_if_enabled(ctx.fbinit(), RemoteEventSinkConfig::default())
 }
 

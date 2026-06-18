@@ -741,9 +741,7 @@ impl<T: PatternType> LoadedPatterns<T> {
         self.results.into_iter()
     }
 
-    pub fn iter_loaded_targets(
-        &self,
-    ) -> impl Iterator<Item = bz_error::Result<TargetNodeRef<'_>>> {
+    pub fn iter_loaded_targets(&self) -> impl Iterator<Item = bz_error::Result<TargetNodeRef<'_>>> {
         self.results
             .values()
             .map(|result| match result {
@@ -755,12 +753,8 @@ impl<T: PatternType> LoadedPatterns<T> {
 
     pub fn iter_loaded_targets_by_package(
         &self,
-    ) -> impl Iterator<
-        Item = (
-            PackageLabelWithModifiers,
-            bz_error::Result<Vec<TargetNode>>,
-        ),
-    > + '_ {
+    ) -> impl Iterator<Item = (PackageLabelWithModifiers, bz_error::Result<Vec<TargetNode>>)> + '_
+    {
         self.results.iter().map(|(package, result)| {
             let targets = result
                 .as_ref()

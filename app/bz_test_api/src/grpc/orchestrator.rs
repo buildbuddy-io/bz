@@ -183,9 +183,9 @@ impl TestOrchestratorClient {
             bz_test_proto::execute_response2::Response::Result(res) => {
                 ExecuteResponse::Result(res.try_into().buck_error_context("Invalid `result`")?)
             }
-            bz_test_proto::execute_response2::Response::Cancelled(
-                bz_test_proto::Cancelled { reason },
-            ) => {
+            bz_test_proto::execute_response2::Response::Cancelled(bz_test_proto::Cancelled {
+                reason,
+            }) => {
                 let reason = match reason {
                     Some(reason) => bz_test_proto::CancellationReason::try_from(reason)
                         .map(|proto_reason| match proto_reason {
@@ -386,12 +386,10 @@ where
                 .buck_error_context("Execution failed")?;
 
             let response = match response {
-                ExecuteResponse::Result(r) => {
-                    bz_test_proto::execute_response2::Response::Result(
-                        r.try_into()
-                            .buck_error_context("Failed to serialize result")?,
-                    )
-                }
+                ExecuteResponse::Result(r) => bz_test_proto::execute_response2::Response::Result(
+                    r.try_into()
+                        .buck_error_context("Failed to serialize result")?,
+                ),
                 ExecuteResponse::Cancelled(reason) => {
                     let reason = if let Some(reason) = reason {
                         match reason {

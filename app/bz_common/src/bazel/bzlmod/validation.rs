@@ -113,9 +113,7 @@ pub(super) fn parse_bzlmod_version(version: &str) -> bz_error::Result<BzlmodVers
     })
 }
 
-fn parse_bzlmod_version_identifiers(
-    value: &str,
-) -> bz_error::Result<Vec<BzlmodVersionIdentifier>> {
+fn parse_bzlmod_version_identifiers(value: &str) -> bz_error::Result<Vec<BzlmodVersionIdentifier>> {
     value
         .split('.')
         .map(|identifier| {

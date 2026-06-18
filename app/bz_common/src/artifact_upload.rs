@@ -119,7 +119,9 @@ pub enum UploadError {
         code: i32,
         stderr: String,
     },
-    #[error("Failed to upload stream to the artifact store with exit code `{code}`, stderr: `{stderr}`")]
+    #[error(
+        "Failed to upload stream to the artifact store with exit code `{code}`, stderr: `{stderr}`"
+    )]
     StreamUploadExitCode { code: i32, stderr: String },
     #[error("No artifact upload endpoint is configured in this build")]
     Unavailable,
@@ -141,17 +143,13 @@ pub struct Bucket {
 }
 
 impl Bucket {
-    pub const EVENT_LOGS: Bucket = Bucket {
-        name: "bz_logs",
-    };
+    pub const EVENT_LOGS: Bucket = Bucket { name: "bz_logs" };
 
     pub const RAGE_DUMPS: Bucket = Bucket {
         name: "bz_rage_dumps",
     };
 
-    pub const RE_LOGS: Bucket = Bucket {
-        name: "bz_re_logs",
-    };
+    pub const RE_LOGS: Bucket = Bucket { name: "bz_re_logs" };
 
     pub const INSTALLER_LOGS: Bucket = Bucket {
         name: "bz_installer_logs",

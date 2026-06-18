@@ -201,10 +201,10 @@ pub(crate) fn write_package_value_impl<'v>(
 
     if !overwrite {
         if package_ctx.parent.package_values().contains_key(key) {
-            return Err(
-                bz_error::Error::from(PackageValueError::KeySetInParentFile(key.to_owned()))
-                    .into(),
-            );
+            return Err(bz_error::Error::from(PackageValueError::KeySetInParentFile(
+                key.to_owned(),
+            ))
+            .into());
         }
     }
 

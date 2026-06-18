@@ -219,9 +219,8 @@ fn apply_bazel_computed_defaults<'v>(
                         dependency.to_owned(),
                     )
                 })?;
-            positional.push(
-                alloc_coerced_attr_value(value.value, eval).map_err(bz_error::Error::from)?,
-            );
+            positional
+                .push(alloc_coerced_attr_value(value.value, eval).map_err(bz_error::Error::from)?);
         }
 
         let raw_value = eval

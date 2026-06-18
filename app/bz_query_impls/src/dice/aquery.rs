@@ -123,8 +123,7 @@ impl<K: Hash + Eq + PartialEq + Dupe, V: Dupe> NodeCache<K, V> {
 #[derive(Clone, Dupe)]
 struct DiceAqueryNodesCache {
     action_nodes: Arc<NodeCache<ActionKey, bz_error::Result<ActionQueryNode>>>,
-    tset_nodes:
-        Arc<NodeCache<TransitiveSetProjectionKey, bz_error::Result<SetProjectionInputs>>>,
+    tset_nodes: Arc<NodeCache<TransitiveSetProjectionKey, bz_error::Result<SetProjectionInputs>>>,
 }
 
 impl DiceAqueryNodesCache {
