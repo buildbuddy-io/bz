@@ -85,6 +85,7 @@ use bz_execute::execute::request::CommandExecutionInput;
 use bz_execute::execute::request::CommandExecutionOutput;
 use bz_execute::execute::request::CommandExecutionOutputRef;
 use bz_execute::execute::request::CommandExecutionRequest;
+use bz_execute::execute::request::BazelInputMapping;
 use bz_execute::execute::request::ExecutorPreference;
 use bz_execute::execute::request::NetworkAccess;
 use bz_execute::execute::request::WorkerProtocol;
@@ -201,13 +202,21 @@ fn local_action_cache_outputs_from_stored_values(
                 .as_ref()
                 .resolve(artifact_fs, Some(&value.content_based_path_hash()))?
                 .into_path();
-            if !fs_util::try_exists(artifact_fs.fs().resolve(&path))? {
-                return Ok(None);
+            match fs_util::try_exists(artifact_fs.fs().resolve(&path)) {
+                Ok(true) => {}
+                Ok(false) => return Ok(None),
+                Err(e) if is_absent_local_action_cache_output_error(&e) => return Ok(None),
+                Err(e) => return Err(e),
             }
         }
     }
 
     Ok(Some(outputs))
+}
+
+fn is_absent_local_action_cache_output_error(error: &bz_error::Error) -> bool {
+    error.has_tag(bz_error::ErrorTag::IoNotFound)
+        || error.has_tag(bz_error::ErrorTag::IoNotADirectory)
 }
 
 #[derive(Clone)]
@@ -711,17 +720,7 @@ impl LocalExecutor {
                 )
                 .buck_error_context("Error creating output directories")?;
 
-                self.materializer
-                    .ensure_materialized(
-                        materialized_inputs
-                            .copied_artifact_path_aliases
-                            .iter()
-                            .cloned()
-                            .collect(),
-                    )
-                    .await?;
-
-                materialize_input_path_aliases(&self.artifact_fs, materialized_inputs)?;
+                prepare_bazel_input_mappings(&self.artifact_fs, materialized_inputs)?;
 
                 let bazel_worker_sandbox = if request.worker().as_ref().is_some_and(|worker| {
                     worker.protocol == WorkerProtocol::Bazel && worker.bazel_worker_sandboxing
@@ -1051,16 +1050,7 @@ impl LocalExecutor {
                 r2?;
 
                 if request.worker().is_some() {
-                    self.materializer
-                        .ensure_materialized(
-                            materialized_inputs
-                                .copied_artifact_path_aliases
-                                .iter()
-                                .cloned()
-                                .collect(),
-                        )
-                        .await?;
-                    materialize_input_path_aliases(&self.artifact_fs, &materialized_inputs)?;
+                    prepare_bazel_input_mappings(&self.artifact_fs, &materialized_inputs)?;
                 }
 
                 bz_error::Ok((materialized_inputs, Instant::now() - start))
@@ -2795,7 +2785,7 @@ async fn prepare_bazel_worker_sandbox(
                 create_or_replace_symlink(source.as_path(), &dest)?;
             }
 
-            for alias in &materialized_inputs.external_cell_root_aliases {
+            for alias in &materialized_inputs.bazel_input_mappings.external_cell_root_aliases {
                 let Some(relative) = alias.alias_root.strip_prefix_opt(request.working_directory())
                 else {
                     continue;
@@ -2830,19 +2820,27 @@ async fn prepare_bazel_worker_sandbox(
                 create_or_replace_symlink(source.as_path(), &dest)?;
             }
 
-            for (source_path, path) in &materialized_inputs.artifact_path_aliases {
+            for input in materialized_inputs
+                .bazel_input_mappings
+                .shared_inputs
+                .iter()
+                .chain(materialized_inputs.bazel_input_mappings.sandbox_inputs.iter())
+            {
                 if bazel_worker_sandbox_external_cell_alias_contains_path(
                     request.working_directory(),
                     materialized_inputs,
-                    path.as_ref(),
+                    input.path.as_ref(),
                 ) {
                     continue;
                 }
-                let Some(relative) = path.strip_prefix_opt(request.working_directory()) else {
+                let Some(relative) = input.path.strip_prefix_opt(request.working_directory()) else {
                     continue;
                 };
+                if !relative.as_str().starts_with("buck-out/") {
+                    continue;
+                }
                 let sandbox_input_path = sandbox_project_path.join(relative);
-                let source = fs.resolve(source_path);
+                let source = fs.resolve(&input.source_path);
                 let dest = fs.resolve(&sandbox_input_path);
                 create_or_replace_symlink(source.as_path(), &dest)?;
             }
@@ -2933,6 +2931,7 @@ fn bazel_worker_sandbox_external_cell_alias_contains_path(
     path: &ProjectRelativePath,
 ) -> bool {
     materialized_inputs
+        .bazel_input_mappings
         .external_cell_root_aliases
         .iter()
         .any(|alias| {
@@ -2972,17 +2971,21 @@ fn create_or_replace_symlink(source: &Path, dest: &AbsNormPath) -> bz_error::Res
 pub struct MaterializedInputPaths {
     pub scratch: ScratchPath,
     pub paths: Vec<ProjectRelativePathBuf>,
-    pub artifact_path_aliases: Vec<(ProjectRelativePathBuf, ProjectRelativePathBuf)>,
-    copied_artifact_path_aliases: Vec<ProjectRelativePathBuf>,
-    shared_artifact_path_aliases: Vec<SharedArtifactPathAlias>,
+    bazel_input_mappings: BazelInputMappings,
+}
+
+#[derive(Default)]
+struct BazelInputMappings {
+    shared_inputs: Vec<BazelMappedInput>,
+    sandbox_inputs: Vec<BazelMappedInput>,
     external_cell_root_aliases: Vec<ExternalCellRootAlias>,
 }
 
-struct SharedArtifactPathAlias {
+#[derive(Clone)]
+struct BazelMappedInput {
     source_path: ProjectRelativePathBuf,
     path: ProjectRelativePathBuf,
     value: ArtifactValue,
-    remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
 }
 
 struct ExternalCellRootAlias {
@@ -3375,9 +3378,14 @@ fn resolve_bazel_worker_flag_file_path(
     let relative = ForwardRelativePathBuf::new(arg_path.to_owned())
         .buck_error_context("Invalid Bazel worker flag-file path")?;
     let execroot_path = request.working_directory().join(relative);
-    for (source_path, alias_path) in &materialized_inputs.artifact_path_aliases {
-        if alias_path == &execroot_path {
-            return Ok(source_path.clone());
+    for input in materialized_inputs
+        .bazel_input_mappings
+        .shared_inputs
+        .iter()
+        .chain(materialized_inputs.bazel_input_mappings.sandbox_inputs.iter())
+    {
+        if input.path == execroot_path {
+            return Ok(input.source_path.clone());
         }
     }
     Ok(execroot_path)
@@ -3565,18 +3573,18 @@ fn materialize_external_cell_root_alias(
     })
 }
 
-pub fn materialize_input_path_aliases(
+pub fn prepare_bazel_input_mappings(
     artifact_fs: &ArtifactFs,
     materialized_inputs: &MaterializedInputPaths,
 ) -> bz_error::Result<()> {
-    for alias in &materialized_inputs.external_cell_root_aliases {
+    for alias in &materialized_inputs.bazel_input_mappings.external_cell_root_aliases {
         materialize_external_cell_root_alias(
             artifact_fs,
             alias.source_root.as_ref(),
             alias.alias_root.as_ref(),
         )?;
     }
-    for alias in &materialized_inputs.shared_artifact_path_aliases {
+    for alias in &materialized_inputs.bazel_input_mappings.shared_inputs {
         materialize_artifact_path_alias(
             artifact_fs,
             alias.source_path.as_ref(),
@@ -3956,8 +3964,8 @@ pub async fn materialize_inputs(
     let mut scratch = ScratchPath(None);
     let mut configuration_path_to_content_based_path_symlinks = vec![];
     let mut remote_cas_declarations = Vec::new();
-    let mut shared_artifact_path_aliases = vec![];
-    let mut sandbox_artifact_path_aliases = vec![];
+    let mut shared_bazel_input_mappings = vec![];
+    let mut sandbox_bazel_input_mappings = vec![];
     let mut external_cell_roots_to_materialize = BuckIndexSet::new();
     let mut lost_remote_cas_input_owners: HashMap<
         ProjectRelativePathBuf,
@@ -4101,14 +4109,14 @@ pub async fn materialize_inputs(
                     }
                 }
             }
-            CommandExecutionInput::ArtifactPathAlias {
+            CommandExecutionInput::BazelInputMapping(BazelInputMapping {
                 source_path,
                 source_requires_materialization,
                 remote_cache_cas_info,
                 owner,
                 path,
                 value,
-            } => {
+            }) => {
                 let producer_path_hint = Arc::new(source_path.clone());
                 lost_remote_cas_producer_path_hints
                     .entry(path.clone())
@@ -4146,13 +4154,16 @@ pub async fn materialize_inputs(
                         .strip_prefix_opt(request.working_directory())
                         .is_some_and(|relative| relative.as_str().starts_with("buck-out/"));
                 if sandbox_alias {
-                    sandbox_artifact_path_aliases.push((source_path.clone(), path.clone()));
-                } else {
-                    shared_artifact_path_aliases.push(SharedArtifactPathAlias {
+                    sandbox_bazel_input_mappings.push(BazelMappedInput {
                         source_path: source_path.clone(),
                         path: path.clone(),
                         value: value.dupe(),
-                        remote_cache_cas_info: remote_cache_cas_info.clone(),
+                    });
+                } else {
+                    shared_bazel_input_mappings.push(BazelMappedInput {
+                        source_path: source_path.clone(),
+                        path: path.clone(),
+                        value: value.dupe(),
                     });
                 }
             }
@@ -4188,58 +4199,11 @@ pub async fn materialize_inputs(
 
     paths.extend(external_cell_roots_to_materialize);
 
-    // Bazel exposes generated inputs directly in the execroot. Let the materializer create
-    // aliases for generated artifacts so copy-source dependencies are honored before the alias is
-    // used. Some rules_js package store outputs contain sibling-relative symlinks and tools may
-    // realpath through package symlinks, so directory aliases also need to be materialized as
-    // directories instead of alias symlinks into Buck's private artifact store.
-    let mut copied_artifact_path_aliases = BuckIndexSet::new();
-    let mut copied_artifact_path_aliases_to_materialize = Vec::new();
-    let mut artifact_path_alias_copies = Vec::new();
-    for alias in &shared_artifact_path_aliases {
-        let is_external_root_alias = bazel_external_repo_root_alias(
-            artifact_fs,
-            alias.source_path.as_ref(),
-            alias.path.as_ref(),
-        )?
-        .is_some();
-        let source_is_generated = buck_artifact_store_path(alias.source_path.as_ref());
-        let source_is_generated_file = source_is_generated
-            && matches!(
-                alias.value.entry(),
-                ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(_))
-            );
-        if (!alias.value.is_dir() && !source_is_generated_file) || is_external_root_alias {
-            continue;
-        }
-
-        if copied_artifact_path_aliases.insert(alias.path.clone()) {
-            copied_artifact_path_aliases_to_materialize.push(alias.path.clone());
-            artifact_path_alias_copies.push((
-                alias.path.clone(),
-                alias.value.dupe(),
-                vec![CopiedArtifact {
-                    src: alias.source_path.clone(),
-                    dest: alias.path.clone(),
-                    dest_entry: alias.value.entry().dupe().map_dir(|d| d.as_immutable()),
-                    executable_bit_override: None,
-                }],
-                None,
-            ));
-        }
-    }
-
     bz_util::future::try_join_all(
         configuration_path_to_content_based_path_symlinks
             .into_iter()
             .map(|(path, value)| materializer.declare_copy(path, value, vec![], None)),
     )
-    .await?;
-    bz_util::future::try_join_all(artifact_path_alias_copies.into_iter().map(
-        |(path, value, copied_artifacts, cfg_path)| {
-            materializer.declare_copy(path, value, copied_artifacts, cfg_path)
-        },
-    ))
     .await?;
     bz_util::future::try_join_all(
         remote_cas_declarations
@@ -4292,51 +4256,38 @@ pub async fn materialize_inputs(
 
     let mut external_cell_root_aliases = BuckIndexSet::new();
     let mut external_cell_root_aliases_to_materialize = Vec::new();
-    let mut shared_artifact_path_aliases_to_materialize = Vec::new();
-    for alias in &shared_artifact_path_aliases {
-        if copied_artifact_path_aliases.contains(&alias.path) {
-            continue;
-        }
+    let mut shared_bazel_input_mappings_to_prepare = Vec::new();
+    for alias in &shared_bazel_input_mappings {
         if let Some((source_root, alias_root)) = bazel_external_repo_root_alias(
             artifact_fs,
             alias.source_path.as_ref(),
             alias.path.as_ref(),
         )? {
             if external_cell_root_aliases.insert((source_root.clone(), alias_root.clone())) {
-                paths.push(alias_root.clone());
                 external_cell_root_aliases_to_materialize.push(ExternalCellRootAlias {
                     source_root,
                     alias_root,
                 });
             }
         } else {
-            paths.push(alias.path.clone());
-            shared_artifact_path_aliases_to_materialize.push(SharedArtifactPathAlias {
-                source_path: alias.source_path.clone(),
-                path: alias.path.clone(),
-                value: alias.value.dupe(),
-                remote_cache_cas_info: alias.remote_cache_cas_info.clone(),
-            });
+            shared_bazel_input_mappings_to_prepare.push(alias.clone());
         }
     }
     for alias in bazel_external_repo_aliases_from_command(artifact_fs, request)? {
         if external_cell_root_aliases.insert((alias.source_root.clone(), alias.alias_root.clone()))
         {
-            paths.push(alias.alias_root.clone());
             external_cell_root_aliases_to_materialize.push(alias);
         }
     }
 
-    let mut materialized_paths = paths;
-    materialized_paths.extend(copied_artifact_path_aliases_to_materialize.iter().cloned());
-
     Ok(MaterializedInputPaths {
         scratch,
-        paths: materialized_paths,
-        artifact_path_aliases: sandbox_artifact_path_aliases,
-        copied_artifact_path_aliases: copied_artifact_path_aliases_to_materialize,
-        shared_artifact_path_aliases: shared_artifact_path_aliases_to_materialize,
-        external_cell_root_aliases: external_cell_root_aliases_to_materialize,
+        paths,
+        bazel_input_mappings: BazelInputMappings {
+            shared_inputs: shared_bazel_input_mappings_to_prepare,
+            sandbox_inputs: sandbox_bazel_input_mappings,
+            external_cell_root_aliases: external_cell_root_aliases_to_materialize,
+        },
     })
 }
 
@@ -4412,7 +4363,7 @@ async fn check_inputs(
                             }
                         }
                     }
-                    CommandExecutionInput::ArtifactPathAlias { path, .. } => {
+                    CommandExecutionInput::BazelInputMapping(BazelInputMapping { path, .. }) => {
                         let abs_path = artifact_fs.fs().resolve(path);
 
                         // We ignore the result here because while we want to tag it, we'd
@@ -4981,16 +4932,16 @@ mod tests {
         let materialized_inputs = MaterializedInputPaths {
             scratch: ScratchPath(None),
             paths: Vec::new(),
-            artifact_path_aliases: Vec::new(),
-            copied_artifact_path_aliases: Vec::new(),
-            shared_artifact_path_aliases: Vec::new(),
-            external_cell_root_aliases: vec![ExternalCellRootAlias {
-                source_root: ProjectRelativePathBuf::unchecked_new(
-                    "buck-out/v2/external_cells/bzlmod_generated/rules_java++toolchains+remote_java_tools"
-                        .to_owned(),
-                ),
-                alias_root: alias_root.clone(),
-            }],
+            bazel_input_mappings: BazelInputMappings {
+                external_cell_root_aliases: vec![ExternalCellRootAlias {
+                    source_root: ProjectRelativePathBuf::unchecked_new(
+                        "buck-out/v2/external_cells/bzlmod_generated/rules_java++toolchains+remote_java_tools"
+                            .to_owned(),
+                    ),
+                    alias_root: alias_root.clone(),
+                }],
+                ..BazelInputMappings::default()
+            },
         };
 
         assert!(bazel_worker_sandbox_external_cell_alias_contains_path(
@@ -5027,6 +4978,44 @@ mod tests {
         assert!(!buck_artifact_store_path(ProjectRelativePath::new(
             "buck-out/debug/__bazel_execroot/abcdef0123456789/buck-out/bin/cfg/file"
         )?));
+        Ok(())
+    }
+
+    #[test]
+    fn test_prepare_bazel_input_mapping_directory_uses_symlink() -> bz_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let artifact_fs = artifact_fs(temp.path().dupe());
+        temp.write_file("buck-out/v2/art/pkg/tree/file", "content");
+        let source_path =
+            ProjectRelativePathBuf::unchecked_new("buck-out/v2/art/pkg/tree".to_owned());
+        let alias_path = ProjectRelativePathBuf::unchecked_new(
+            "buck-out/v2/__bazel_execroot/pkg/tree".to_owned(),
+        );
+        let materialized_inputs = MaterializedInputPaths {
+            scratch: ScratchPath(None),
+            paths: vec![source_path.clone()],
+            bazel_input_mappings: BazelInputMappings {
+                shared_inputs: vec![BazelMappedInput {
+                    source_path: source_path.clone(),
+                    path: alias_path.clone(),
+                    value: ArtifactValue::dir(DigestConfig::testing_default().empty_directory()),
+                }],
+                ..BazelInputMappings::default()
+            },
+        };
+
+        prepare_bazel_input_mappings(&artifact_fs, &materialized_inputs)?;
+
+        let source = artifact_fs.fs().resolve(&source_path);
+        let alias = artifact_fs.fs().resolve(&alias_path);
+        assert_eq!(
+            fs_util::read_link(&alias).categorize_internal()?.as_path(),
+            source.as_path()
+        );
+        assert_eq!(
+            fs_util::read_to_string(alias.as_path().join("file")).categorize_internal()?,
+            "content"
+        );
         Ok(())
     }
 
@@ -5342,6 +5331,47 @@ mod tests {
                 true,
             )?
             .is_some()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_action_metadata_cache_outputs_treat_not_a_directory_as_missing()
+    -> bz_error::Result<()> {
+        let (executor, _, temp) = test_executor()?;
+        let outputs = buck_indexmap! {
+            test_output("parent/out") => ArtifactValue::file(DigestConfig::testing_default().empty_file()),
+        };
+        let output_keys = outputs.keys().cloned().collect();
+        let output_values = outputs.values().cloned().collect::<Vec<_>>();
+        let fingerprint = local_action_cache_outputs_fingerprint(&executor.artifact_fs, &outputs)?;
+
+        for (output, value) in &outputs {
+            let path = output
+                .as_ref()
+                .resolve(
+                    &executor.artifact_fs,
+                    Some(&value.content_based_path_hash()),
+                )?
+                .into_path();
+            let parent = path
+                .as_str()
+                .rsplit_once('/')
+                .expect("test output should have a parent")
+                .0;
+            temp.write_file(parent, "");
+        }
+
+        assert!(
+            local_action_cache_outputs_from_stored_values(
+                &executor.artifact_fs,
+                &output_keys,
+                &output_values,
+                fingerprint.as_slice(),
+                true,
+            )?
+            .is_none()
         );
 
         Ok(())

@@ -117,6 +117,7 @@ use bz_execute::execute::command_executor::ActionExecutionTimingData;
 use bz_execute::execute::dep_file_digest::DepFileDigest;
 use bz_execute::execute::environment_inheritance::EnvironmentInheritance;
 use bz_execute::execute::request::ActionMetadataBlob;
+use bz_execute::execute::request::BazelInputMapping;
 use bz_execute::execute::request::CommandExecutionInput;
 use bz_execute::execute::request::CommandExecutionOutput;
 use bz_execute::execute::request::CommandExecutionPaths;
@@ -2032,14 +2033,14 @@ fn fingerprint_command_execution_input(
                 Some(executable_paths),
             )?;
         }
-        CommandExecutionInput::ArtifactPathAlias {
+        CommandExecutionInput::BazelInputMapping(BazelInputMapping {
             source_path,
             source_requires_materialization,
             path,
             value,
             ..
-        } => {
-            action_cache_add_str(fingerprint, "artifact_path_alias");
+        }) => {
+            action_cache_add_str(fingerprint, "bazel_input_mapping");
             action_cache_add_str(fingerprint, source_path.as_str());
             action_cache_add_bool(fingerprint, *source_requires_materialization);
             action_cache_add_str(fingerprint, path.as_str());
@@ -3789,14 +3790,14 @@ impl RunAction {
                         value,
                         executable_paths,
                     );
-                    inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                    inputs.push(CommandExecutionInput::BazelInputMapping(BazelInputMapping {
                         source_path: source_path.clone(),
                         source_requires_materialization,
                         remote_cache_cas_info: remote_cache_cas_info.cloned(),
                         owner: artifact.input_owner(),
                         path: bazel_alias,
                         value,
-                    });
+                    }));
                 }
 
                 let source_alias =
@@ -3807,14 +3808,14 @@ impl RunAction {
                         value,
                         executable_paths,
                     );
-                    inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                    inputs.push(CommandExecutionInput::BazelInputMapping(BazelInputMapping {
                         source_path: source_path.clone(),
                         source_requires_materialization,
                         remote_cache_cas_info: remote_cache_cas_info.cloned(),
                         owner: artifact.input_owner(),
                         path: source_alias,
                         value,
-                    });
+                    }));
                 }
 
                 let normalized_source_path =
@@ -3829,14 +3830,14 @@ impl RunAction {
                         value,
                         executable_paths,
                     );
-                    inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                    inputs.push(CommandExecutionInput::BazelInputMapping(BazelInputMapping {
                         source_path: source_path.clone(),
                         source_requires_materialization,
                         remote_cache_cas_info: remote_cache_cas_info.cloned(),
                         owner: artifact.input_owner(),
                         path: normalized_source_alias,
                         value,
-                    });
+                    }));
                 }
 
                 if stage_bazel_path_mapping_aliases {
@@ -3855,14 +3856,14 @@ impl RunAction {
                             value,
                             executable_paths,
                         );
-                        inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                        inputs.push(CommandExecutionInput::BazelInputMapping(BazelInputMapping {
                             source_path: source_path.clone(),
                             source_requires_materialization,
                             remote_cache_cas_info: remote_cache_cas_info.cloned(),
                             owner: artifact.input_owner(),
                             path: mapped_bazel_alias,
                             value,
-                        });
+                        }));
                     }
 
                     let mapped_normalized_source_path =
@@ -3877,14 +3878,14 @@ impl RunAction {
                             value,
                             executable_paths,
                         );
-                        inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                        inputs.push(CommandExecutionInput::BazelInputMapping(BazelInputMapping {
                             source_path: source_path.clone(),
                             source_requires_materialization,
                             remote_cache_cas_info: remote_cache_cas_info.cloned(),
                             owner: artifact.input_owner(),
                             path: mapped_normalized_source_alias,
                             value,
-                        });
+                        }));
                     }
                 }
             }
@@ -4084,7 +4085,9 @@ impl RunAction {
         let mut aliases = inputs
             .iter()
             .filter_map(|input| match input {
-                CommandExecutionInput::ArtifactPathAlias { path, .. } => Some(path.clone()),
+                CommandExecutionInput::BazelInputMapping(BazelInputMapping { path, .. }) => {
+                    Some(path.clone())
+                }
                 _ => None,
             })
             .collect::<BuckIndexSet<_>>();
@@ -4160,7 +4163,7 @@ impl RunAction {
             .resolve(&source_path)
             .as_path()
             .to_path_buf();
-        inputs.push(CommandExecutionInput::ArtifactPathAlias {
+        inputs.push(CommandExecutionInput::BazelInputMapping(BazelInputMapping {
             source_path,
             source_requires_materialization: false,
             remote_cache_cas_info: None,
@@ -4170,7 +4173,7 @@ impl RunAction {
                 source_abs_path,
                 ForwardRelativePathBuf::default(),
             )?)),
-        });
+        }));
         Ok(())
     }
 
@@ -4322,14 +4325,14 @@ impl RunAction {
                     value,
                     executable_paths,
                 );
-                inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                inputs.push(CommandExecutionInput::BazelInputMapping(BazelInputMapping {
                     source_path,
                     source_requires_materialization,
                     remote_cache_cas_info,
                     owner: artifact.input_owner(),
                     path: alias,
                     value,
-                });
+                }));
             }
         }
         if !saw_workspace_runfiles_entry {
@@ -4784,7 +4787,7 @@ impl RunAction {
             if let (Some(bazel_execroot), Some(bazel_exec_path)) =
                 (bazel_execroot, &param_file.bazel_exec_path)
             {
-                inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                inputs.push(CommandExecutionInput::BazelInputMapping(BazelInputMapping {
                     source_path: project_rel_path,
                     source_requires_materialization: true,
                     remote_cache_cas_info: None,
@@ -4794,7 +4797,7 @@ impl RunAction {
                         digest: param_file.digest.dupe(),
                         is_executable: false,
                     }),
-                });
+                }));
             }
         }
         Ok(())

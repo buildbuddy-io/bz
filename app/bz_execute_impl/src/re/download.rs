@@ -78,8 +78,8 @@ use futures::FutureExt;
 use futures::future;
 use remote_execution as RE;
 
-use crate::executors::local::materialize_input_path_aliases;
 use crate::executors::local::materialize_inputs;
+use crate::executors::local::prepare_bazel_input_mappings;
 use crate::re::paranoid_download::ParanoidDownloader;
 use crate::storage_resource_exhausted::is_storage_resource_exhausted;
 
@@ -290,7 +290,7 @@ pub async fn download_action_results<'a>(
                         {
                             Ok(materialized_paths) => {
                                 if let Err(e) =
-                                    materialize_input_path_aliases(artifact_fs, &materialized_paths)
+                                    prepare_bazel_input_mappings(artifact_fs, &materialized_paths)
                                 {
                                     console_message(format!(
                                         "Failed to materialize input aliases for failed action: {e}"

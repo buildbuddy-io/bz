@@ -33,6 +33,7 @@ use crate::directory::finalize_lazy_action_directory;
 use crate::directory::insert_artifact_lazy_for_execution;
 use crate::execute::request::ActionMetadataBlobData;
 use crate::execute::request::ArtifactUploadPathInfo;
+use crate::execute::request::BazelInputMapping;
 use crate::execute::request::CommandExecutionInput;
 
 pub fn inputs_directory(
@@ -80,14 +81,14 @@ pub fn inputs_directory(
                 )?;
                 add_artifact_group_upload_paths(group.as_ref(), fs, &mut artifact_upload_paths)?;
             }
-            CommandExecutionInput::ArtifactPathAlias {
+            CommandExecutionInput::BazelInputMapping(BazelInputMapping {
                 source_path,
                 source_requires_materialization,
                 remote_cache_cas_info,
                 owner,
                 path,
                 value,
-            } => {
+            }) => {
                 let abs_path = fs.fs().resolve(source_path);
                 let value =
                     value.resolve_source_file_proxy(abs_path.as_abs_path(), digest_config)?;

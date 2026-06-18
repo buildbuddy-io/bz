@@ -89,20 +89,22 @@ pub struct ActionMetadataBlob {
     pub content_hash: ContentBasedPathHash,
 }
 
+pub struct BazelInputMapping {
+    pub source_path: ProjectRelativePathBuf,
+    pub source_requires_materialization: bool,
+    pub remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
+    pub owner: Option<CommandExecutionInputOwner>,
+    pub path: ProjectRelativePathBuf,
+    pub value: ArtifactValue,
+}
+
 pub enum CommandExecutionInput {
     Artifact(Box<dyn ArtifactGroupValuesDyn>),
     ArtifactWithExecutableOverrides {
         group: Box<dyn ArtifactGroupValuesDyn>,
         executable_paths: Arc<[ProjectRelativePathBuf]>,
     },
-    ArtifactPathAlias {
-        source_path: ProjectRelativePathBuf,
-        source_requires_materialization: bool,
-        remote_cache_cas_info: Option<Arc<CasDownloadInfo>>,
-        owner: Option<CommandExecutionInputOwner>,
-        path: ProjectRelativePathBuf,
-        value: ArtifactValue,
-    },
+    BazelInputMapping(BazelInputMapping),
     EmptyFile(ProjectRelativePathBuf),
     SyntheticFile {
         path: ProjectRelativePathBuf,

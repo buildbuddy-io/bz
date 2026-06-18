@@ -106,6 +106,7 @@ use bz_execute::execute::kind::CommandExecutionKind;
 use bz_execute::execute::manager::CommandExecutionManager;
 use bz_execute::execute::prepared::NoOpCommandOptionalExecutor;
 use bz_execute::execute::prepared::PreparedCommand;
+use bz_execute::execute::request::BazelInputMapping;
 use bz_execute::execute::request::CommandExecutionInput;
 use bz_execute::execute::request::CommandExecutionOutput;
 use bz_execute::execute::request::CommandExecutionPaths;
@@ -128,8 +129,8 @@ use bz_execute::re::action_identity::ReActionIdentity;
 use bz_execute_impl::executors::local::EnvironmentBuilder;
 use bz_execute_impl::executors::local::apply_local_execution_environment;
 use bz_execute_impl::executors::local::create_output_dirs;
-use bz_execute_impl::executors::local::materialize_input_path_aliases;
 use bz_execute_impl::executors::local::materialize_inputs;
+use bz_execute_impl::executors::local::prepare_bazel_input_mappings;
 use bz_execute_impl::executors::local::prep_scratch_path;
 use bz_fs::paths::forward_rel_path::ForwardRelativePath;
 use bz_fs::paths::forward_rel_path::ForwardRelativePathBuf;
@@ -1094,7 +1095,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
             self.cancellations,
         )
         .await?;
-        materialize_input_path_aliases(&fs, &materialized_inputs)?;
+        prepare_bazel_input_mappings(&fs, &materialized_inputs)?;
 
         for local_resource_setup_command in setup_commands.iter() {
             let materialized_inputs = materialize_inputs(
@@ -1116,7 +1117,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
                 self.cancellations,
             )
             .await?;
-            materialize_input_path_aliases(&fs, &materialized_inputs)?;
+            prepare_bazel_input_mappings(&fs, &materialized_inputs)?;
         }
 
         Ok(create_prepare_for_local_execution_result(
@@ -2181,14 +2182,14 @@ fn bazel_test_runfiles_inputs(
             return Ok(());
         }
 
-        inputs.push(CommandExecutionInput::ArtifactPathAlias {
+        inputs.push(CommandExecutionInput::BazelInputMapping(BazelInputMapping {
             source_path,
             source_requires_materialization: artifact.requires_materialization(artifact_fs),
             remote_cache_cas_info,
             owner: artifact.input_owner(),
             path: alias,
             value: value.dupe(),
-        });
+        }));
         Ok(())
     })?;
 
