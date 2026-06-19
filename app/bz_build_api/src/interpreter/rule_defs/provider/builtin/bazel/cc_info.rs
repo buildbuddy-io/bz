@@ -1259,7 +1259,18 @@ fn bazel_cc_add_legacy_action_configs(
             .find_map(|(tool_name, path)| (tool_name == name).then_some(path.as_str()))
     };
 
-    let compile_implies: &[&str] = &[];
+    let compile_implies: &[&str] = if add_legacy_feature_implies {
+        &[
+            "dependency_file",
+            "user_compile_flags",
+            "unfiltered_compile_flags",
+            "pic",
+            "compiler_input_flags",
+            "compiler_output_flags",
+        ]
+    } else {
+        &[]
+    };
     let link_implies: &[&str] = if add_legacy_feature_implies {
         &[
             "shared_flag",
@@ -1434,6 +1445,73 @@ fn bazel_cc_legacy_archiver_flag_sets(platform: &str) -> Vec<BazelFlagSet> {
         "archiver_flags",
         &["c++-link-static-library"],
         flag_groups,
+    )]
+}
+
+fn bazel_cc_legacy_compile_actions() -> &'static [&'static str] {
+    BAZEL_CC_ALL_COMPILE_ACTIONS
+}
+
+fn bazel_cc_legacy_dependency_file_flag_sets() -> Vec<BazelFlagSet> {
+    let mut group = bazel_cc_flag_group(&["-MD", "-MF", "%{dependency_file}"]);
+    group.expand_if_available = Some("dependency_file".to_owned());
+    vec![bazel_cc_feature_flag_set(
+        "dependency_file",
+        bazel_cc_legacy_compile_actions(),
+        vec![group],
+    )]
+}
+
+fn bazel_cc_legacy_user_compile_flags_flag_sets() -> Vec<BazelFlagSet> {
+    let mut group = bazel_cc_flag_group(&["%{user_compile_flags}"]);
+    group.iterate_over = Some("user_compile_flags".to_owned());
+    group.expand_if_available = Some("user_compile_flags".to_owned());
+    vec![bazel_cc_feature_flag_set(
+        "user_compile_flags",
+        bazel_cc_legacy_compile_actions(),
+        vec![group],
+    )]
+}
+
+fn bazel_cc_legacy_pic_flag_sets() -> Vec<BazelFlagSet> {
+    let mut group = bazel_cc_flag_group(&["-fPIC"]);
+    group.expand_if_available = Some("pic".to_owned());
+    vec![bazel_cc_feature_flag_set(
+        "pic",
+        &[
+            "assemble",
+            "c-compile",
+            "c++-compile",
+            "c++-module-codegen",
+            "c++-module-compile",
+            "linkstamp-compile",
+            "preprocess-assemble",
+        ],
+        vec![group],
+    )]
+}
+
+fn bazel_cc_legacy_compiler_input_flags_flag_sets() -> Vec<BazelFlagSet> {
+    let mut group = bazel_cc_flag_group(&["-c", "%{source_file}"]);
+    group.expand_if_available = Some("source_file".to_owned());
+    vec![bazel_cc_feature_flag_set(
+        "compiler_input_flags",
+        bazel_cc_legacy_compile_actions(),
+        vec![group],
+    )]
+}
+
+fn bazel_cc_legacy_compiler_output_flags_flag_sets() -> Vec<BazelFlagSet> {
+    let mut assembly = bazel_cc_flag_group(&["-S"]);
+    assembly.expand_if_available = Some("output_assembly_file".to_owned());
+    let mut preprocess = bazel_cc_flag_group(&["-E"]);
+    preprocess.expand_if_available = Some("output_preprocess_file".to_owned());
+    let mut output = bazel_cc_flag_group(&["-o", "%{output_file}"]);
+    output.expand_if_available = Some("output_file".to_owned());
+    vec![bazel_cc_feature_flag_set(
+        "compiler_output_flags",
+        bazel_cc_legacy_compile_actions(),
+        vec![assembly, preprocess, output],
     )]
 }
 
@@ -1630,6 +1708,48 @@ fn bazel_cc_add_legacy_features(
     existing_feature_names: &[String],
     platform: &str,
 ) {
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "dependency_file",
+        bazel_cc_legacy_dependency_file_flag_sets(),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "user_compile_flags",
+        bazel_cc_legacy_user_compile_flags_flag_sets(),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "unfiltered_compile_flags",
+        Vec::new(),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "pic",
+        bazel_cc_legacy_pic_flag_sets(),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "compiler_input_flags",
+        bazel_cc_legacy_compiler_input_flags_flag_sets(),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "compiler_output_flags",
+        bazel_cc_legacy_compiler_output_flags_flag_sets(),
+    );
     bazel_cc_add_legacy_feature(
         selectables,
         flag_sets,
