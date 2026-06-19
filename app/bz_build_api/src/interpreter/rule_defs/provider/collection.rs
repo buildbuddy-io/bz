@@ -72,6 +72,8 @@ use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
 use crate::interpreter::rule_defs::provider::builtin::bazel::file_target_info::FrozenBazelFileTargetInfo;
 use crate::interpreter::rule_defs::provider::builtin::bazel::output_group_info::OutputGroupInfoCallable;
 use crate::interpreter::rule_defs::provider::builtin::bazel::output_group_info::merge_output_group_info_values;
+use crate::interpreter::rule_defs::provider::builtin::bazel::run_environment_info::FrozenRunEnvironmentInfo;
+use crate::interpreter::rule_defs::provider::builtin::bazel::run_environment_info::RunEnvironmentInfo;
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
 fn format_provider_keys_for_error(keys: &[String]) -> String {
@@ -353,6 +355,9 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
         default_outputs: Vec<Value<'v>>,
         is_bazel_executable_rule: bool,
         is_bazel_test_rule: bool,
+        bazel_target_args: Vec<String>,
+        bazel_run_environment: Vec<(String, String)>,
+        bazel_run_inherited_environment: Vec<String>,
     ) -> bz_error::Result<ProviderCollection<'v>> {
         let mut providers = Self::try_from_bazel_value_impl(value)?;
         if !providers.contains_key(DefaultInfoCallable::provider_id()) {
@@ -361,11 +366,21 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
                 heap.alloc(DefaultInfo::with_default_outputs(heap, default_outputs)),
             );
         }
+        let (bazel_run_environment, bazel_run_inherited_environment) =
+            if is_bazel_executable_rule || is_bazel_test_rule {
+                Self::bazel_run_environment_from_provider(&providers)?
+                    .unwrap_or((bazel_run_environment, bazel_run_inherited_environment))
+            } else {
+                (bazel_run_environment, bazel_run_inherited_environment)
+            };
         Self::project_bazel_default_info(
             &mut providers,
             heap,
             is_bazel_executable_rule,
             is_bazel_test_rule,
+            &bazel_target_args,
+            &bazel_run_environment,
+            &bazel_run_inherited_environment,
         )?;
 
         Ok(ProviderCollection::<'v> { providers })
@@ -376,6 +391,9 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
         heap: Heap<'v>,
         is_bazel_executable_rule: bool,
         is_bazel_test_rule: bool,
+        bazel_target_args: &[String],
+        bazel_run_environment: &[(String, String)],
+        bazel_run_inherited_environment: &[String],
     ) -> bz_error::Result<()> {
         let Some(default_info_value) = providers.get(DefaultInfoCallable::provider_id()).copied()
         else {
@@ -388,6 +406,9 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
                     heap,
                     is_bazel_executable_rule,
                     is_bazel_test_rule,
+                    bazel_target_args,
+                    bazel_run_environment,
+                    bazel_run_inherited_environment,
                 )?
             } else if let Some(default_info) = default_info_value
                 .unpack_frozen()
@@ -397,6 +418,9 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
                     heap,
                     is_bazel_executable_rule,
                     is_bazel_test_rule,
+                    bazel_target_args,
+                    bazel_run_environment,
+                    bazel_run_inherited_environment,
                 )?
             } else {
                 return Err(internal_error!("DefaultInfo provider had unexpected value").into());
@@ -407,6 +431,27 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
             heap.alloc(projected_default_info),
         );
         Ok(())
+    }
+
+    fn bazel_run_environment_from_provider(
+        providers: &SmallMap<Arc<ProviderId>, Value<'v>>,
+    ) -> bz_error::Result<Option<(Vec<(String, String)>, Vec<String>)>> {
+        let Some(value) = providers
+            .get(FrozenRunEnvironmentInfo::builtin_provider_id())
+            .copied()
+        else {
+            return Ok(None);
+        };
+        if let Some(info) = value.downcast_ref::<RunEnvironmentInfo<'v>>() {
+            return Ok(Some((info.environment()?, info.inherited_environment()?)));
+        }
+        if let Some(info) = value
+            .unpack_frozen()
+            .and_then(|value| value.downcast_ref::<FrozenRunEnvironmentInfo>())
+        {
+            return Ok(Some((info.environment()?, info.inherited_environment()?)));
+        }
+        Err(internal_error!("RunEnvironmentInfo provider had unexpected value").into())
     }
 
     /// Takes a value returned from a Bazel Starlark aspect implementation and builds a provider

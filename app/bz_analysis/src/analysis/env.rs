@@ -2017,7 +2017,6 @@ async fn run_analysis_with_env_underlying(
                     .map(|v| ((*label).dupe(), v))
             })
             .collect::<SmallMap<_, _>>();
-
         let mut dep_analysis_results = get_deps_from_analysis_results(analysis_env.deps)?;
         let (bazel_extra_analysis_deps, bazel_aspect_resolved_toolchains) = if node.is_bazel_rule()
         {
@@ -2346,6 +2345,9 @@ async fn run_analysis_with_env_underlying(
                     predeclared_outputs,
                     node.is_bazel_executable_rule(),
                     node.is_bazel_test_rule(),
+                    bazel_target_args,
+                    bazel_run_environment,
+                    bazel_run_inherited_environment,
                 )?
             } else {
                 ProviderCollection::try_from_value(list_res)?
@@ -2360,13 +2362,7 @@ async fn run_analysis_with_env_underlying(
             res_typed.insert_provider(output_file_info)?;
         }
         if node.is_bazel_test_rule()
-            && let Some(test_info) = bazel_test_info(
-                &res_typed,
-                &bazel_target_args,
-                &bazel_run_environment,
-                node,
-                env.heap(),
-            )?
+            && let Some(test_info) = bazel_test_info(&res_typed, node, env.heap())?
         {
             res_typed.insert_provider(test_info)?;
         }
@@ -2394,15 +2390,12 @@ async fn run_analysis_with_env_underlying(
         Ok((
             token,
             (
-                AnalysisResult::new_with_bazel_target_args(
+                AnalysisResult::new(
                     recorded_values,
                     profile_data,
                     StdBuckHashMap::default(),
                     declared_actions,
                     declared_artifacts,
-                    bazel_target_args,
-                    bazel_run_environment,
-                    bazel_run_inherited_environment,
                     validations,
                 ),
                 split_instants,
@@ -2505,8 +2498,6 @@ fn bazel_run_environment_values(
 
 fn bazel_test_info<'v>(
     providers: &ProviderCollection<'v>,
-    target_args: &[String],
-    environment: &[(String, String)],
     node: ConfiguredTargetNodeRef<'_>,
     heap: Heap<'v>,
 ) -> bz_error::Result<Option<Value<'v>>> {
@@ -2535,6 +2526,25 @@ fn bazel_test_info<'v>(
             "DefaultInfo provider should have the expected provider type"
         ));
     };
+    let (target_args, environment) =
+        if let Some(default_info) = default_info.downcast_ref::<DefaultInfo>() {
+            (
+                default_info.bazel_target_args()?,
+                default_info.bazel_run_environment()?,
+            )
+        } else if let Some(default_info) = default_info
+            .unpack_frozen()
+            .and_then(|value| value.downcast_ref::<FrozenDefaultInfo>())
+        {
+            (
+                default_info.bazel_target_args()?,
+                default_info.bazel_run_environment()?,
+            )
+        } else {
+            return Err(internal_error!(
+                "DefaultInfo provider should have the expected provider type"
+            ));
+        };
 
     let mut command = Vec::with_capacity(1 + target_args.len());
     command.push(executable);

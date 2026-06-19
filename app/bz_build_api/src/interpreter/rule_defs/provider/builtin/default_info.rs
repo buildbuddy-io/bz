@@ -822,6 +822,16 @@ pub struct DefaultInfoGen<V: ValueLifetimeless> {
     files: ValueOfUncheckedGeneric<V, FrozenBazelDepset>,
     /// Bazel-compatible files-to-run provider view.
     files_to_run: ValueOfUncheckedGeneric<V, StructRef<'static>>,
+    /// Bazel-compatible target arguments attached to the files-to-run provider.
+    ///
+    /// This is intentionally not exposed as a Starlark attribute of
+    /// `DefaultInfo.files_to_run`; Bazel keeps it on the internal
+    /// `FilesToRunProvider`/`RunfilesSupport` object.
+    bazel_target_args: ValueOfUncheckedGeneric<V, ListType<String>>,
+    /// Bazel-compatible fixed run environment attached to the files-to-run provider.
+    bazel_run_environment: ValueOfUncheckedGeneric<V, DictType<String, String>>,
+    /// Bazel-compatible inherited run environment attached to the files-to-run provider.
+    bazel_run_inherited_environment: ValueOfUncheckedGeneric<V, ListType<String>>,
     /// Bazel-compatible runfiles for data dependencies.
     data_runfiles: ValueOfUncheckedGeneric<V, FrozenBazelRunfiles>,
     /// Bazel-compatible runfiles for ordinary dependencies.
@@ -947,6 +957,37 @@ fn bazel_files_to_run<'v>(
     ]))
 }
 
+fn bazel_string_list(value: Value, field: &str) -> bz_error::Result<Vec<String>> {
+    ListRef::from_value(value)
+        .ok_or_else(|| internal_error!("{field} should be a list"))?
+        .iter()
+        .map(|value| {
+            value
+                .unpack_str()
+                .map(str::to_owned)
+                .ok_or_else(|| internal_error!("{field} should contain only strings"))
+        })
+        .collect()
+}
+
+fn bazel_string_dict(value: Value, field: &str) -> bz_error::Result<Vec<(String, String)>> {
+    let mut entries = DictRef::from_value(value)
+        .ok_or_else(|| internal_error!("{field} should be a dict"))?
+        .iter()
+        .map(|(key, value)| {
+            let key = key
+                .unpack_str()
+                .ok_or_else(|| internal_error!("{field} keys should be strings"))?;
+            let value = value
+                .unpack_str()
+                .ok_or_else(|| internal_error!("{field} values should be strings"))?;
+            Ok((key.to_owned(), value.to_owned()))
+        })
+        .collect::<bz_error::Result<Vec<_>>>()?;
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    Ok(entries)
+}
+
 fn validate_default_info(info: &FrozenDefaultInfo) -> bz_error::Result<()> {
     // Check length of default outputs
     let default_output_list = ListRef::from_value(info.default_outputs.get().to_value())
@@ -985,12 +1026,21 @@ impl<'v> DefaultInfo<'v> {
             Value::new_none(),
             default_runfiles.get().to_value(),
         ));
+        let bazel_target_args =
+            ValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
+        let bazel_run_environment =
+            ValueOfUnchecked::<DictType<String, String>>::new(heap.alloc(AllocDict::EMPTY));
+        let bazel_run_inherited_environment =
+            ValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
         DefaultInfo {
             sub_targets,
             default_outputs,
             other_outputs,
             files,
             files_to_run,
+            bazel_target_args,
+            bazel_run_environment,
+            bazel_run_inherited_environment,
             data_runfiles,
             default_runfiles,
             stateless_runfiles: ValueOfUnchecked::new(heap.alloc(true)),
@@ -1017,12 +1067,21 @@ impl<'v> DefaultInfo<'v> {
             Value::new_none(),
             default_runfiles.get().to_value(),
         ));
+        let bazel_target_args =
+            ValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
+        let bazel_run_environment =
+            ValueOfUnchecked::<DictType<String, String>>::new(heap.alloc(AllocDict::EMPTY));
+        let bazel_run_inherited_environment =
+            ValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
         DefaultInfo {
             sub_targets,
             default_outputs,
             other_outputs,
             files,
             files_to_run,
+            bazel_target_args,
+            bazel_run_environment,
+            bazel_run_inherited_environment,
             data_runfiles,
             default_runfiles,
             stateless_runfiles: ValueOfUnchecked::new(heap.alloc(true)),
@@ -1045,12 +1104,21 @@ impl<'v> DefaultInfo<'v> {
             artifact,
             default_runfiles.get().to_value(),
         ));
+        let bazel_target_args =
+            ValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
+        let bazel_run_environment =
+            ValueOfUnchecked::<DictType<String, String>>::new(heap.alloc(AllocDict::EMPTY));
+        let bazel_run_inherited_environment =
+            ValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
         DefaultInfo {
             sub_targets,
             default_outputs,
             other_outputs,
             files,
             files_to_run,
+            bazel_target_args,
+            bazel_run_environment,
+            bazel_run_inherited_environment,
             data_runfiles,
             default_runfiles,
             stateless_runfiles: ValueOfUnchecked::new(heap.alloc(true)),
@@ -1064,6 +1132,9 @@ impl<'v, V: ValueLike<'v>> DefaultInfoGen<V> {
         heap: Heap<'v>,
         is_bazel_executable_rule: bool,
         is_bazel_test_rule: bool,
+        bazel_target_args: &[String],
+        bazel_run_environment: &[(String, String)],
+        bazel_run_inherited_environment: &[String],
     ) -> bz_error::Result<DefaultInfo<'v>> {
         let executable = bazel_files_to_run_executable(self.files_to_run.get().to_value());
         let is_executable_or_test = is_bazel_executable_rule || is_bazel_test_rule;
@@ -1098,6 +1169,20 @@ impl<'v, V: ValueLike<'v>> DefaultInfoGen<V> {
             executable.unwrap_or_else(Value::new_none),
             default_runfiles,
         );
+        let (bazel_target_args, bazel_run_environment, bazel_run_inherited_environment) =
+            if is_executable_or_test {
+                (
+                    heap.alloc(AllocList(bazel_target_args.iter().cloned())),
+                    heap.alloc(AllocDict(bazel_run_environment.iter().cloned())),
+                    heap.alloc(AllocList(bazel_run_inherited_environment.iter().cloned())),
+                )
+            } else {
+                (
+                    self.bazel_target_args.get().to_value(),
+                    self.bazel_run_environment.get().to_value(),
+                    self.bazel_run_inherited_environment.get().to_value(),
+                )
+            };
 
         Ok(DefaultInfo {
             sub_targets: ValueOfUnchecked::new(self.sub_targets.get().to_value()),
@@ -1105,10 +1190,34 @@ impl<'v, V: ValueLike<'v>> DefaultInfoGen<V> {
             other_outputs: ValueOfUnchecked::new(self.other_outputs.get().to_value()),
             files: ValueOfUnchecked::new(self.files.get().to_value()),
             files_to_run: ValueOfUnchecked::new(files_to_run),
+            bazel_target_args: ValueOfUnchecked::new(bazel_target_args),
+            bazel_run_environment: ValueOfUnchecked::new(bazel_run_environment),
+            bazel_run_inherited_environment: ValueOfUnchecked::new(bazel_run_inherited_environment),
             data_runfiles: ValueOfUnchecked::new(data_runfiles),
             default_runfiles: ValueOfUnchecked::new(default_runfiles),
             stateless_runfiles: ValueOfUnchecked::new(self.stateless_runfiles.get().to_value()),
         })
+    }
+
+    pub fn bazel_target_args(&self) -> bz_error::Result<Vec<String>> {
+        bazel_string_list(
+            self.bazel_target_args.get().to_value(),
+            "DefaultInfo.bazel_target_args",
+        )
+    }
+
+    pub fn bazel_run_environment(&self) -> bz_error::Result<Vec<(String, String)>> {
+        bazel_string_dict(
+            self.bazel_run_environment.get().to_value(),
+            "DefaultInfo.bazel_run_environment",
+        )
+    }
+
+    pub fn bazel_run_inherited_environment(&self) -> bz_error::Result<Vec<String>> {
+        bazel_string_list(
+            self.bazel_run_inherited_environment.get().to_value(),
+            "DefaultInfo.bazel_run_inherited_environment",
+        )
     }
 
     pub fn default_output_values_for_dependency(&self) -> bz_error::Result<Vec<Value<'v>>> {
@@ -1162,12 +1271,21 @@ impl FrozenDefaultInfo {
             ("runfiles_manifest", FrozenValue::new_none()),
             (BAZEL_FILES_TO_RUN_RUNFILES_FIELD, default_runfiles.get()),
         ])));
+        let bazel_target_args =
+            FrozenValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
+        let bazel_run_environment =
+            FrozenValueOfUnchecked::<DictType<String, String>>::new(heap.alloc(AllocDict::EMPTY));
+        let bazel_run_inherited_environment =
+            FrozenValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
         FrozenValueTyped::new_err(heap.alloc(FrozenDefaultInfo {
             sub_targets,
             default_outputs,
             other_outputs,
             files,
             files_to_run,
+            bazel_target_args,
+            bazel_run_environment,
+            bazel_run_inherited_environment,
             data_runfiles,
             default_runfiles,
             stateless_runfiles: FrozenValueOfUnchecked::new(heap.alloc(true)),
@@ -1203,12 +1321,21 @@ impl FrozenDefaultInfo {
             ("runfiles_manifest", FrozenValue::new_none()),
             (BAZEL_FILES_TO_RUN_RUNFILES_FIELD, default_runfiles.get()),
         ])));
+        let bazel_target_args =
+            FrozenValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
+        let bazel_run_environment =
+            FrozenValueOfUnchecked::<DictType<String, String>>::new(heap.alloc(AllocDict::EMPTY));
+        let bazel_run_inherited_environment =
+            FrozenValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
         FrozenValueTyped::new_err(heap.alloc(FrozenDefaultInfo {
             sub_targets,
             default_outputs,
             other_outputs,
             files,
             files_to_run,
+            bazel_target_args,
+            bazel_run_environment,
+            bazel_run_inherited_environment,
             data_runfiles,
             default_runfiles,
             stateless_runfiles: FrozenValueOfUnchecked::new(heap.alloc(true)),
@@ -1695,6 +1822,12 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         let valid_data_runfiles = ValueOfUnchecked::<FrozenBazelRunfiles>::new(valid_data_runfiles);
         let valid_default_runfiles =
             ValueOfUnchecked::<FrozenBazelRunfiles>::new(valid_default_runfiles);
+        let bazel_target_args =
+            ValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
+        let bazel_run_environment =
+            ValueOfUnchecked::<DictType<String, String>>::new(heap.alloc(AllocDict::EMPTY));
+        let bazel_run_inherited_environment =
+            ValueOfUnchecked::<ListType<String>>::new(heap.alloc(AllocList::EMPTY));
 
         let valid_sub_targets = sub_targets
             .entries
@@ -1719,6 +1852,9 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
                 files_to_run_executable,
                 files_to_run_runfiles,
             )),
+            bazel_target_args,
+            bazel_run_environment,
+            bazel_run_inherited_environment,
             data_runfiles: valid_data_runfiles,
             default_runfiles: valid_default_runfiles,
             stateless_runfiles: ValueOfUnchecked::new(heap.alloc(stateless_runfiles)),

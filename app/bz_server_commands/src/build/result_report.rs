@@ -23,7 +23,6 @@ use bz_build_api::interpreter::rule_defs::cmd_args::AbsCommandLineContext;
 use bz_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use bz_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use bz_build_api::interpreter::rule_defs::context::bazel_workspace_name_for_cell;
-use bz_build_api::interpreter::rule_defs::provider::builtin::bazel::run_environment_info::FrozenRunEnvironmentInfo;
 use bz_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_add_executable_to_command_line;
 use bz_build_api::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
 use bz_certs::validate::CertState;
@@ -229,36 +228,6 @@ impl<'a> ResultReporter<'a> {
         let (run_args, run_environment, run_inherited_environment, run_spec) =
             if let Some(providers) = result.provider_collection.as_ref() {
                 let provider_collection = providers.provider_collection();
-                let (run_environment, run_inherited_environment): (
-                    Vec<proto::ClientEnvironmentVariable>,
-                    Vec<String>,
-                ) = if let Some(run_environment_info) =
-                    provider_collection.builtin_provider::<FrozenRunEnvironmentInfo>()
-                {
-                    (
-                        run_environment_info
-                            .environment()?
-                            .into_iter()
-                            .map(|(name, value)| proto::ClientEnvironmentVariable {
-                                name,
-                                value: Some(value),
-                            })
-                            .collect(),
-                        run_environment_info.inherited_environment()?,
-                    )
-                } else {
-                    (
-                        result
-                            .bazel_run_environment
-                            .iter()
-                            .map(|(name, value)| proto::ClientEnvironmentVariable {
-                                name: name.clone(),
-                                value: Some(value.clone()),
-                            })
-                            .collect(),
-                        result.bazel_run_inherited_environment.clone(),
-                    )
-                };
                 let path_separator = if cfg!(windows) {
                     PathSeparatorKind::Windows
                 } else {
@@ -271,6 +240,8 @@ impl<'a> ResultReporter<'a> {
                     ErrorCountingArtifactPathMapperImpl::new(artifact_path_mapping);
                 let mut added_bazel_files_to_run = false;
                 let mut run_spec: Option<proto::RunSpec> = None;
+                let mut run_environment: Vec<proto::ClientEnvironmentVariable> = Vec::new();
+                let mut run_inherited_environment: Vec<String> = Vec::new();
                 if let Ok(default_info) = provider_collection.default_info() {
                     // Bazel executable rules expose DefaultInfo.files_to_run instead of Buck RunInfo.
                     added_bazel_files_to_run = bazel_files_to_run_add_executable_to_command_line(
@@ -280,6 +251,17 @@ impl<'a> ResultReporter<'a> {
                         &error_counting_artifact_path_mapper,
                     )?;
                     if added_bazel_files_to_run && let Some(executable) = cli.first() {
+                        let target_args = default_info.bazel_target_args()?;
+                        run_environment = default_info
+                            .bazel_run_environment()?
+                            .into_iter()
+                            .map(|(name, value)| proto::ClientEnvironmentVariable {
+                                name,
+                                value: Some(value),
+                            })
+                            .collect();
+                        run_inherited_environment =
+                            default_info.bazel_run_inherited_environment()?;
                         let mut runfiles = Vec::new();
                         default_info.for_each_default_runfiles_entry(&mut |path, artifact| {
                             runfiles.push(proto::Runfile {
@@ -308,7 +290,7 @@ impl<'a> ResultReporter<'a> {
                         );
                         run_spec = Some(proto::RunSpec {
                             executable: executable.clone(),
-                            target_args: result.bazel_target_args.clone(),
+                            target_args,
                             runfiles_dir: runfiles_dir.clone(),
                             working_directory,
                             environment: run_environment.clone(),

@@ -9,6 +9,7 @@ use starlark::eval::Evaluator;
 use starlark::values::Freeze;
 use starlark::values::Trace;
 use starlark::values::ValueLifetimeless;
+use starlark::values::ValueLike;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::dict::AllocDict;
@@ -57,7 +58,7 @@ pub(crate) fn make_run_environment_info<'v>(
     }
 }
 
-impl FrozenRunEnvironmentInfo {
+impl<'v, V: ValueLike<'v>> RunEnvironmentInfoGen<V> {
     pub fn environment(&self) -> bz_error::Result<Vec<(String, String)>> {
         let environment =
             DictRef::from_value(self.environment.get().to_value()).ok_or_else(|| {
