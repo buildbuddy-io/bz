@@ -1095,6 +1095,15 @@ fn parse_target_pattern_no_validate<T>(
 where
     T: PatternType,
 {
+    let repo_only_pattern;
+    let pattern = match bazel_repo_only_label_pattern(pattern) {
+        Some(pattern) => {
+            repo_only_pattern = pattern;
+            repo_only_pattern.as_str()
+        }
+        None => pattern,
+    };
+
     let canonical_pattern;
     let canonical_cell;
     let pattern = match bazel_canonical_label_pattern(pattern, cell_resolver)? {
@@ -1223,6 +1232,27 @@ fn bazel_canonical_label_pattern(
         cell,
         format!("{}//{}", cell.as_str(), package_and_target),
     )))
+}
+
+fn bazel_repo_only_label_pattern(pattern: &str) -> Option<String> {
+    let repo = pattern
+        .strip_prefix("@@")
+        .or_else(|| pattern.strip_prefix('@'))?;
+
+    if !is_bazel_repo_only_label_name(repo) {
+        return None;
+    }
+
+    // Bazel treats `@repo` as `@repo//:repo`, and `@@repo` as
+    // `@@repo//:repo`.
+    Some(format!("{pattern}//:{repo}"))
+}
+
+fn is_bazel_repo_only_label_name(repo: &str) -> bool {
+    !repo.is_empty()
+        && repo
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'+'))
 }
 
 #[derive(bz_error::Error, Debug)]
@@ -1366,6 +1396,8 @@ mod tests {
     use crate::target::name::TargetNameRef;
     use crate::target_aliases::TargetAliasResolver;
 
+    const MUSL_REPO: &str = "musl-1_2_3-platform-x86_64-unknown-linux-gnu-target-x86_64-linux-musl";
+
     fn mk_package<P: PatternType>(cell: &str, path: &str) -> ParsedPattern<P> {
         ParsedPattern::Package(PackageLabel::testing_new(cell, path))
     }
@@ -1492,6 +1524,10 @@ mod tests {
                         "buck-out/v2/external_cells/bzlmod/rules_go+0.57.0",
                     ),
                 ),
+                (
+                    CellName::testing_new(MUSL_REPO),
+                    CellRootPathBuf::testing_new(MUSL_REPO),
+                ),
             ],
             StdBuckHashMap::from_iter([
                 (
@@ -1501,6 +1537,10 @@ mod tests {
                 (
                     NonEmptyCellAlias::testing_new("alias2"),
                     CellName::testing_new("cell2"),
+                ),
+                (
+                    NonEmptyCellAlias::testing_new(MUSL_REPO),
+                    CellName::testing_new(MUSL_REPO),
                 ),
             ]),
         )
@@ -2129,6 +2169,40 @@ mod tests {
             mk_providers(&bzlmod_cell_name("rules_go+0.57.0"), "go", "sdk", None),
             ParsedPattern::<ProvidersPatternExtra>::parse_precise(
                 "@@rules_go+0.57.0//go:sdk",
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_bazel_repo_only_label_patterns() {
+        assert_eq!(
+            mk_target(MUSL_REPO, "", MUSL_REPO),
+            ParsedPattern::<TargetPatternExtra>::parse_precise(
+                &format!("@{MUSL_REPO}"),
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            mk_target("bazel_tools", "", "bazel_tools"),
+            ParsedPattern::<TargetPatternExtra>::parse_precise(
+                "@@bazel_tools",
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            mk_target(&bzlmod_cell_name("rules_go+0.57.0"), "", "rules_go+0.57.0"),
+            ParsedPattern::<TargetPatternExtra>::parse_precise(
+                "@@rules_go+0.57.0",
                 CellName::testing_new("root"),
                 &resolver(),
                 &alias_resolver(),
