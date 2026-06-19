@@ -1434,6 +1434,7 @@ cc_toolchain = prelude_rule(
         "compiler": attrs.option(attrs.string(), default = None),
         "tags": attrs.list(attrs.string(), default = []),
     } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
+    is_toolchain_rule = True,
 )
 
 cc_toolchain_suite = prelude_rule(
